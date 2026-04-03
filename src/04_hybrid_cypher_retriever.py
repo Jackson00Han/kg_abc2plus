@@ -5,6 +5,9 @@ fulltext keyword search, then traverses the graph for entity context.
 This retrieves chunks that match both semantically and by keyword,
 producing more robust results than either approach alone.
 
+Compare scores here with step 03 — hybrid scores are fused from both
+search strategies, often resulting in higher confidence matches.
+
 Run: uv run python src/04_hybrid_cypher_retriever.py
 """
 
@@ -30,6 +33,17 @@ def main():
     with get_driver() as driver:
         embedder = get_embedder()
 
+        # HybridCypherRetriever combines two search strategies:
+        #   1. Vector search: cosine similarity over chunk embeddings
+        #      (good for semantic/conceptual matches and paraphrases)
+        #   2. Fulltext search: BM25 keyword matching over chunk text
+        #      (good for exact terms like "iPhone" or "$391.0 billion")
+        #
+        # The scores from both searches are fused, then the same Cypher
+        # traversal from step 03 enriches results with entity context.
+        #
+        # This requires BOTH a vector index and a fulltext index on Chunk
+        # nodes, which step 01 creates.
         retriever = HybridCypherRetriever(
             driver=driver,
             vector_index_name=VECTOR_INDEX_NAME,

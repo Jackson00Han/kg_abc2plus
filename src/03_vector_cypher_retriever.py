@@ -5,6 +5,9 @@ similarity, then traverses the graph to pull in structured entity
 information (companies, products, risk factors) that pure vector
 search cannot surface.
 
+Compare the output with step 02 — the same queries now return entity
+names and types alongside the chunk text.
+
 Run: uv run python src/03_vector_cypher_retriever.py
 """
 
@@ -24,6 +27,15 @@ def main():
     with get_driver() as driver:
         embedder = get_embedder()
 
+        # VectorCypherRetriever adds a graph traversal step after vector search:
+        #   1. Embed the query and find top_k similar chunks (same as VectorRetriever)
+        #   2. For each matched chunk, run RETRIEVAL_QUERY to traverse the graph
+        #   3. The Cypher query walks from chunks to their parent Document and
+        #      to any entities extracted from that chunk (Product, RiskFactor, etc.)
+        #   4. The result_formatter shapes each Neo4j record into a RetrieverResultItem
+        #
+        # This is the key GraphRAG pattern: vector search for relevance,
+        # graph traversal for structured context.
         retriever = VectorCypherRetriever(
             driver=driver,
             index_name=VECTOR_INDEX_NAME,
@@ -44,6 +56,8 @@ def main():
                 score = item.metadata.get("score")
                 score_str = f"{score:.4f}" if isinstance(score, (int, float)) else "N/A"
                 print(f"\n--- Result {i+1} (score: {score_str}) ---")
+                # content now includes chunk text + "Related entities: ..." + "Source: ..."
+                # thanks to the formatter in shared.py
                 print(item.content[:800])
 
 

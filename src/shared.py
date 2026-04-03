@@ -1,22 +1,37 @@
-"""Shared retrieval query and formatter for vector-cypher retrieval.
+"""Shared retrieval query and formatter for graph-enriched retrieval.
 
 Used by 03_vector_cypher_retriever.py, 04_hybrid_cypher_retriever.py,
-and 05_graphrag_qa.py.
+and 05_graphrag_qa.py. Extracting these into a shared module avoids
+duplicating the Cypher query and formatting logic across scripts.
 """
 
 import neo4j
 from neo4j_graphrag.types import RetrieverResultItem
 
-# After vector search finds matching Chunks, this Cypher query traverses
-# the graph to collect structured context: the parent document and any
-# entities extracted from that chunk.
+# ---------------------------------------------------------------------------
+# Cypher retrieval query
+# ---------------------------------------------------------------------------
+# When a VectorCypherRetriever (or HybridCypherRetriever) finds matching
+# Chunk nodes via vector/fulltext search, it then runs THIS Cypher query
+# to pull in additional graph context.
 #
-# SimpleKGPipeline creates:
-#   (entity)-[:FROM_CHUNK]->(chunk)   entity was extracted from this chunk
-#   (chunk)-[:FROM_DOCUMENT]->(doc)   chunk belongs to this document
+# The query starts from the matched chunk (provided as `node` by the
+# retriever) and traverses two relationship types that SimpleKGPipeline
+# creates:
 #
-# We filter out internal labels (__KGBuilder__, __Entity__) to show only
-# the domain-specific entity types (Product, RiskFactor, Company, etc.).
+#   (entity)-[:FROM_CHUNK]->(chunk)   — entity was extracted from this chunk
+#   (chunk)-[:FROM_DOCUMENT]->(doc)   — chunk belongs to this document
+#
+# For each chunk, we collect:
+#   1. The chunk text itself
+#   2. The similarity score from the vector/hybrid search
+#   3. The source metadata from the parent Document node
+#   4. A list of entity labels and names (e.g. "Product: iPhone")
+#
+# We filter out internal labels (__KGBuilder__, __Entity__) that the
+# library adds to all nodes, keeping only domain-specific types like
+# Product, RiskFactor, Company.
+# ---------------------------------------------------------------------------
 RETRIEVAL_QUERY = """
 WITH node AS chunk, score
 OPTIONAL MATCH (chunk)-[:FROM_DOCUMENT]->(doc:Document)
@@ -35,11 +50,20 @@ RETURN
 
 
 def formatter(record: neo4j.Record) -> RetrieverResultItem:
-    """Format a neo4j Record into a RetrieverResultItem with entity context."""
+    """Format a Neo4j record into a RetrieverResultItem with entity context.
+
+    The retriever returns raw Neo4j records. This function shapes each
+    record into the format that GraphRAG (or direct printing) expects:
+    the chunk text, followed by any related entities and the document source.
+
+    This is what the LLM sees as context when generating answers — so the
+    format here directly affects answer quality.
+    """
     text = record.get("text", "")
     entities = record.get("entities", [])
     source = record.get("source", "")
 
+    # Build a multi-line string: chunk text first, then entity context
     parts = [text]
     if entities:
         parts.append(f"Related entities: {', '.join(entities)}")

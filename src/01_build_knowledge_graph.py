@@ -30,7 +30,24 @@ from config import (
     get_llm,
 )
 
-# Schema definition: what entities and relationships to extract
+# ---------------------------------------------------------------------------
+# Schema definition
+# ---------------------------------------------------------------------------
+# The schema tells the LLM what entities and relationships to look for
+# during extraction. Without a schema, the LLM will invent its own types,
+# leading to inconsistent and noisy graphs. With a schema, you get a clean,
+# typed graph that maps to your domain.
+#
+# Each node type can have:
+#   - label: the Neo4j node label (required)
+#   - description: helps the LLM understand what qualifies as this type
+#   - properties: typed attributes the LLM should try to extract
+#
+# Each relationship type has a label and optional description.
+#
+# Patterns define which node types can connect through which relationships.
+# The LLM uses these as constraints during extraction.
+# ---------------------------------------------------------------------------
 NODE_TYPES = [
     {"label": "Company", "properties": [{"name": "ticker", "type": "STRING"}]},
     {
@@ -50,6 +67,9 @@ RELATIONSHIP_TYPES = [
     {"label": "FACES_RISK", "description": "Company faces a business risk"},
 ]
 
+# Patterns constrain which relationships can exist between which node types.
+# Only (Company)-[:OFFERS]->(Product) and (Company)-[:FACES_RISK]->(RiskFactor)
+# are valid — the LLM won't create relationships outside these patterns.
 PATTERNS = [
     ("Company", "OFFERS", "Product"),
     ("Company", "FACES_RISK", "RiskFactor"),
@@ -64,14 +84,14 @@ async def build_graph():
     embedder = get_embedder()
 
     with get_driver() as driver:
-        # Clear existing data
+        # Clear existing data so the demo is idempotent.
+        # In production you'd use incremental updates instead.
         with driver.session(database=NEO4J_DATABASE) as session:
             result = session.run("MATCH (n) DETACH DELETE n RETURN count(n) AS deleted")
             deleted = result.single()["deleted"]
             if deleted > 0:
                 print(f"Cleared {deleted} existing nodes")
 
-        # Build the knowledge graph
         print("\nBuilding knowledge graph with SimpleKGPipeline...")
         print("  - Splitting text into chunks")
         print("  - Generating embeddings for each chunk")
@@ -79,10 +99,22 @@ async def build_graph():
         print("  - Writing to Neo4j")
         print("  - Resolving duplicate entities\n")
 
-        # Smaller chunks so different queries match different sections of
-        # the filing, making the retrieval comparison more visible.
+        # Use smaller chunks (500 chars, 100 overlap) so different queries
+        # match different sections of the filing. The default chunk size
+        # (4000 chars) would put the entire ~3000-char filing into a single
+        # chunk, making the retrieval comparison in later steps meaningless.
         text_splitter = FixedSizeSplitter(chunk_size=500, chunk_overlap=100)
 
+        # SimpleKGPipeline orchestrates the full pipeline in one call:
+        #   1. Split text into chunks (using our text_splitter)
+        #   2. Embed each chunk (using the embedder)
+        #   3. Extract entities and relationships from each chunk (using the LLM)
+        #   4. Write everything to Neo4j (Chunk, Document, entity nodes + relationships)
+        #   5. Run entity resolution to merge duplicates (e.g. "Apple" and "Apple Inc.")
+        #
+        # The resulting graph has two layers:
+        #   - Lexical layer: Document -> Chunk nodes (with embeddings and text)
+        #   - Semantic layer: Company, Product, RiskFactor nodes with OFFERS/FACES_RISK edges
         kg_builder = SimpleKGPipeline(
             llm=llm,
             driver=driver,
@@ -102,11 +134,18 @@ async def build_graph():
 
         result = await kg_builder.run_async(
             text=text,
+            # Metadata is stored as properties on the Document node,
+            # making it available during retrieval for provenance tracking.
             document_metadata={"source": "SEC EDGAR", "filing_type": "10-K"},
         )
         print(f"Pipeline result: {result}\n")
 
-        # Create indexes on Chunk nodes for retrieval
+        # --- Index creation ---
+        # SimpleKGPipeline stores embeddings on Chunk nodes but does NOT
+        # create indexes automatically. We need to create them manually
+        # so the retriever scripts can perform vector and fulltext search.
+
+        # Vector index: enables cosine similarity search over chunk embeddings
         print(f"Creating vector index '{VECTOR_INDEX_NAME}'...")
         create_vector_index(
             driver,
@@ -118,6 +157,9 @@ async def build_graph():
         )
         print("Vector index created.")
 
+        # Fulltext index: enables keyword search over chunk text.
+        # Used by HybridCypherRetriever in step 04 to combine keyword
+        # matching with vector similarity.
         print(f"Creating fulltext index '{FULLTEXT_INDEX_NAME}'...")
         create_fulltext_index(
             driver,
@@ -127,7 +169,8 @@ async def build_graph():
         )
         print("Fulltext index created.\n")
 
-        # Show what was built
+        # --- Print a summary of what was built ---
+        # Filter out __KGBuilder__ (internal label added to all pipeline-created nodes)
         with driver.session(database=NEO4J_DATABASE) as session:
             result = session.run("""
                 MATCH (n)
@@ -149,6 +192,7 @@ async def build_graph():
             for record in result:
                 print(f"  {record['type']}: {record['count']}")
 
+    # Clean up the async OpenAI client used by SimpleKGPipeline
     await llm.async_client.close()
 
 
