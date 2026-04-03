@@ -4,29 +4,6 @@ Build a knowledge graph from an SEC filing and query it with progressively riche
 
 This project uses the [neo4j-graphrag-python](https://github.com/neo4j/neo4j-graphrag-python) library, OpenAI for LLM and embeddings, and Neo4j for graph storage. Five scripts walk through the complete GraphRAG pipeline in sequence.
 
-## Quick Start
-
-```bash
-git clone <this-repo> && cd sample-graphrag
-
-# 1. Install uv (if you don't have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
-uv sync
-
-# 3. Configure credentials
-cp .env.example .env
-# Edit .env with your OPENAI_API_KEY, NEO4J_URI, NEO4J_PASSWORD
-
-# 4. Run the pipeline
-uv run python src/01_build_knowledge_graph.py
-uv run python src/02_vector_retriever.py
-uv run python src/03_vector_cypher_retriever.py
-uv run python src/04_hybrid_cypher_retriever.py
-uv run python src/05_graphrag_qa.py
-```
-
 ## Prerequisites
 
 - **Python 3.12+**
@@ -72,6 +49,28 @@ docker run -d --name neo4j \
 ```
 
 Then set `NEO4J_URI=neo4j://localhost:7687` in your `.env`.
+
+## Quick Start
+
+Once you have Python, uv, an OpenAI key, and a Neo4j instance ready:
+
+```bash
+git clone <this-repo> && cd sample-graphrag
+
+# 1. Install dependencies
+uv sync
+
+# 2. Configure credentials
+cp .env.example .env
+# Edit .env with your OPENAI_API_KEY, NEO4J_URI, NEO4J_PASSWORD
+
+# 3. Run the pipeline
+uv run python src/01_build_knowledge_graph.py
+uv run python src/02_vector_retriever.py
+uv run python src/03_vector_cypher_retriever.py
+uv run python src/04_hybrid_cypher_retriever.py
+uv run python src/05_graphrag_qa.py
+```
 
 ## How GraphRAG Works
 
