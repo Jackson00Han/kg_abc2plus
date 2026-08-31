@@ -13,7 +13,7 @@ Run: uv run python src/01_build_knowledge_graph.py
 
 import asyncio
 
-from neo4j_graphrag.experimental.components.text_splitters.fixed_size_splitter import (
+from neo4j_graphrag.components.text_splitters.fixed_size_splitter import (
     FixedSizeSplitter,
 )
 from neo4j_graphrag.experimental.pipeline.kg_builder import SimpleKGPipeline
@@ -76,6 +76,27 @@ PATTERNS = [
 ]
 
 
+def verify_apoc(driver) -> None:
+    """Fail fast when the APOC procedures required by the pipeline are absent."""
+    required = {"apoc.merge.relationship", "apoc.refactor.mergeNodes"}
+    records, _, _ = driver.execute_query(
+        """
+        SHOW PROCEDURES YIELD name
+        WHERE name IN $required
+        RETURN name
+        """,
+        required=sorted(required),
+        database_=NEO4J_DATABASE,
+    )
+    missing = required - {record["name"] for record in records}
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise RuntimeError(
+            f"Neo4j APOC Core is missing required procedures: {names}. "
+            "Install the APOC plugin and restart Neo4j before running this script."
+        )
+
+
 async def build_graph():
     text = (DATA_DIR / "apple_10k_excerpt.txt").read_text()
     print(f"Loaded {len(text)} characters from apple_10k_excerpt.txt")
@@ -84,6 +105,8 @@ async def build_graph():
     embedder = get_embedder()
 
     with get_driver() as driver:
+        verify_apoc(driver)
+
         # Clear existing data so the demo is idempotent.
         # In production you'd use incremental updates instead.
         with driver.session(database=NEO4J_DATABASE) as session:
@@ -125,7 +148,7 @@ async def build_graph():
                 "relationship_types": RELATIONSHIP_TYPES,
                 "patterns": PATTERNS,
             },
-            from_pdf=False,
+            from_file=False,
             neo4j_database=NEO4J_DATABASE,
             # Entity resolution merges nodes with the same label and name
             # property, preventing duplicates like "Apple" and "Apple Inc."

@@ -8,7 +8,7 @@ This project uses the [neo4j-graphrag-python](https://github.com/neo4j/neo4j-gra
 
 - **Python 3.12+**
 - **An OpenAI API key** with access to `gpt-5-mini` and `text-embedding-3-small`
-- **A Neo4j instance** -- either a local install or the free [Neo4j Aura](https://neo4j.com/cloud/aura-free/) tier
+- **A Neo4j instance with APOC Core** -- either a local install or the free [Neo4j Aura](https://neo4j.com/cloud/aura-free/) tier
 
 ## Setting Up uv
 
@@ -45,10 +45,12 @@ You need a running Neo4j instance. Two options:
 docker run -d --name neo4j \
   -p 7474:7474 -p 7687:7687 \
   -e NEO4J_AUTH=neo4j/your-password-here \
+  -e 'NEO4J_PLUGINS=["apoc"]' \
   neo4j:5
 ```
 
-Then set `NEO4J_URI=neo4j://localhost:7687` in your `.env`.
+Then set `NEO4J_URI=neo4j://localhost:7687` in your `.env`. APOC Core is
+required for dynamic relationship creation and entity resolution.
 
 ## Quick Start
 

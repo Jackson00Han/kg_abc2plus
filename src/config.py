@@ -31,6 +31,15 @@ NEO4J_URI = os.environ["NEO4J_URI"]
 NEO4J_AUTH = ("neo4j", os.environ["NEO4J_PASSWORD"])
 NEO4J_DATABASE = "neo4j"
 
+# LLM model exposed by the configured OpenAI-compatible endpoint.
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-5-mini")
+
+# Embedding settings must match both the provider's model and the Neo4j vector
+# index. DashScope's text-embedding-v4 defaults to 1024 dimensions; OpenAI's
+# text-embedding-3-small defaults to 1536.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+
 # Path to the data/ directory containing sample documents
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -38,11 +47,6 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # populates the graph. Steps 02-05 reference them for retrieval.
 VECTOR_INDEX_NAME = "chunkEmbeddings"
 FULLTEXT_INDEX_NAME = "chunkFulltext"
-
-# text-embedding-3-small produces 1536-dimensional vectors.
-# The vector index must be created with matching dimensions.
-EMBEDDING_DIMENSIONS = 1536
-
 
 def get_driver() -> neo4j.Driver:
     """Create a Neo4j driver and verify the connection is reachable.
@@ -61,16 +65,12 @@ def get_driver() -> neo4j.Driver:
 def get_llm() -> OpenAILLM:
     """Create an OpenAI LLM instance for entity extraction and answer generation.
 
-    gpt-5-mini is used for both the SimpleKGPipeline (structured entity
-    extraction) and the GraphRAG answer generation step.
+    The model is configured through MODEL_NAME so OpenAI-compatible providers
+    can select one of their own chat models.
     """
-    return OpenAILLM(model_name="gpt-5-mini")
+    return OpenAILLM(model_name=MODEL_NAME)
 
 
 def get_embedder() -> OpenAIEmbeddings:
-    """Create an OpenAI embedder for chunk and query embedding.
-
-    text-embedding-3-small is a cost-effective model that produces
-    1536-dimensional vectors suitable for cosine similarity search.
-    """
-    return OpenAIEmbeddings(model="text-embedding-3-small")
+    """Create an embedder using the configured OpenAI-compatible model."""
+    return OpenAIEmbeddings(model=EMBEDDING_MODEL)

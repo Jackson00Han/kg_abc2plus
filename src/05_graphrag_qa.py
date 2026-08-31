@@ -1,23 +1,73 @@
-"""Full GraphRAG pipeline: retriever + LLM for question answering.
+"""Full GraphRAG pipeline: hybrid retrieval + graph context + LLM.
 
-Demonstrates GraphRAG: combines VectorCypherRetriever with an LLM to
-generate answers grounded in knowledge graph context. Shows the complete
-flow from question to graph-enriched retrieval to generated answer.
+Combines semantic vector search, BM25 fulltext search, Cypher-based graph
+enrichment, and an LLM to generate grounded natural-language answers.
 
 This is the final step in the progression:
   02: vector search only           -> raw chunks
   03: vector + graph traversal     -> chunks with entity context
   04: hybrid + graph traversal     -> more robust matching
-  05: hybrid + graph + LLM (here)  -> natural language answers
+  05: hybrid + graph + LLM (here)  -> grounded natural-language answers
 
 Run: uv run python src/05_graphrag_qa.py
 """
 
 from neo4j_graphrag.generation import GraphRAG
-from neo4j_graphrag.retrievers import VectorCypherRetriever
+from neo4j_graphrag.generation.prompts import RagTemplate
+from neo4j_graphrag.retrievers import HybridCypherRetriever
 
-from config import NEO4J_DATABASE, VECTOR_INDEX_NAME, get_driver, get_embedder, get_llm
+from config import (
+    FULLTEXT_INDEX_NAME,
+    NEO4J_DATABASE,
+    VECTOR_INDEX_NAME,
+    get_driver,
+    get_embedder,
+    get_llm,
+)
 from shared import RETRIEVAL_QUERY, formatter
+
+
+# Keep retrieval behavior explicit instead of relying on library defaults.
+# Linear fusion rewards chunks found by both search strategies. Vector search
+# receives more weight because natural-language questions often use words that
+# differ from the source text, while BM25 preserves exact names and numbers.
+RETRIEVER_CONFIG = {
+    "top_k": 3,
+    "effective_search_ratio": 2,
+    "ranker": "linear",
+    "alpha": 0.7,
+}
+
+FALLBACK_RESPONSE = "I don't have enough context to answer this question."
+
+# Extracted graph entities are useful navigation hints, but the source chunk is
+# the evidence. This prompt prevents an incorrectly extracted entity from being
+# treated as an independently verified fact and gives the model an explicit
+# insufficient-evidence behavior.
+ANSWER_PROMPT = RagTemplate(
+    system_instructions=(
+        "Answer the question using only the supplied context. "
+        "Treat chunk text as evidence and related entities only as navigation hints. "
+        "Do not invent facts or sources."
+    ),
+    template="""Context:
+{context}
+
+Examples:
+{examples}
+
+Instructions:
+- Base every factual claim on the chunk text above.
+- Do not treat a name in "Related entities" as proof unless the chunk text supports it.
+- If the context is insufficient, answer exactly: "{fallback_response}"
+- End the answer with the source names that appear in the context.
+
+Question:
+{query_text}
+
+Answer:
+""".replace("{fallback_response}", FALLBACK_RESPONSE),
+)
 
 # Questions that exercise different parts of the knowledge graph.
 # Each question should pull context from different chunks and entities.
@@ -34,12 +84,13 @@ def main():
         embedder = get_embedder()
         llm = get_llm()
 
-        # Same retriever as step 03 — vector search + Cypher graph traversal.
-        # The retriever finds relevant chunks and enriches them with entity
-        # context from the knowledge graph.
-        retriever = VectorCypherRetriever(
+        # Upgrade step 04 with answer generation: retrieve candidates using
+        # vector similarity and BM25, fuse their scores, then enrich the final
+        # chunks with entities and document provenance via RETRIEVAL_QUERY.
+        retriever = HybridCypherRetriever(
             driver=driver,
-            index_name=VECTOR_INDEX_NAME,
+            vector_index_name=VECTOR_INDEX_NAME,
+            fulltext_index_name=FULLTEXT_INDEX_NAME,
             retrieval_query=RETRIEVAL_QUERY,
             result_formatter=formatter,
             embedder=embedder,
@@ -53,7 +104,11 @@ def main():
         #
         # The LLM sees the chunk text, related entity names, and source
         # metadata — everything the formatter in shared.py produces.
-        rag = GraphRAG(retriever=retriever, llm=llm)
+        rag = GraphRAG(
+            retriever=retriever,
+            llm=llm,
+            prompt_template=ANSWER_PROMPT,
+        )
 
         for question in QUESTIONS:
             print(f"\n{'='*60}")
@@ -62,22 +117,28 @@ def main():
 
             result = rag.search(
                 query_text=question,
+                retriever_config=RETRIEVER_CONFIG,
                 # return_context=True includes the retriever results in the
                 # response, so you can see exactly what the LLM was given.
                 return_context=True,
-                # Fallback message if the retriever finds no relevant context.
-                response_fallback="I don't have enough context to answer this question.",
+                # This handles an empty index/result set. The prompt separately
+                # instructs the LLM to refuse when returned context is insufficient.
+                response_fallback=FALLBACK_RESPONSE,
             )
 
             print(f"\nAnswer:\n{result.answer}")
 
-            # Show which chunks were retrieved to produce this answer.
-            # This makes the pipeline transparent — you can verify the LLM
-            # is grounding its answer in the right source material.
+            # Print the complete retrieved context, not a short preview, so the
+            # generated answer can be checked against exactly what the LLM saw.
             if result.retriever_result:
                 print(f"\n--- Retrieved {len(result.retriever_result.items)} chunks ---")
                 for i, item in enumerate(result.retriever_result.items):
-                    print(f"  Chunk {i+1}: {item.content[:100]}...")
+                    score = (item.metadata or {}).get("score")
+                    score_text = (
+                        f"{score:.4f}" if isinstance(score, (int, float)) else "N/A"
+                    )
+                    print(f"\nChunk {i+1} (score: {score_text})")
+                    print(item.content)
 
 
 if __name__ == "__main__":
