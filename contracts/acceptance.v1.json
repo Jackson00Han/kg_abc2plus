@@ -1,0 +1,276 @@
+{
+  "contract_version": "1.0.0",
+  "target_milestone": "validation_complete",
+  "owner": "repository-maintainers",
+  "scope": {
+    "authoritative_input": "utf8_plain_text_with_provenance",
+    "domain": "english_company_filings",
+    "tenancy": "logical_multi_tenant",
+    "authorization": "tenant_and_access_groups",
+    "minimum_validation_chunks": 10000,
+    "retrieval_concurrency": 8
+  },
+  "datasets": [
+    {
+      "id": "gold-v1",
+      "owner": "repository-maintainers",
+      "kind": "adjudicated_question_evidence",
+      "minimum_items": 49,
+      "versioned": true
+    },
+    {
+      "id": "graph-review-v1",
+      "owner": "repository-maintainers",
+      "kind": "adjudicated_entity_relationship_sample",
+      "minimum_items": 50,
+      "versioned": true
+    },
+    {
+      "id": "load-v1",
+      "owner": "repository-maintainers",
+      "kind": "deterministic_synthetic_load_corpus",
+      "minimum_items": 10000,
+      "versioned": true
+    }
+  ],
+  "question_classes": [
+    {
+      "id": "single_chunk",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    },
+    {
+      "id": "cross_chunk",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    },
+    {
+      "id": "graph_relationship",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    },
+    {
+      "id": "exact_value",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    },
+    {
+      "id": "temporal_conflict",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    },
+    {
+      "id": "unanswerable",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    },
+    {
+      "id": "unauthorized",
+      "minimum_success_cases": 5,
+      "minimum_boundary_cases": 2
+    }
+  ],
+  "metrics": [
+    {
+      "id": "entity_precision",
+      "area": "graph",
+      "operator": ">=",
+      "target": 0.95,
+      "unit": "ratio",
+      "method": "adjudicated accepted entities divided by sampled accepted entities",
+      "dataset": "graph-review-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "relationship_precision",
+      "area": "graph",
+      "operator": ">=",
+      "target": 0.95,
+      "unit": "ratio",
+      "method": "adjudicated supported relationships divided by sampled accepted relationships",
+      "dataset": "graph-review-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "entity_resolution_accuracy",
+      "area": "graph",
+      "operator": ">=",
+      "target": 0.95,
+      "unit": "ratio",
+      "method": "correct merge and non-merge decisions divided by adjudicated entity pairs",
+      "dataset": "graph-review-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "recall_at_5",
+      "area": "retrieval",
+      "operator": ">=",
+      "target": 0.9,
+      "unit": "ratio",
+      "method": "queries with required evidence in top five divided by answerable gold queries",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "mrr",
+      "area": "retrieval",
+      "operator": ">=",
+      "target": 0.8,
+      "unit": "score",
+      "method": "mean reciprocal rank of first relevant evidence chunk",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "ndcg_at_5",
+      "area": "retrieval",
+      "operator": ">=",
+      "target": 0.85,
+      "unit": "score",
+      "method": "mean normalized discounted cumulative gain at five using adjudicated relevance grades",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "unauthorized_exposure_count",
+      "area": "security",
+      "operator": "=",
+      "target": 0,
+      "unit": "count",
+      "method": "protected chunks entities citations or existence signals returned to unauthorized test principals",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "supported_claim_rate",
+      "area": "answer",
+      "operator": ">=",
+      "target": 0.95,
+      "unit": "ratio",
+      "method": "material answer claims entailed by cited source chunks divided by all material claims",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "citation_precision",
+      "area": "answer",
+      "operator": ">=",
+      "target": 0.95,
+      "unit": "ratio",
+      "method": "citations that support their attached claims divided by all citations",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "citation_coverage",
+      "area": "answer",
+      "operator": ">=",
+      "target": 0.95,
+      "unit": "ratio",
+      "method": "material factual claims with valid citations divided by all material factual claims",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "numerical_fidelity",
+      "area": "answer",
+      "operator": "=",
+      "target": 1.0,
+      "unit": "ratio",
+      "method": "cited numbers dates currencies and units preserved correctly divided by tested exact values",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "refusal_f1",
+      "area": "answer",
+      "operator": ">=",
+      "target": 0.9,
+      "unit": "score",
+      "method": "F1 for refusing unanswerable queries while answering supported contrasts",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "ingestion_success_rate",
+      "area": "ingestion",
+      "operator": ">=",
+      "target": 0.995,
+      "unit": "ratio",
+      "method": "completed deterministic ingestion jobs divided by valid submitted jobs without injected dependency failure",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "idempotency_mismatch_count",
+      "area": "ingestion",
+      "operator": "=",
+      "target": 0,
+      "unit": "count",
+      "method": "graph state differences after repeating identical ingestion operations",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "deletion_residue_count",
+      "area": "ingestion",
+      "operator": "=",
+      "target": 0,
+      "unit": "count",
+      "method": "retrievable chunks or unsupported derived records remaining after accepted deletion",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "recovery_success_rate",
+      "area": "reliability",
+      "operator": "=",
+      "target": 1.0,
+      "unit": "ratio",
+      "method": "injected interrupted jobs recovered to one valid terminal state divided by recovery scenarios",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "retrieval_p95_ms",
+      "area": "performance",
+      "operator": "<=",
+      "target": 1000,
+      "unit": "milliseconds",
+      "method": "warmed p95 server-side retrieval latency at declared corpus size and concurrency excluding answer generation",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "answer_p95_ms",
+      "area": "performance",
+      "operator": "<=",
+      "target": 15000,
+      "unit": "milliseconds",
+      "method": "p95 end-to-end answer latency with model and provider version recorded",
+      "dataset": "gold-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "retrieval_throughput_rps",
+      "area": "performance",
+      "operator": ">=",
+      "target": 8,
+      "unit": "requests_per_second",
+      "method": "successful sustained retrieval requests per second with eight clients for five minutes",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    },
+    {
+      "id": "server_error_rate",
+      "area": "reliability",
+      "operator": "<=",
+      "target": 0.005,
+      "unit": "ratio",
+      "method": "unexpected server errors divided by valid requests during sustained validation load",
+      "dataset": "load-v1",
+      "dataset_owner": "repository-maintainers"
+    }
+  ]
+}
+

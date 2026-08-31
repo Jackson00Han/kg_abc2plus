@@ -295,7 +295,7 @@ tests/
 | Stage | Status | Evidence |
 | --- | --- | --- |
 | Plan and execution rules | Complete | `AGENTS.md`; formatting and secret checks passed |
-| 1. Requirements and acceptance contract | Not started | |
+| 1. Requirements and acceptance contract | Complete | `contracts/acceptance.v1.json`; `docs/validation/stage-1.md` |
 | 2. Production data and provenance model | Not started | |
 | 3. Idempotent incremental ingestion | Not started | |
 | 4. Knowledge graph quality governance | Not started | |

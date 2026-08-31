@@ -2,7 +2,11 @@
 
 Build a knowledge graph from an SEC filing and query it with progressively richer retrieval strategies, from basic vector search to full GraphRAG question answering.
 
-This project uses the [neo4j-graphrag-python](https://github.com/neo4j/neo4j-graphrag-python) library, OpenAI for LLM and embeddings, and Neo4j for graph storage. Five scripts walk through the complete GraphRAG pipeline in sequence.
+This project uses the [neo4j-graphrag-python](https://github.com/neo4j/neo4j-graphrag-python) library, OpenAI for LLM and embeddings, and Neo4j for graph storage. Six scripts walk through progressively richer GraphRAG retrieval and question-answering patterns.
+
+The tutorial scripts are followed by a staged production-candidate roadmap in
+[`AGENTS.md`](AGENTS.md). Its measurable scope and quality gates are defined in
+[`docs/acceptance_contract.md`](docs/acceptance_contract.md).
 
 ## Prerequisites
 
@@ -72,6 +76,7 @@ uv run python src/02_vector_retriever.py
 uv run python src/03_vector_cypher_retriever.py
 uv run python src/04_hybrid_cypher_retriever.py
 uv run python src/05_graphrag_qa.py
+uv run python src/06_graph_expanded_rag.py
 ```
 
 ## How GraphRAG Works
@@ -283,6 +288,7 @@ sample-graphrag/
         03_vector_cypher_retriever.py   # Vector + graph traversal
         04_hybrid_cypher_retriever.py   # Hybrid + graph traversal
         05_graphrag_qa.py               # Full RAG question answering
+        06_graph_expanded_rag.py         # RRF + RA graph-expanded RAG
 ```
 
 ## Key Concepts
