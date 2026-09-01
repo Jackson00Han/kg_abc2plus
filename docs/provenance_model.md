@@ -108,11 +108,11 @@ future vector/full-text recall must preserve the same predicates.
 
 ## Constraints and Supported Database
 
-The executable schema source is
-`src/graphrag_prod/graph/migrations/001_provenance_schema.cypher`. It provides
-stable-ID uniqueness, natural business-identity uniqueness, and lookup indexes.
-Migration application is idempotent, and verification checks label, properties,
-constraint/index type, and online index state.
+The executable schema sources are the ordered files under
+`src/graphrag_prod/graph/migrations`. They provide stable-ID uniqueness,
+natural business-identity uniqueness, lifecycle constraints, and lookup
+indexes. Migration application is idempotent, and verification checks label,
+properties, constraint/index type, and online index state.
 
 The validation environment uses `neo4j:5.26.12-community`. Community Edition
 does not provide every Enterprise existence/type constraint, so required-field,
@@ -122,16 +122,12 @@ through that boundary; unrestricted direct Cypher writes are not supported.
 
 ## Current Boundary
 
-This stage establishes identity, provenance, schema, atomic writes, and a
-permission-safe evidence read. It does not yet provide incremental ingestion,
-version switching/deletion, graph quality adjudication, vector storage/search,
-answer generation, or an API. `ChunkEmbedding` records an embedding profile and
-space identity only; vector values and indexes arrive with production retrieval.
-Those responsibilities begin in Stages 3-7.
+Stage 3 now supplies whole-document incremental orchestration, active snapshot
+switching/deletion, vector values, and isolated index-generation cutover. See
+`docs/incremental_ingestion.md`. Graph quality adjudication, production
+retrieval, answer generation, and APIs remain gated by Stages 4-7.
 
-`ProvenanceBundle` currently writes one Chunk, one embedding profile, and one
-Assertion at a time. Updating a multi-Chunk document's ACL through successive
-bundles fails closed while policy versions differ, but whole-document bulk
-orchestration belongs to Stage 3. The model also requires replayed immutable
-ingestion timestamps to retain their first values; ingestion jobs will own that
-metadata in Stage 3.
+`Neo4jProvenanceStore.write_bundle` is retained as a Stage 2 compatibility
+writer for unmanaged legacy tenants. Once the incremental lifecycle marks a
+tenant `MANAGED_INCREMENTAL`, that direct writer fails closed under the shared
+tenant corpus lock; all later writes must use the Stage 3 ingestion boundary.

@@ -199,3 +199,80 @@ def assertion_id(
         _required(extractor_version, "extractor_version"),
         _required(schema_version, "schema_version"),
     )
+
+
+def pipeline_profile_id(
+    normalizer_signature: str,
+    splitter_signature: str,
+    extractor_signature: str,
+    prompt_signature: str,
+    schema_signature: str,
+    code_signature: str,
+) -> str:
+    """Identify a graph-building profile independently of any source version."""
+    return _stable_id(
+        "graph-pipeline-profile",
+        _required(normalizer_signature, "normalizer_signature"),
+        _required(splitter_signature, "splitter_signature"),
+        _required(extractor_signature, "extractor_signature"),
+        _required(prompt_signature, "prompt_signature"),
+        _required(schema_signature, "schema_signature"),
+        _required(code_signature, "code_signature"),
+    )
+
+
+def knowledge_snapshot_id(version_identifier: str, profile_identifier: str) -> str:
+    return _stable_id(
+        "knowledge-snapshot",
+        _required(version_identifier, "version_id"),
+        _required(profile_identifier, "profile_id"),
+    )
+
+
+def ingestion_job_id(tenant_id: str, operation: str, idempotency_key: str) -> str:
+    return _stable_id(
+        "ingestion-job",
+        _required(tenant_id, "tenant_id"),
+        _required(operation, "operation"),
+        _required(idempotency_key, "idempotency_key"),
+    )
+
+
+def ingestion_task_id(job_identifier: str, chunk_identifier: str) -> str:
+    return _stable_id(
+        "ingestion-task",
+        _required(job_identifier, "job_id"),
+        _required(chunk_identifier, "chunk_id"),
+    )
+
+
+def derivation_artifact_id(
+    tenant_id: str,
+    kind: str,
+    input_hash: str,
+    profile_identifier: str,
+) -> str:
+    return _stable_id(
+        "derivation-artifact",
+        _required(tenant_id, "tenant_id"),
+        _required(kind, "kind"),
+        _checksum(input_hash),
+        _required(profile_identifier, "profile_id"),
+    )
+
+
+def embedding_index_generation_id(
+    tenant_id: str,
+    embedding_space_identifier: str,
+    generation_version: int,
+) -> str:
+    if isinstance(generation_version, bool) or not isinstance(generation_version, int):
+        raise ValueError("generation_version must be a positive integer")
+    if generation_version <= 0:
+        raise ValueError("generation_version must be a positive integer")
+    return _stable_id(
+        "embedding-index-generation",
+        _required(tenant_id, "tenant_id"),
+        _required(embedding_space_identifier, "embedding_space_id"),
+        generation_version,
+    )

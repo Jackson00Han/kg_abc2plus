@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 
-MIGRATION_PATH = Path(__file__).with_name("migrations") / "001_provenance_schema.cypher"
+MIGRATIONS_DIRECTORY = Path(__file__).with_name("migrations")
+# Backwards-compatible handle for callers that need the original migration only.
+MIGRATION_PATH = MIGRATIONS_DIRECTORY / "001_provenance_schema.cypher"
 
 
 class QueryDriver(Protocol):
@@ -67,11 +69,11 @@ EXPECTED_SCHEMA = (
         ("chunk_id",),
     ),
     SchemaExpectation(
-        "chunk_ordinal_unique",
+        "chunk_splitter_ordinal_unique",
         "constraint",
         "UNIQUENESS",
         "Chunk",
-        ("version_id", "ordinal"),
+        ("version_id", "splitter_version", "ordinal"),
     ),
     SchemaExpectation(
         "chunk_embedding_id_unique",
@@ -116,6 +118,111 @@ EXPECTED_SCHEMA = (
         ("assertion_id",),
     ),
     SchemaExpectation(
+        "graph_pipeline_profile_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "GraphPipelineProfile",
+        ("profile_id",),
+    ),
+    SchemaExpectation(
+        "graph_pipeline_profile_identity_unique",
+        "constraint",
+        "UNIQUENESS",
+        "GraphPipelineProfile",
+        (
+            "normalizer_signature",
+            "splitter_signature",
+            "extractor_signature",
+            "prompt_signature",
+            "schema_signature",
+            "code_signature",
+        ),
+    ),
+    SchemaExpectation(
+        "knowledge_snapshot_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "KnowledgeSnapshot",
+        ("snapshot_id",),
+    ),
+    SchemaExpectation(
+        "knowledge_snapshot_identity_unique",
+        "constraint",
+        "UNIQUENESS",
+        "KnowledgeSnapshot",
+        ("version_id", "profile_id"),
+    ),
+    SchemaExpectation(
+        "ingestion_job_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "IngestionJob",
+        ("job_id",),
+    ),
+    SchemaExpectation(
+        "ingestion_job_idempotency_unique",
+        "constraint",
+        "UNIQUENESS",
+        "IngestionJob",
+        ("tenant_id", "operation", "idempotency_key"),
+    ),
+    SchemaExpectation(
+        "ingestion_task_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "IngestionTask",
+        ("task_id",),
+    ),
+    SchemaExpectation(
+        "ingestion_task_identity_unique",
+        "constraint",
+        "UNIQUENESS",
+        "IngestionTask",
+        ("job_id", "chunk_id"),
+    ),
+    SchemaExpectation(
+        "derivation_artifact_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "DerivationArtifact",
+        ("artifact_id",),
+    ),
+    SchemaExpectation(
+        "derivation_artifact_identity_unique",
+        "constraint",
+        "UNIQUENESS",
+        "DerivationArtifact",
+        ("tenant_id", "kind", "input_hash", "profile_id"),
+    ),
+    SchemaExpectation(
+        "embedding_index_generation_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "EmbeddingIndexGeneration",
+        ("generation_id",),
+    ),
+    SchemaExpectation(
+        "embedding_index_generation_identity_unique",
+        "constraint",
+        "UNIQUENESS",
+        "EmbeddingIndexGeneration",
+        ("tenant_id", "embedding_space_id", "generation_version"),
+    ),
+    SchemaExpectation(
+        "tenant_corpus_state_tenant_unique",
+        "constraint",
+        "UNIQUENESS",
+        "TenantCorpusState",
+        ("tenant_id",),
+    ),
+    SchemaExpectation(
+        "document_tombstone_identity_unique",
+        "constraint",
+        "UNIQUENESS",
+        "DocumentTombstone",
+        ("tenant_id", "document_id"),
+    ),
+    SchemaExpectation(
         "document_tenant_id",
         "index",
         "RANGE",
@@ -157,11 +264,60 @@ EXPECTED_SCHEMA = (
         "Assertion",
         ("tenant_id", "accepted"),
     ),
+    SchemaExpectation(
+        "knowledge_snapshot_document_lookup",
+        "index",
+        "RANGE",
+        "KnowledgeSnapshot",
+        ("tenant_id", "document_id"),
+    ),
+    SchemaExpectation(
+        "ingestion_job_status_lookup",
+        "index",
+        "RANGE",
+        "IngestionJob",
+        ("tenant_id", "status", "next_retry_at"),
+    ),
+    SchemaExpectation(
+        "ingestion_job_lease_lookup",
+        "index",
+        "RANGE",
+        "IngestionJob",
+        ("status", "lease_expires_at"),
+    ),
+    SchemaExpectation(
+        "ingestion_task_status_lookup",
+        "index",
+        "RANGE",
+        "IngestionTask",
+        ("job_id", "status"),
+    ),
+    SchemaExpectation(
+        "embedding_generation_state_lookup",
+        "index",
+        "RANGE",
+        "EmbeddingIndexGeneration",
+        ("tenant_id", "embedding_space_id", "state"),
+    ),
+    SchemaExpectation(
+        "document_tombstone_generation_lookup",
+        "index",
+        "RANGE",
+        "DocumentTombstone",
+        ("tenant_id", "document_id", "generation"),
+    ),
 )
 
 
-def migration_statements(path: Path = MIGRATION_PATH) -> tuple[str, ...]:
-    """Load executable statements from the versioned migration source."""
+def migration_paths(directory: Path = MIGRATIONS_DIRECTORY) -> tuple[Path, ...]:
+    """Return all migration files in deterministic filename order."""
+    paths = tuple(sorted(directory.glob("*.cypher"), key=lambda item: item.name))
+    if not paths:
+        raise FileNotFoundError(f"no Cypher migrations found in {directory}")
+    return paths
+
+
+def _statements_from(path: Path) -> tuple[str, ...]:
     lines = []
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -173,8 +329,42 @@ def migration_statements(path: Path = MIGRATION_PATH) -> tuple[str, ...]:
     )
 
 
+def _without_retired_creates(statements: tuple[str, ...]) -> tuple[str, ...]:
+    """Avoid recreating an object that a later replayed migration retires."""
+    later_operation: dict[tuple[str, str], str] = {}
+    replay_reversed: list[str] = []
+    for statement in reversed(statements):
+        parts = statement.split(maxsplit=3)
+        is_schema_ddl = (
+            len(parts) >= 3
+            and parts[0] in {"CREATE", "DROP"}
+            and parts[1] in {"CONSTRAINT", "INDEX"}
+        )
+        if not is_schema_ddl:
+            replay_reversed.append(statement)
+            continue
+        action, kind, name = parts[:3]
+        key = (kind, name)
+        if action == "CREATE" and later_operation.get(key) == "DROP":
+            continue
+        later_operation[key] = action
+        replay_reversed.append(statement)
+    return tuple(reversed(replay_reversed))
+
+
+def migration_statements(path: Path | None = None) -> tuple[str, ...]:
+    """Load one legacy migration or a replay-safe sequence of all migrations."""
+    paths = (path,) if path is not None else migration_paths()
+    statements = tuple(
+        statement for item in paths for statement in _statements_from(item)
+    )
+    if path is not None:
+        return statements
+    return _without_retired_creates(statements)
+
+
 def apply_schema(driver: QueryDriver, database: str = "neo4j") -> None:
-    """Apply the single versioned migration idempotently."""
+    """Apply all versioned migrations in deterministic order."""
     for statement in migration_statements():
         driver.execute_query(statement, database_=database)
 

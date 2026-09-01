@@ -312,8 +312,12 @@ class Neo4jProvenanceIntegrationTests(unittest.TestCase):
             ),
             (
                 "CREATE (:Chunk {chunk_id: 'other', version_id: $version_id, "
-                "ordinal: $ordinal})",
-                {"version_id": bundle.version.version_id, "ordinal": bundle.chunk.ordinal},
+                "splitter_version: $splitter_version, ordinal: $ordinal})",
+                {
+                    "version_id": bundle.version.version_id,
+                    "splitter_version": bundle.chunk.splitter_version,
+                    "ordinal": bundle.chunk.ordinal,
+                },
             ),
             (
                 "CREATE (:Entity {entity_id: 'other', tenant_id: $tenant, "

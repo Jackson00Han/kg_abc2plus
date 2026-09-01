@@ -36,19 +36,33 @@ class ProvenanceBundle:
     document: Document
     version: DocumentVersion
     chunk: Chunk
-    embedding: ChunkEmbedding
+    embedding: ChunkEmbedding | None
     entities: tuple[Entity, ...]
     mentions: tuple[EntityMention, ...]
-    assertion: Assertion
+    assertion: Assertion | None
     activate_version: bool = True
+    additional_embeddings: tuple[ChunkEmbedding, ...] = ()
+    additional_assertions: tuple[Assertion, ...] = ()
+
+    @property
+    def all_embeddings(self) -> tuple[ChunkEmbedding, ...]:
+        primary = () if self.embedding is None else (self.embedding,)
+        return (*primary, *self.additional_embeddings)
+
+    @property
+    def all_assertions(self) -> tuple[Assertion, ...]:
+        primary = () if self.assertion is None else (self.assertion,)
+        return (*primary, *self.additional_assertions)
 
     def __post_init__(self) -> None:
+        embeddings = self.all_embeddings
+        assertions = self.all_assertions
         tenant_ids = {
             self.document.tenant_id,
             self.version.tenant_id,
             self.chunk.tenant_id,
-            self.embedding.tenant_id,
-            self.assertion.tenant_id,
+            *(embedding.tenant_id for embedding in embeddings),
+            *(assertion.tenant_id for assertion in assertions),
             *(entity.tenant_id for entity in self.entities),
             *(mention.tenant_id for mention in self.mentions),
         }
@@ -60,8 +74,13 @@ class ProvenanceBundle:
             raise ValueError("chunk must belong to the supplied version")
         if self.chunk.document_id != self.document.document_id:
             raise ValueError("chunk document_id does not match the document")
-        if self.embedding.chunk_id != self.chunk.chunk_id:
-            raise ValueError("embedding must belong to the supplied chunk")
+        if len({embedding.embedding_id for embedding in embeddings}) != len(embeddings):
+            raise ValueError("bundle contains duplicate embedding IDs")
+        if len({assertion.assertion_id for assertion in assertions}) != len(assertions):
+            raise ValueError("bundle contains duplicate assertion IDs")
+        for embedding in embeddings:
+            if embedding.chunk_id != self.chunk.chunk_id:
+                raise ValueError("embedding must belong to the supplied chunk")
         if not self.chunk.access_groups <= self.document.access_groups:
             raise ValueError("chunk access cannot be broader than document access")
         if (
@@ -107,14 +126,15 @@ class ProvenanceBundle:
             != self.chunk.chunk_id
         ):
             raise ValueError("chunk_id does not match its identity inputs")
-        if (
-            make_chunk_embedding_id(
-                self.embedding.chunk_id,
-                self.embedding.embedding_space_id,
-            )
-            != self.embedding.embedding_id
-        ):
-            raise ValueError("embedding_id does not match its identity inputs")
+        for embedding in embeddings:
+            if (
+                make_chunk_embedding_id(
+                    embedding.chunk_id,
+                    embedding.embedding_space_id,
+                )
+                != embedding.embedding_id
+            ):
+                raise ValueError("embedding_id does not match its identity inputs")
 
         entities_by_id = {entity.entity_id: entity for entity in self.entities}
         if len(entities_by_id) != len(self.entities):
@@ -129,23 +149,6 @@ class ProvenanceBundle:
                 != entity.entity_id
             ):
                 raise ValueError("entity_id does not match its identity inputs")
-
-        if self.assertion.subject_entity_id not in entities_by_id:
-            raise ValueError("assertion subject is absent from the bundle")
-        if (
-            self.assertion.object_entity_id is not None
-            and self.assertion.object_entity_id not in entities_by_id
-        ):
-            raise ValueError("assertion object is absent from the bundle")
-        if self.assertion.evidence_chunk_id != self.chunk.chunk_id:
-            raise ValueError("bundle chunk must be assertion evidence")
-        if not (
-            self.chunk.char_start
-            <= self.assertion.evidence_char_start
-            < self.assertion.evidence_char_end
-            <= self.chunk.char_end
-        ):
-            raise ValueError("assertion evidence range is outside the chunk")
 
         for mention in self.mentions:
             entity = entities_by_id.get(mention.entity_id)
@@ -178,50 +181,66 @@ class ProvenanceBundle:
         mentioned_entity_ids = {mention.entity_id for mention in self.mentions}
         if mentioned_entity_ids != set(entities_by_id):
             raise ValueError("every derived entity requires a mention in the evidence chunk")
-        required_endpoint_ids = {self.assertion.subject_entity_id}
-        if self.assertion.object_entity_id is not None:
-            required_endpoint_ids.add(self.assertion.object_entity_id)
-        if not required_endpoint_ids <= mentioned_entity_ids:
-            raise ValueError("assertion endpoints require entity mentions")
-        for endpoint_id in required_endpoint_ids:
-            if not any(
-                mention.entity_id == endpoint_id
-                and self.assertion.evidence_char_start <= mention.char_start
-                and mention.char_end <= self.assertion.evidence_char_end
-                for mention in self.mentions
+        for assertion in assertions:
+            if assertion.subject_entity_id not in entities_by_id:
+                raise ValueError("assertion subject is absent from the bundle")
+            if (
+                assertion.object_entity_id is not None
+                and assertion.object_entity_id not in entities_by_id
             ):
-                raise ValueError("assertion endpoint mention is outside evidence span")
-        evidence_text = self.version.normalized_text[
-            self.assertion.evidence_char_start : self.assertion.evidence_char_end
-        ]
-        if (
-            self.assertion.literal_value is not None
-            and self.assertion.literal_value not in evidence_text
-        ):
-            raise ValueError("literal assertion object is absent from its evidence span")
+                raise ValueError("assertion object is absent from the bundle")
+            if assertion.evidence_chunk_id != self.chunk.chunk_id:
+                raise ValueError("bundle chunk must be assertion evidence")
+            if not (
+                self.chunk.char_start
+                <= assertion.evidence_char_start
+                < assertion.evidence_char_end
+                <= self.chunk.char_end
+            ):
+                raise ValueError("assertion evidence range is outside the chunk")
 
-        object_kind = (
-            "entity" if self.assertion.object_entity_id is not None else "literal"
-        )
-        object_reference = (
-            self.assertion.object_entity_id or self.assertion.literal_value or ""
-        )
-        if (
-            make_assertion_id(
-                self.assertion.tenant_id,
-                self.assertion.subject_entity_id,
-                self.assertion.predicate,
-                object_kind,
-                object_reference,
-                self.assertion.evidence_chunk_id,
-                self.assertion.evidence_char_start,
-                self.assertion.evidence_char_end,
-                self.assertion.extractor_version,
-                self.assertion.schema_version,
+            required_endpoint_ids = {assertion.subject_entity_id}
+            if assertion.object_entity_id is not None:
+                required_endpoint_ids.add(assertion.object_entity_id)
+            if not required_endpoint_ids <= mentioned_entity_ids:
+                raise ValueError("assertion endpoints require entity mentions")
+            for endpoint_id in required_endpoint_ids:
+                if not any(
+                    mention.entity_id == endpoint_id
+                    and assertion.evidence_char_start <= mention.char_start
+                    and mention.char_end <= assertion.evidence_char_end
+                    for mention in self.mentions
+                ):
+                    raise ValueError("assertion endpoint mention is outside evidence span")
+            evidence_text = self.version.normalized_text[
+                assertion.evidence_char_start : assertion.evidence_char_end
+            ]
+            if (
+                assertion.literal_value is not None
+                and assertion.literal_value not in evidence_text
+            ):
+                raise ValueError("literal assertion object is absent from its evidence span")
+
+            object_kind = (
+                "entity" if assertion.object_entity_id is not None else "literal"
             )
-            != self.assertion.assertion_id
-        ):
-            raise ValueError("assertion_id does not match its identity inputs")
+            object_reference = assertion.object_entity_id or assertion.literal_value or ""
+            if (
+                make_assertion_id(
+                    assertion.tenant_id,
+                    assertion.subject_entity_id,
+                    assertion.predicate,
+                    object_kind,
+                    object_reference,
+                    assertion.evidence_chunk_id,
+                    assertion.evidence_char_start,
+                    assertion.evidence_char_end,
+                    assertion.extractor_version,
+                    assertion.schema_version,
+                )
+                != assertion.assertion_id
+            ):
+                raise ValueError("assertion_id does not match its identity inputs")
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,11 +292,14 @@ class Neo4jProvenanceStore:
         mutable_properties: dict[str, Any] | None = None,
         versioned_properties: dict[str, Any] | None = None,
         version_property: str | None = None,
+        update_mutable: bool = True,
+        on_create_properties: dict[str, Any] | None = None,
     ) -> None:
         if immutable_properties.get(id_property) != identifier:
             raise ValueError(f"{label} properties do not contain their stable ID")
         mutable_properties = mutable_properties or {}
         versioned_properties = versioned_properties or {}
+        on_create_properties = on_create_properties or {}
         if bool(versioned_properties) != bool(version_property):
             raise ValueError(
                 "versioned_properties and version_property must be supplied together"
@@ -289,6 +311,7 @@ class Neo4jProvenanceStore:
             **immutable_properties,
             **mutable_properties,
             **versioned_properties,
+            **on_create_properties,
         }
         if versioned_properties:
             # The transient write takes a Neo4j node lock before the current
@@ -356,7 +379,7 @@ class Neo4jProvenanceStore:
                     identifier=identifier,
                     versioned_properties=versioned_properties,
                 ).consume()
-        if mutable_properties:
+        if mutable_properties and update_mutable:
             tx.run(
                 f"""
                 MATCH (node:{label} {{{id_property}: $identifier}})
@@ -367,34 +390,90 @@ class Neo4jProvenanceStore:
             ).consume()
 
     @classmethod
-    def _write_bundle_tx(cls, tx: Any, bundle: ProvenanceBundle) -> None:
+    def _write_bundle_tx(
+        cls,
+        tx: Any,
+        bundle: ProvenanceBundle,
+        staging_job_id: str | None = None,
+    ) -> None:
         document = bundle.document
         version = bundle.version
         chunk = bundle.chunk
+
+        if staging_job_id is None:
+            # ``write_bundle`` is the Stage 2 compatibility writer.  It shares
+            # the tenant corpus mutex so it cannot race the Stage 3 lifecycle,
+            # and it permanently fails closed after managed ingestion starts.
+            lifecycle = tx.run(
+                """
+                MERGE (state:TenantCorpusState {tenant_id: $tenant_id})
+                ON CREATE SET state.corpus_revision = 0,
+                              state.created_at = $now,
+                              state.lifecycle_mode = 'LEGACY'
+                SET state.__corpus_write_lock = randomUUID()
+                WITH state
+                REMOVE state.__corpus_write_lock
+                WITH state
+                OPTIONAL MATCH (snapshot:KnowledgeSnapshot {
+                    tenant_id: $tenant_id,
+                    document_id: $document_id
+                })
+                RETURN coalesce(
+                           state.lifecycle_mode,
+                           'MANAGED_INCREMENTAL'
+                       ) AS lifecycle_mode,
+                       count(snapshot) > 0 AS has_managed_snapshot
+                """,
+                tenant_id=document.tenant_id,
+                document_id=document.document_id,
+                now=version.ingested_at,
+            ).single()
+            if (
+                lifecycle is None
+                or lifecycle["lifecycle_mode"] != "LEGACY"
+                or lifecycle["has_managed_snapshot"]
+            ):
+                raise ValueError(
+                    "legacy write_bundle is disabled for a managed "
+                    "incremental-ingestion tenant"
+                )
 
         document_identity = _properties(
             document_id=document.document_id,
             tenant_id=document.tenant_id,
             canonical_uri=document.canonical_uri,
             source_name=document.source_name,
-            created_at=document.created_at,
         )
+        document_creation = _properties(created_at=document.created_at)
         document_profile = _properties(title=document.title)
         document_access = _properties(
             access_policy_id=document.access_policy_id,
             access_policy_version=document.access_policy_version,
             access_groups=sorted(document.access_groups),
         )
-        cls._merge_node(
-            tx,
-            "Document",
-            "document_id",
-            document.document_id,
-            document_identity,
-            document_profile,
-            document_access,
-            "access_policy_version",
-        )
+        if staging_job_id is None:
+            cls._merge_node(
+                tx,
+                "Document",
+                "document_id",
+                document.document_id,
+                document_identity,
+                document_profile,
+                document_access,
+                "access_policy_version",
+                on_create_properties=document_creation,
+            )
+        else:
+            # Staging must not change the profile or ACL of the currently
+            # published Document. Desired state is applied during publish.
+            cls._merge_node(
+                tx,
+                "Document",
+                "document_id",
+                document.document_id,
+                document_identity,
+                on_create_properties=document_creation,
+            )
 
         # A transient write obtains a lock on the logical document so two
         # concurrent publishers cannot both observe that no active version exists.
@@ -425,7 +504,10 @@ class Neo4jProvenanceStore:
             mime_type=version.mime_type,
             language=version.language,
             published_at=version.published_at,
+        )
+        version_creation = _properties(
             ingested_at=version.ingested_at,
+            first_ingested_at=version.ingested_at,
         )
         cls._merge_node(
             tx,
@@ -433,6 +515,7 @@ class Neo4jProvenanceStore:
             "version_id",
             version.version_id,
             version_properties,
+            on_create_properties=version_creation,
         )
         tx.run(
             """
@@ -475,15 +558,27 @@ class Neo4jProvenanceStore:
             access_policy_version=chunk.access_policy_version,
             access_groups=sorted(chunk.access_groups),
         )
-        cls._merge_node(
-            tx,
-            "Chunk",
-            "chunk_id",
-            chunk.chunk_id,
-            chunk_identity,
-            versioned_properties=chunk_access,
-            version_property="access_policy_version",
-        )
+        if staging_job_id is None:
+            cls._merge_node(
+                tx,
+                "Chunk",
+                "chunk_id",
+                chunk.chunk_id,
+                chunk_identity,
+                mutable_properties={"publication_state": "LEGACY_PUBLISHED"},
+                versioned_properties=chunk_access,
+                version_property="access_policy_version",
+            )
+        else:
+            # A staged Chunk may be shared with the active snapshot when only
+            # extraction changes. ACL state therefore moves at publish time.
+            cls._merge_node(
+                tx,
+                "Chunk",
+                "chunk_id",
+                chunk.chunk_id,
+                chunk_identity,
+            )
         tx.run(
             """
             MATCH (version:DocumentVersion {version_id: $version_id})
@@ -496,37 +591,71 @@ class Neo4jProvenanceStore:
             chunk_id=chunk.chunk_id,
         ).consume()
 
-        embedding = bundle.embedding
-        embedding_properties = _properties(
-            embedding_id=embedding.embedding_id,
-            tenant_id=embedding.tenant_id,
-            chunk_id=embedding.chunk_id,
-            embedding_space_id=embedding.embedding_space_id,
-            provider=embedding.provider,
-            model=embedding.model,
-            revision=embedding.revision,
-            dimensions=embedding.dimensions,
-            normalization=embedding.normalization,
-            created_at=embedding.created_at,
-        )
-        cls._merge_node(
-            tx,
-            "ChunkEmbedding",
-            "embedding_id",
-            embedding.embedding_id,
-            embedding_properties,
-        )
-        tx.run(
-            """
-            MATCH (chunk:Chunk {chunk_id: $chunk_id})
-            MATCH (embedding:ChunkEmbedding {embedding_id: $embedding_id})
-            WHERE chunk.tenant_id = embedding.tenant_id
-              AND embedding.chunk_id = chunk.chunk_id
-            MERGE (chunk)-[:HAS_EMBEDDING]->(embedding)
-            """,
-            chunk_id=chunk.chunk_id,
-            embedding_id=embedding.embedding_id,
-        ).consume()
+        for embedding in bundle.all_embeddings:
+            vector = tuple(getattr(embedding, "vector", ()))
+            embedding_identity = _properties(
+                embedding_id=embedding.embedding_id,
+                tenant_id=embedding.tenant_id,
+                chunk_id=embedding.chunk_id,
+                embedding_space_id=embedding.embedding_space_id,
+                provider=embedding.provider,
+                model=embedding.model,
+                revision=embedding.revision,
+                dimensions=embedding.dimensions,
+                normalization=embedding.normalization,
+            )
+            cls._merge_node(
+                tx,
+                "ChunkEmbedding",
+                "embedding_id",
+                embedding.embedding_id,
+                embedding_identity,
+                on_create_properties={"created_at": embedding.created_at},
+            )
+            if vector:
+                vector_checksum = getattr(embedding, "vector_checksum", None)
+                vector_record = tx.run(
+                    """
+                    MATCH (embedding:ChunkEmbedding {embedding_id: $embedding_id})
+                    SET embedding.__vector_write_lock = randomUUID()
+                    WITH embedding
+                    REMOVE embedding.__vector_write_lock
+                    RETURN embedding.vector_checksum AS current_checksum
+                    """,
+                    embedding_id=embedding.embedding_id,
+                ).single()
+                current_checksum = vector_record["current_checksum"]
+                if current_checksum not in (None, vector_checksum):
+                    raise ValueError("immutable ChunkEmbedding vector conflicts")
+                if current_checksum is None:
+                    tx.run(
+                        """
+                        MATCH (embedding:ChunkEmbedding {embedding_id: $embedding_id})
+                        SET embedding.vector = $vector,
+                            embedding.vector_checksum = $vector_checksum
+                        """,
+                        embedding_id=embedding.embedding_id,
+                        vector=list(vector),
+                        vector_checksum=vector_checksum,
+                    ).consume()
+                tx.run(
+                    """
+                    MATCH (embedding:ChunkEmbedding {embedding_id: $embedding_id})
+                    SET embedding.cosine_indexable = true
+                    """,
+                    embedding_id=embedding.embedding_id,
+                ).consume()
+            tx.run(
+                """
+                MATCH (chunk:Chunk {chunk_id: $chunk_id})
+                MATCH (embedding:ChunkEmbedding {embedding_id: $embedding_id})
+                WHERE chunk.tenant_id = embedding.tenant_id
+                  AND embedding.chunk_id = chunk.chunk_id
+                MERGE (chunk)-[:HAS_EMBEDDING]->(embedding)
+                """,
+                chunk_id=chunk.chunk_id,
+                embedding_id=embedding.embedding_id,
+            ).consume()
 
         for entity in bundle.entities:
             entity_identity = _properties(
@@ -539,14 +668,25 @@ class Neo4jProvenanceStore:
                 canonical_name=entity.canonical_name,
                 aliases=list(entity.aliases),
             )
-            cls._merge_node(
-                tx,
-                "Entity",
-                "entity_id",
-                entity.entity_id,
-                entity_identity,
-                entity_profile,
-            )
+            if staging_job_id is None:
+                cls._merge_node(
+                    tx,
+                    "Entity",
+                    "entity_id",
+                    entity.entity_id,
+                    entity_identity,
+                    entity_profile,
+                )
+            else:
+                # Profile state from an unpublished/failed snapshot must not
+                # become globally visible through a shared Entity identity.
+                cls._merge_node(
+                    tx,
+                    "Entity",
+                    "entity_id",
+                    entity.entity_id,
+                    entity_identity,
+                )
 
         for mention in bundle.mentions:
             mention_properties = _properties(
@@ -588,7 +728,16 @@ class Neo4jProvenanceStore:
             if record is None:
                 raise ValueError("mention provenance path is invalid")
 
-        assertion = bundle.assertion
+        for assertion in bundle.all_assertions:
+            cls._write_assertion_tx(tx, assertion, staging_job_id)
+
+    @classmethod
+    def _write_assertion_tx(
+        cls,
+        tx: Any,
+        assertion: Assertion,
+        staging_job_id: str | None = None,
+    ) -> None:
         object_kind = "entity" if assertion.object_entity_id else "literal"
         assertion_identity = _properties(
             assertion_id=assertion.assertion_id,
@@ -607,7 +756,12 @@ class Neo4jProvenanceStore:
             schema_version=assertion.schema_version,
             confidence=assertion.confidence,
         )
-        assertion_state = _properties(accepted=assertion.accepted)
+        assertion_state = _properties(
+            accepted=assertion.accepted,
+            publication_state=(
+                "LEGACY_PUBLISHED" if staging_job_id is None else None
+            ),
+        )
         cls._merge_node(
             tx,
             "Assertion",
@@ -615,6 +769,7 @@ class Neo4jProvenanceStore:
             assertion.assertion_id,
             assertion_identity,
             assertion_state,
+            update_mutable=staging_job_id is None,
         )
         record = tx.run(
             """
@@ -677,8 +832,7 @@ class Neo4jProvenanceStore:
                     tenant_id: $tenant_id
                 })<-[:EVIDENCED_BY]-(assertion:Assertion {
                     assertion_id: $assertion_id,
-                    tenant_id: $tenant_id,
-                    accepted: true
+                    tenant_id: $tenant_id
                 })-[:SUBJECT]->(subject:Entity {tenant_id: $tenant_id})
                 WHERE any(group IN document.access_groups WHERE group IN $groups)
                   AND any(group IN chunk.access_groups WHERE group IN $groups)
@@ -690,6 +844,29 @@ class Neo4jProvenanceStore:
                   AND chunk.version_id = version.version_id
                   AND chunk.access_policy_id = document.access_policy_id
                   AND chunk.access_policy_version = document.access_policy_version
+                  AND (
+                      NOT EXISTS {
+                          MATCH (document)-[:ACTIVE_SNAPSHOT]->(:KnowledgeSnapshot)
+                      }
+                      AND chunk.publication_state = 'LEGACY_PUBLISHED'
+                      AND assertion.publication_state = 'LEGACY_PUBLISHED'
+                      AND assertion.accepted = true
+                      OR EXISTS {
+                          MATCH (document)-[:ACTIVE_SNAPSHOT]->(
+                              snapshot:KnowledgeSnapshot
+                          )-[assertion_membership:INCLUDES_ASSERTION]->(assertion)
+                          WHERE EXISTS {
+                              MATCH (snapshot)-[:OF_VERSION]->(version)
+                          }
+                            AND EXISTS {
+                              MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk)
+                          }
+                            AND EXISTS {
+                              MATCH (snapshot)-[:INCLUDES_ENTITY]->(subject)
+                          }
+                            AND assertion_membership.accepted = true
+                      }
+                  )
                 OPTIONAL MATCH (assertion)-[:OBJECT]->(object:Entity {
                     tenant_id: $tenant_id
                 })

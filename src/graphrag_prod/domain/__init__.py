@@ -7,10 +7,16 @@ from .ids import (
     chunk_embedding_id,
     chunk_id,
     content_checksum,
+    derivation_artifact_id,
     document_id,
+    embedding_index_generation_id,
     embedding_space_id,
     entity_id,
+    ingestion_job_id,
+    ingestion_task_id,
+    knowledge_snapshot_id,
     mention_id,
+    pipeline_profile_id,
     version_id,
 )
 from .models import (
@@ -21,6 +27,8 @@ from .models import (
     DocumentVersion,
     Entity,
     EntityMention,
+    GraphPipelineProfile,
+    KnowledgeSnapshot,
 )
 
 __all__ = [
@@ -31,6 +39,8 @@ __all__ = [
     "DocumentVersion",
     "Entity",
     "EntityMention",
+    "GraphPipelineProfile",
+    "KnowledgeSnapshot",
     "Principal",
     "assertion_id",
     "can_access",
@@ -38,9 +48,15 @@ __all__ = [
     "chunk_embedding_id",
     "chunk_id",
     "content_checksum",
+    "derivation_artifact_id",
     "document_id",
+    "embedding_index_generation_id",
     "embedding_space_id",
     "entity_id",
+    "ingestion_job_id",
+    "ingestion_task_id",
+    "knowledge_snapshot_id",
     "mention_id",
+    "pipeline_profile_id",
     "version_id",
 ]

@@ -297,7 +297,7 @@ tests/
 | Plan and execution rules | Complete | `AGENTS.md`; formatting and secret checks passed |
 | 1. Requirements and acceptance contract | Complete | `contracts/acceptance.v1.json`; `docs/validation/stage-1.md` |
 | 2. Production data and provenance model | Complete | `docs/provenance_model.md`; `docs/validation/stage-2.md`; 28 unit + 13 disposable-Neo4j tests |
-| 3. Idempotent incremental ingestion | Not started | |
+| 3. Idempotent incremental ingestion | Complete | `docs/incremental_ingestion.md`; `docs/validation/stage-3.md`; 49 unit + 41 disposable-Neo4j tests |
 | 4. Knowledge graph quality governance | Not started | |
 | 5. Production retrieval engine | Not started | |
 | 6. Grounded answer generation | Not started | |

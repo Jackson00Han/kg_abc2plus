@@ -12,7 +12,9 @@ The production implementation is developed separately under
 `src/graphrag_prod`. Its stable identity, source provenance, access boundary,
 and Neo4j model are documented in
 [`docs/provenance_model.md`](docs/provenance_model.md); completed stage evidence
-is recorded under [`docs/validation`](docs/validation).
+is recorded under [`docs/validation`](docs/validation). The resumable provider,
+snapshot publication, deletion, and vector-generation lifecycle is documented
+in [`docs/incremental_ingestion.md`](docs/incremental_ingestion.md).
 
 ## Prerequisites
 

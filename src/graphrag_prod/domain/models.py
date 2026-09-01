@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import math
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime
+from numbers import Real
 
-from .ids import content_checksum, embedding_space_id
+from .ids import (
+    chunk_embedding_id,
+    content_checksum,
+    embedding_space_id,
+    knowledge_snapshot_id,
+    pipeline_profile_id,
+)
 
 
 def _text(value: str, name: str) -> str:
@@ -206,6 +216,71 @@ class EntityMention:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphPipelineProfile:
+    profile_id: str
+    normalizer_signature: str
+    splitter_signature: str
+    extractor_signature: str
+    prompt_signature: str
+    schema_signature: str
+    code_signature: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "profile_id",
+            "normalizer_signature",
+            "splitter_signature",
+            "extractor_signature",
+            "prompt_signature",
+            "schema_signature",
+            "code_signature",
+        ):
+            object.__setattr__(self, name, _text(getattr(self, name), name))
+        expected_id = pipeline_profile_id(
+            self.normalizer_signature,
+            self.splitter_signature,
+            self.extractor_signature,
+            self.prompt_signature,
+            self.schema_signature,
+            self.code_signature,
+        )
+        if self.profile_id != expected_id:
+            raise ValueError("profile_id does not match its pipeline signatures")
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeSnapshot:
+    snapshot_id: str
+    tenant_id: str
+    document_id: str
+    version_id: str
+    profile_id: str
+    manifest_hash: str
+    expected_chunk_count: int
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        for name in (
+            "snapshot_id",
+            "tenant_id",
+            "document_id",
+            "version_id",
+            "profile_id",
+        ):
+            object.__setattr__(self, name, _text(getattr(self, name), name))
+        object.__setattr__(self, "manifest_hash", _sha256(self.manifest_hash))
+        if isinstance(self.expected_chunk_count, bool) or not isinstance(
+            self.expected_chunk_count, int
+        ):
+            raise ValueError("expected_chunk_count must be a positive integer")
+        if self.expected_chunk_count <= 0:
+            raise ValueError("expected_chunk_count must be a positive integer")
+        if knowledge_snapshot_id(self.version_id, self.profile_id) != self.snapshot_id:
+            raise ValueError("snapshot_id does not match version_id and profile_id")
+        _aware(self.created_at, "created_at")
+
+
+@dataclass(frozen=True, slots=True)
 class ChunkEmbedding:
     embedding_id: str
     tenant_id: str
@@ -217,6 +292,7 @@ class ChunkEmbedding:
     dimensions: int
     normalization: str
     created_at: datetime
+    vector: tuple[float, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -243,7 +319,59 @@ class ChunkEmbedding:
             != self.embedding_space_id
         ):
             raise ValueError("embedding_space_id does not match its profile")
+        if (
+            chunk_embedding_id(self.chunk_id, self.embedding_space_id)
+            != self.embedding_id
+        ):
+            raise ValueError("embedding_id does not match chunk and vector space")
+        try:
+            raw_vector = tuple(self.vector)
+        except TypeError as error:
+            raise ValueError("vector values must be finite numbers") from error
+        if any(
+            isinstance(value, bool) or not isinstance(value, Real)
+            for value in raw_vector
+        ):
+            raise ValueError("vector values must be finite numbers")
+        vector = tuple(float(value) for value in raw_vector)
+        if vector and len(vector) != self.dimensions:
+            raise ValueError("non-empty vector length must match dimensions")
+        if any(not math.isfinite(value) for value in vector):
+            raise ValueError("vector values must be finite numbers")
+        if vector:
+            try:
+                float32_vector = tuple(
+                    struct.unpack("!f", struct.pack("!f", value))[0]
+                    for value in vector
+                )
+                float32_norm = struct.unpack(
+                    "!f",
+                    struct.pack("!f", math.hypot(*float32_vector)),
+                )[0]
+            except (OverflowError, struct.error) as error:
+                raise ValueError(
+                    "vector and its norm must be representable as float32"
+                ) from error
+            if not math.isfinite(float32_norm) or float32_norm == 0.0:
+                raise ValueError(
+                    "vector must have a non-zero finite norm for cosine indexing"
+                )
+        object.__setattr__(self, "vector", vector)
         _aware(self.created_at, "created_at")
+
+    @property
+    def vector_checksum(self) -> str | None:
+        """Return a stable checksum when vector values are stored inline."""
+        if not self.vector:
+            return None
+        payload = json.dumps(
+            self.vector,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+            sort_keys=True,
+        )
+        return content_checksum(payload)
 
 
 @dataclass(frozen=True, slots=True)

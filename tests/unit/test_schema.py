@@ -5,22 +5,64 @@ from __future__ import annotations
 import re
 import unittest
 
-from graphrag_prod.graph.schema import EXPECTED_SCHEMA, migration_statements
+from graphrag_prod.graph.schema import (
+    EXPECTED_SCHEMA,
+    MIGRATION_PATH,
+    migration_paths,
+    migration_statements,
+)
 
 
 class SchemaMigrationTests(unittest.TestCase):
     def test_migration_is_single_source_for_expected_names(self) -> None:
         statements = migration_statements()
-        names = {
-            match.group(1)
-            for statement in statements
-            if (match := re.search(r"CREATE (?:CONSTRAINT|INDEX) (\w+)", statement))
-        }
+        names: set[str] = set()
+        for statement in statements:
+            if match := re.search(r"CREATE (?:CONSTRAINT|INDEX) (\w+)", statement):
+                names.add(match.group(1))
+            elif match := re.search(r"DROP (?:CONSTRAINT|INDEX) (\w+)", statement):
+                names.discard(match.group(1))
         self.assertEqual(names, {item.name for item in EXPECTED_SCHEMA})
 
     def test_every_statement_is_idempotent(self) -> None:
         for statement in migration_statements():
-            self.assertIn("IF NOT EXISTS", statement)
+            if statement.startswith("DROP "):
+                self.assertIn("IF EXISTS", statement)
+            else:
+                self.assertIn("IF NOT EXISTS", statement)
+
+    def test_migrations_are_loaded_in_filename_order(self) -> None:
+        paths = migration_paths()
+        self.assertEqual(paths, tuple(sorted(paths, key=lambda item: item.name)))
+        self.assertEqual(
+            [path.name for path in paths],
+            [
+                "001_provenance_schema.cypher",
+                "002_incremental_ingestion_schema.cypher",
+            ],
+        )
+        statements = migration_statements()
+        self.assertIn("DROP CONSTRAINT chunk_ordinal_unique IF EXISTS", statements)
+        self.assertFalse(
+            any(
+                statement.startswith("CREATE CONSTRAINT chunk_ordinal_unique ")
+                for statement in statements
+            )
+        )
+
+    def test_original_migration_path_remains_usable(self) -> None:
+        legacy_statements = migration_statements(MIGRATION_PATH)
+        self.assertTrue(legacy_statements)
+        self.assertFalse(
+            any(statement.startswith("DROP ") for statement in legacy_statements)
+        )
+        self.assertTrue(
+            any(
+                statement.startswith("CREATE CONSTRAINT chunk_ordinal_unique ")
+                for statement in legacy_statements
+            )
+        )
+        self.assertLess(len(legacy_statements), len(migration_statements()))
 
 
 if __name__ == "__main__":
