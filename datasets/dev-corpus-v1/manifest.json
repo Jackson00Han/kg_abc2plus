@@ -1,0 +1,478 @@
+{
+  "artifacts": [
+    {
+      "path": "NOTICE.txt",
+      "sha256": "d9733e70e93ae9f065bfcb8d54c8b6eb6e0165ec39e596a728a1b19fe6f3b861",
+      "size_bytes": 264
+    },
+    {
+      "path": "chunks.jsonl",
+      "sha256": "58457e947940f4d25b6846ce372f8cbb47957f58b0964a44a0f3e429788a2a44",
+      "size_bytes": 185918
+    },
+    {
+      "path": "entities.jsonl",
+      "sha256": "83ff05190702f335e2523aab2678c6efc4df0eb677990dee6e808f85554482ca",
+      "size_bytes": 4953
+    },
+    {
+      "path": "questions.jsonl",
+      "sha256": "27aaf4e4f227d4cda913c74ef3f92ba739bb7d70a3250c97c2e5476080f690ee",
+      "size_bytes": 28510
+    },
+    {
+      "path": "sources/tenant-alpha/atc-fy2023.txt",
+      "sha256": "f8ee0ccf3144db6f59a5fedd82c7e6e95388e3b68431cc41abfc8f8ce921afcc",
+      "size_bytes": 3454
+    },
+    {
+      "path": "sources/tenant-alpha/atc-fy2024.txt",
+      "sha256": "c2a1e548485996811db538093b8e23a236f42c8f34f1cf946f0394b0e9f3857b",
+      "size_bytes": 3454
+    },
+    {
+      "path": "sources/tenant-alpha/atl-fy2023.txt",
+      "sha256": "a47cf243143fdb3f05b4cf0ccf2e06426f17260f1032ca047b76509e481c9d83",
+      "size_bytes": 3493
+    },
+    {
+      "path": "sources/tenant-alpha/atl-fy2024.txt",
+      "sha256": "e44ed87c6c55c6795b44cf78d3f5e989aabef3ca3a2c77636f6bd7ca25e8127d",
+      "size_bytes": 3493
+    },
+    {
+      "path": "sources/tenant-alpha/nst-fy2023.txt",
+      "sha256": "715aab61a365e88d3e47ca32c4b158dddef7c2e02b1ebe0fb802772616f21f0f",
+      "size_bytes": 3463
+    },
+    {
+      "path": "sources/tenant-alpha/nst-fy2024.txt",
+      "sha256": "46e3aaeb95c28da53d40b5d4a363afc540583f55ca5390c61d3d2a5f96b2cb67",
+      "size_bytes": 3463
+    },
+    {
+      "path": "sources/tenant-beta/hbe-fy2023.txt",
+      "sha256": "3e68674c5c14b68f0a77c233b6fb72af67b19afcd2d00ca179503648e4db376b",
+      "size_bytes": 3483
+    },
+    {
+      "path": "sources/tenant-beta/hbe-fy2024.txt",
+      "sha256": "574b99e6b1bda502b65974b49a667c2fab6a7b7418854b26e46950ae399edc43",
+      "size_bytes": 3483
+    },
+    {
+      "path": "sources/tenant-beta/mrt-fy2023.txt",
+      "sha256": "10b2312874054b26e1f4e85fbf2d2b68aaabfc4576ec93cd4479e0e9f3aa3470",
+      "size_bytes": 3515
+    },
+    {
+      "path": "sources/tenant-beta/mrt-fy2024.txt",
+      "sha256": "161ecdcb75922e4eea3c6c6299063c4c2f8b127d8eee868af81fbbfdec821e33",
+      "size_bytes": 3515
+    },
+    {
+      "path": "vectors.jsonl",
+      "sha256": "382abb97e296cb5f0d59e0f4f67fe552d25431a1fde35850ddea08118b1e619b",
+      "size_bytes": 119260
+    }
+  ],
+  "counts": {
+    "active_chunks": 120,
+    "companies": 5,
+    "documents": 10,
+    "entities": 19,
+    "questions": 49,
+    "tenants": 2,
+    "vectors": 169
+  },
+  "coverage": {
+    "access_groups": [
+      "alpha-finance",
+      "alpha-legal",
+      "alpha-public",
+      "beta-board",
+      "beta-public"
+    ],
+    "fiscal_years": [
+      2023,
+      2024
+    ],
+    "homonym_negative_pairs": [
+      {
+        "entity_ids": [
+          "de388183-671a-5113-8397-0fc88857994c",
+          "950dd7b7-9659-520d-95c6-66d1db81c4cb"
+        ],
+        "entity_keys": [
+          "tenant-alpha:company:ticker:ATC",
+          "tenant-alpha:company:ticker:ATL"
+        ],
+        "expected_resolution": "KEEP_SEPARATE",
+        "shared_surface": "Atlas",
+        "tenant_id": "tenant-alpha"
+      }
+    ],
+    "question_classes": [
+      "cross_chunk",
+      "exact_value",
+      "graph_relationship",
+      "single_chunk",
+      "temporal_conflict",
+      "unanswerable",
+      "unauthorized"
+    ],
+    "tenants": [
+      "tenant-alpha",
+      "tenant-beta"
+    ]
+  },
+  "dataset_id": "dev-corpus-v1",
+  "description": "Deterministic representative synthetic company-filing development corpus.",
+  "documents": [
+    {
+      "access_groups": [
+        "alpha-finance"
+      ],
+      "access_policy_id": "tenant-alpha:alpha-finance",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-alpha:atc:fy2023",
+      "checksum": "f8ee0ccf3144db6f59a5fedd82c7e6e95388e3b68431cc41abfc8f8ce921afcc",
+      "chunk_count": 12,
+      "company_canonical_name": "Atlas Cloud Services Ltd.",
+      "company_entity_id": "de388183-671a-5113-8397-0fc88857994c",
+      "company_key": "atlas-cloud",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "5eff82fc-5c4f-5862-8272-e2b364a39437",
+      "document_key": "tenant-alpha:atc:fy2023",
+      "fiscal_year": 2023,
+      "identity_anchor": "Atlas Cloud Services Ltd. (ATC), fiscal year 2023 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "f8ee0ccf3144db6f59a5fedd82c7e6e95388e3b68431cc41abfc8f8ce921afcc",
+      "published_at": "2023-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-alpha/atc-fy2023.txt",
+      "tenant_id": "tenant-alpha",
+      "ticker": "ATC",
+      "title": "Atlas Cloud Services Ltd. synthetic FY2023 filing",
+      "version_id": "fb0fed83-fc15-5605-a1c4-a9a9ebffec23",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "alpha-finance"
+      ],
+      "access_policy_id": "tenant-alpha:alpha-finance",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-alpha:atc:fy2024",
+      "checksum": "c2a1e548485996811db538093b8e23a236f42c8f34f1cf946f0394b0e9f3857b",
+      "chunk_count": 12,
+      "company_canonical_name": "Atlas Cloud Services Ltd.",
+      "company_entity_id": "de388183-671a-5113-8397-0fc88857994c",
+      "company_key": "atlas-cloud",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "e0abd9e3-e14b-5a09-89e8-d66ee880143d",
+      "document_key": "tenant-alpha:atc:fy2024",
+      "fiscal_year": 2024,
+      "identity_anchor": "Atlas Cloud Services Ltd. (ATC), fiscal year 2024 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "c2a1e548485996811db538093b8e23a236f42c8f34f1cf946f0394b0e9f3857b",
+      "published_at": "2024-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-alpha/atc-fy2024.txt",
+      "tenant_id": "tenant-alpha",
+      "ticker": "ATC",
+      "title": "Atlas Cloud Services Ltd. synthetic FY2024 filing",
+      "version_id": "26966842-6d45-5b8e-a05c-3bb9ab9c0c6e",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "alpha-legal"
+      ],
+      "access_policy_id": "tenant-alpha:alpha-legal",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-alpha:atl:fy2023",
+      "checksum": "a47cf243143fdb3f05b4cf0ccf2e06426f17260f1032ca047b76509e481c9d83",
+      "chunk_count": 12,
+      "company_canonical_name": "Atlas Logistics Holdings Inc.",
+      "company_entity_id": "950dd7b7-9659-520d-95c6-66d1db81c4cb",
+      "company_key": "atlas-logistics",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "c636cce4-e32a-5861-b3c2-a4a601383429",
+      "document_key": "tenant-alpha:atl:fy2023",
+      "fiscal_year": 2023,
+      "identity_anchor": "Atlas Logistics Holdings Inc. (ATL), fiscal year 2023 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "a47cf243143fdb3f05b4cf0ccf2e06426f17260f1032ca047b76509e481c9d83",
+      "published_at": "2023-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-alpha/atl-fy2023.txt",
+      "tenant_id": "tenant-alpha",
+      "ticker": "ATL",
+      "title": "Atlas Logistics Holdings Inc. synthetic FY2023 filing",
+      "version_id": "29814134-a6a0-5c6c-827b-9eb3c45864e1",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "alpha-legal"
+      ],
+      "access_policy_id": "tenant-alpha:alpha-legal",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-alpha:atl:fy2024",
+      "checksum": "e44ed87c6c55c6795b44cf78d3f5e989aabef3ca3a2c77636f6bd7ca25e8127d",
+      "chunk_count": 12,
+      "company_canonical_name": "Atlas Logistics Holdings Inc.",
+      "company_entity_id": "950dd7b7-9659-520d-95c6-66d1db81c4cb",
+      "company_key": "atlas-logistics",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "e7a0eb92-1e90-5255-8bc9-8fee9426715d",
+      "document_key": "tenant-alpha:atl:fy2024",
+      "fiscal_year": 2024,
+      "identity_anchor": "Atlas Logistics Holdings Inc. (ATL), fiscal year 2024 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "e44ed87c6c55c6795b44cf78d3f5e989aabef3ca3a2c77636f6bd7ca25e8127d",
+      "published_at": "2024-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-alpha/atl-fy2024.txt",
+      "tenant_id": "tenant-alpha",
+      "ticker": "ATL",
+      "title": "Atlas Logistics Holdings Inc. synthetic FY2024 filing",
+      "version_id": "98e7fac7-34d4-555c-8ea0-4994e6bc2f42",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "alpha-public"
+      ],
+      "access_policy_id": "tenant-alpha:alpha-public",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-alpha:nst:fy2023",
+      "checksum": "715aab61a365e88d3e47ca32c4b158dddef7c2e02b1ebe0fb802772616f21f0f",
+      "chunk_count": 12,
+      "company_canonical_name": "Northstar Systems plc",
+      "company_entity_id": "c53fc8fe-8fcb-539b-94cf-fc1229e6e2fb",
+      "company_key": "northstar",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "d69beb13-f5da-50ad-918a-634dcde8ff9d",
+      "document_key": "tenant-alpha:nst:fy2023",
+      "fiscal_year": 2023,
+      "identity_anchor": "Northstar Systems plc (NST), fiscal year 2023 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "715aab61a365e88d3e47ca32c4b158dddef7c2e02b1ebe0fb802772616f21f0f",
+      "published_at": "2023-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-alpha/nst-fy2023.txt",
+      "tenant_id": "tenant-alpha",
+      "ticker": "NST",
+      "title": "Northstar Systems plc synthetic FY2023 filing",
+      "version_id": "0410cdf7-86dd-521a-950d-ff813ee5a295",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "alpha-public"
+      ],
+      "access_policy_id": "tenant-alpha:alpha-public",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-alpha:nst:fy2024",
+      "checksum": "46e3aaeb95c28da53d40b5d4a363afc540583f55ca5390c61d3d2a5f96b2cb67",
+      "chunk_count": 12,
+      "company_canonical_name": "Northstar Systems plc",
+      "company_entity_id": "c53fc8fe-8fcb-539b-94cf-fc1229e6e2fb",
+      "company_key": "northstar",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "928062e7-5e3b-5330-b73c-e03f9b9c60ff",
+      "document_key": "tenant-alpha:nst:fy2024",
+      "fiscal_year": 2024,
+      "identity_anchor": "Northstar Systems plc (NST), fiscal year 2024 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "46e3aaeb95c28da53d40b5d4a363afc540583f55ca5390c61d3d2a5f96b2cb67",
+      "published_at": "2024-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-alpha/nst-fy2024.txt",
+      "tenant_id": "tenant-alpha",
+      "ticker": "NST",
+      "title": "Northstar Systems plc synthetic FY2024 filing",
+      "version_id": "cec0e097-04d3-544b-a766-e6e03dd4ef00",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "beta-board"
+      ],
+      "access_policy_id": "tenant-beta:beta-board",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-beta:hbe:fy2023",
+      "checksum": "3e68674c5c14b68f0a77c233b6fb72af67b19afcd2d00ca179503648e4db376b",
+      "chunk_count": 12,
+      "company_canonical_name": "Harbor Energy Networks S.A.",
+      "company_entity_id": "eeaf5bd2-78ba-55c1-b56d-52330d51817b",
+      "company_key": "harbor-energy",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "fd131366-d114-55ef-842e-9aeb5eb3f60b",
+      "document_key": "tenant-beta:hbe:fy2023",
+      "fiscal_year": 2023,
+      "identity_anchor": "Harbor Energy Networks S.A. (HBE), fiscal year 2023 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "3e68674c5c14b68f0a77c233b6fb72af67b19afcd2d00ca179503648e4db376b",
+      "published_at": "2023-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-beta/hbe-fy2023.txt",
+      "tenant_id": "tenant-beta",
+      "ticker": "HBE",
+      "title": "Harbor Energy Networks S.A. synthetic FY2023 filing",
+      "version_id": "384fd8d2-b5d1-5fff-816c-dfaf968e9364",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "beta-board"
+      ],
+      "access_policy_id": "tenant-beta:beta-board",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-beta:hbe:fy2024",
+      "checksum": "574b99e6b1bda502b65974b49a667c2fab6a7b7418854b26e46950ae399edc43",
+      "chunk_count": 12,
+      "company_canonical_name": "Harbor Energy Networks S.A.",
+      "company_entity_id": "eeaf5bd2-78ba-55c1-b56d-52330d51817b",
+      "company_key": "harbor-energy",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "bf843346-6364-5f67-8cd6-a1b69f7454b4",
+      "document_key": "tenant-beta:hbe:fy2024",
+      "fiscal_year": 2024,
+      "identity_anchor": "Harbor Energy Networks S.A. (HBE), fiscal year 2024 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "574b99e6b1bda502b65974b49a667c2fab6a7b7418854b26e46950ae399edc43",
+      "published_at": "2024-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-beta/hbe-fy2024.txt",
+      "tenant_id": "tenant-beta",
+      "ticker": "HBE",
+      "title": "Harbor Energy Networks S.A. synthetic FY2024 filing",
+      "version_id": "2c48f5da-d2df-5e8a-86e4-3e6179d9ed5b",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "beta-public"
+      ],
+      "access_policy_id": "tenant-beta:beta-public",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-beta:mrt:fy2023",
+      "checksum": "10b2312874054b26e1f4e85fbf2d2b68aaabfc4576ec93cd4479e0e9f3aa3470",
+      "chunk_count": 12,
+      "company_canonical_name": "Meridian Retail Group Corp.",
+      "company_entity_id": "22f42cbe-a53d-5345-a21f-58dfda884bc2",
+      "company_key": "meridian-retail",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "8dd3967b-2769-5952-a08e-42192249f1b5",
+      "document_key": "tenant-beta:mrt:fy2023",
+      "fiscal_year": 2023,
+      "identity_anchor": "Meridian Retail Group Corp. (MRT), fiscal year 2023 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "10b2312874054b26e1f4e85fbf2d2b68aaabfc4576ec93cd4479e0e9f3aa3470",
+      "published_at": "2023-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-beta/mrt-fy2023.txt",
+      "tenant_id": "tenant-beta",
+      "ticker": "MRT",
+      "title": "Meridian Retail Group Corp. synthetic FY2023 filing",
+      "version_id": "04df4073-db10-5a85-a633-d7f6b128d65b",
+      "version_number": 1
+    },
+    {
+      "access_groups": [
+        "beta-public"
+      ],
+      "access_policy_id": "tenant-beta:beta-public",
+      "access_policy_version": 1,
+      "canonical_uri": "urn:sample-graphrag:synthetic:dev-corpus-v1:tenant-beta:mrt:fy2024",
+      "checksum": "161ecdcb75922e4eea3c6c6299063c4c2f8b127d8eee868af81fbbfdec821e33",
+      "chunk_count": 12,
+      "company_canonical_name": "Meridian Retail Group Corp.",
+      "company_entity_id": "22f42cbe-a53d-5345-a21f-58dfda884bc2",
+      "company_key": "meridian-retail",
+      "created_at": "2026-09-01T00:00:00+00:00",
+      "document_id": "d83eee2c-f32e-5e29-a3dd-25bc5c8daf2e",
+      "document_key": "tenant-beta:mrt:fy2024",
+      "fiscal_year": 2024,
+      "identity_anchor": "Meridian Retail Group Corp. (MRT), fiscal year 2024 — ",
+      "ingested_at": "2026-09-01T00:00:00+00:00",
+      "language": "en",
+      "mime_type": "text/plain",
+      "original_checksum": "161ecdcb75922e4eea3c6c6299063c4c2f8b127d8eee868af81fbbfdec821e33",
+      "published_at": "2024-11-15T00:00:00+00:00",
+      "source_name": "sample-graphrag deterministic synthetic filing",
+      "source_path": "sources/tenant-beta/mrt-fy2024.txt",
+      "tenant_id": "tenant-beta",
+      "ticker": "MRT",
+      "title": "Meridian Retail Group Corp. synthetic FY2024 filing",
+      "version_id": "93493a11-f2ba-5a19-a7f7-c627fd4658d2",
+      "version_number": 1
+    }
+  ],
+  "embedding_profile": {
+    "dimensions": 128,
+    "embedding_space_id": "19ef2d72-d978-5d0d-9f75-b7f33f9b6f4d",
+    "feature_count": 107,
+    "feature_index_checksum": "5ba8a1bf587231b6bf01c19bc9583a729494e75bc5317c9c32af50f3fa5ba700",
+    "fixture_method": "adjudicated_evidence_cluster_projection",
+    "model": "adjudicated-evidence-clusters",
+    "normalization": "l2",
+    "provider": "fixture",
+    "quality_claim": "none",
+    "revision": "dev-corpus-v1.1",
+    "warning": "Gold-derived fixture vectors validate retrieval orchestration only; they cannot demonstrate embedding-model or customer-corpus quality."
+  },
+  "fixture_vector_scope": {
+    "can_validate": [
+      "retrieval orchestration",
+      "ranking fusion over controlled semantic candidates",
+      "authorization filtering",
+      "citation and trace stability"
+    ],
+    "cannot_validate": [
+      "embedding model quality",
+      "natural-language generalization",
+      "customer-corpus retrieval quality",
+      "production-candidate quality"
+    ],
+    "query_mapping": "Answerable queries project adjudicated positive evidence clusters; unauthorized queries project forbidden evidence clusters; unanswerable queries use an unanchored reserved feature."
+  },
+  "generated_by": {
+    "path": "scripts/build_dev_corpus.py",
+    "version": "1.1.0"
+  },
+  "owner": "repository-maintainers",
+  "pipeline_profile": {
+    "code_signature": "dev-corpus-builder:1.1.0",
+    "extractor_signature": "synthetic-adjudicated-extractor:v1",
+    "normalizer_signature": "unicode-nfc-lf:v1",
+    "profile_id": "6a3c9590-8326-5018-bb2e-bc419d13dcaf",
+    "prompt_signature": "checked-in-synthetic-annotations:v1",
+    "schema_signature": "company-filings:v1",
+    "splitter_signature": "synthetic-section-splitter:v1"
+  },
+  "synthetic": true,
+  "version": "1.0.1",
+  "warning": "Not real filings and not production-candidate validation evidence."
+}

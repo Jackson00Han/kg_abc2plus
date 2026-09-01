@@ -15,11 +15,20 @@ Chunks and two retrieval clients). The full production-scale values remain in
 A `dev-mini` result exercises the complete workflow but is not production
 qualification evidence.
 
-At the current milestone the command validates and previews the declared
-workload; it does not generate a corpus or run a load test. The Stage 2–4
-Neo4j runners already enforce the checked local resource cap. Stage 8/9 will
-make the evaluation runner consume the declared corpus, concurrency, sample,
-and duration values.
+The profile command validates and previews the declared workload; it does not
+run a load test. Stage 5A materializes the bounded development corpus described
+below, while Stage 8/9 will make a unified evaluation runner consume the
+declared corpus, concurrency, sample, and duration values. Disposable Neo4j
+runners enforce the checked local resource cap.
+
+Stage 5A adds a separate, versioned `dev-corpus-v1`: 10 deterministic
+synthetic filings across two tenants and five company identities, with 120
+exact Chunks and all seven question classes. It complements rather than
+replaces the one-file teaching sample. Its construction, provenance boundary,
+checks, and limitations are documented in
+[`docs/representative_dev_corpus.md`](docs/representative_dev_corpus.md), with
+the repeatable evidence recorded in
+[`docs/validation/stage-5a.md`](docs/validation/stage-5a.md).
 
 The production implementation is developed separately under
 `src/graphrag_prod`. Its stable identity, source provenance, access boundary,

@@ -74,6 +74,19 @@ returned Chunks, and context characters. It also exposes deterministic cosine,
 BM25, and RRF-channel gates. Defaults are safe reference values, not deployment
 tuning claims.
 
+`minimum_vector_score` uses Neo4j's cosine-similarity score domain, not the raw
+mathematical cosine domain. Neo4j returns values in `[0, 1]` and maps orthogonal
+vectors to `0.5`; see the
+[Neo4j 5 vector-index definition](https://neo4j.com/docs/cypher-manual/5/indexes/semantic-indexes/vector-indexes/).
+Thresholds must therefore be calibrated and recorded in that same domain.
+Negative thresholds are rejected because they cannot gate any Neo4j cosine
+result.
+
+Exact-content deduplication is scoped to an immutable Version. Identical text
+inside one Version can be collapsed, but matching checksums from different
+Versions remain separate so temporal or conflicting provenance cannot be
+erased.
+
 Context budgeting never truncates Chunk text. A Chunk that cannot fit is
 skipped and recorded in the trace, preserving its checksum and exact character
 location if selected elsewhere.

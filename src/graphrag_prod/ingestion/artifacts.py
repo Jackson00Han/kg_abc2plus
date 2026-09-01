@@ -25,6 +25,40 @@ from graphrag_prod.graph.provenance import ProvenanceBundle
 def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
     """Encode derivations relative to a chunk so unchanged text can be reused."""
     entities = {entity.entity_id: entity for entity in bundle.entities}
+    encoded_mentions = [
+        {
+            "entity_type": mention.entity_type,
+            "canonical_key": entities[mention.entity_id].canonical_key,
+            "surface": mention.surface,
+            "relative_start": mention.char_start - bundle.chunk.char_start,
+            "relative_end": mention.char_end - bundle.chunk.char_start,
+            "confidence": mention.confidence,
+        }
+        for mention in bundle.mentions
+    ]
+    encoded_assertions = [
+        {
+            "subject_type": entities[assertion.subject_entity_id].entity_type,
+            "subject_key": entities[assertion.subject_entity_id].canonical_key,
+            "predicate": assertion.predicate,
+            "object_type": (
+                entities[assertion.object_entity_id].entity_type
+                if assertion.object_entity_id
+                else None
+            ),
+            "object_key": (
+                entities[assertion.object_entity_id].canonical_key
+                if assertion.object_entity_id
+                else None
+            ),
+            "literal_value": assertion.literal_value,
+            "relative_start": assertion.evidence_char_start - bundle.chunk.char_start,
+            "relative_end": assertion.evidence_char_end - bundle.chunk.char_start,
+            "confidence": assertion.confidence,
+            "accepted": assertion.accepted,
+        }
+        for assertion in bundle.all_assertions
+    ]
     return {
         "format_version": 1,
         "entities": [
@@ -34,47 +68,45 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
                 "canonical_name": entity.canonical_name,
                 "aliases": list(entity.aliases),
             }
-            for entity in sorted(bundle.entities, key=lambda item: item.entity_id)
-        ],
-        "mentions": [
-            {
-                "entity_type": mention.entity_type,
-                "canonical_key": entities[mention.entity_id].canonical_key,
-                "surface": mention.surface,
-                "relative_start": mention.char_start - bundle.chunk.char_start,
-                "relative_end": mention.char_end - bundle.chunk.char_start,
-                "confidence": mention.confidence,
-            }
-            for mention in sorted(bundle.mentions, key=lambda item: item.mention_id)
-        ],
-        "assertions": [
-            {
-                "subject_type": entities[assertion.subject_entity_id].entity_type,
-                "subject_key": entities[assertion.subject_entity_id].canonical_key,
-                "predicate": assertion.predicate,
-                "object_type": (
-                    entities[assertion.object_entity_id].entity_type
-                    if assertion.object_entity_id
-                    else None
+            for entity in sorted(
+                bundle.entities,
+                key=lambda item: (
+                    item.entity_type,
+                    item.canonical_key,
+                    item.canonical_name,
+                    item.aliases,
                 ),
-                "object_key": (
-                    entities[assertion.object_entity_id].canonical_key
-                    if assertion.object_entity_id
-                    else None
-                ),
-                "literal_value": assertion.literal_value,
-                "relative_start": (
-                    assertion.evidence_char_start - bundle.chunk.char_start
-                ),
-                "relative_end": assertion.evidence_char_end - bundle.chunk.char_start,
-                "confidence": assertion.confidence,
-                "accepted": assertion.accepted,
-            }
-            for assertion in sorted(
-                bundle.all_assertions,
-                key=lambda item: item.assertion_id,
             )
         ],
+        # Stable artifact ordering must not depend on IDs that are rebound for
+        # each source Chunk. Otherwise byte-identical provider inputs can map
+        # to different immutable artifact payloads across document versions.
+        "mentions": sorted(
+            encoded_mentions,
+            key=lambda item: (
+                item["relative_start"],
+                item["relative_end"],
+                item["entity_type"],
+                item["canonical_key"],
+                item["surface"],
+                item["confidence"],
+            ),
+        ),
+        "assertions": sorted(
+            encoded_assertions,
+            key=lambda item: (
+                item["relative_start"],
+                item["relative_end"],
+                item["subject_type"],
+                item["subject_key"],
+                item["predicate"],
+                item["object_type"] or "",
+                item["object_key"] or "",
+                item["literal_value"] or "",
+                item["confidence"],
+                item["accepted"],
+            ),
+        ),
     }
 
 

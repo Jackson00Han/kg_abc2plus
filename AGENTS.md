@@ -38,6 +38,10 @@ continuing to add all behavior to one numbered script.
     It may reduce scale, duration, and repetition only; it must not weaken
     identity, provenance, authorization, correctness, or lifecycle invariants,
     and its results never qualify as production-candidate validation.
+12. Use tiered corpora instead of replacing fast fixtures with one large
+    dataset. Unit tests may use minimal fixtures, `dev-corpus-v1` must exercise
+    representative multi-document behavior, and production-reference load
+    evidence remains a Stage 9 requirement.
 
 ## Definition of Done for Every Stage
 
@@ -174,6 +178,37 @@ before committing. Do not hide failures by weakening or deleting tests.
 - Retrieval is bounded, explainable, permission-safe, and meets the agreed
   quality targets.
 
+## Stage 5A: Representative Development Corpus
+
+This additive stage strengthens the evidence for Stage 5 without invalidating
+or rewriting the completed Stage 1 through Stage 5 commits. It must complete
+before Stage 6 begins.
+
+### Deliverables
+
+- Add a versioned, deterministic `dev-corpus-v1` containing 100–200 Chunks,
+  multiple documents, companies, filing periods, tenants, and access groups.
+- Include temporal conflicts, exact values, homonym non-merge cases,
+  unauthorized material, and unanswerable questions.
+- Preserve source text, immutable checksums, exact Chunk ranges, provenance,
+  and a reproducible offline build/check command.
+- Keep the original teaching sample and fast unit fixtures; do not require
+  provider calls during routine validation.
+
+### Checks
+
+- Corpus manifest, checksum, exact-range, scale, diversity, and deterministic
+  rebuild tests.
+- Real-Neo4j ingestion and retrieval regression over the representative
+  corpus, including tenant/access isolation and stable citations.
+- Re-run the complete Stage 5 checks under the `dev-mini` resource cap.
+
+### Exit Criteria
+
+- At least 100 representative Chunks can be rebuilt and validated from a clean
+  checkout, Stage 5 quality/security targets still pass, and development-scale
+  execution remains bounded.
+
 ## Stage 6: Grounded Answer Generation
 
 ### Deliverables
@@ -304,6 +339,7 @@ tests/
 | 3. Idempotent incremental ingestion | Complete | `docs/incremental_ingestion.md`; `docs/validation/stage-3.md`; 49 unit + 41 disposable-Neo4j tests |
 | 4. Knowledge graph quality governance | Complete | `docs/graph_quality_governance.md`; `docs/validation/stage-4.md`; 75 unit + 48 disposable-Neo4j tests; 60 adjudicated cases |
 | 5. Production retrieval engine | Complete | `docs/production_retrieval.md`; `docs/validation/stage-5.md`; 88 unit + 53 disposable-Neo4j tests; 49-case gold regression fixture |
+| 5A. Representative development corpus | Complete | `docs/representative_dev_corpus.md`; `docs/validation/stage-5a.md`; 120-Chunk corpus; 99 unit + 60 disposable-Neo4j tests |
 | 6. Grounded answer generation | Not started | |
 | 7. API, security, reliability, observability | Not started | |
 | 8. Automated evaluation and regression gates | Not started | |

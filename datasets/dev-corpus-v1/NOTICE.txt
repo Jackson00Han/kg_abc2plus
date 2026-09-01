@@ -1,0 +1,5 @@
+SYNTHETIC DEVELOPMENT DATA ONLY
+
+Every company, filing, value, relationship, and question in this directory is
+fabricated for deterministic GraphRAG development. Nothing here is a real SEC
+filing, investment fact, customer record, or production validation result.

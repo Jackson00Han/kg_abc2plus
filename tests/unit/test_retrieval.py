@@ -16,6 +16,7 @@ from graphrag_prod.retrieval.engine import (
     GRAPH_EXPANSION_QUERY,
     HYDRATE_QUERY,
     VECTOR_RECALL_QUERY,
+    _content_deduplication_key,
     _query_terms,
 )
 from graphrag_prod.retrieval.metrics import (
@@ -68,6 +69,28 @@ class RetrievalRankingTests(unittest.TestCase):
         self.assertEqual(kept, ("a", "c"))
         self.assertEqual(removed, ("b", "a"))
 
+    def test_content_deduplication_never_erases_version_provenance(self) -> None:
+        records = {
+            "first": {"version_id": "version-one", "chunk_checksum": "same"},
+            "local-copy": {
+                "version_id": "version-one",
+                "chunk_checksum": "same",
+            },
+            "other-version": {
+                "version_id": "version-two",
+                "chunk_checksum": "same",
+            },
+        }
+        kept, removed = stable_deduplicate(
+            tuple(records),
+            {
+                chunk_id: _content_deduplication_key(record)
+                for chunk_id, record in records.items()
+            },
+        )
+        self.assertEqual(kept, ("first", "other-version"))
+        self.assertEqual(removed, ("local-copy",))
+
     def test_context_budget_never_truncates_a_chunk(self) -> None:
         selected = select_context(
             ranked_ids=["a", "b", "c"],
@@ -86,8 +109,13 @@ class RetrievalContractTests(unittest.TestCase):
     def test_limits_validate_cross_field_and_score_bounds(self) -> None:
         with self.assertRaisesRegex(ValueError, "bm25_scan_k"):
             RetrievalLimits(bm25_recall_k=10, bm25_scan_k=9)
-        with self.assertRaisesRegex(ValueError, "minimum_vector_score"):
-            RetrievalLimits(minimum_vector_score=1.1)
+        for value in (-0.1, 1.1):
+            with self.subTest(minimum_vector_score=value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "minimum_vector_score must be between zero and one",
+                ):
+                    RetrievalLimits(minimum_vector_score=value)
         with self.assertRaisesRegex(ValueError, "finite number"):
             RetrievalLimits(minimum_vector_score=True)
         with self.assertRaisesRegex(ValueError, "anchor_k"):

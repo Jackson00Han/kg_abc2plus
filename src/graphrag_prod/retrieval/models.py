@@ -116,8 +116,8 @@ class RetrievalLimits:
             raise ValueError("minimum_rrf_channels cannot exceed two")
         vector_floor = _finite(self.minimum_vector_score, "minimum_vector_score")
         object.__setattr__(self, "minimum_vector_score", vector_floor)
-        if not -1.0 <= vector_floor <= 1.0:
-            raise ValueError("minimum_vector_score must be between -1 and one")
+        if not 0.0 <= vector_floor <= 1.0:
+            raise ValueError("minimum_vector_score must be between zero and one")
         bm25_floor = _finite(self.minimum_bm25_score, "minimum_bm25_score")
         object.__setattr__(self, "minimum_bm25_score", bm25_floor)
         if bm25_floor < 0.0:

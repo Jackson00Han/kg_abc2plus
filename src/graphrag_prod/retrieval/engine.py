@@ -342,6 +342,11 @@ def _ids(records: list[dict[str, Any]]) -> tuple[str, ...]:
     return tuple(str(record["chunk_id"]) for record in records)
 
 
+def _content_deduplication_key(record: dict[str, Any]) -> tuple[str, str]:
+    """Preserve immutable Version provenance while removing local duplicates."""
+    return str(record["version_id"]), str(record["chunk_checksum"])
+
+
 def _trace_hits(
     records: list[dict[str, Any]],
     *,
@@ -552,7 +557,7 @@ class Neo4jRetrievalEngine:
                 )
 
         content_keys = {
-            chunk_id: str(record["chunk_checksum"])
+            chunk_id: _content_deduplication_key(record)
             for chunk_id, record in hydrated.items()
         }
         deduped_ranking, duplicate_ids = stable_deduplicate(
