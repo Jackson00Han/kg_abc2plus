@@ -1,0 +1,63 @@
+{
+  "dataset_id": "gold-v1",
+  "version": "1.0.0",
+  "owner": "repository-maintainers",
+  "description": "Adjudicated Stage 5 retrieval regression fixture. Rankings are the recorded deterministic baseline; relevance grades are exact chunk-level judgments.",
+  "items": [
+    {"id":"single-success-1","question_class":"single_chunk","case_type":"success","query":"What revenue was reported?","answerable":true,"relevance":{"revenue-current":3},"ranking":["revenue-current","margin-current","cash-current"],"unauthorized_exposures":[]},
+    {"id":"single-success-2","question_class":"single_chunk","case_type":"success","query":"What gross margin was reported?","answerable":true,"relevance":{"margin-current":3},"ranking":["margin-current","revenue-current"],"unauthorized_exposures":[]},
+    {"id":"single-success-3","question_class":"single_chunk","case_type":"success","query":"How much cash was held?","answerable":true,"relevance":{"cash-current":3},"ranking":["cash-current","margin-current"],"unauthorized_exposures":[]},
+    {"id":"single-success-4","question_class":"single_chunk","case_type":"success","query":"Which company filed the report?","answerable":true,"relevance":{"company-current":3},"ranking":["company-current","revenue-current"],"unauthorized_exposures":[]},
+    {"id":"single-success-5","question_class":"single_chunk","case_type":"success","query":"What fiscal year does the filing cover?","answerable":true,"relevance":{"period-current":3},"ranking":["period-current","company-current"],"unauthorized_exposures":[]},
+    {"id":"single-boundary-1","question_class":"single_chunk","case_type":"boundary","query":"Revenue with punctuation: (reported)?","answerable":true,"relevance":{"revenue-current":3},"ranking":["revenue-current"],"unauthorized_exposures":[]},
+    {"id":"single-boundary-2","question_class":"single_chunk","case_type":"boundary","query":"Revenue using mixed case","answerable":true,"relevance":{"revenue-current":3},"ranking":["revenue-current","company-current"],"unauthorized_exposures":[]},
+
+    {"id":"cross-success-1","question_class":"cross_chunk","case_type":"success","query":"Compare revenue and margin.","answerable":true,"relevance":{"revenue-current":3,"margin-current":3},"ranking":["revenue-current","margin-current","cash-current"],"unauthorized_exposures":[]},
+    {"id":"cross-success-2","question_class":"cross_chunk","case_type":"success","query":"Summarize margin and cash.","answerable":true,"relevance":{"margin-current":3,"cash-current":3},"ranking":["margin-current","cash-current","revenue-current"],"unauthorized_exposures":[]},
+    {"id":"cross-success-3","question_class":"cross_chunk","case_type":"success","query":"Give the company, period, and revenue.","answerable":true,"relevance":{"company-current":2,"period-current":3,"revenue-current":3},"ranking":["period-current","revenue-current","company-current"],"unauthorized_exposures":[]},
+    {"id":"cross-success-4","question_class":"cross_chunk","case_type":"success","query":"Summarize all reported metrics.","answerable":true,"relevance":{"revenue-current":3,"margin-current":3,"cash-current":3},"ranking":["revenue-current","margin-current","cash-current"],"unauthorized_exposures":[]},
+    {"id":"cross-success-5","question_class":"cross_chunk","case_type":"success","query":"Connect the reporting period with cash.","answerable":true,"relevance":{"period-current":2,"cash-current":3},"ranking":["cash-current","period-current","company-current"],"unauthorized_exposures":[]},
+    {"id":"cross-boundary-1","question_class":"cross_chunk","case_type":"boundary","query":"Use two adjacent metric passages.","answerable":true,"relevance":{"revenue-current":3,"margin-current":2},"ranking":["revenue-current","margin-current"],"unauthorized_exposures":[]},
+    {"id":"cross-boundary-2","question_class":"cross_chunk","case_type":"boundary","query":"Use nonadjacent revenue and cash passages.","answerable":true,"relevance":{"revenue-current":3,"cash-current":3},"ranking":["revenue-current","cash-current","margin-current"],"unauthorized_exposures":[]},
+
+    {"id":"graph-success-1","question_class":"graph_relationship","case_type":"success","query":"Which passages mention the same company as revenue?","answerable":true,"relevance":{"revenue-current":3,"margin-current":2,"cash-current":2},"ranking":["revenue-current","margin-current","cash-current"],"unauthorized_exposures":[]},
+    {"id":"graph-success-2","question_class":"graph_relationship","case_type":"success","query":"Expand from the company to its cash metric.","answerable":true,"relevance":{"cash-current":3},"ranking":["cash-current","company-current"],"unauthorized_exposures":[]},
+    {"id":"graph-success-3","question_class":"graph_relationship","case_type":"success","query":"Find margin through the shared company entity.","answerable":true,"relevance":{"margin-current":3},"ranking":["margin-current","revenue-current"],"unauthorized_exposures":[]},
+    {"id":"graph-success-4","question_class":"graph_relationship","case_type":"success","query":"Find all metrics associated with the filer.","answerable":true,"relevance":{"revenue-current":3,"margin-current":3,"cash-current":3},"ranking":["revenue-current","margin-current","cash-current"],"unauthorized_exposures":[]},
+    {"id":"graph-success-5","question_class":"graph_relationship","case_type":"success","query":"Navigate from filing identity to reporting period.","answerable":true,"relevance":{"period-current":3},"ranking":["period-current","company-current"],"unauthorized_exposures":[]},
+    {"id":"graph-boundary-1","question_class":"graph_relationship","case_type":"boundary","query":"Do not expand through a quarantined homonym.","answerable":true,"relevance":{"company-current":3},"ranking":["company-current"],"unauthorized_exposures":[]},
+    {"id":"graph-boundary-2","question_class":"graph_relationship","case_type":"boundary","query":"Bound expansion from a common entity hub.","answerable":true,"relevance":{"revenue-current":3},"ranking":["revenue-current","margin-current"],"unauthorized_exposures":[]},
+
+    {"id":"exact-success-1","question_class":"exact_value","case_type":"success","query":"What is the exact revenue value?","answerable":true,"relevance":{"revenue-current":3},"ranking":["revenue-current"],"unauthorized_exposures":[]},
+    {"id":"exact-success-2","question_class":"exact_value","case_type":"success","query":"What is the exact margin percentage?","answerable":true,"relevance":{"margin-current":3},"ranking":["margin-current"],"unauthorized_exposures":[]},
+    {"id":"exact-success-3","question_class":"exact_value","case_type":"success","query":"What is the exact cash amount?","answerable":true,"relevance":{"cash-current":3},"ranking":["cash-current"],"unauthorized_exposures":[]},
+    {"id":"exact-success-4","question_class":"exact_value","case_type":"success","query":"Retrieve the exact fiscal year.","answerable":true,"relevance":{"period-current":3},"ranking":["period-current"],"unauthorized_exposures":[]},
+    {"id":"exact-success-5","question_class":"exact_value","case_type":"success","query":"Retrieve the exact legal company name.","answerable":true,"relevance":{"company-current":3},"ranking":["company-current"],"unauthorized_exposures":[]},
+    {"id":"exact-boundary-1","question_class":"exact_value","case_type":"boundary","query":"Retrieve decimal 46.2 without fuzzy replacement.","answerable":true,"relevance":{"margin-current":3},"ranking":["margin-current","revenue-current"],"unauthorized_exposures":[]},
+    {"id":"exact-boundary-2","question_class":"exact_value","case_type":"boundary","query":"Distinguish 29.9 from 299.","answerable":true,"relevance":{"cash-current":3},"ranking":["cash-current","margin-current"],"unauthorized_exposures":[]},
+
+    {"id":"temporal-success-1","question_class":"temporal_conflict","case_type":"success","query":"What is the currently active margin?","answerable":true,"relevance":{"margin-current":3,"margin-retired":0},"ranking":["margin-current"],"unauthorized_exposures":[]},
+    {"id":"temporal-success-2","question_class":"temporal_conflict","case_type":"success","query":"Retrieve the active document version.","answerable":true,"relevance":{"period-current":3,"period-retired":0},"ranking":["period-current"],"unauthorized_exposures":[]},
+    {"id":"temporal-success-3","question_class":"temporal_conflict","case_type":"success","query":"Use the latest active cash statement.","answerable":true,"relevance":{"cash-current":3,"cash-retired":0},"ranking":["cash-current"],"unauthorized_exposures":[]},
+    {"id":"temporal-success-4","question_class":"temporal_conflict","case_type":"success","query":"Filter the current version by its stable ID.","answerable":true,"relevance":{"revenue-current":3},"ranking":["revenue-current"],"unauthorized_exposures":[]},
+    {"id":"temporal-success-5","question_class":"temporal_conflict","case_type":"success","query":"Apply a publication cutoff to an active filing.","answerable":true,"relevance":{"company-current":3},"ranking":["company-current"],"unauthorized_exposures":[]},
+    {"id":"temporal-boundary-1","question_class":"temporal_conflict","case_type":"boundary","query":"A retired version ID must return no evidence.","answerable":true,"relevance":{"margin-current":3,"margin-retired":0},"ranking":["margin-current"],"unauthorized_exposures":[]},
+    {"id":"temporal-boundary-2","question_class":"temporal_conflict","case_type":"boundary","query":"A cutoff before publication must return no later evidence.","answerable":true,"relevance":{"period-current":3,"period-future":0},"ranking":["period-current"],"unauthorized_exposures":[]},
+
+    {"id":"unanswerable-success-1","question_class":"unanswerable","case_type":"success","query":"What is the capital of France?","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unanswerable-success-2","question_class":"unanswerable","case_type":"success","query":"Who won an unrelated sporting event?","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unanswerable-success-3","question_class":"unanswerable","case_type":"success","query":"Give a metric absent from the filing.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unanswerable-success-4","question_class":"unanswerable","case_type":"success","query":"Ask about a company outside the corpus.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unanswerable-success-5","question_class":"unanswerable","case_type":"success","query":"Ask an unsupported future prediction.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unanswerable-boundary-1","question_class":"unanswerable","case_type":"boundary","query":"Only punctuation: ???","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unanswerable-boundary-2","question_class":"unanswerable","case_type":"boundary","query":"Use valid words with no relevant evidence.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+
+    {"id":"unauthorized-success-1","question_class":"unauthorized","case_type":"success","query":"Retrieve revenue as the wrong group.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unauthorized-success-2","question_class":"unauthorized","case_type":"success","query":"Retrieve margin across tenants.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unauthorized-success-3","question_class":"unauthorized","case_type":"success","query":"Expand graph into a protected document.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unauthorized-success-4","question_class":"unauthorized","case_type":"success","query":"Attach a protected adjacent chunk.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unauthorized-success-5","question_class":"unauthorized","case_type":"success","query":"Hydrate protected final context.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unauthorized-boundary-1","question_class":"unauthorized","case_type":"boundary","query":"Document ACL allows but chunk ACL denies.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]},
+    {"id":"unauthorized-boundary-2","question_class":"unauthorized","case_type":"boundary","query":"Chunk ACL allows but document ACL denies.","answerable":false,"relevance":{},"ranking":[],"unauthorized_exposures":[]}
+  ]
+}

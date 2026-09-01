@@ -383,6 +383,20 @@ EXPECTED_SCHEMA = (
         "EntityResolutionDecision",
         ("tenant_id", "outcome", "rule_id"),
     ),
+    SchemaExpectation(
+        "graphrag_chunk_text_v1",
+        "index",
+        "FULLTEXT",
+        "Chunk",
+        ("text",),
+    ),
+    SchemaExpectation(
+        "chunk_retrieval_scope_lookup",
+        "index",
+        "RANGE",
+        "Chunk",
+        ("tenant_id", "document_id", "version_id"),
+    ),
 )
 
 
@@ -444,6 +458,11 @@ def apply_schema(driver: QueryDriver, database: str = "neo4j") -> None:
     """Apply all versioned migrations in deterministic order."""
     for statement in migration_statements():
         driver.execute_query(statement, database_=database)
+    driver.execute_query(
+        "CALL db.awaitIndexes($timeout_seconds)",
+        timeout_seconds=300,
+        database_=database,
+    )
 
 
 def _record_map(records: list[Any]) -> dict[str, dict[str, Any]]:

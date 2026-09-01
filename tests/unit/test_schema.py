@@ -18,7 +18,9 @@ class SchemaMigrationTests(unittest.TestCase):
         statements = migration_statements()
         names: set[str] = set()
         for statement in statements:
-            if match := re.search(r"CREATE (?:CONSTRAINT|INDEX) (\w+)", statement):
+            if match := re.search(
+                r"CREATE (?:FULLTEXT )?(?:CONSTRAINT|INDEX) (\w+)", statement
+            ):
                 names.add(match.group(1))
             elif match := re.search(r"DROP (?:CONSTRAINT|INDEX) (\w+)", statement):
                 names.discard(match.group(1))
@@ -40,6 +42,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 "001_provenance_schema.cypher",
                 "002_incremental_ingestion_schema.cypher",
                 "003_graph_governance_schema.cypher",
+                "004_retrieval_schema.cypher",
             ],
         )
         statements = migration_statements()

@@ -303,7 +303,7 @@ tests/
 | 2. Production data and provenance model | Complete | `docs/provenance_model.md`; `docs/validation/stage-2.md`; 28 unit + 13 disposable-Neo4j tests |
 | 3. Idempotent incremental ingestion | Complete | `docs/incremental_ingestion.md`; `docs/validation/stage-3.md`; 49 unit + 41 disposable-Neo4j tests |
 | 4. Knowledge graph quality governance | Complete | `docs/graph_quality_governance.md`; `docs/validation/stage-4.md`; 75 unit + 48 disposable-Neo4j tests; 60 adjudicated cases |
-| 5. Production retrieval engine | Not started | |
+| 5. Production retrieval engine | Complete | `docs/production_retrieval.md`; `docs/validation/stage-5.md`; 88 unit + 53 disposable-Neo4j tests; 49-case gold regression fixture |
 | 6. Grounded answer generation | Not started | |
 | 7. API, security, reliability, observability | Not started | |
 | 8. Automated evaluation and regression gates | Not started | |

@@ -301,6 +301,19 @@ Setting `return_context=True` lets you inspect exactly what the LLM was given, m
 
 ---
 
+## Production reference implementation
+
+The numbered examples remain learning artifacts. Production-oriented packages
+under `src/graphrag_prod/` now cover provenance, incremental ingestion, graph
+governance, and bounded retrieval. Stage 5 retrieval uses stable IDs, active
+versions, tenant and access-group filters on every path, standard RRF and RA,
+whole-Chunk context budgets, exact citations, and a structured trace.
+
+See `docs/production_retrieval.md` for the retrieval design and
+`docs/validation/stage-5.md` for repeatable validation evidence.
+
+---
+
 ## Project Structure
 
 ```

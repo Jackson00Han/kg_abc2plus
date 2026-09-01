@@ -47,6 +47,7 @@ from config import (
     get_embedder,
     get_llm,
 )
+from graphrag_prod.retrieval.ranking import reciprocal_rank_fusion
 
 
 # RRF's original SIGIR 2009 paper used k=60. RRF combines ranks rather than
@@ -225,31 +226,6 @@ RETURN
     [entity IN raw_entities WHERE entity IS NOT NULL] AS entities
 ORDER BY position
 """
-
-
-def reciprocal_rank_fusion(
-    rankings: dict[str, list[str]],
-    *,
-    rank_constant: int = RRF_K,
-) -> tuple[list[str], dict[str, float], dict[str, dict[str, int]]]:
-    """Fuse named rankings using the original RRF scoring rule."""
-    if rank_constant <= 0:
-        raise ValueError("rank_constant must be positive")
-
-    scores: defaultdict[str, float] = defaultdict(float)
-    rank_positions: defaultdict[str, dict[str, int]] = defaultdict(dict)
-
-    for ranking_name, chunk_ids in rankings.items():
-        seen: set[str] = set()
-        for rank, chunk_id in enumerate(chunk_ids, start=1):
-            if chunk_id in seen:
-                continue
-            seen.add(chunk_id)
-            scores[chunk_id] += 1.0 / (rank_constant + rank)
-            rank_positions[chunk_id][ranking_name] = rank
-
-    ordered_ids = sorted(scores, key=lambda chunk_id: (-scores[chunk_id], chunk_id))
-    return ordered_ids, dict(scores), dict(rank_positions)
 
 
 def format_context_record(record: neo4j.Record) -> RetrieverResultItem:
