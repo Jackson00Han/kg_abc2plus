@@ -11,11 +11,13 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 from typing import Any, Iterable
 
@@ -37,7 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET_DIR = ROOT / "datasets" / "dev-corpus-v1"
 DATASET_ID = "dev-corpus-v1"
 DATASET_VERSION = "1.0.1"
-GENERATOR_VERSION = "1.1.0"
+ANSWER_GOLD_VERSION = "1.1.0"
+GENERATOR_VERSION = "1.3.0"
 FIXED_INGESTED_AT = "2026-09-01T00:00:00+00:00"
 SPLITTER_SIGNATURE = "synthetic-section-splitter:v1"
 EXTRACTOR_SIGNATURE = "synthetic-adjudicated-extractor:v1"
@@ -47,6 +50,100 @@ EMBEDDING_PROVIDER = "fixture"
 EMBEDDING_MODEL = "adjudicated-evidence-clusters"
 EMBEDDING_REVISION = "dev-corpus-v1.1"
 EMBEDDING_NORMALIZATION = "l2"
+_ANSWER_TOKEN = re.compile(r"[^\W_]+(?:['’][^\W_]+)?", re.UNICODE)
+_ANSWER_QUANTITY = re.compile(
+    r"^(?P<currency>\$)?(?P<number>\d+(?:\.\d+)?)"
+    r"(?:\s+(?P<scale>billion))?(?P<percent>%)?$"
+)
+_ANSWER_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "are",
+        "as",
+        "at",
+        "be",
+        "for",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "that",
+        "the",
+        "this",
+        "was",
+        "were",
+        "with",
+    }
+)
+_ANSWER_INFERENCE_TERMS = frozenset(
+    {
+        "compared",
+        "comparison",
+        "decrease",
+        "decreased",
+        "decreases",
+        "difference",
+        "equal",
+        "from",
+        "higher",
+        "increase",
+        "increased",
+        "increases",
+        "lower",
+        "same",
+        "to",
+        "unchanged",
+    }
+)
+
+
+def _answer_content_sequence(text: str) -> tuple[str, ...]:
+    return tuple(
+        token.casefold()
+        for token in _ANSWER_TOKEN.findall(text)
+        if token.casefold() not in _ANSWER_STOPWORDS
+    )
+
+
+def _answer_content_tokens(text: str) -> set[str]:
+    """Mirror the Stage 6 sourced-wording gate for offline gold validation."""
+    return set(_answer_content_sequence(text))
+
+
+def _is_ordered_subsequence(
+    needle: tuple[str, ...],
+    haystack: tuple[str, ...],
+) -> bool:
+    if not needle:
+        return False
+    position = 0
+    for token in haystack:
+        if token == needle[position]:
+            position += 1
+            if position == len(needle):
+                return True
+    return False
+
+
+def _answer_quantity_parts(value: str) -> tuple[Decimal, str] | None:
+    match = _ANSWER_QUANTITY.fullmatch(value)
+    if match is None:
+        return None
+    try:
+        number = Decimal(match.group("number"))
+    except InvalidOperation:
+        return None
+    qualifier = "".join(
+        (
+            match.group("currency") or "",
+            f" {match.group('scale')}" if match.group("scale") else "",
+            match.group("percent") or "",
+        )
+    )
+    return number, qualifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +187,7 @@ class DatasetBuild:
     entities: tuple[dict[str, Any], ...]
     chunks: tuple[dict[str, Any], ...]
     questions: tuple[dict[str, Any], ...]
+    answers: tuple[dict[str, Any], ...]
     vectors: tuple[dict[str, Any], ...]
 
 
@@ -586,6 +684,389 @@ def _question_records(
     return tuple(records)
 
 
+def _answer_gold_records(
+    questions: Iterable[dict[str, Any]],
+    chunks_by_key: dict[str, dict[str, Any]],
+    documents: Iterable[dict[str, Any]],
+    companies_by_key: dict[str, CompanySpec],
+) -> tuple[dict[str, Any], ...]:
+    """Create versioned grounded-answer annotations, never model predictions."""
+    questions_by_id = {item["id"]: item for item in questions}
+    documents_by_id = {item["document_id"]: item for item in documents}
+    specs: dict[str, dict[str, Any]] = {}
+
+    def ck(company_key: str, year: int, section: str) -> str:
+        company = companies_by_key[company_key]
+        return f"{company.tenant_id}:{company.ticker.casefold()}:fy{year}:{section}"
+
+    def fact(
+        company_key: str,
+        years: Iterable[int],
+        family: str,
+    ) -> tuple[str, ...]:
+        sections = {
+            # Answer evidence is narrower than retrieval relevance: related
+            # Chunks remain recall candidates, but only direct assertions may
+            # be cited as support for the generated claim.
+            "offering": ("business",),
+            "segment": ("segment",),
+        }.get(family, (family,))
+        return tuple(
+            ck(company_key, year, section)
+            for year in years
+            for section in sections
+        )
+
+    def evidence(keys: Iterable[str]) -> tuple[dict[str, Any], ...]:
+        result: list[dict[str, Any]] = []
+        for key in dict.fromkeys(keys):
+            chunk = chunks_by_key[key]
+            document = documents_by_id[chunk["document_id"]]
+            result.append(
+                {
+                    "canonical_uri": document["canonical_uri"],
+                    "char_end": chunk["char_end"],
+                    "char_start": chunk["char_start"],
+                    "chunk_checksum": chunk["checksum"],
+                    "chunk_id": chunk["chunk_id"],
+                    "chunk_key": key,
+                    "document_id": chunk["document_id"],
+                    "document_title": document["title"],
+                    "ordinal": chunk["ordinal"],
+                    "page_number": chunk["page_number"],
+                    "published_at": document["published_at"],
+                    "section": chunk["section"],
+                    "source_name": document["source_name"],
+                    "version_checksum": document["checksum"],
+                    "version_id": chunk["version_id"],
+                    "version_number": document["version_number"],
+                }
+            )
+        return tuple(result)
+
+    def claim(
+        text: str,
+        required_terms: Iterable[str],
+        evidence_keys: Iterable[str],
+        *,
+        exact_tokens: Iterable[str] = (),
+        inference: bool = False,
+    ) -> dict[str, Any]:
+        keys = tuple(dict.fromkeys(evidence_keys))
+        return {
+            "evidence_chunk_ids": [chunks_by_key[key]["chunk_id"] for key in keys],
+            "evidence_chunk_keys": list(keys),
+            "exact_tokens": list(dict.fromkeys(exact_tokens)),
+            "inference": inference,
+            "material": True,
+            "reference_text": text,
+            "required_terms": list(dict.fromkeys(required_terms)),
+        }
+
+    def metric_value(company_key: str, year: int, metric: str) -> str:
+        company = companies_by_key[company_key]
+        values = company.metrics_for(year)
+        if metric == "revenue":
+            return f"${values.revenue_billions:.1f} billion"
+        if metric == "margin":
+            return f"{values.gross_margin_percent:.1f}%"
+        if metric == "cash":
+            return f"${values.cash_billions:.1f} billion"
+        if metric == "capital":
+            return f"${values.capital_return_billions:.1f} billion"
+        raise ValueError(f"unknown answer metric: {metric}")
+
+    def metric_claim(company_key: str, year: int, metric: str) -> dict[str, Any]:
+        company = companies_by_key[company_key]
+        value = metric_value(company_key, year, metric)
+        if metric == "revenue":
+            label = "synthetic revenue"
+            text = (
+                f"{company.canonical_name} reported {label} of {value} "
+                f"for fiscal year {year}."
+            )
+        elif metric == "margin":
+            label = "synthetic gross margin"
+            text = (
+                f"{company.canonical_name} reported a {label} of {value} "
+                f"for fiscal year {year}."
+            )
+        elif metric == "cash":
+            label = "synthetic cash and cash equivalents"
+            text = (
+                f"{company.canonical_name} held {label} of {value} at the end "
+                f"of fiscal year {year}."
+            )
+        elif metric == "capital":
+            label = "returned"
+            text = (
+                f"{company.canonical_name} returned a synthetic {value} to stakeholders "
+                f"during fiscal year {year}."
+            )
+        else:
+            raise ValueError(f"unknown answer metric: {metric}")
+        period = f"fiscal year {year}"
+        return claim(
+            text,
+            (company.canonical_name, label, value, period),
+            fact(company_key, (year,), metric),
+            exact_tokens=(value, period),
+        )
+
+    def offering_claim(company_key: str, years: Iterable[int]) -> dict[str, Any]:
+        company = companies_by_key[company_key]
+        return claim(
+            f"{company.canonical_name} describes a synthetic business centered on its {company.product}.",
+            (
+                company.canonical_name,
+                "describes",
+                "synthetic business",
+                "centered",
+                company.product,
+            ),
+            fact(company_key, years, "offering"),
+        )
+
+    def segment_claim(company_key: str, years: Iterable[int]) -> dict[str, Any]:
+        company = companies_by_key[company_key]
+        return claim(
+            f"{company.canonical_name} operates the {company.segment} segment.",
+            (company.canonical_name, "operates", company.segment),
+            fact(company_key, years, "segment"),
+        )
+
+    def risk_claim(
+        company_key: str,
+        years: Iterable[int],
+        risk: str,
+    ) -> dict[str, Any]:
+        company = companies_by_key[company_key]
+        risk_name = {
+            "risk-market": "Macroeconomic volatility",
+            "risk-supply": "Supply-chain disruption",
+        }[risk]
+        return claim(
+            f"{company.canonical_name} identifies {risk_name} as a synthetic risk factor.",
+            (company.canonical_name, risk_name, "risk factor"),
+            fact(company_key, years, risk),
+        )
+
+    def identity_claim(company_key: str, years: Iterable[int]) -> dict[str, Any]:
+        company = companies_by_key[company_key]
+        return claim(
+            f"{company.surface} ({company.ticker}) identifies {company.canonical_name} as the reporting company.",
+            (
+                company.surface,
+                company.ticker,
+                "identifies",
+                company.canonical_name,
+                "reporting company",
+            ),
+            fact(company_key, years, "identity"),
+        )
+
+    def inference_claim(
+        company_key: str,
+        metric: str,
+        direction: str,
+    ) -> dict[str, Any]:
+        company = companies_by_key[company_key]
+        result = claim(
+            f"{metric.capitalize()} for {company.canonical_name} {direction} from fiscal year 2023 to fiscal year 2024.",
+            (company.canonical_name, metric, direction),
+            (
+                *fact(company_key, (2023,), metric),
+                *fact(company_key, (2024,), metric),
+            ),
+            inference=True,
+        )
+        result["comparison"] = {
+            "direction": direction,
+            "from_period": "fiscal year 2023",
+            "from_value": metric_value(company_key, 2023, metric),
+            "to_period": "fiscal year 2024",
+            "to_value": metric_value(company_key, 2024, metric),
+        }
+        return result
+
+    def shared_risk_claims(
+        first_key: str,
+        second_key: str,
+        risk: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return (
+            risk_claim(first_key, (2023, 2024), risk),
+            risk_claim(second_key, (2023, 2024), risk),
+        )
+
+    def answer(
+        item_id: str,
+        claims: Iterable[dict[str, Any]],
+        *,
+        expected_status: str = "answered",
+        forbidden_answer_terms: Iterable[str] = (),
+        conflict: dict[str, Any] | None = None,
+        temporal_comparison: dict[str, Any] | None = None,
+    ) -> None:
+        material_claims = tuple(claims)
+        specs[item_id] = {
+            "claims": material_claims,
+            "conflict": conflict,
+            "expected_status": expected_status,
+            "forbidden_answer_terms": list(dict.fromkeys(forbidden_answer_terms)),
+            "reference_answer": " ".join(
+                ("Inference: " if item["inference"] else "")
+                + item["reference_text"]
+                for item in material_claims
+            ),
+            "refusal_reason": None,
+            "temporal_comparison": temporal_comparison,
+        }
+
+    def refuse(
+        item_id: str,
+        reason: str,
+        *,
+        protected_terms: Iterable[str] = (),
+    ) -> None:
+        specs[item_id] = {
+            "claims": (),
+            "conflict": None,
+            "expected_status": "insufficient_context",
+            "forbidden_answer_terms": list(dict.fromkeys(protected_terms)),
+            "reference_answer": "I don't have enough cited context to answer this question.",
+            "refusal_reason": reason,
+            "temporal_comparison": None,
+        }
+
+    # Single-Chunk and exact-value cases.
+    answer("single_chunk-success-01", (metric_claim("northstar", 2024, "revenue"),))
+    answer("single_chunk-success-02", (metric_claim("meridian-retail", 2024, "margin"),))
+    answer("single_chunk-success-03", (metric_claim("harbor-energy", 2023, "cash"),))
+    answer("single_chunk-success-04", (offering_claim("atlas-cloud", (2023, 2024)),))
+    answer("single_chunk-success-05", (segment_claim("atlas-logistics", (2023, 2024)),))
+    answer("single_chunk-boundary-01", (metric_claim("northstar", 2024, "revenue"),))
+    answer("single_chunk-boundary-02", (identity_claim("atlas-cloud", (2023, 2024)),))
+
+    answer("exact_value-success-01", (metric_claim("northstar", 2024, "revenue"),))
+    answer("exact_value-success-02", (metric_claim("meridian-retail", 2024, "margin"),))
+    answer("exact_value-success-03", (metric_claim("harbor-energy", 2023, "cash"),))
+    answer("exact_value-success-04", (metric_claim("atlas-cloud", 2024, "capital"),))
+    answer("exact_value-success-05", (metric_claim("atlas-logistics", 2024, "revenue"),))
+    answer("exact_value-boundary-01", (metric_claim("atlas-cloud", 2024, "revenue"),))
+    answer("exact_value-boundary-02", (metric_claim("harbor-energy", 2024, "margin"),))
+
+    # Cross-Chunk cases.
+    answer("cross_chunk-success-01", (metric_claim("northstar", 2024, "revenue"), metric_claim("northstar", 2024, "margin")))
+    answer("cross_chunk-success-02", (metric_claim("northstar", 2023, "revenue"), metric_claim("northstar", 2024, "revenue"), inference_claim("northstar", "revenue", "increased")))
+    answer("cross_chunk-success-03", (offering_claim("atlas-cloud", (2023, 2024)), risk_claim("atlas-cloud", (2023, 2024), "risk-market")))
+    answer("cross_chunk-success-04", (metric_claim("harbor-energy", 2024, "margin"), metric_claim("harbor-energy", 2024, "cash")))
+    answer("cross_chunk-success-05", (segment_claim("atlas-cloud", (2024,)), segment_claim("atlas-logistics", (2024,))))
+    answer("cross_chunk-boundary-01", (offering_claim("meridian-retail", (2024,)), metric_claim("meridian-retail", 2024, "cash")))
+    answer("cross_chunk-boundary-02", (metric_claim("atlas-cloud", 2024, "revenue"), metric_claim("atlas-logistics", 2024, "revenue")))
+
+    # Graph relationship cases.
+    answer("graph_relationship-success-01", (offering_claim("northstar", (2023, 2024)),))
+    answer("graph_relationship-success-02", (risk_claim("atlas-cloud", (2023, 2024), "risk-supply"),))
+    answer("graph_relationship-success-03", (segment_claim("atlas-logistics", (2023, 2024)),))
+    answer("graph_relationship-success-04", shared_risk_claims("atlas-cloud", "atlas-logistics", "risk-market"))
+    answer("graph_relationship-success-05", shared_risk_claims("meridian-retail", "harbor-energy", "risk-supply"))
+    answer("graph_relationship-boundary-01", (segment_claim("northstar", (2023, 2024)),))
+    answer("graph_relationship-boundary-02", (offering_claim("atlas-cloud", (2023, 2024)), offering_claim("atlas-logistics", (2023, 2024))))
+
+    # Compatible temporal comparisons require both periods plus labelled inference.
+    temporal_specs = (
+        ("temporal_conflict-success-01", "northstar", "revenue", "increased"),
+        ("temporal_conflict-success-02", "atlas-cloud", "margin", "increased"),
+        ("temporal_conflict-success-03", "atlas-logistics", "cash", "increased"),
+        ("temporal_conflict-success-04", "meridian-retail", "revenue", "increased"),
+        ("temporal_conflict-success-05", "harbor-energy", "revenue", "decreased"),
+    )
+    for item_id, company_key, metric, direction in temporal_specs:
+        answer(
+            item_id,
+            (
+                metric_claim(company_key, 2023, metric),
+                metric_claim(company_key, 2024, metric),
+                inference_claim(company_key, metric, direction),
+            ),
+            temporal_comparison={
+                "inference_direction": direction,
+                "must_label_inference": True,
+                "required": True,
+                "required_periods": ["fiscal year 2023", "fiscal year 2024"],
+            },
+        )
+    answer(
+        "temporal_conflict-boundary-01",
+        (metric_claim("northstar", 2024, "revenue"),),
+        forbidden_answer_terms=("$68.4 billion",),
+    )
+    answer(
+        "temporal_conflict-boundary-02",
+        (metric_claim("atlas-cloud", 2023, "margin"),),
+        forbidden_answer_terms=("63.5%",),
+    )
+
+    # Unanswerable cases must refuse without inventing claims.
+    for item_id in sorted(
+        item_id for item_id in questions_by_id if item_id.startswith("unanswerable-")
+    ):
+        refuse(item_id, "unsupported")
+
+    # Unauthorized cases refuse and may not echo protected facts or identities.
+    refuse("unauthorized-success-01", "unauthorized", protected_terms=("$52.8 billion",))
+    refuse("unauthorized-success-02", "unauthorized", protected_terms=("Atlas Fleet network",))
+    refuse("unauthorized-success-03", "unauthorized", protected_terms=("$5.9 billion",))
+    refuse("unauthorized-success-04", "unauthorized", protected_terms=("29.4%", "30.2%"))
+    refuse("unauthorized-success-05", "unauthorized", protected_terms=("Atlas Cloud Services Ltd.", "Atlas Logistics Holdings Inc."))
+    refuse("unauthorized-boundary-01", "unauthorized", protected_terms=("Northstar Systems plc", "NST"))
+    refuse("unauthorized-boundary-02", "unauthorized", protected_terms=("$52.8 billion",))
+
+    if set(specs) != set(questions_by_id):
+        missing = sorted(set(questions_by_id) - set(specs))
+        extra = sorted(set(specs) - set(questions_by_id))
+        raise ValueError(f"answer gold coverage mismatch: missing={missing}, extra={extra}")
+
+    records: list[dict[str, Any]] = []
+    for item_id, question in sorted(questions_by_id.items()):
+        spec = specs[item_id]
+        claims: list[dict[str, Any]] = []
+        evidence_by_id: dict[str, dict[str, Any]] = {}
+        for index, raw_claim in enumerate(spec["claims"], start=1):
+            item = dict(raw_claim)
+            item["claim_id"] = f"{item_id}:claim-{index:02d}"
+            claims.append(item)
+            for source in evidence(item["evidence_chunk_keys"]):
+                evidence_by_id[source["chunk_id"]] = source
+        records.append(
+            {
+                "case_type": question["case_type"],
+                "claims": claims,
+                "conflict": spec["conflict"],
+                "corpus_id": DATASET_ID,
+                "corpus_version": DATASET_VERSION,
+                "evidence": sorted(evidence_by_id.values(), key=lambda item: item["chunk_id"]),
+                "expected_material_claim_count": len(claims),
+                "expected_status": spec["expected_status"],
+                "forbidden_answer_terms": spec["forbidden_answer_terms"],
+                "gold_version": ANSWER_GOLD_VERSION,
+                "id": item_id,
+                "query": question["query"],
+                "question_class": question["question_class"],
+                "reference_answer": spec["reference_answer"],
+                "refusal_reason": spec["refusal_reason"],
+                "required_exact_tokens": list(
+                    dict.fromkeys(
+                        token for item in claims for token in item["exact_tokens"]
+                    )
+                ),
+                "temporal_comparison": spec["temporal_comparison"],
+            }
+        )
+    return tuple(records)
+
+
 def build_dataset() -> DatasetBuild:
     profile_id, signatures = _profile()
     embedding_profile = _embedding_profile()
@@ -797,6 +1278,14 @@ def build_dataset() -> DatasetBuild:
                 char_start = char_end
 
     questions = list(_question_records(chunks_by_key, companies_by_key))
+    answers = list(
+        _answer_gold_records(
+            questions,
+            chunks_by_key,
+            documents,
+            companies_by_key,
+        )
+    )
     chunks_by_id = {item["chunk_id"]: item for item in chunks}
     unanswerable_features = {
         item["id"]: f"unanswerable:{item['id']}"
@@ -859,6 +1348,7 @@ def build_dataset() -> DatasetBuild:
     documents.sort(key=lambda item: item["document_key"])
     chunks.sort(key=lambda item: item["chunk_key"])
     questions.sort(key=lambda item: item["id"])
+    answers.sort(key=lambda item: item["id"])
     vectors.sort(key=lambda item: (item["kind"], item["logical_key"]))
 
     notice = (
@@ -870,6 +1360,7 @@ def build_dataset() -> DatasetBuild:
     ).encode("utf-8")
     generated: dict[str, bytes] = {
         "NOTICE.txt": notice,
+        "answers.jsonl": _jsonl_bytes(answers),
         "chunks.jsonl": _jsonl_bytes(chunks),
         "entities.jsonl": _jsonl_bytes(entities),
         "questions.jsonl": _jsonl_bytes(questions),
@@ -889,12 +1380,21 @@ def build_dataset() -> DatasetBuild:
         "code_signature",
     )
     manifest = {
+        "answer_gold": {
+            "case_id_field": "id",
+            "contains_predictions": False,
+            "evidence_policy": "direct_claim_support",
+            "evidence_unit": "chunk",
+            "path": "answers.jsonl",
+            "version": ANSWER_GOLD_VERSION,
+        },
         "artifacts": [
             {"path": path, "sha256": _sha256(payload), "size_bytes": len(payload)}
             for path, payload in sorted(generated.items())
         ],
         "counts": {
             "active_chunks": len(chunks),
+            "answer_annotations": len(answers),
             "companies": len(COMPANIES),
             "documents": len(documents),
             "entities": len(entities),
@@ -961,6 +1461,7 @@ def build_dataset() -> DatasetBuild:
         entities=tuple(entities),
         chunks=tuple(chunks),
         questions=tuple(questions),
+        answers=tuple(answers),
         vectors=tuple(vectors),
     )
     errors = validate_build(build)
@@ -986,6 +1487,8 @@ def validate_build(build: DatasetBuild) -> tuple[str, ...]:
         errors.append("corpus must contain exactly two tenants")
     if len(build.questions) != 49:
         errors.append("corpus must contain 49 representative questions")
+    if counts.get("answer_annotations") != len(build.answers):
+        errors.append("manifest answer annotation count does not match answer gold")
 
     expected_classes = {
         "single_chunk",
@@ -1009,9 +1512,12 @@ def validate_build(build: DatasetBuild) -> tuple[str, ...]:
         if path.startswith("sources/")
     }
     documents_by_key = {item["document_key"]: item for item in build.documents}
+    documents_by_id = {item["document_id"]: item for item in build.documents}
     chunks_by_id = {item["chunk_id"]: item for item in build.chunks}
     if len(documents_by_key) != len(build.documents):
         errors.append("document keys must be unique")
+    if len(documents_by_id) != len(build.documents):
+        errors.append("document IDs must be unique")
     if len(chunks_by_id) != len(build.chunks):
         errors.append("chunk IDs must be unique")
 
@@ -1117,6 +1623,295 @@ def validate_build(build: DatasetBuild) -> tuple[str, ...]:
                 chunk = chunks_by_key[key]
                 if chunk["tenant_id"] == principal["tenant_id"] and set(chunk["access_groups"]) & set(principal["groups"]):
                     errors.append(f"unauthorized question {item['id']} can access forbidden evidence")
+
+    questions_by_id = {item["id"]: item for item in build.questions}
+    answers_by_id = {item["id"]: item for item in build.answers}
+    if len(answers_by_id) != len(build.answers) or set(answers_by_id) != set(questions_by_id):
+        errors.append("answer gold must bind exactly once to every question ID")
+    answer_gold_manifest = build.manifest.get("answer_gold", {})
+    if answer_gold_manifest != {
+        "case_id_field": "id",
+        "contains_predictions": False,
+        "evidence_policy": "direct_claim_support",
+        "evidence_unit": "chunk",
+        "path": "answers.jsonl",
+        "version": ANSWER_GOLD_VERSION,
+    }:
+        errors.append("manifest answer-gold contract is invalid")
+    for item_id, gold in answers_by_id.items():
+        question = questions_by_id.get(item_id)
+        if question is None:
+            continue
+        if gold.get("corpus_id") != DATASET_ID or gold.get("corpus_version") != DATASET_VERSION:
+            errors.append(f"answer gold {item_id} has the wrong corpus identity")
+        if gold.get("gold_version") != ANSWER_GOLD_VERSION:
+            errors.append(f"answer gold {item_id} has the wrong gold version")
+        if gold.get("query") != question["query"] or gold.get("question_class") != question["question_class"]:
+            errors.append(f"answer gold {item_id} does not match its question")
+        status = gold.get("expected_status")
+        if status not in {"answered", "insufficient_context", "conflict"}:
+            errors.append(f"answer gold {item_id} has an invalid expected status")
+        refusal_case = question["question_class"] in {"unanswerable", "unauthorized"}
+        if refusal_case != (status == "insufficient_context"):
+            errors.append(f"answer gold {item_id} has inconsistent refusal behavior")
+        claims = gold.get("claims")
+        if not isinstance(claims, list):
+            errors.append(f"answer gold {item_id} claims must be a list")
+            continue
+        if refusal_case and claims:
+            errors.append(f"refusal answer gold {item_id} must not contain factual claims")
+        if not refusal_case and not claims:
+            errors.append(f"answer gold {item_id} requires material claims")
+        if gold.get("expected_material_claim_count") != len(claims):
+            errors.append(f"answer gold {item_id} claim count is inconsistent")
+        positive_evidence = {
+            chunk_id_value
+            for chunk_id_value, grade in question["relevance"].items()
+            if grade > 0
+        }
+        evidence_records = gold.get("evidence", [])
+        if not isinstance(evidence_records, list):
+            errors.append(f"answer gold {item_id} evidence must be a list")
+            evidence_records = []
+        declared_evidence: set[str] = set()
+        for source in evidence_records:
+            if not isinstance(source, dict):
+                errors.append(f"answer gold {item_id} evidence must contain objects")
+                continue
+            source_chunk_id = source.get("chunk_id")
+            if not isinstance(source_chunk_id, str) or source_chunk_id in declared_evidence:
+                errors.append(f"answer gold {item_id} has invalid evidence IDs")
+                continue
+            declared_evidence.add(source_chunk_id)
+            chunk = chunks_by_id.get(source_chunk_id)
+            if chunk is None:
+                errors.append(f"answer gold {item_id} references unknown evidence")
+                continue
+            document = documents_by_id.get(chunk["document_id"])
+            if document is None:
+                errors.append(f"answer gold {item_id} evidence has no document")
+                continue
+            expected_source = {
+                "canonical_uri": document["canonical_uri"],
+                "char_end": chunk["char_end"],
+                "char_start": chunk["char_start"],
+                "chunk_checksum": chunk["checksum"],
+                "chunk_id": chunk["chunk_id"],
+                "chunk_key": chunk["chunk_key"],
+                "document_id": chunk["document_id"],
+                "document_title": document["title"],
+                "ordinal": chunk["ordinal"],
+                "page_number": chunk["page_number"],
+                "published_at": document["published_at"],
+                "section": chunk["section"],
+                "source_name": document["source_name"],
+                "version_checksum": document["checksum"],
+                "version_id": chunk["version_id"],
+                "version_number": document["version_number"],
+            }
+            if source != expected_source:
+                errors.append(
+                    f"answer gold {item_id} evidence does not exactly bind its Chunk/Document/Version"
+                )
+        claim_ids: set[str] = set()
+        canonical_claims: set[tuple[bool, str]] = set()
+        used_claim_evidence: set[str] = set()
+        for answer_claim in claims:
+            claim_id_value = answer_claim.get("claim_id")
+            if not isinstance(claim_id_value, str) or not claim_id_value or claim_id_value in claim_ids:
+                errors.append(f"answer gold {item_id} has invalid claim IDs")
+                continue
+            claim_ids.add(claim_id_value)
+            if answer_claim.get("material") is not True:
+                errors.append(f"answer gold {item_id} claims must be material")
+            reference_text = str(answer_claim.get("reference_text", ""))
+            if not reference_text.strip():
+                errors.append(f"answer gold {item_id} claim text must not be empty")
+            if reference_text.startswith("Inference:"):
+                errors.append(
+                    f"answer gold {item_id} must keep inference labels out of claim text"
+                )
+            canonical_claim = (
+                bool(answer_claim.get("inference")),
+                reference_text,
+            )
+            if canonical_claim in canonical_claims:
+                errors.append(
+                    f"answer gold {item_id} repeats a canonical adjudicated claim"
+                )
+            canonical_claims.add(canonical_claim)
+            rendered_reference = (
+                f"Inference: {reference_text}"
+                if answer_claim.get("inference")
+                else reference_text
+            )
+            if rendered_reference not in gold.get("reference_answer", ""):
+                errors.append(
+                    f"answer gold {item_id} reference answer omits a rendered claim"
+                )
+            for term in answer_claim.get("required_terms", []):
+                if str(term).casefold() not in reference_text.casefold():
+                    errors.append(f"answer gold {item_id} required term is absent from its claim")
+            for token in answer_claim.get("exact_tokens", []):
+                if str(token) not in reference_text:
+                    errors.append(f"answer gold {item_id} exact token is absent from its claim")
+            claim_evidence = set(answer_claim.get("evidence_chunk_ids", []))
+            used_claim_evidence.update(claim_evidence)
+            if not claim_evidence or not claim_evidence <= chunk_ids:
+                errors.append(f"answer gold {item_id} has invalid claim evidence")
+            if not claim_evidence <= positive_evidence:
+                errors.append(f"answer gold {item_id} uses evidence outside retrieval relevance")
+            if not claim_evidence <= declared_evidence:
+                errors.append(f"answer gold {item_id} omits claim evidence provenance")
+            claim_tokens = _answer_content_tokens(reference_text)
+            claim_sequence = _answer_content_sequence(reference_text)
+            evidence_tokens: set[str] = set()
+            for chunk_id_value in claim_evidence:
+                chunk = chunks_by_id.get(chunk_id_value)
+                if chunk is None:
+                    continue
+                source = source_texts.get(chunk["source_path"], "")
+                evidence_text = source[chunk["char_start"] : chunk["char_end"]]
+                evidence_tokens.update(_answer_content_tokens(evidence_text))
+                if (
+                    not answer_claim.get("inference")
+                    and not _is_ordered_subsequence(
+                        claim_sequence,
+                        _answer_content_sequence(evidence_text),
+                    )
+                ):
+                    errors.append(
+                        f"answer gold {item_id} lists a Chunk that does not "
+                        "directly support its sourced claim"
+                    )
+            allowed_tokens = (
+                evidence_tokens | _ANSWER_INFERENCE_TERMS
+                if answer_claim.get("inference")
+                else evidence_tokens
+            )
+            missing_tokens = sorted(claim_tokens - allowed_tokens)
+            if not claim_tokens or missing_tokens:
+                claim_kind = (
+                    "inference" if answer_claim.get("inference") else "sourced claim"
+                )
+                errors.append(
+                    f"answer gold {item_id} {claim_kind} contains tokens absent "
+                    f"from its evidence: {missing_tokens}"
+                )
+            comparison = answer_claim.get("comparison")
+            if answer_claim.get("inference"):
+                expected_comparison_fields = {
+                    "direction",
+                    "from_period",
+                    "from_value",
+                    "to_period",
+                    "to_value",
+                }
+                if not isinstance(comparison, dict) or set(comparison) != expected_comparison_fields:
+                    errors.append(
+                        f"answer gold {item_id} inference lacks an auditable comparison"
+                    )
+                else:
+                    from_parts = _answer_quantity_parts(str(comparison["from_value"]))
+                    to_parts = _answer_quantity_parts(str(comparison["to_value"]))
+                    if (
+                        from_parts is None
+                        or to_parts is None
+                        or from_parts[1] != to_parts[1]
+                    ):
+                        errors.append(
+                            f"answer gold {item_id} comparison quantities are incompatible"
+                        )
+                    else:
+                        actual_direction = (
+                            "increased"
+                            if to_parts[0] > from_parts[0]
+                            else "decreased"
+                            if to_parts[0] < from_parts[0]
+                            else "unchanged"
+                        )
+                        if comparison["direction"] != actual_direction:
+                            errors.append(
+                                f"answer gold {item_id} comparison direction "
+                                "does not match its operands"
+                            )
+                    if comparison.get("direction") not in reference_text:
+                        errors.append(
+                            f"answer gold {item_id} comparison direction is absent from its claim"
+                        )
+                    for prefix in ("from", "to"):
+                        period = str(comparison.get(f"{prefix}_period", ""))
+                        value = str(comparison.get(f"{prefix}_value", ""))
+                        if not any(
+                            period in source_text and value in source_text
+                            for chunk_id_value in claim_evidence
+                            if (chunk := chunks_by_id.get(chunk_id_value)) is not None
+                            and (
+                                source_text := source_texts.get(
+                                    chunk["source_path"], ""
+                                )[
+                                    chunk["char_start"] : chunk["char_end"]
+                                ]
+                            )
+                        ):
+                            errors.append(
+                                f"answer gold {item_id} comparison operand lacks direct evidence"
+                            )
+            elif comparison is not None:
+                errors.append(
+                    f"answer gold {item_id} sourced claim cannot declare a comparison"
+                )
+        if declared_evidence != used_claim_evidence:
+            errors.append(
+                f"answer gold {item_id} top-level evidence must exactly equal claim evidence"
+            )
+        exact_tokens = list(
+            dict.fromkeys(
+                token for answer_claim in claims for token in answer_claim.get("exact_tokens", [])
+            )
+        )
+        if gold.get("required_exact_tokens") != exact_tokens:
+            errors.append(f"answer gold {item_id} exact-token index is inconsistent")
+        if question["question_class"] == "exact_value" and not exact_tokens:
+            errors.append(f"exact-value answer gold {item_id} requires exact tokens")
+        if question["question_class"] == "unauthorized" and not gold.get("forbidden_answer_terms"):
+            errors.append(f"unauthorized answer gold {item_id} requires protected terms")
+        conflict = gold.get("conflict")
+        if status == "conflict":
+            if not isinstance(conflict, dict) or conflict.get("required") is not True:
+                errors.append(f"conflict answer gold {item_id} requires a conflict contract")
+        elif conflict is not None:
+            errors.append(f"non-conflict answer gold {item_id} must not declare conflict")
+        temporal = gold.get("temporal_comparison")
+        if temporal is not None:
+            if status != "answered" or not isinstance(temporal, dict):
+                errors.append(f"temporal answer gold {item_id} must be answered")
+            else:
+                raw_periods = temporal.get("required_periods")
+                periods = raw_periods if isinstance(raw_periods, list) else []
+                if (
+                    temporal.get("required") is not True
+                    or temporal.get("must_label_inference") is not True
+                    or not isinstance(raw_periods, list)
+                    or len(periods) < 2
+                    or not all(isinstance(period, str) and period for period in periods)
+                    or not isinstance(temporal.get("inference_direction"), str)
+                ):
+                    errors.append(f"temporal answer gold {item_id} has an invalid contract")
+                if not any(answer_claim.get("inference") for answer_claim in claims):
+                    errors.append(f"temporal answer gold {item_id} requires labelled inference")
+                direction = temporal.get("inference_direction")
+                if not any(
+                    answer_claim.get("inference")
+                    and isinstance(answer_claim.get("comparison"), dict)
+                    and answer_claim["comparison"].get("direction") == direction
+                    for answer_claim in claims
+                ):
+                    errors.append(
+                        f"temporal answer gold {item_id} direction does not match its inference"
+                    )
+                if any(period not in gold.get("reference_answer", "") for period in periods):
+                    errors.append(f"temporal answer gold {item_id} omits a required period")
 
     pairs = build.manifest.get("coverage", {}).get("homonym_negative_pairs", [])
     if len(pairs) != 1:

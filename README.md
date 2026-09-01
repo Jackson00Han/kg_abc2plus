@@ -40,6 +40,11 @@ in [`docs/incremental_ingestion.md`](docs/incremental_ingestion.md). Versioned
 graph schema rules, conservative entity resolution, quarantine, and quality
 reports are documented in
 [`docs/graph_quality_governance.md`](docs/graph_quality_governance.md).
+The bounded, permission-safe retrieval engine is documented in
+[`docs/production_retrieval.md`](docs/production_retrieval.md). Grounded answer
+generation, server-owned citations, refusal behavior, and the provider-neutral
+model boundary are documented in
+[`docs/grounded_answer_generation.md`](docs/grounded_answer_generation.md).
 
 ## Prerequisites
 

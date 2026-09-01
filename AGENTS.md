@@ -340,7 +340,7 @@ tests/
 | 4. Knowledge graph quality governance | Complete | `docs/graph_quality_governance.md`; `docs/validation/stage-4.md`; 75 unit + 48 disposable-Neo4j tests; 60 adjudicated cases |
 | 5. Production retrieval engine | Complete | `docs/production_retrieval.md`; `docs/validation/stage-5.md`; 88 unit + 53 disposable-Neo4j tests; 49-case gold regression fixture |
 | 5A. Representative development corpus | Complete | `docs/representative_dev_corpus.md`; `docs/validation/stage-5a.md`; 120-Chunk corpus; 99 unit + 60 disposable-Neo4j tests |
-| 6. Grounded answer generation | Not started | |
+| 6. Grounded answer generation | Complete | `docs/grounded_answer_generation.md`; `docs/validation/stage-6.md`; 153 unit + 62 disposable-Neo4j tests; 49-case cited-answer regression |
 | 7. API, security, reliability, observability | Not started | |
 | 8. Automated evaluation and regression gates | Not started | |
 | 9. Integrated production-candidate validation | Not started | |

@@ -24,6 +24,7 @@ from graphrag_prod.retrieval.metrics import (
     evaluate_retrieval_items,
 )
 from graphrag_prod.retrieval.models import (
+    Citation,
     RetrievalLimits,
     RetrievalRequest,
     VersionFilter,
@@ -106,6 +107,36 @@ class RetrievalRankingTests(unittest.TestCase):
 
 
 class RetrievalContractTests(unittest.TestCase):
+    def test_citation_adds_optional_document_provenance_compatibly(self) -> None:
+        citation = Citation(
+            chunk_id="chunk",
+            chunk_checksum="chunk-checksum",
+            document_id="document",
+            canonical_uri="https://example.com/document",
+            source_name="fixture",
+            version_id="version",
+            version_checksum="version-checksum",
+            version_number=1,
+            ordinal=0,
+            char_start=0,
+            char_end=5,
+            page_number=None,
+            section=None,
+        )
+        self.assertIsNone(citation.document_title)
+        self.assertIsNone(citation.published_at)
+
+        enriched = dataclasses.replace(
+            citation,
+            document_title="Authoritative title",
+            published_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        self.assertEqual(enriched.document_title, "Authoritative title")
+        self.assertEqual(
+            enriched.published_at,
+            datetime(2024, 1, 1, tzinfo=UTC),
+        )
+
     def test_limits_validate_cross_field_and_score_bounds(self) -> None:
         with self.assertRaisesRegex(ValueError, "bm25_scan_k"):
             RetrievalLimits(bm25_recall_k=10, bm25_scan_k=9)
@@ -158,6 +189,8 @@ class RetrievalContractTests(unittest.TestCase):
             self.assertIn("version_ids", query)
             self.assertIn("chunk_id", query)
             self.assertNotIn("elementId", query)
+        self.assertIn("document.title AS document_title", HYDRATE_QUERY)
+        self.assertIn("version.published_at AS published_at", HYDRATE_QUERY)
 
 
 class RetrievalMetricTests(unittest.TestCase):

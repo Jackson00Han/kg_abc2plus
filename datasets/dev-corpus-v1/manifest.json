@@ -1,9 +1,22 @@
 {
+  "answer_gold": {
+    "case_id_field": "id",
+    "contains_predictions": false,
+    "evidence_policy": "direct_claim_support",
+    "evidence_unit": "chunk",
+    "path": "answers.jsonl",
+    "version": "1.1.0"
+  },
   "artifacts": [
     {
       "path": "NOTICE.txt",
       "sha256": "d9733e70e93ae9f065bfcb8d54c8b6eb6e0165ec39e596a728a1b19fe6f3b861",
       "size_bytes": 264
+    },
+    {
+      "path": "answers.jsonl",
+      "sha256": "a18841f0a4624941fa3082eb1db38f63a6edfec687e9b569fa94e2968551e8c5",
+      "size_bytes": 106052
     },
     {
       "path": "chunks.jsonl",
@@ -78,6 +91,7 @@
   ],
   "counts": {
     "active_chunks": 120,
+    "answer_annotations": 49,
     "companies": 5,
     "documents": 10,
     "entities": 19,
@@ -460,14 +474,14 @@
   },
   "generated_by": {
     "path": "scripts/build_dev_corpus.py",
-    "version": "1.1.0"
+    "version": "1.3.0"
   },
   "owner": "repository-maintainers",
   "pipeline_profile": {
-    "code_signature": "dev-corpus-builder:1.1.0",
+    "code_signature": "dev-corpus-builder:1.3.0",
     "extractor_signature": "synthetic-adjudicated-extractor:v1",
     "normalizer_signature": "unicode-nfc-lf:v1",
-    "profile_id": "6a3c9590-8326-5018-bb2e-bc419d13dcaf",
+    "profile_id": "0ff508d8-dbf2-5d61-936a-1ec0f93f4d32",
     "prompt_signature": "checked-in-synthetic-annotations:v1",
     "schema_signature": "company-filings:v1",
     "splitter_signature": "synthetic-section-splitter:v1"

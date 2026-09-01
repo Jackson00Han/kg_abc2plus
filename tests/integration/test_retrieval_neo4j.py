@@ -158,12 +158,33 @@ class Neo4jRetrievalIntegrationTests(unittest.TestCase):
         ))
         for chunk in result.chunks:
             citation = chunk.citation
+            source_bundle = self.plan.bundles[citation.ordinal]
             self.assertEqual(citation.document_id, self.plan.document_id)
+            self.assertEqual(citation.document_title, source_bundle.document.title)
             self.assertEqual(citation.version_id, self.plan.version_id)
-            source = self.plan.bundles[citation.ordinal].version.normalized_text
+            self.assertEqual(citation.published_at, source_bundle.version.published_at)
+            source = source_bundle.version.normalized_text
             self.assertEqual(source[citation.char_start : citation.char_end], chunk.text)
         replay = self.engine.retrieve(request)
         self.assertEqual(result.trace.trace_id, replay.trace.trace_id)
+
+    def test_citation_metadata_cannot_be_spoofed_by_chunk_properties(self) -> None:
+        self.driver.execute_query(
+            """
+            MATCH (chunk:Chunk {tenant_id: $tenant_id})
+            SET chunk.document_title = 'forged chunk title',
+                chunk.published_at = datetime('2099-01-01T00:00:00Z')
+            """,
+            tenant_id=self.plan.tenant_id,
+            database_=self.database,
+        )
+        result = self.engine.retrieve(self._request(query_text="Apple revenue"))
+        self.assertTrue(result.citations)
+        for citation in result.citations:
+            source_bundle = self.plan.bundles[citation.ordinal]
+            self.assertEqual(citation.document_title, source_bundle.document.title)
+            self.assertEqual(citation.published_at, source_bundle.version.published_at)
+            self.assertNotEqual(citation.document_title, "forged chunk title")
 
     def test_all_stage_1_question_classes_have_real_retrieval_cases(self) -> None:
         ids = [bundle.chunk.chunk_id for bundle in self.plan.bundles]

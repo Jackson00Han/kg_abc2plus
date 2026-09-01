@@ -163,6 +163,10 @@ class Citation:
     char_end: int
     page_number: int | None
     section: str | None
+    # Optional tail fields preserve compatibility with callers constructing
+    # the Stage 5 contract while Stage 6 receives fuller source provenance.
+    document_title: str | None = None
+    published_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

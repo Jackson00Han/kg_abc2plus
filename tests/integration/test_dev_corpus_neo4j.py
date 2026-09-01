@@ -10,6 +10,12 @@ from urllib.parse import urlparse
 import neo4j
 
 from graphrag_prod.domain import Principal
+from graphrag_prod.generation import (
+    AnswerModelRequest,
+    AnswerStatus,
+    GenerationRequest,
+    GroundedGenerationService,
+)
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.ingestion import (
     Neo4jEmbeddingIndexManager,
@@ -21,7 +27,20 @@ from graphrag_prod.retrieval import (
     RetrievalRequest,
 )
 from graphrag_prod.retrieval.metrics import evaluate_retrieval_items
+from scripts.evaluate_grounded_answers import evaluate_answer_results
 from tests.fixtures.dev_corpus import DevCorpusFixture, load_dev_corpus_fixture
+
+
+class _StaticAnswerModel:
+    """Return one adjudicated payload through the real untrusted-model boundary."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.requests: list[AnswerModelRequest] = []
+
+    def generate(self, request: AnswerModelRequest) -> object:
+        self.requests.append(request)
+        return self.payload
 
 
 class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
@@ -106,6 +125,8 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             database_=cls.database,
         )
         cls.engine = Neo4jRetrievalEngine(cls.driver, cls.database)
+        cls.default_retrieval_results = {}
+        cls.generation_retrieval_results = {}
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -158,6 +179,70 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
         ):
             ids.update(hit.chunk_id for hit in stage)
         return ids
+
+    @classmethod
+    def _default_retrieval(cls, question: dict):
+        result = cls.default_retrieval_results.get(question["id"])
+        if result is None:
+            result = cls.engine.retrieve(cls._request(question))
+            cls.default_retrieval_results[question["id"]] = result
+        return result
+
+    @classmethod
+    def _generation_retrieval(cls, question: dict):
+        result = cls.generation_retrieval_results.get(question["id"])
+        if result is None:
+            result = cls.engine.retrieve(
+                cls._request(
+                    question,
+                    limits=RetrievalLimits(
+                        top_k=10,
+                        anchor_k=5,
+                        minimum_vector_score=0.75,
+                    ),
+                )
+            )
+            cls.generation_retrieval_results[question["id"]] = result
+        return result
+
+    @staticmethod
+    def _answer_payload(gold: dict, retrieval_result) -> dict[str, object]:
+        labels_by_chunk_id = {
+            chunk.citation.chunk_id: f"S{position}"
+            for position, chunk in enumerate(retrieval_result.chunks, start=1)
+        }
+        text_by_chunk_id = {
+            chunk.citation.chunk_id: chunk.text
+            for chunk in retrieval_result.chunks
+        }
+        claims: list[dict[str, object]] = []
+        for claim in gold["claims"]:
+            selected_ids = [
+                chunk_id
+                for chunk_id in claim["evidence_chunk_ids"]
+                if chunk_id in labels_by_chunk_id
+            ]
+            if not selected_ids:
+                raise AssertionError(
+                    f"{gold['id']} lacks selected evidence for {claim['claim_id']}"
+                )
+            citation_ids = [labels_by_chunk_id[chunk_id] for chunk_id in selected_ids]
+            claims.append(
+                {
+                    "text": claim["reference_text"],
+                    "material": True,
+                    "inference": claim["inference"],
+                    "citation_ids": citation_ids,
+                    "evidence": [
+                        {
+                            "citation_id": labels_by_chunk_id[chunk_id],
+                            "quote": text_by_chunk_id[chunk_id],
+                        }
+                        for chunk_id in selected_ids
+                    ],
+                }
+            )
+        return {"status": "answered", "claims": claims, "conflicts": []}
 
     def test_ingests_declared_scale_and_activates_complete_generations(self) -> None:
         records, _, _ = self.driver.execute_query(
@@ -342,7 +427,7 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             ]
 
         for question in self.fixture.build.questions:
-            result = self.engine.retrieve(self._request(question))
+            result = self._default_retrieval(question)
             trace_ids = self._trace_ids(result)
             forbidden = set(question["forbidden_chunk_ids"])
             accepted_final = [
@@ -450,6 +535,53 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             0,
             evidence,
         )
+
+    def test_actual_grounded_answers_meet_stage_1_targets(self) -> None:
+        actual: list[dict[str, object]] = []
+        answers_by_id = {item["id"]: item for item in self.fixture.build.answers}
+        for question in self.fixture.build.questions:
+            with self.subTest(question=question["id"]):
+                gold = answers_by_id[question["id"]]
+                retrieval_result = self._generation_retrieval(question)
+                payload = (
+                    self._answer_payload(gold, retrieval_result)
+                    if gold["expected_status"] == "answered"
+                    else {
+                        "status": "insufficient_context",
+                        "claims": [],
+                        "conflicts": [],
+                    }
+                )
+                model = _StaticAnswerModel(payload)
+                result = GroundedGenerationService(model).generate(
+                    GenerationRequest(question["query"], retrieval_result.chunks)
+                )
+                self.assertIsNone(result.failure_code)
+                self.assertEqual(result.status.value, gold["expected_status"])
+                if result.status is AnswerStatus.ANSWERED:
+                    self.assertEqual(len(model.requests), 1)
+                self.assertTrue(
+                    all(
+                        protected.casefold() not in result.answer.casefold()
+                        for protected in gold["forbidden_answer_terms"]
+                    )
+                )
+                record = result.as_dict()
+                record["id"] = question["id"]
+                actual.append(record)
+
+        metrics = evaluate_answer_results(self.fixture.build.answers, actual)
+        print(f"\nStage 6 actual grounded answers: metrics={metrics}")
+        self.assertEqual(metrics.item_count, 49)
+        self.assertEqual(metrics.generation_failure_count, 0)
+        self.assertGreaterEqual(metrics.supported_claim_rate, 0.95)
+        self.assertGreaterEqual(metrics.citation_precision, 0.95)
+        self.assertGreaterEqual(metrics.citation_coverage, 0.95)
+        self.assertEqual(metrics.numerical_fidelity, 1.0)
+        self.assertGreaterEqual(metrics.refusal_f1, 0.90)
+        self.assertEqual(metrics.answer_correctness, 1.0)
+        self.assertEqual(metrics.temporal_comparison_rate, 1.0)
+        self.assertIsNone(metrics.conflict_handling_rate)
 
     def test_acl_is_enforced_at_every_stage_and_across_tenants(self) -> None:
         unauthorized = (

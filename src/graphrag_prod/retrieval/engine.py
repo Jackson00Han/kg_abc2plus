@@ -322,9 +322,11 @@ RETURN DISTINCT chunk.chunk_id AS chunk_id,
        document.document_id AS document_id,
        document.canonical_uri AS canonical_uri,
        document.source_name AS source_name,
+       document.title AS document_title,
        version.version_id AS version_id,
        version.checksum AS version_checksum,
-       version.version_number AS version_number
+       version.version_number AS version_number,
+       version.published_at AS published_at
 ORDER BY chunk_id
 """
 
@@ -336,6 +338,14 @@ def _query_terms(query_text: str) -> str:
 
 def _records(tx: Any, query: str, parameters: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(record) for record in tx.run(query, **parameters)]
+
+
+def _native_datetime(value: Any) -> datetime | None:
+    """Convert Neo4j temporal values without inventing missing provenance."""
+    if value is None:
+        return None
+    to_native = getattr(value, "to_native", None)
+    return to_native() if callable(to_native) else value
 
 
 def _ids(records: list[dict[str, Any]]) -> tuple[str, ...]:
@@ -624,6 +634,12 @@ class Neo4jRetrievalEngine:
                     None if record.get("page_number") is None else int(record["page_number"])
                 ),
                 section=(None if record.get("section") is None else str(record["section"])),
+                document_title=(
+                    None
+                    if record.get("document_title") is None
+                    else str(record["document_title"])
+                ),
+                published_at=_native_datetime(record.get("published_at")),
             )
             result_chunks.append(
                 RetrievedChunk(
