@@ -142,6 +142,9 @@ def validate_contract(contract: dict[str, Any]) -> list[str]:
         "domain",
         "tenancy",
         "authorization",
+        "maximum_document_bytes",
+        "expected_daily_version_changes",
+        "burst_version_changes_per_minute",
         "minimum_validation_chunks",
         "retrieval_concurrency",
     ):
@@ -169,4 +172,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

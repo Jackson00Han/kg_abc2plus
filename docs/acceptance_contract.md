@@ -1,6 +1,6 @@
 # Production-Candidate Acceptance Contract
 
-Contract version: 1.0.0  
+Contract version: 1.0.1
 Machine-readable source: `contracts/acceptance.v1.json`  
 Target milestone: validation complete
 
@@ -44,6 +44,9 @@ uses conservative, testable assumptions:
   has an access-group list; callers may only retrieve allowed documents.
 - Update visibility is eventual, with one active document version used for
   ordinary retrieval and older versions retained only when policy allows it.
+- The reference workload expects 100 document-version changes per day, accepts
+  bursts of 20 changes per minute, and limits one submitted text version to
+  5 MiB. Larger or faster workloads require a new validation profile.
 - The validation environment is a single API service and a Neo4j database. It
   validates at least 10,000 chunks and eight concurrent retrieval clients.
 - External LLM and embedding availability is not controlled by this service.
@@ -105,6 +108,10 @@ metrics use the declared reference profile, warmed indexes, fixed concurrency,
 and recorded software/configuration versions. External model latency is
 reported separately from retrieval latency.
 
+Idempotency compares canonical published graph state and deliberately excludes
+declared volatile job timestamps and retry counters. Answer latency uses at
+least 30 warmed requests per recorded provider/model configuration.
+
 ## Security Boundary
 
 - The authenticated principal supplies a tenant ID and access groups through a
@@ -138,4 +145,3 @@ Run the Stage 1 contract checks with:
 python scripts/validate_acceptance_contract.py
 python -m unittest tests.unit.test_acceptance_contract
 ```
-

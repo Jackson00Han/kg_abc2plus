@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.0.1",
   "target_milestone": "validation_complete",
   "owner": "repository-maintainers",
   "scope": {
@@ -7,6 +7,9 @@
     "domain": "english_company_filings",
     "tenancy": "logical_multi_tenant",
     "authorization": "tenant_and_access_groups",
+    "maximum_document_bytes": 5242880,
+    "expected_daily_version_changes": 100,
+    "burst_version_changes_per_minute": 20,
     "minimum_validation_chunks": 10000,
     "retrieval_concurrency": 8
   },
@@ -207,7 +210,7 @@
       "operator": "=",
       "target": 0,
       "unit": "count",
-      "method": "graph state differences after repeating identical ingestion operations",
+      "method": "canonical graph state differences after repeating identical ingestion operations excluding declared volatile job timestamps and attempt counters",
       "dataset": "load-v1",
       "dataset_owner": "repository-maintainers"
     },
@@ -247,7 +250,7 @@
       "operator": "<=",
       "target": 15000,
       "unit": "milliseconds",
-      "method": "p95 end-to-end answer latency with model and provider version recorded",
+      "method": "p95 of at least 30 warmed end-to-end answer requests with model provider and configuration versions recorded",
       "dataset": "gold-v1",
       "dataset_owner": "repository-maintainers"
     },
@@ -273,4 +276,3 @@
     }
   ]
 }
-

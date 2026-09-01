@@ -1,7 +1,7 @@
 # Stage 1 Validation Record
 
 Date: 2026-08-31  
-Contract: `contracts/acceptance.v1.json` version 1.0.0
+Contract: `contracts/acceptance.v1.json` version 1.0.1
 
 ## Deliverables
 
@@ -31,3 +31,5 @@ assumptions because no deployment-specific corpus, traffic profile, or business
 reviewers were supplied. A real deployment must version and reapprove changed
 targets rather than silently reinterpret this contract.
 
+Post-review clarification 1.0.1 adds the assumed update frequency, document
+size, idempotency comparison boundary, and minimum answer-latency sample size.
