@@ -1,0 +1,49 @@
+{
+  "profile_version": "1.0.0",
+  "profile_id": "dev-mini",
+  "base_contract_version": "1.0.1",
+  "purpose": "local_development_smoke",
+  "production_candidate_eligible": false,
+  "overrides": {
+    "scope": {
+      "maximum_document_bytes": 262144,
+      "expected_daily_version_changes": 5,
+      "burst_version_changes_per_minute": 2,
+      "minimum_validation_chunks": 100,
+      "retrieval_concurrency": 2
+    },
+    "datasets": {
+      "gold-v1": {
+        "minimum_items": 14
+      },
+      "graph-review-v1": {
+        "minimum_items": 14
+      },
+      "load-v1": {
+        "minimum_items": 100
+      }
+    },
+    "question_classes": {
+      "minimum_success_cases": 1,
+      "minimum_boundary_cases": 1
+    }
+  },
+  "execution": {
+    "answer_latency_samples": 5,
+    "sustained_load_seconds": 30,
+    "neo4j": {
+      "mode": "local_capped",
+      "container_memory_mb": 1536,
+      "container_cpus": 1,
+      "heap_initial_mb": 256,
+      "heap_max_mb": 512,
+      "pagecache_mb": 128,
+      "readiness_timeout_seconds": 90
+    }
+  },
+  "metric_policy": {
+    "thresholds": "inherited_unchanged",
+    "quality_results": "smoke_only",
+    "performance_results": "informational_only"
+  }
+}

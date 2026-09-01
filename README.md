@@ -8,6 +8,19 @@ The tutorial scripts are followed by a staged production-candidate roadmap in
 [`AGENTS.md`](AGENTS.md). Its measurable scope and quality gates are defined in
 [`docs/acceptance_contract.md`](docs/acceptance_contract.md).
 
+Local validation defaults to the resource-bounded `dev-mini` profile (100
+Chunks and two retrieval clients). The full production-scale values remain in
+`contracts/acceptance.v1.json` and can be resolved and checked with
+`python3 scripts/validate_acceptance_contract.py --profile production-reference`.
+A `dev-mini` result exercises the complete workflow but is not production
+qualification evidence.
+
+At the current milestone the command validates and previews the declared
+workload; it does not generate a corpus or run a load test. The Stage 2/3
+Neo4j runners already enforce the checked local resource cap. Stage 8/9 will
+make the evaluation runner consume the declared corpus, concurrency, sample,
+and duration values.
+
 The production implementation is developed separately under
 `src/graphrag_prod`. Its stable identity, source provenance, access boundary,
 and Neo4j model are documented in
@@ -55,14 +68,20 @@ You need a running Neo4j instance. Two options:
 
 ```bash
 docker run -d --name neo4j \
+  --memory 1536m --memory-swap 1536m --cpus 1 \
   -p 7474:7474 -p 7687:7687 \
   -e NEO4J_AUTH=neo4j/your-password-here \
+  -e NEO4J_server_memory_heap_initial__size=256m \
+  -e NEO4J_server_memory_heap_max__size=512m \
+  -e NEO4J_server_memory_pagecache_size=128m \
   -e 'NEO4J_PLUGINS=["apoc"]' \
-  neo4j:5
+  neo4j:5.26.12-community
 ```
 
 Then set `NEO4J_URI=neo4j://localhost:7687` in your `.env`. APOC Core is
 required for dynamic relationship creation and entity resolution.
+These local limits match the default `dev-mini` profile; they cap Neo4j at
+1.5 GiB and one CPU without changing the graph schema or code paths.
 
 ## Quick Start
 

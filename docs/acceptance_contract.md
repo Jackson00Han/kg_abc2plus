@@ -2,6 +2,7 @@
 
 Contract version: 1.0.1
 Machine-readable source: `contracts/acceptance.v1.json`  
+Default local profile: `contracts/profiles/dev-mini.v1.json`
 Target milestone: validation complete
 
 ## Purpose
@@ -57,6 +58,49 @@ uses conservative, testable assumptions:
 These assumptions are requirements for this reference implementation, not
 universal claims. Changing one requires a new contract version and regression
 run.
+
+## Validation Workload Profiles
+
+The production contract remains the authoritative target. Local development
+uses a strict scale-only overlay so the same architecture, IDs, evidence path,
+authorization, ingestion lifecycle, retrieval stages, and metric definitions
+can be exercised without a production-sized corpus.
+
+| Parameter | `dev-mini` default | `production-reference` |
+| --- | ---: | ---: |
+| Production qualification eligible | No | Yes |
+| Maximum test document | 256 KiB | 5 MiB |
+| Expected changes/day | 5 | 100 |
+| Burst changes/minute | 2 | 20 |
+| Validation corpus | 100 Chunks | 10,000 Chunks |
+| Retrieval concurrency | 2 | 8 |
+| Gold cases | 14 | 49 |
+| Graph review records | 14 | 50 |
+| Synthetic load records | 100 | 10,000 |
+| Cases per question class | 1 success + 1 boundary | 5 success + 2 boundary |
+| Answer-latency requests | 5 smoke requests | At least 30 |
+| Sustained-load duration | 30 seconds | 300 seconds |
+| Neo4j local cap | 1.5 GiB, 1 CPU | Deployment-sized |
+| Quality interpretation | Smoke only | Gate |
+| Performance interpretation | Informational only | Gate |
+
+The overlay cannot change the domain, tenancy, authorization model, question
+classes, dataset ownership, metric definitions, or metric thresholds. In
+particular, unauthorized exposure, idempotency mismatches, and deletion residue
+remain zero; numerical fidelity and interruption recovery remain 100%.
+
+The validator rejects unknown override fields, profile/contract version drift,
+non-positive or oversized scale values, inadequate gold/load quotas, and any
+attempt to mark a reduced profile as production eligible. JSON comments are not
+used: both profiles are explicit, versioned, and machine checked.
+
+The profile command currently validates and resolves configuration; it does not
+itself create test data or run performance traffic. The disposable Neo4j
+runners consume equivalent local resource limits, with a unit check preventing
+configuration drift. The Stage 8/9 evaluation runner will consume the declared
+dataset, concurrency, sample-count, and duration values. Until that runner and
+its datasets exist, `--profile production-reference` is a configuration check,
+not a production-scale validation run.
 
 ## Supported Document Lifecycle
 
@@ -142,6 +186,11 @@ risks.
 Run the Stage 1 contract checks with:
 
 ```bash
+# Defaults to the small local workflow profile.
 python scripts/validate_acceptance_contract.py
+
+# Validate and preview the preserved production reference declaration.
+python scripts/validate_acceptance_contract.py --profile production-reference
+
 python -m unittest tests.unit.test_acceptance_contract
 ```

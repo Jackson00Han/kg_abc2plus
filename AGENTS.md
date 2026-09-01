@@ -34,6 +34,10 @@ continuing to add all behavior to one numbered script.
    query, not only after retrieval.
 10. Record material design decisions, test evidence, limitations, and metric
     changes in the repository.
+11. Local development defaults to the versioned `dev-mini` workload profile.
+    It may reduce scale, duration, and repetition only; it must not weaken
+    identity, provenance, authorization, correctness, or lifecycle invariants,
+    and its results never qualify as production-candidate validation.
 
 ## Definition of Done for Every Stage
 
@@ -295,7 +299,7 @@ tests/
 | Stage | Status | Evidence |
 | --- | --- | --- |
 | Plan and execution rules | Complete | `AGENTS.md`; formatting and secret checks passed |
-| 1. Requirements and acceptance contract | Complete | `contracts/acceptance.v1.json`; `docs/validation/stage-1.md` |
+| 1. Requirements and acceptance contract | Complete | Production reference plus default `dev-mini` overlay; `contracts/acceptance.v1.json`; `docs/validation/stage-1.md` |
 | 2. Production data and provenance model | Complete | `docs/provenance_model.md`; `docs/validation/stage-2.md`; 28 unit + 13 disposable-Neo4j tests |
 | 3. Idempotent incremental ingestion | Complete | `docs/incremental_ingestion.md`; `docs/validation/stage-3.md`; 49 unit + 41 disposable-Neo4j tests |
 | 4. Knowledge graph quality governance | Not started | |

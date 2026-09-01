@@ -1,0 +1,24 @@
+{
+  "profile_version": "1.0.0",
+  "profile_id": "production-reference",
+  "base_contract_version": "1.0.1",
+  "purpose": "production_candidate_validation",
+  "production_candidate_eligible": true,
+  "overrides": {
+    "scope": {},
+    "datasets": {},
+    "question_classes": {}
+  },
+  "execution": {
+    "answer_latency_samples": 30,
+    "sustained_load_seconds": 300,
+    "neo4j": {
+      "mode": "deployment_sized"
+    }
+  },
+  "metric_policy": {
+    "thresholds": "inherited_unchanged",
+    "quality_results": "gate",
+    "performance_results": "gate"
+  }
+}

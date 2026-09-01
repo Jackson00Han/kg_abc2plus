@@ -19,6 +19,9 @@ metric from changing meaning between stages.
   support the claim to which they are attached.
 - **Conflict**: two accessible, currently valid sources make incompatible
   claims and the configured authority/version policy cannot select one.
+- **Development smoke profile**: a versioned, scale-only workload overlay that
+  executes the production code paths with fewer records, clients, samples, and
+  seconds. Its results cannot establish production-candidate eligibility.
 - **Evidence**: exact text and location in an accepted source chunk. An entity
   name or graph edge without a source chunk is not evidence.
 - **Gold case**: a versioned evaluation record with question, caller scope,
@@ -33,6 +36,9 @@ metric from changing meaning between stages.
 - **Production candidate**: a version that passes the committed acceptance
   contract in a recorded reference environment. It is not automatically a live
   service or proof of fitness outside that environment.
+- **Production reference profile**: the unmodified workload, sample quotas,
+  metric thresholds, and gating policy required to make a production-candidate
+  validation claim.
 - **Retrieval latency**: server-side time from validated retrieval request to a
   bounded context result; answer-model time is excluded and reported
   separately.
@@ -46,4 +52,3 @@ metric from changing meaning between stages.
 - **Validation complete**: every hard gate in the named contract version has a
   repeatable passing result, or an exception is explicitly recorded as not
   passed. It does not imply an operational availability SLO.
-

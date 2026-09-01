@@ -42,7 +42,9 @@ git diff --check
 The disposable runner refuses an existing fixed-name container, binds Bolt to
 `127.0.0.1:17687`, requires an initially empty database, clears application
 credentials, runs only the integration suite, and removes the container on
-exit. It never targets the database configured in `.env`.
+exit. It never targets the database configured in `.env`. The current local
+runner also caps Neo4j at 1.5 GiB, one CPU, a 512 MiB maximum heap, and a 128 MiB
+page cache under the `dev-mini` profile.
 
 ## Verified Behavior
 

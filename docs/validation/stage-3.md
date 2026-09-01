@@ -51,7 +51,9 @@ git diff --check
 The Stage 3 runner refuses an existing fixed-name container, binds Bolt only
 to `127.0.0.1:17688`, requires an initially empty database, clears application
 credentials, runs the complete Neo4j integration suite, and removes the
-container on exit. It never targets the database configured in `.env`.
+container on exit. It never targets the database configured in `.env`. Under
+the default `dev-mini` profile it caps Neo4j at 1.5 GiB, one CPU, a 512 MiB
+maximum heap, and a 128 MiB page cache.
 
 ## Verified Behavior
 
