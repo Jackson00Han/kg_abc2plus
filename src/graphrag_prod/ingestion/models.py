@@ -16,6 +16,10 @@ from graphrag_prod.domain.ids import (
     knowledge_snapshot_id,
 )
 from graphrag_prod.domain.models import Chunk, GraphPipelineProfile, KnowledgeSnapshot
+from graphrag_prod.graph.governance import (
+    GovernanceFinding,
+    GraphGovernancePolicy,
+)
 from graphrag_prod.graph.provenance import ProvenanceBundle
 
 
@@ -149,8 +153,10 @@ def snapshot_manifest(bundles: tuple[ProvenanceBundle, ...]) -> tuple[dict[str, 
 class IngestionPlan:
     operation_key: str
     profile: GraphPipelineProfile
+    governance_policy: GraphGovernancePolicy
     snapshot: KnowledgeSnapshot
     bundles: tuple[ProvenanceBundle, ...]
+    governance_findings: tuple[GovernanceFinding, ...]
     expected_active_snapshot_id: str | None
     source_generation: int
     artifact_input_hashes: tuple[tuple[str, str], ...]
@@ -164,6 +170,10 @@ class IngestionPlan:
             raise ValueError("source_generation must not be negative")
         if self.max_attempts <= 0:
             raise ValueError("max_attempts must be positive")
+        if self.governance_policy.policy_id != self.profile.schema_signature:
+            raise ValueError(
+                "governance policy_id must match the pipeline schema signature"
+            )
 
         documents = {bundle.document.document_id for bundle in self.bundles}
         versions = {bundle.version.version_id for bundle in self.bundles}
@@ -221,6 +231,10 @@ class IngestionPlan:
             for assertion in bundle.all_assertions
         ):
             raise ValueError("assertion derivation does not match graph pipeline profile")
+        for bundle in self.bundles:
+            governed = self.governance_policy.govern_bundle(bundle)
+            if governed.bundle != bundle:
+                raise ValueError("ingestion bundles must be governed before planning")
 
         artifact_hashes = dict(self.artifact_input_hashes)
         if len(artifact_hashes) != len(self.artifact_input_hashes):
@@ -255,8 +269,10 @@ class IngestionPlan:
             {
                 "operation": "UPSERT",
                 "profile": self.profile,
+                "governance_policy": self.governance_policy,
                 "snapshot": self.snapshot,
                 "bundles": self.bundles,
+                "governance_findings": self.governance_findings,
                 "expected_active_snapshot_id": self.expected_active_snapshot_id,
                 "source_generation": self.source_generation,
                 "artifact_input_hashes": self.artifact_input_hashes,
@@ -269,6 +285,7 @@ class IngestionPlan:
         *,
         operation_key: str,
         profile: GraphPipelineProfile,
+        governance_policy: GraphGovernancePolicy,
         bundles: tuple[ProvenanceBundle, ...],
         expected_active_snapshot_id: str | None,
         source_generation: int,
@@ -278,6 +295,15 @@ class IngestionPlan:
     ) -> IngestionPlan:
         if not bundles:
             raise ValueError("ingestion plan requires at least one chunk bundle")
+        if governance_policy.policy_id != profile.schema_signature:
+            raise ValueError(
+                "governance policy_id must match the pipeline schema signature"
+            )
+        governed = tuple(governance_policy.govern_bundle(bundle) for bundle in bundles)
+        bundles = tuple(result.bundle for result in governed)
+        findings = tuple(
+            finding for result in governed for finding in result.findings
+        )
         first = bundles[0]
         manifest_hash = _fingerprint(snapshot_manifest(bundles))
         snapshot_identifier = knowledge_snapshot_id(
@@ -297,8 +323,10 @@ class IngestionPlan:
         return cls(
             operation_key=operation_key,
             profile=profile,
+            governance_policy=governance_policy,
             snapshot=snapshot,
             bundles=bundles,
+            governance_findings=findings,
             expected_active_snapshot_id=expected_active_snapshot_id,
             source_generation=source_generation,
             artifact_input_hashes=tuple(sorted(artifact_input_hashes.items())),

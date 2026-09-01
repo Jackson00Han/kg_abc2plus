@@ -14,6 +14,7 @@ from tests.fixtures.ingestion import (
     CHUNKS_V2,
     FIXED_TIME,
     make_bundles,
+    make_governance_policy,
     make_plan,
     make_profile,
 )
@@ -23,6 +24,7 @@ def _build(bundles: tuple, operation_key: str = "unit-plan") -> IngestionPlan:
     return IngestionPlan.build(
         operation_key=operation_key,
         profile=make_profile(),
+        governance_policy=make_governance_policy(),
         bundles=bundles,
         expected_active_snapshot_id=None,
         source_generation=0,
@@ -214,7 +216,7 @@ class IngestionPlanTests(unittest.TestCase):
             "mention-confidence": (
                 dataclasses.replace(
                     first,
-                    mentions=(dataclasses.replace(mention, confidence=0.75),),
+                    mentions=(dataclasses.replace(mention, confidence=0.85),),
                 ),
                 *base.bundles[1:],
             ),

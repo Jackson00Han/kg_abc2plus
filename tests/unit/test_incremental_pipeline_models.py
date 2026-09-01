@@ -12,7 +12,12 @@ from graphrag_prod.ingestion import (
     EmbeddingProfile,
     IncrementalIngestionRequest,
 )
-from tests.fixtures.ingestion import CHUNKS_V1, FIXED_TIME, make_profile
+from tests.fixtures.ingestion import (
+    CHUNKS_V1,
+    FIXED_TIME,
+    make_governance_policy,
+    make_profile,
+)
 
 
 def _seeds() -> tuple[ChunkSeed, ...]:
@@ -64,6 +69,7 @@ def _request() -> IncrementalIngestionRequest:
         expected_active_snapshot_id=None,
         chunks=_seeds(),
         profile=make_profile(),
+        governance_policy=make_governance_policy(),
         embedding_profile=_embedding_profile(),
         max_attempts=3,
     )

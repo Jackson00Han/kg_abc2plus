@@ -516,9 +516,27 @@ class Neo4jIngestionService:
             profile.profile_id,
             profile_properties,
         )
+        governance_policy = plan.governance_policy
+        governance_policy_properties = {
+            "policy_id": governance_policy.policy_id,
+            "policy_version": governance_policy.policy_version,
+            "payload_hash": governance_policy.payload_hash,
+            "payload": governance_policy.canonical_payload,
+        }
+        Neo4jProvenanceStore._merge_node(
+            tx,
+            "GraphGovernancePolicy",
+            "policy_id",
+            governance_policy.policy_id,
+            governance_policy_properties,
+        )
         snapshot = plan.snapshot
         snapshot_identity = asdict(snapshot)
         snapshot_identity.pop("created_at")
+        snapshot_identity["governance_policy_id"] = plan.governance_policy.policy_id
+        snapshot_identity["governance_policy_version"] = (
+            plan.governance_policy.policy_version
+        )
         Neo4jProvenanceStore._merge_node(
             tx,
             "KnowledgeSnapshot",
@@ -534,16 +552,41 @@ class Neo4jIngestionService:
             MATCH (job:IngestionJob {job_id: $job_id})
             MATCH (snapshot:KnowledgeSnapshot {snapshot_id: $snapshot_id})
             MATCH (profile:GraphPipelineProfile {profile_id: $profile_id})
+            MATCH (policy:GraphGovernancePolicy {policy_id: $policy_id})
             MERGE (job)-[:BUILDS]->(snapshot)
             MERGE (snapshot)-[:USES_PROFILE]->(profile)
+            MERGE (snapshot)-[:USES_GOVERNANCE_POLICY]->(policy)
             SET job.phase = $phase, job.updated_at = $now
             """,
             job_id=plan.job_id,
             snapshot_id=snapshot.snapshot_id,
             profile_id=profile.profile_id,
+            policy_id=governance_policy.policy_id,
             phase=JobPhase.STAGE.value,
             now=now,
         ).consume()
+        for finding in plan.governance_findings:
+            finding_properties = {
+                "finding_id": f"ingestion-finding:{_fingerprint([snapshot.snapshot_id, finding])}",
+                "snapshot_id": snapshot.snapshot_id,
+                **asdict(finding),
+            }
+            Neo4jProvenanceStore._merge_node(
+                tx,
+                "GraphGovernanceFinding",
+                "finding_id",
+                finding_properties["finding_id"],
+                finding_properties,
+            )
+            tx.run(
+                """
+                MATCH (snapshot:KnowledgeSnapshot {snapshot_id: $snapshot_id})
+                MATCH (finding:GraphGovernanceFinding {finding_id: $finding_id})
+                MERGE (snapshot)-[:HAS_GOVERNANCE_FINDING]->(finding)
+                """,
+                snapshot_id=snapshot.snapshot_id,
+                finding_id=finding_properties["finding_id"],
+            ).consume()
 
     def _stage_bundle(
         self,
@@ -1028,9 +1071,9 @@ class Neo4jIngestionService:
             chunk_ids=chunk_ids,
         ).consume()
 
-        # Entity identity is shared, while profile governance belongs to
-        # Stage 4. Publish may fill an absent profile, but never overwrite a
-        # profile already supported by another active document.
+        # Entity identity is shared. A new governed publication may fill an
+        # absent profile/status, but never clears a human quarantine or
+        # overwrites a profile supported by another active document.
         for entity in {
             entity.entity_id: entity
             for bundle in plan.bundles
@@ -1043,12 +1086,21 @@ class Neo4jIngestionService:
                         entity.canonical_name,
                         $canonical_name
                     ),
-                    entity.aliases = coalesce(entity.aliases, $aliases)
+                    entity.aliases = coalesce(entity.aliases, $aliases),
+                    entity.governance_status = coalesce(
+                        entity.governance_status,
+                        'ACCEPTED'
+                    ),
+                    entity.governance_policy_id = coalesce(
+                        entity.governance_policy_id,
+                        $governance_policy_id
+                    )
                 """,
                 entity_id=entity.entity_id,
                 tenant_id=entity.tenant_id,
                 canonical_name=entity.canonical_name,
                 aliases=list(entity.aliases),
+                governance_policy_id=plan.governance_policy.policy_id,
             ).consume()
 
         old_snapshot_id = current_snapshot

@@ -157,6 +157,7 @@ class AcceptanceContractTests(unittest.TestCase):
         for runner_name in (
             "run_stage2_neo4j_tests.sh",
             "run_stage3_neo4j_tests.sh",
+            "run_stage4_neo4j_tests.sh",
         ):
             with self.subTest(runner=runner_name):
                 runner = (ROOT / "scripts" / runner_name).read_text(encoding="utf-8")

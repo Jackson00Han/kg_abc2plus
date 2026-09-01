@@ -16,7 +16,7 @@ A `dev-mini` result exercises the complete workflow but is not production
 qualification evidence.
 
 At the current milestone the command validates and previews the declared
-workload; it does not generate a corpus or run a load test. The Stage 2/3
+workload; it does not generate a corpus or run a load test. The Stage 2–4
 Neo4j runners already enforce the checked local resource cap. Stage 8/9 will
 make the evaluation runner consume the declared corpus, concurrency, sample,
 and duration values.
@@ -27,7 +27,10 @@ and Neo4j model are documented in
 [`docs/provenance_model.md`](docs/provenance_model.md); completed stage evidence
 is recorded under [`docs/validation`](docs/validation). The resumable provider,
 snapshot publication, deletion, and vector-generation lifecycle is documented
-in [`docs/incremental_ingestion.md`](docs/incremental_ingestion.md).
+in [`docs/incremental_ingestion.md`](docs/incremental_ingestion.md). Versioned
+graph schema rules, conservative entity resolution, quarantine, and quality
+reports are documented in
+[`docs/graph_quality_governance.md`](docs/graph_quality_governance.md).
 
 ## Prerequisites
 

@@ -1,0 +1,56 @@
+{
+  "catalog_version": "1.0.0",
+  "owner": "repository-maintainers",
+  "domain": "english_company_filings",
+  "policies": [
+    {
+      "policy_id": "company-filings:v1",
+      "policy_version": 1,
+      "minimum_entity_confidence": 0.8,
+      "minimum_assertion_confidence": 0.8,
+      "anomalous_hub_degree": 25,
+      "entity_properties": {
+        "required": ["entity_id", "tenant_id", "entity_type", "canonical_key", "canonical_name", "aliases"],
+        "allowed": ["entity_id", "tenant_id", "entity_type", "canonical_key", "canonical_name", "aliases"]
+      },
+      "assertion_properties": {
+        "required": ["assertion_id", "tenant_id", "subject_entity_id", "predicate", "evidence_chunk_id", "evidence_char_start", "evidence_char_end", "extractor_version", "schema_version", "confidence", "accepted", "object_entity_id", "literal_value"],
+        "allowed": ["assertion_id", "tenant_id", "subject_entity_id", "predicate", "evidence_chunk_id", "evidence_char_start", "evidence_char_end", "extractor_version", "schema_version", "confidence", "accepted", "object_entity_id", "literal_value"]
+      },
+      "entity_types": [
+        {"entity_type": "Company", "canonical_key_namespaces": ["ticker", "cik", "lei", "name"]},
+        {"entity_type": "Product", "canonical_key_namespaces": ["product", "apple-product", "name"]},
+        {"entity_type": "RiskFactor", "canonical_key_namespaces": ["risk", "name"]},
+        {"entity_type": "BusinessSegment", "canonical_key_namespaces": ["segment", "name"]}
+      ],
+      "relationships": [
+        {"predicate": "OFFERS", "subject_types": ["Company"], "object_kind": "entity", "object_types": ["Product"]},
+        {"predicate": "HAS_RISK", "subject_types": ["Company"], "object_kind": "entity", "object_types": ["RiskFactor"]},
+        {"predicate": "OPERATES_SEGMENT", "subject_types": ["Company"], "object_kind": "entity", "object_types": ["BusinessSegment"]}
+      ]
+    },
+    {
+      "policy_id": "company-metrics:v1",
+      "policy_version": 1,
+      "minimum_entity_confidence": 0.8,
+      "minimum_assertion_confidence": 0.8,
+      "anomalous_hub_degree": 25,
+      "entity_properties": {
+        "required": ["entity_id", "tenant_id", "entity_type", "canonical_key", "canonical_name", "aliases"],
+        "allowed": ["entity_id", "tenant_id", "entity_type", "canonical_key", "canonical_name", "aliases"]
+      },
+      "assertion_properties": {
+        "required": ["assertion_id", "tenant_id", "subject_entity_id", "predicate", "evidence_chunk_id", "evidence_char_start", "evidence_char_end", "extractor_version", "schema_version", "confidence", "accepted", "object_entity_id", "literal_value"],
+        "allowed": ["assertion_id", "tenant_id", "subject_entity_id", "predicate", "evidence_chunk_id", "evidence_char_start", "evidence_char_end", "extractor_version", "schema_version", "confidence", "accepted", "object_entity_id", "literal_value"]
+      },
+      "entity_types": [
+        {"entity_type": "Company", "canonical_key_namespaces": ["ticker", "cik", "lei", "name"]}
+      ],
+      "relationships": [
+        {"predicate": "REPORTS_REVENUE", "subject_types": ["Company"], "object_kind": "literal"},
+        {"predicate": "REPORTS_MARGIN", "subject_types": ["Company"], "object_kind": "literal"},
+        {"predicate": "REPORTS_CASH", "subject_types": ["Company"], "object_kind": "literal"}
+      ]
+    }
+  ]
+}

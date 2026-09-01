@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
+from pathlib import Path
 
 from graphrag_prod.domain import (
     Assertion,
@@ -29,6 +30,10 @@ from graphrag_prod.domain import (
     version_id,
 )
 from graphrag_prod.graph.provenance import ProvenanceBundle
+from graphrag_prod.graph.governance import (
+    GraphGovernancePolicy,
+    load_governance_policy,
+)
 from graphrag_prod.ingestion.models import (
     IngestionPlan,
     default_artifact_input_hash,
@@ -84,6 +89,13 @@ def make_profile() -> GraphPipelineProfile:
         "git:stage3-fixture",
     )
     return GraphPipelineProfile(pipeline_profile_id(*signatures), *signatures)
+
+
+def make_governance_policy() -> GraphGovernancePolicy:
+    return load_governance_policy(
+        Path(__file__).parents[2] / "contracts" / "graph_governance.v1.json",
+        SCHEMA_SIGNATURE,
+    )
 
 
 def make_principal(tenant_id: str = "tenant-stage3") -> Principal:
@@ -292,6 +304,7 @@ def make_plan(
     return IngestionPlan.build(
         operation_key=operation_key,
         profile=make_profile(),
+        governance_policy=make_governance_policy(),
         bundles=bundles,
         expected_active_snapshot_id=expected_active_snapshot_id,
         source_generation=source_generation,

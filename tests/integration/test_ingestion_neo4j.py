@@ -190,6 +190,7 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
         return IngestionPlan.build(
             operation_key=operation_key,
             profile=plan.profile,
+            governance_policy=plan.governance_policy,
             bundles=bundles,
             expected_active_snapshot_id=plan.snapshot.snapshot_id,
             source_generation=plan.source_generation,
@@ -223,6 +224,7 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
         return IngestionPlan.build(
             operation_key=operation_key,
             profile=plan.profile,
+            governance_policy=plan.governance_policy,
             bundles=bundles,
             expected_active_snapshot_id=plan.snapshot.snapshot_id,
             source_generation=plan.source_generation,
@@ -1291,6 +1293,7 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             return IngestionPlan.build(
                 operation_key=operation_key,
                 profile=profile,
+                governance_policy=source.governance_policy,
                 bundles=bundles,
                 expected_active_snapshot_id=expected_active_snapshot_id,
                 source_generation=source.source_generation,

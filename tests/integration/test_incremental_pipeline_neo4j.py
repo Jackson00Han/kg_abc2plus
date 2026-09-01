@@ -44,6 +44,7 @@ from tests.fixtures.ingestion import (
     CHUNKS_V2,
     FIXED_TIME,
     FixedClock,
+    make_governance_policy,
     make_profile,
 )
 
@@ -337,6 +338,7 @@ def _request(
         expected_active_snapshot_id=expected_active_snapshot_id,
         chunks=_chunk_seeds(specs),
         profile=make_profile(),
+        governance_policy=make_governance_policy(),
         embedding_profile=EmbeddingProfile(
             provider="fixture",
             model="durable-provider-four-dimensional",

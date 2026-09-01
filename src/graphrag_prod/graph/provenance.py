@@ -844,13 +844,20 @@ class Neo4jProvenanceStore:
                   AND chunk.version_id = version.version_id
                   AND chunk.access_policy_id = document.access_policy_id
                   AND chunk.access_policy_version = document.access_policy_version
+                  AND coalesce(assertion.governance_status, 'ACCEPTED') IN
+                      ['ACCEPTED', 'ACCEPTED_BY_REVIEW']
+                  AND coalesce(subject.governance_status, 'ACCEPTED') IN
+                      ['ACCEPTED', 'ACCEPTED_BY_REVIEW']
                   AND (
                       NOT EXISTS {
                           MATCH (document)-[:ACTIVE_SNAPSHOT]->(:KnowledgeSnapshot)
                       }
                       AND chunk.publication_state = 'LEGACY_PUBLISHED'
                       AND assertion.publication_state = 'LEGACY_PUBLISHED'
-                      AND assertion.accepted = true
+                      AND (
+                          assertion.accepted = true
+                          OR assertion.governance_status = 'ACCEPTED_BY_REVIEW'
+                      )
                       OR EXISTS {
                           MATCH (document)-[:ACTIVE_SNAPSHOT]->(
                               snapshot:KnowledgeSnapshot
@@ -864,12 +871,20 @@ class Neo4jProvenanceStore:
                             AND EXISTS {
                               MATCH (snapshot)-[:INCLUDES_ENTITY]->(subject)
                           }
-                            AND assertion_membership.accepted = true
+                            AND (
+                                assertion_membership.accepted = true
+                                OR assertion.governance_status = 'ACCEPTED_BY_REVIEW'
+                            )
                       }
                   )
                 OPTIONAL MATCH (assertion)-[:OBJECT]->(object:Entity {
                     tenant_id: $tenant_id
                 })
+                WITH assertion, subject, object, chunk, version, document
+                WHERE assertion.object_kind <> 'entity'
+                   OR (object IS NOT NULL
+                       AND coalesce(object.governance_status, 'ACCEPTED') IN
+                           ['ACCEPTED', 'ACCEPTED_BY_REVIEW'])
                 RETURN assertion.assertion_id AS assertion_id,
                        assertion.predicate AS predicate,
                        subject.entity_id AS subject_entity_id,

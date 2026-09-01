@@ -31,6 +31,7 @@ from graphrag_prod.domain.models import (
     GraphPipelineProfile,
 )
 from graphrag_prod.graph.provenance import ProvenanceBundle
+from graphrag_prod.graph.governance import GraphGovernancePolicy
 
 from .artifacts import (
     decode_embedding,
@@ -157,6 +158,7 @@ class IncrementalIngestionRequest:
     expected_active_snapshot_id: str | None
     chunks: tuple[ChunkSeed, ...]
     profile: GraphPipelineProfile
+    governance_policy: GraphGovernancePolicy
     embedding_profile: EmbeddingProfile
     version_number: int
     ingested_at: datetime
@@ -185,6 +187,10 @@ class IncrementalIngestionRequest:
             raise ValueError("source_generation and version_number are invalid")
         if self.max_attempts <= 0:
             raise ValueError("max_attempts must be positive")
+        if self.governance_policy.policy_id != self.profile.schema_signature:
+            raise ValueError(
+                "governance policy_id must match the pipeline schema signature"
+            )
         _aware(self.ingested_at, "ingested_at")
         if self.published_at is not None:
             _aware(self.published_at, "published_at")
@@ -516,6 +522,7 @@ class Neo4jIncrementalPipeline:
             plan = IngestionPlan.build(
                 operation_key=request.operation_key,
                 profile=request.profile,
+                governance_policy=request.governance_policy,
                 bundles=tuple(bundles),
                 expected_active_snapshot_id=request.expected_active_snapshot_id,
                 source_generation=request.source_generation,
