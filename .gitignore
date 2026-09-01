@@ -20,9 +20,6 @@ eggs/
 venv/
 ENV/
 
-# uv
-uv.lock
-
 # IDE - VS Code
 .vscode/
 

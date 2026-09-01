@@ -1,0 +1,724 @@
+"""Neo4j adapter for immutable, access-controlled provenance records."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import (
+    assertion_id as make_assertion_id,
+    canonicalize_uri,
+    chunk_embedding_id as make_chunk_embedding_id,
+    chunk_id as make_chunk_id,
+    document_id as make_document_id,
+    entity_id as make_entity_id,
+    mention_id as make_mention_id,
+    version_id as make_version_id,
+)
+from graphrag_prod.domain.models import (
+    Assertion,
+    Chunk,
+    ChunkEmbedding,
+    Document,
+    DocumentVersion,
+    Entity,
+    EntityMention,
+)
+
+
+class SessionDriver(Protocol):
+    def session(self, **kwargs: object) -> Any: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ProvenanceBundle:
+    document: Document
+    version: DocumentVersion
+    chunk: Chunk
+    embedding: ChunkEmbedding
+    entities: tuple[Entity, ...]
+    mentions: tuple[EntityMention, ...]
+    assertion: Assertion
+    activate_version: bool = True
+
+    def __post_init__(self) -> None:
+        tenant_ids = {
+            self.document.tenant_id,
+            self.version.tenant_id,
+            self.chunk.tenant_id,
+            self.embedding.tenant_id,
+            self.assertion.tenant_id,
+            *(entity.tenant_id for entity in self.entities),
+            *(mention.tenant_id for mention in self.mentions),
+        }
+        if len(tenant_ids) != 1:
+            raise ValueError("all provenance records must belong to one tenant")
+        if self.version.document_id != self.document.document_id:
+            raise ValueError("version must belong to the supplied document")
+        if self.chunk.version_id != self.version.version_id:
+            raise ValueError("chunk must belong to the supplied version")
+        if self.chunk.document_id != self.document.document_id:
+            raise ValueError("chunk document_id does not match the document")
+        if self.embedding.chunk_id != self.chunk.chunk_id:
+            raise ValueError("embedding must belong to the supplied chunk")
+        if not self.chunk.access_groups <= self.document.access_groups:
+            raise ValueError("chunk access cannot be broader than document access")
+        if (
+            self.chunk.access_policy_id != self.document.access_policy_id
+            or self.chunk.access_policy_version != self.document.access_policy_version
+        ):
+            raise ValueError("chunk and document access policy versions must match")
+        if not 0 <= self.chunk.char_start < self.chunk.char_end <= len(
+            self.version.normalized_text
+        ):
+            raise ValueError("chunk range is outside the normalized source text")
+        if (
+            self.version.normalized_text[self.chunk.char_start : self.chunk.char_end]
+            != self.chunk.text
+        ):
+            raise ValueError("chunk text does not match its source range")
+
+        if canonicalize_uri(self.document.canonical_uri) != self.document.canonical_uri:
+            raise ValueError("document canonical_uri is not canonical")
+        if (
+            make_document_id(self.document.tenant_id, self.document.canonical_uri)
+            != self.document.document_id
+        ):
+            raise ValueError("document_id does not match its identity inputs")
+        if (
+            make_version_id(
+                self.document.document_id,
+                self.version.checksum,
+                self.version.original_checksum,
+            )
+            != self.version.version_id
+        ):
+            raise ValueError("version_id does not match its identity inputs")
+        if (
+            make_chunk_id(
+                self.version.version_id,
+                self.chunk.splitter_version,
+                self.chunk.ordinal,
+                self.chunk.char_start,
+                self.chunk.char_end,
+                self.chunk.checksum,
+            )
+            != self.chunk.chunk_id
+        ):
+            raise ValueError("chunk_id does not match its identity inputs")
+        if (
+            make_chunk_embedding_id(
+                self.embedding.chunk_id,
+                self.embedding.embedding_space_id,
+            )
+            != self.embedding.embedding_id
+        ):
+            raise ValueError("embedding_id does not match its identity inputs")
+
+        entities_by_id = {entity.entity_id: entity for entity in self.entities}
+        if len(entities_by_id) != len(self.entities):
+            raise ValueError("bundle contains duplicate entity IDs")
+        for entity in self.entities:
+            if (
+                make_entity_id(
+                    entity.tenant_id,
+                    entity.entity_type,
+                    entity.canonical_key,
+                )
+                != entity.entity_id
+            ):
+                raise ValueError("entity_id does not match its identity inputs")
+
+        if self.assertion.subject_entity_id not in entities_by_id:
+            raise ValueError("assertion subject is absent from the bundle")
+        if (
+            self.assertion.object_entity_id is not None
+            and self.assertion.object_entity_id not in entities_by_id
+        ):
+            raise ValueError("assertion object is absent from the bundle")
+        if self.assertion.evidence_chunk_id != self.chunk.chunk_id:
+            raise ValueError("bundle chunk must be assertion evidence")
+        if not (
+            self.chunk.char_start
+            <= self.assertion.evidence_char_start
+            < self.assertion.evidence_char_end
+            <= self.chunk.char_end
+        ):
+            raise ValueError("assertion evidence range is outside the chunk")
+
+        for mention in self.mentions:
+            entity = entities_by_id.get(mention.entity_id)
+            if mention.chunk_id != self.chunk.chunk_id:
+                raise ValueError("mention must belong to the supplied chunk")
+            if entity is None:
+                raise ValueError("mention entity is absent from the bundle")
+            if mention.entity_type != entity.entity_type:
+                raise ValueError("mention and entity types do not match")
+            if not self.chunk.char_start <= mention.char_start < mention.char_end <= self.chunk.char_end:
+                raise ValueError("mention range is outside the chunk")
+            if (
+                self.version.normalized_text[mention.char_start : mention.char_end]
+                != mention.surface
+            ):
+                raise ValueError("mention surface does not match source text")
+            if (
+                make_mention_id(
+                    mention.chunk_id,
+                    mention.entity_type,
+                    mention.char_start,
+                    mention.char_end,
+                    mention.surface,
+                    mention.extractor_version,
+                )
+                != mention.mention_id
+            ):
+                raise ValueError("mention_id does not match its identity inputs")
+
+        mentioned_entity_ids = {mention.entity_id for mention in self.mentions}
+        if mentioned_entity_ids != set(entities_by_id):
+            raise ValueError("every derived entity requires a mention in the evidence chunk")
+        required_endpoint_ids = {self.assertion.subject_entity_id}
+        if self.assertion.object_entity_id is not None:
+            required_endpoint_ids.add(self.assertion.object_entity_id)
+        if not required_endpoint_ids <= mentioned_entity_ids:
+            raise ValueError("assertion endpoints require entity mentions")
+        for endpoint_id in required_endpoint_ids:
+            if not any(
+                mention.entity_id == endpoint_id
+                and self.assertion.evidence_char_start <= mention.char_start
+                and mention.char_end <= self.assertion.evidence_char_end
+                for mention in self.mentions
+            ):
+                raise ValueError("assertion endpoint mention is outside evidence span")
+        evidence_text = self.version.normalized_text[
+            self.assertion.evidence_char_start : self.assertion.evidence_char_end
+        ]
+        if (
+            self.assertion.literal_value is not None
+            and self.assertion.literal_value not in evidence_text
+        ):
+            raise ValueError("literal assertion object is absent from its evidence span")
+
+        object_kind = (
+            "entity" if self.assertion.object_entity_id is not None else "literal"
+        )
+        object_reference = (
+            self.assertion.object_entity_id or self.assertion.literal_value or ""
+        )
+        if (
+            make_assertion_id(
+                self.assertion.tenant_id,
+                self.assertion.subject_entity_id,
+                self.assertion.predicate,
+                object_kind,
+                object_reference,
+                self.assertion.evidence_chunk_id,
+                self.assertion.evidence_char_start,
+                self.assertion.evidence_char_end,
+                self.assertion.extractor_version,
+                self.assertion.schema_version,
+            )
+            != self.assertion.assertion_id
+        ):
+            raise ValueError("assertion_id does not match its identity inputs")
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceView:
+    assertion_id: str
+    predicate: str
+    subject_entity_id: str
+    object_reference: str
+    evidence_char_start: int
+    evidence_char_end: int
+    chunk_id: str
+    chunk_checksum: str
+    text: str
+    char_start: int
+    char_end: int
+    page_number: int | None
+    section: str | None
+    version_id: str
+    version_checksum: str
+    version_number: int
+    document_id: str
+    canonical_uri: str
+    source_name: str
+
+
+def _properties(**values: Any) -> dict[str, Any]:
+    """Neo4j maps omit None because assigning null removes a property."""
+    return {key: value for key, value in values.items() if value is not None}
+
+
+class Neo4jProvenanceStore:
+    """Persist immutable provenance and read evidence through real graph paths."""
+
+    def __init__(self, driver: SessionDriver, database: str = "neo4j") -> None:
+        self.driver = driver
+        self.database = database
+
+    def write_bundle(self, bundle: ProvenanceBundle) -> None:
+        with self.driver.session(database=self.database) as session:
+            session.execute_write(self._write_bundle_tx, bundle)
+
+    @staticmethod
+    def _merge_node(
+        tx: Any,
+        label: str,
+        id_property: str,
+        identifier: str,
+        immutable_properties: dict[str, Any],
+        mutable_properties: dict[str, Any] | None = None,
+        versioned_properties: dict[str, Any] | None = None,
+        version_property: str | None = None,
+    ) -> None:
+        if immutable_properties.get(id_property) != identifier:
+            raise ValueError(f"{label} properties do not contain their stable ID")
+        mutable_properties = mutable_properties or {}
+        versioned_properties = versioned_properties or {}
+        if bool(versioned_properties) != bool(version_property):
+            raise ValueError(
+                "versioned_properties and version_property must be supplied together"
+            )
+        if version_property and version_property not in versioned_properties:
+            raise ValueError("versioned state does not contain its version property")
+
+        all_properties = {
+            **immutable_properties,
+            **mutable_properties,
+            **versioned_properties,
+        }
+        if versioned_properties:
+            # The transient write takes a Neo4j node lock before the current
+            # policy snapshot is read. The lock is held until this transaction
+            # commits, so Document and Chunk policy changes form one atomic CAS.
+            record = tx.run(
+                f"""
+                MERGE (node:{label} {{{id_property}: $identifier}})
+                ON CREATE SET node = $all_properties
+                WITH node
+                SET node.__state_write_lock = randomUUID()
+                WITH node,
+                     all(
+                         key IN keys($immutable_properties)
+                         WHERE node[key] = $immutable_properties[key]
+                     ) AS compatible,
+                     node[$version_property] AS current_version,
+                     all(
+                         key IN keys($versioned_properties)
+                         WHERE node[key] = $versioned_properties[key]
+                     ) AS same_versioned_state
+                REMOVE node.__state_write_lock
+                RETURN compatible, current_version, same_versioned_state
+                """,
+                identifier=identifier,
+                all_properties=all_properties,
+                immutable_properties=immutable_properties,
+                versioned_properties=versioned_properties,
+                version_property=version_property,
+            ).single()
+        else:
+            record = tx.run(
+                f"""
+                MERGE (node:{label} {{{id_property}: $identifier}})
+                ON CREATE SET node = $all_properties
+                RETURN all(
+                    key IN keys($immutable_properties)
+                    WHERE node[key] = $immutable_properties[key]
+                ) AS compatible
+                """,
+                identifier=identifier,
+                all_properties=all_properties,
+                immutable_properties=immutable_properties,
+            ).single()
+        if record is None or not record["compatible"]:
+            raise ValueError(f"immutable {label} conflicts with existing stable ID")
+
+        if versioned_properties:
+            incoming_version = versioned_properties[version_property]
+            current_version = record["current_version"]
+            if incoming_version < current_version:
+                raise ValueError(f"stale {label} {version_property}")
+            if incoming_version == current_version:
+                if not record["same_versioned_state"]:
+                    raise ValueError(
+                        f"conflicting {label} state at {version_property} "
+                        f"{incoming_version}"
+                    )
+            else:
+                tx.run(
+                    f"""
+                    MATCH (node:{label} {{{id_property}: $identifier}})
+                    SET node += $versioned_properties
+                    """,
+                    identifier=identifier,
+                    versioned_properties=versioned_properties,
+                ).consume()
+        if mutable_properties:
+            tx.run(
+                f"""
+                MATCH (node:{label} {{{id_property}: $identifier}})
+                SET node += $mutable_properties
+                """,
+                identifier=identifier,
+                mutable_properties=mutable_properties,
+            ).consume()
+
+    @classmethod
+    def _write_bundle_tx(cls, tx: Any, bundle: ProvenanceBundle) -> None:
+        document = bundle.document
+        version = bundle.version
+        chunk = bundle.chunk
+
+        document_identity = _properties(
+            document_id=document.document_id,
+            tenant_id=document.tenant_id,
+            canonical_uri=document.canonical_uri,
+            source_name=document.source_name,
+            created_at=document.created_at,
+        )
+        document_profile = _properties(title=document.title)
+        document_access = _properties(
+            access_policy_id=document.access_policy_id,
+            access_policy_version=document.access_policy_version,
+            access_groups=sorted(document.access_groups),
+        )
+        cls._merge_node(
+            tx,
+            "Document",
+            "document_id",
+            document.document_id,
+            document_identity,
+            document_profile,
+            document_access,
+            "access_policy_version",
+        )
+
+        # A transient write obtains a lock on the logical document so two
+        # concurrent publishers cannot both observe that no active version exists.
+        active = tx.run(
+            """
+            MATCH (document:Document {document_id: $document_id})
+            SET document.__provenance_write_lock = randomUUID()
+            REMOVE document.__provenance_write_lock
+            WITH document
+            OPTIONAL MATCH (document)-[:ACTIVE_VERSION]->(active:DocumentVersion)
+            WHERE active.version_id <> $version_id
+            RETURN count(active) AS active_count
+            """,
+            document_id=document.document_id,
+            version_id=version.version_id,
+        ).single()
+        if bundle.activate_version and active is not None and active["active_count"] > 0:
+            raise ValueError("document already has a different active version")
+
+        version_properties = _properties(
+            version_id=version.version_id,
+            document_id=version.document_id,
+            tenant_id=version.tenant_id,
+            checksum=version.checksum,
+            original_checksum=version.original_checksum,
+            normalized_text=version.normalized_text,
+            version_number=version.version_number,
+            mime_type=version.mime_type,
+            language=version.language,
+            published_at=version.published_at,
+            ingested_at=version.ingested_at,
+        )
+        cls._merge_node(
+            tx,
+            "DocumentVersion",
+            "version_id",
+            version.version_id,
+            version_properties,
+        )
+        tx.run(
+            """
+            MATCH (document:Document {document_id: $document_id})
+            MATCH (version:DocumentVersion {version_id: $version_id})
+            WHERE document.tenant_id = version.tenant_id
+            MERGE (document)-[:HAS_VERSION]->(version)
+            """,
+            document_id=document.document_id,
+            version_id=version.version_id,
+        ).consume()
+        if bundle.activate_version:
+            tx.run(
+                """
+                MATCH (document:Document {document_id: $document_id})
+                MATCH (version:DocumentVersion {version_id: $version_id})
+                WHERE document.tenant_id = version.tenant_id
+                MERGE (document)-[:ACTIVE_VERSION]->(version)
+                """,
+                document_id=document.document_id,
+                version_id=version.version_id,
+            ).consume()
+
+        chunk_identity = _properties(
+            chunk_id=chunk.chunk_id,
+            version_id=chunk.version_id,
+            document_id=chunk.document_id,
+            tenant_id=chunk.tenant_id,
+            ordinal=chunk.ordinal,
+            text=chunk.text,
+            checksum=chunk.checksum,
+            char_start=chunk.char_start,
+            char_end=chunk.char_end,
+            page_number=chunk.page_number,
+            section=chunk.section,
+            splitter_version=chunk.splitter_version,
+        )
+        chunk_access = _properties(
+            access_policy_id=chunk.access_policy_id,
+            access_policy_version=chunk.access_policy_version,
+            access_groups=sorted(chunk.access_groups),
+        )
+        cls._merge_node(
+            tx,
+            "Chunk",
+            "chunk_id",
+            chunk.chunk_id,
+            chunk_identity,
+            versioned_properties=chunk_access,
+            version_property="access_policy_version",
+        )
+        tx.run(
+            """
+            MATCH (version:DocumentVersion {version_id: $version_id})
+            MATCH (chunk:Chunk {chunk_id: $chunk_id})
+            WHERE version.tenant_id = chunk.tenant_id
+              AND chunk.version_id = version.version_id
+            MERGE (version)-[:HAS_CHUNK]->(chunk)
+            """,
+            version_id=version.version_id,
+            chunk_id=chunk.chunk_id,
+        ).consume()
+
+        embedding = bundle.embedding
+        embedding_properties = _properties(
+            embedding_id=embedding.embedding_id,
+            tenant_id=embedding.tenant_id,
+            chunk_id=embedding.chunk_id,
+            embedding_space_id=embedding.embedding_space_id,
+            provider=embedding.provider,
+            model=embedding.model,
+            revision=embedding.revision,
+            dimensions=embedding.dimensions,
+            normalization=embedding.normalization,
+            created_at=embedding.created_at,
+        )
+        cls._merge_node(
+            tx,
+            "ChunkEmbedding",
+            "embedding_id",
+            embedding.embedding_id,
+            embedding_properties,
+        )
+        tx.run(
+            """
+            MATCH (chunk:Chunk {chunk_id: $chunk_id})
+            MATCH (embedding:ChunkEmbedding {embedding_id: $embedding_id})
+            WHERE chunk.tenant_id = embedding.tenant_id
+              AND embedding.chunk_id = chunk.chunk_id
+            MERGE (chunk)-[:HAS_EMBEDDING]->(embedding)
+            """,
+            chunk_id=chunk.chunk_id,
+            embedding_id=embedding.embedding_id,
+        ).consume()
+
+        for entity in bundle.entities:
+            entity_identity = _properties(
+                entity_id=entity.entity_id,
+                tenant_id=entity.tenant_id,
+                entity_type=entity.entity_type,
+                canonical_key=entity.canonical_key,
+            )
+            entity_profile = _properties(
+                canonical_name=entity.canonical_name,
+                aliases=list(entity.aliases),
+            )
+            cls._merge_node(
+                tx,
+                "Entity",
+                "entity_id",
+                entity.entity_id,
+                entity_identity,
+                entity_profile,
+            )
+
+        for mention in bundle.mentions:
+            mention_properties = _properties(
+                mention_id=mention.mention_id,
+                tenant_id=mention.tenant_id,
+                chunk_id=mention.chunk_id,
+                entity_id=mention.entity_id,
+                entity_type=mention.entity_type,
+                surface=mention.surface,
+                char_start=mention.char_start,
+                char_end=mention.char_end,
+                extractor_version=mention.extractor_version,
+                confidence=mention.confidence,
+            )
+            cls._merge_node(
+                tx,
+                "EntityMention",
+                "mention_id",
+                mention.mention_id,
+                mention_properties,
+            )
+            record = tx.run(
+                """
+                MATCH (mention:EntityMention {mention_id: $mention_id})
+                MATCH (chunk:Chunk {chunk_id: $chunk_id})
+                MATCH (entity:Entity {entity_id: $entity_id})
+                WHERE mention.tenant_id = chunk.tenant_id
+                  AND mention.tenant_id = entity.tenant_id
+                  AND mention.chunk_id = chunk.chunk_id
+                  AND mention.entity_id = entity.entity_id
+                MERGE (mention)-[:IN_CHUNK]->(chunk)
+                MERGE (mention)-[:REFERS_TO]->(entity)
+                RETURN mention.mention_id AS mention_id
+                """,
+                mention_id=mention.mention_id,
+                chunk_id=mention.chunk_id,
+                entity_id=mention.entity_id,
+            ).single()
+            if record is None:
+                raise ValueError("mention provenance path is invalid")
+
+        assertion = bundle.assertion
+        object_kind = "entity" if assertion.object_entity_id else "literal"
+        assertion_identity = _properties(
+            assertion_id=assertion.assertion_id,
+            tenant_id=assertion.tenant_id,
+            subject_entity_id=assertion.subject_entity_id,
+            object_entity_id=assertion.object_entity_id,
+            predicate=assertion.predicate,
+            object_kind=object_kind,
+            # Keep the property present for one stable Cypher shape; entity
+            # assertions use an empty sentinel that is ignored by object_kind.
+            literal_value=assertion.literal_value or "",
+            evidence_chunk_id=assertion.evidence_chunk_id,
+            evidence_char_start=assertion.evidence_char_start,
+            evidence_char_end=assertion.evidence_char_end,
+            extractor_version=assertion.extractor_version,
+            schema_version=assertion.schema_version,
+            confidence=assertion.confidence,
+        )
+        assertion_state = _properties(accepted=assertion.accepted)
+        cls._merge_node(
+            tx,
+            "Assertion",
+            "assertion_id",
+            assertion.assertion_id,
+            assertion_identity,
+            assertion_state,
+        )
+        record = tx.run(
+            """
+            MATCH (assertion:Assertion {assertion_id: $assertion_id})
+            MATCH (subject:Entity {entity_id: $subject_entity_id})
+            WHERE assertion.tenant_id = subject.tenant_id
+            MERGE (assertion)-[:SUBJECT]->(subject)
+            RETURN assertion.assertion_id AS assertion_id
+            """,
+            assertion_id=assertion.assertion_id,
+            subject_entity_id=assertion.subject_entity_id,
+        ).single()
+        if record is None:
+            raise ValueError("assertion subject provenance is invalid")
+
+        if assertion.object_entity_id:
+            record = tx.run(
+                """
+                MATCH (assertion:Assertion {assertion_id: $assertion_id})
+                MATCH (object:Entity {entity_id: $object_entity_id})
+                WHERE assertion.tenant_id = object.tenant_id
+                MERGE (assertion)-[:OBJECT]->(object)
+                RETURN object.entity_id AS entity_id
+                """,
+                assertion_id=assertion.assertion_id,
+                object_entity_id=assertion.object_entity_id,
+            ).single()
+            if record is None:
+                raise ValueError("assertion object provenance is invalid")
+
+        record = tx.run(
+            """
+            MATCH (assertion:Assertion {assertion_id: $assertion_id})
+            MATCH (chunk:Chunk {chunk_id: $chunk_id})
+            WHERE assertion.tenant_id = chunk.tenant_id
+              AND assertion.evidence_chunk_id = chunk.chunk_id
+            MERGE (assertion)-[:EVIDENCED_BY]->(chunk)
+            RETURN chunk.chunk_id AS chunk_id
+            """,
+            assertion_id=assertion.assertion_id,
+            chunk_id=assertion.evidence_chunk_id,
+        ).single()
+        if record is None:
+            raise ValueError("assertion evidence is missing or cross-tenant")
+
+    def get_assertion_evidence(
+        self,
+        principal: Principal,
+        assertion_id: str,
+    ) -> tuple[EvidenceView, ...]:
+        """Return evidence only through an authorized provenance path."""
+        with self.driver.session(database=self.database) as session:
+            records = session.run(
+                """
+                MATCH (document:Document {
+                    tenant_id: $tenant_id
+                })-[:ACTIVE_VERSION]->(version:DocumentVersion {
+                    tenant_id: $tenant_id
+                })-[:HAS_CHUNK]->(chunk:Chunk {
+                    tenant_id: $tenant_id
+                })<-[:EVIDENCED_BY]-(assertion:Assertion {
+                    assertion_id: $assertion_id,
+                    tenant_id: $tenant_id,
+                    accepted: true
+                })-[:SUBJECT]->(subject:Entity {tenant_id: $tenant_id})
+                WHERE any(group IN document.access_groups WHERE group IN $groups)
+                  AND any(group IN chunk.access_groups WHERE group IN $groups)
+                  AND EXISTS {
+                      MATCH (document)-[:HAS_VERSION]->(version)
+                  }
+                  AND version.document_id = document.document_id
+                  AND chunk.document_id = document.document_id
+                  AND chunk.version_id = version.version_id
+                  AND chunk.access_policy_id = document.access_policy_id
+                  AND chunk.access_policy_version = document.access_policy_version
+                OPTIONAL MATCH (assertion)-[:OBJECT]->(object:Entity {
+                    tenant_id: $tenant_id
+                })
+                RETURN assertion.assertion_id AS assertion_id,
+                       assertion.predicate AS predicate,
+                       subject.entity_id AS subject_entity_id,
+                       CASE assertion.object_kind
+                           WHEN 'entity' THEN object.entity_id
+                           ELSE assertion.literal_value
+                       END AS object_reference,
+                       assertion.evidence_char_start AS evidence_char_start,
+                       assertion.evidence_char_end AS evidence_char_end,
+                       chunk.chunk_id AS chunk_id,
+                       chunk.checksum AS chunk_checksum,
+                       chunk.text AS text,
+                       chunk.char_start AS char_start,
+                       chunk.char_end AS char_end,
+                       chunk.page_number AS page_number,
+                       chunk.section AS section,
+                       version.version_id AS version_id,
+                       version.checksum AS version_checksum,
+                       version.version_number AS version_number,
+                       document.document_id AS document_id,
+                       document.canonical_uri AS canonical_uri,
+                       document.source_name AS source_name
+                ORDER BY chunk.ordinal
+                """,
+                assertion_id=assertion_id,
+                tenant_id=principal.tenant_id,
+                groups=sorted(principal.groups),
+            )
+            return tuple(EvidenceView(**record.data()) for record in records)

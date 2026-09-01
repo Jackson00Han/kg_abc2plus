@@ -4,6 +4,17 @@ version = "0.1.0"
 description = "Standalone GraphRAG demo using neo4j-graphrag and OpenAI"
 requires-python = ">=3.12"
 dependencies = [
+    "neo4j>=5.28.0,<7.0.0",
     "neo4j-graphrag[openai]>=1.14.0",
     "python-dotenv>=1.0.0",
 ]
+
+[build-system]
+requires = ["hatchling>=1.27.0,<2.0.0"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/graphrag_prod"]

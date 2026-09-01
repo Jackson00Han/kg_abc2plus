@@ -8,6 +8,12 @@ The tutorial scripts are followed by a staged production-candidate roadmap in
 [`AGENTS.md`](AGENTS.md). Its measurable scope and quality gates are defined in
 [`docs/acceptance_contract.md`](docs/acceptance_contract.md).
 
+The production implementation is developed separately under
+`src/graphrag_prod`. Its stable identity, source provenance, access boundary,
+and Neo4j model are documented in
+[`docs/provenance_model.md`](docs/provenance_model.md); completed stage evidence
+is recorded under [`docs/validation`](docs/validation).
+
 ## Prerequisites
 
 - **Python 3.12+**
