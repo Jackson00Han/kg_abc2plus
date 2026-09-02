@@ -45,6 +45,10 @@ The bounded, permission-safe retrieval engine is documented in
 generation, server-owned citations, refusal behavior, and the provider-neutral
 model boundary are documented in
 [`docs/grounded_answer_generation.md`](docs/grounded_answer_generation.md).
+The authenticated API boundary, bounded execution and retries, Neo4j resource
+lifecycle, error taxonomy, protected-content-safe logs, and aggregate metrics
+are documented in
+[`docs/api_security_reliability.md`](docs/api_security_reliability.md).
 
 ## Prerequisites
 

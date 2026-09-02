@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import ipaddress
 import os
+import time
 import unittest
 from urllib.parse import urlparse
 
+from fastapi.testclient import TestClient
+import jwt
 import neo4j
 
+from graphrag_prod.api.app import create_app
+from graphrag_prod.api.auth import JWTAuthConfig, JWTAuthenticator
+from graphrag_prod.api.backend import (
+    GraphRAGApplicationBackend,
+    GraphRAGQueryOperations,
+    QueryEmbedding,
+)
+from graphrag_prod.api.contracts import ReadinessResponse, RetrievalResponse
+from graphrag_prod.api.runtime import BackendResult
 from graphrag_prod.domain import Principal
 from graphrag_prod.generation import (
     AnswerModelRequest,
@@ -41,6 +54,71 @@ class _StaticAnswerModel:
     def generate(self, request: AnswerModelRequest) -> object:
         self.requests.append(request)
         return self.payload
+
+
+class _FixtureQueryEmbedder:
+    """Resolve a fixture query vector inside the trusted server boundary."""
+
+    def __init__(self, fixture: DevCorpusFixture) -> None:
+        self.fixture = fixture
+        self.calls: list[tuple[str, str]] = []
+
+    def embed(self, query_text: str, *, tenant_id: str) -> QueryEmbedding:
+        matches = [
+            question
+            for question in self.fixture.build.questions
+            if question["query"] == query_text
+        ]
+        if len(matches) != 1:
+            raise AssertionError("API query must resolve to exactly one fixture vector")
+        question = matches[0]
+        if question["principal"]["tenant_id"] != tenant_id:
+            raise AssertionError("JWT tenant must own the selected fixture query")
+        self.calls.append((query_text, tenant_id))
+        return QueryEmbedding(
+            tuple(self.fixture.query_vector(question)),
+            self.fixture.build.manifest["embedding_profile"][
+                "embedding_space_id"
+            ],
+        )
+
+
+class _RecordingRetrievalEngine:
+    """Record the trusted domain request, then delegate to real Neo4j."""
+
+    def __init__(self, engine: Neo4jRetrievalEngine) -> None:
+        self.engine = engine
+        self.requests: list[RetrievalRequest] = []
+
+    def retrieve(self, request: RetrievalRequest):
+        self.requests.append(request)
+        return self.engine.retrieve(request)
+
+
+class _UnavailableDocumentOperations:
+    """Prove retrieval/answer routes never invoke document operations."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def ingest(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("document ingestion must not be called")
+
+    def delete(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("document deletion must not be called")
+
+    def get_job(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("job lookup must not be called")
+
+
+class _ReadyOperations:
+    def check(self) -> BackendResult:
+        return BackendResult(
+            ReadinessResponse(status="ready", checks={"neo4j": "ok"})
+        )
 
 
 class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
@@ -603,6 +681,266 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
                         self.fixture.chunks_by_id[chunk_id]["tenant_id"],
                         principal_tenant,
                     )
+
+    def test_authenticated_api_uses_real_retrieval_and_grounded_generation(
+        self,
+    ) -> None:
+        """Exercise the HTTP/JWT boundary through the loaded Neo4j corpus."""
+
+        issuer = "stage7-integration-issuer"
+        audience = "stage7-integration-api"
+        # Deterministic, high-diversity test material; never a deployment secret.
+        signing_key = bytes(range(32, 64))
+
+        def headers(question: dict) -> dict[str, str]:
+            now = int(time.time())
+            principal = question["principal"]
+            token = jwt.encode(
+                {
+                    "iss": issuer,
+                    "aud": audience,
+                    "sub": principal["principal_id"],
+                    "tenant_id": principal["tenant_id"],
+                    "groups": principal["groups"],
+                    "scope": "retrieval:read answers:generate",
+                    "iat": now,
+                    "exp": now + 300,
+                },
+                signing_key,
+                algorithm="HS256",
+                headers={"typ": "JWT"},
+            )
+            return {"Authorization": f"Bearer {token}"}
+
+        authenticator = JWTAuthenticator(
+            JWTAuthConfig(
+                issuer=issuer,
+                audience=audience,
+                secret=signing_key,
+                leeway_seconds=0,
+            )
+        )
+
+        def application(answer_model: _StaticAnswerModel):
+            embedder = _FixtureQueryEmbedder(self.fixture)
+            recording_engine = _RecordingRetrievalEngine(self.engine)
+            documents = _UnavailableDocumentOperations()
+            backend = GraphRAGApplicationBackend(
+                documents=documents,
+                queries=GraphRAGQueryOperations(
+                    recording_engine,  # type: ignore[arg-type]
+                    embedder,
+                    GroundedGenerationService(answer_model),
+                ),
+                readiness=_ReadyOperations(),
+            )
+            return (
+                create_app(authenticator=authenticator, backend=backend),
+                embedder,
+                recording_engine,
+                documents,
+            )
+
+        exact = self.fixture.question("exact_value-success-01")
+        expected = self._default_retrieval(exact)
+        answers_by_id = {item["id"]: item for item in self.fixture.build.answers}
+        answer_model = _StaticAnswerModel(
+            self._answer_payload(answers_by_id[exact["id"]], expected)
+        )
+        app, embedder, recording_engine, documents = application(answer_model)
+        retrieval_payload = {
+            "query_text": exact["query"],
+            "limits": {"minimum_vector_score": 0.75},
+        }
+        answer_payload = {
+            "query_text": exact["query"],
+            "retrieval_limits": {"minimum_vector_score": 0.75},
+        }
+        with TestClient(app) as client:
+            ready = client.get("/health/ready")
+            first = client.post(
+                "/v1/retrieval",
+                headers=headers(exact),
+                json=retrieval_payload,
+            )
+            second = client.post(
+                "/v1/retrieval",
+                headers=headers(exact),
+                json=retrieval_payload,
+            )
+            answer = client.post(
+                "/v1/answers",
+                headers=headers(exact),
+                json=answer_payload,
+            )
+            calls_before_untrusted_vector = len(embedder.calls)
+            untrusted_vector = client.post(
+                "/v1/retrieval",
+                headers=headers(exact),
+                json={
+                    "query_text": exact["query"],
+                    "query_vector": list(self.fixture.query_vector(exact)),
+                },
+            )
+
+        self.assertEqual(ready.status_code, 200, ready.text)
+        self.assertEqual(ready.json(), {"status": "ready", "checks": {"neo4j": "ok"}})
+        if first.status_code != 200 and recording_engine.requests:
+            # Re-run the deterministic request through the public response
+            # schema so a contract regression reports its exact safe fixture
+            # location instead of only the deliberately generic HTTP error.
+            diagnostic_result = self.engine.retrieve(recording_engine.requests[0])
+            diagnostic_payload = asdict(diagnostic_result)
+            diagnostic_payload["trace"]["version_filter"] = {
+                "document_ids": tuple(
+                    sorted(diagnostic_result.trace.version_filter.document_ids)
+                ),
+                "version_ids": tuple(
+                    sorted(diagnostic_result.trace.version_filter.version_ids)
+                ),
+                "published_at_or_before": (
+                    diagnostic_result.trace.version_filter.published_at_or_before
+                ),
+            }
+            RetrievalResponse.model_validate(diagnostic_payload)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(first.json(), second.json())
+        retrieval_body = first.json()
+        self.assertEqual(retrieval_body["trace"]["trace_id"], expected.trace.trace_id)
+        self.assertEqual(
+            retrieval_body["trace"]["selected_chunk_ids"],
+            list(expected.trace.selected_chunk_ids),
+        )
+        self.assertEqual(retrieval_body["trace"]["tenant_id"], "tenant-alpha")
+        relevant_ids = set(exact["relevance"])
+        self.assertTrue(
+            relevant_ids
+            & {
+                chunk["citation"]["chunk_id"]
+                for chunk in retrieval_body["chunks"]
+            }
+        )
+        for chunk in retrieval_body["chunks"]:
+            citation = chunk["citation"]
+            fixture_chunk = self.fixture.chunks_by_id[citation["chunk_id"]]
+            document = self.fixture.documents_by_id[citation["document_id"]]
+            source = self.fixture.source_texts[document["source_path"]]
+            self.assertEqual(citation["chunk_checksum"], fixture_chunk["checksum"])
+            self.assertEqual(citation["version_id"], document["version_id"])
+            self.assertEqual(
+                source[citation["char_start"] : citation["char_end"]],
+                chunk["text"],
+            )
+
+        expected_principal = exact["principal"]
+        self.assertEqual(len(recording_engine.requests), 3)
+        for request in recording_engine.requests:
+            self.assertEqual(
+                request.principal.principal_id,
+                expected_principal["principal_id"],
+            )
+            self.assertEqual(
+                request.principal.tenant_id,
+                expected_principal["tenant_id"],
+            )
+            self.assertEqual(
+                request.principal.groups,
+                frozenset(expected_principal["groups"]),
+            )
+            self.assertEqual(
+                request.query_vector,
+                tuple(self.fixture.query_vector(exact)),
+            )
+        self.assertEqual(
+            embedder.calls,
+            [(exact["query"], "tenant-alpha")] * 3,
+        )
+        self.assertEqual(untrusted_vector.status_code, 422, untrusted_vector.text)
+        self.assertEqual(
+            untrusted_vector.json()["code"],
+            "invalid_request",
+        )
+        self.assertEqual(len(embedder.calls), calls_before_untrusted_vector)
+        self.assertEqual(documents.calls, 0)
+
+        self.assertEqual(answer.status_code, 200, answer.text)
+        answer_body = answer.json()
+        self.assertEqual(answer_body["status"], "answered")
+        self.assertIn("$72.1 billion", answer_body["answer"])
+        self.assertIn("[S", answer_body["answer"])
+        self.assertTrue(answer_body["claims"])
+        self.assertTrue(answer_body["citations"])
+        self.assertTrue(
+            relevant_ids
+            & {citation["chunk_id"] for citation in answer_body["citations"]}
+        )
+        self.assertEqual(len(answer_model.requests), 1)
+
+        unauthorized = self.fixture.question("unauthorized-success-01")
+        refusal_model = _StaticAnswerModel(
+            {"status": "insufficient_context", "claims": [], "conflicts": []}
+        )
+        unauthorized_app, unauthorized_embedder, unauthorized_engine, unauthorized_docs = (
+            application(refusal_model)
+        )
+        unauthorized_retrieval_payload = {
+            "query_text": unauthorized["query"],
+            "limits": {"minimum_vector_score": 0.75},
+        }
+        unauthorized_answer_payload = {
+            "query_text": unauthorized["query"],
+            "retrieval_limits": {"minimum_vector_score": 0.75},
+        }
+        with TestClient(unauthorized_app) as client:
+            unauthorized_retrieval = client.post(
+                "/v1/retrieval",
+                headers=headers(unauthorized),
+                json=unauthorized_retrieval_payload,
+            )
+            unauthorized_answer = client.post(
+                "/v1/answers",
+                headers=headers(unauthorized),
+                json=unauthorized_answer_payload,
+            )
+
+        self.assertEqual(
+            unauthorized_retrieval.status_code,
+            200,
+            unauthorized_retrieval.text,
+        )
+        unauthorized_body = unauthorized_retrieval.json()
+        trace_ids = set(unauthorized_body["trace"]["selected_chunk_ids"])
+        for stage in (
+            "vector_recall",
+            "bm25_recall",
+            "seed_ranking",
+            "graph_expansion",
+            "candidate_vector_ranking",
+            "final_ranking",
+        ):
+            trace_ids.update(hit["chunk_id"] for hit in unauthorized_body["trace"][stage])
+        forbidden_ids = set(unauthorized["forbidden_chunk_ids"])
+        self.assertTrue(trace_ids.isdisjoint(forbidden_ids))
+        self.assertEqual(unauthorized_body["trace"]["tenant_id"], "tenant-alpha")
+        self.assertNotIn("$52.8 billion", unauthorized_retrieval.text)
+        self.assertEqual(unauthorized_answer.status_code, 200, unauthorized_answer.text)
+        self.assertEqual(unauthorized_answer.json()["status"], "insufficient_context")
+        self.assertEqual(unauthorized_answer.json()["citations"], [])
+        self.assertNotIn("$52.8 billion", unauthorized_answer.text)
+        self.assertEqual(len(unauthorized_engine.requests), 2)
+        for request in unauthorized_engine.requests:
+            self.assertEqual(
+                request.principal.principal_id,
+                unauthorized["principal"]["principal_id"],
+            )
+            self.assertEqual(request.principal.tenant_id, "tenant-alpha")
+            self.assertEqual(request.principal.groups, frozenset({"alpha-public"}))
+        self.assertEqual(
+            unauthorized_embedder.calls,
+            [(unauthorized["query"], "tenant-alpha")] * 2,
+        )
+        self.assertEqual(unauthorized_docs.calls, 0)
 
     def test_unanswerable_query_can_be_deterministically_gated(self) -> None:
         question = self.fixture.question("unanswerable-success-01")

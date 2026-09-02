@@ -220,6 +220,33 @@ class Neo4jIngestionService:
             raise KeyError(f"unknown ingestion job: {job_id}")
         return _job_view(record["job"])
 
+    def get_job_for_tenant(self, tenant_id: str, job_id: str) -> JobView:
+        """Read a durable job only inside its authenticated tenant boundary.
+
+        This is the public/application read path.  ``get_job`` remains an
+        internal workflow primitive because a worker already holds a stable,
+        tenant-derived job identifier while completing an ingestion result.
+        """
+        tenant_id = tenant_id.strip()
+        job_id = job_id.strip()
+        if not tenant_id or not job_id:
+            raise ValueError("tenant_id and job_id are required")
+        with self.driver.session(database=self.database) as session:
+            record = session.run(
+                """
+                MATCH (job:IngestionJob {
+                    tenant_id: $tenant_id,
+                    job_id: $job_id
+                })
+                RETURN job{.*} AS job
+                """,
+                tenant_id=tenant_id,
+                job_id=job_id,
+            ).single()
+        if record is None:
+            raise KeyError("unknown ingestion job in tenant")
+        return _job_view(record["job"])
+
     def pending_artifact_ids(self, plan: IngestionPlan) -> tuple[str, ...]:
         """Return content/profile artifacts that require expensive provider work."""
         identifiers: list[str] = []

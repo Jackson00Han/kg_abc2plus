@@ -13,6 +13,9 @@ from urllib.parse import urlparse
 
 import neo4j
 
+from graphrag_prod.api.backend import Neo4jDocumentOperations
+from graphrag_prod.api.contracts import DeleteRequest, IngestionRequest
+from graphrag_prod.api.runtime import ResourceNotFoundError
 from graphrag_prod.domain import (
     Assertion,
     ChunkEmbedding,
@@ -24,6 +27,7 @@ from graphrag_prod.domain import (
     entity_id,
     ingestion_job_id,
     mention_id,
+    Principal,
 )
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.ingestion import (
@@ -291,6 +295,23 @@ class DeleteActiveDocumentBeforeExtractionReturns:
         return output
 
 
+class FixedIncrementalIngestionPlanner:
+    """Integration fixture that exposes a fully versioned Stage 3 request."""
+
+    def __init__(self, planned: IncrementalIngestionRequest) -> None:
+        self.planned = planned
+        self.calls: list[tuple[Principal, IngestionRequest]] = []
+
+    def plan(
+        self,
+        *,
+        principal: Principal,
+        request: IngestionRequest,
+    ) -> IncrementalIngestionRequest:
+        self.calls.append((principal, request))
+        return self.planned
+
+
 def _chunk_seeds(specs) -> tuple[ChunkSeed, ...]:
     seeds: list[ChunkSeed] = []
     char_start = 0
@@ -439,6 +460,144 @@ class Neo4jIncrementalPipelineIntegrationTests(unittest.TestCase):
                 fail_on_call=fail_extraction_on_call,
             ),
             RecordingEmbeddingProvider(probe),
+        )
+
+    def test_api_document_adapter_runs_real_lifecycle_and_hides_other_tenants(
+        self,
+    ) -> None:
+        planned = _request(operation_key="stage7-api-ingest-real-001")
+        _, extraction, embedding = self._providers(planned)
+        planner = FixedIncrementalIngestionPlanner(planned)
+        operations = Neo4jDocumentOperations(
+            self.pipeline,
+            planner,
+            extraction,
+            embedding,
+        )
+        principal = Principal(
+            "stage7-api-writer",
+            planned.tenant_id,
+            frozenset(planned.access_groups),
+        )
+        request = IngestionRequest(
+            operation_key=planned.operation_key,
+            canonical_uri=planned.canonical_uri,
+            title=planned.title,
+            source_name=planned.source_name,
+            mime_type=planned.mime_type,
+            language=planned.language,
+            published_at=planned.published_at,
+            content=planned.normalized_text,
+            access_policy_id=planned.access_policy_id,
+            access_policy_version=planned.access_policy_version,
+            access_groups=tuple(sorted(planned.access_groups)),
+            expected_active_snapshot_id=planned.expected_active_snapshot_id,
+            source_generation=planned.source_generation,
+            max_attempts=planned.max_attempts,
+        )
+
+        ingested = operations.ingest(principal, request)
+        ingestion_job = ingested.payload["job"]
+        self.assertEqual(ingestion_job["status"], JobStatus.SUCCEEDED.value)
+        self.assertEqual(ingested.payload["snapshot_id"], planned.snapshot_id)
+        self.assertEqual(ingested.payload["active_snapshot_id"], planned.snapshot_id)
+        self.assertNotIn("tenant_id", ingestion_job)
+        self.assertNotIn("request_fingerprint", ingestion_job)
+        self.assertNotIn("lease_token", ingestion_job)
+        self.assertEqual(len(extraction.calls), len(planned.chunks))
+        self.assertEqual(len(embedding.calls), len(planned.chunks))
+
+        replayed = operations.ingest(principal, request)
+        self.assertEqual(replayed.payload, ingested.payload)
+        self.assertEqual(len(extraction.calls), len(planned.chunks))
+        self.assertEqual(len(embedding.calls), len(planned.chunks))
+        self.assertEqual(len(planner.calls), 2)
+
+        job_id = ingestion_job["job_id"]
+        visible_job = operations.get_job(principal, job_id).payload
+        self.assertEqual(visible_job, ingestion_job)
+
+        other_principal = Principal(
+            "stage7-other-tenant-reader",
+            "tenant-stage7-other",
+            frozenset({"knowledge-readers"}),
+        )
+        hidden_errors: list[tuple[object, ...]] = []
+        for hidden_job_id in (job_id, "unknown-stage7-job-id"):
+            with self.assertRaises(ResourceNotFoundError) as raised:
+                operations.get_job(other_principal, hidden_job_id)
+            hidden_errors.append(
+                (
+                    raised.exception.code,
+                    raised.exception.status_code,
+                    raised.exception.public_message,
+                )
+            )
+        self.assertEqual(hidden_errors[0], hidden_errors[1])
+
+        # Deleting an existing identifier from the wrong tenant is exactly the
+        # same no-op as deleting an unknown identifier in that tenant, and it
+        # cannot mutate the owning tenant's graph.
+        other_delete_results = []
+        for operation_key, document_id in (
+            ("stage7-other-delete-hidden-001", planned.document_id),
+            ("stage7-other-delete-unknown-001", "unknown-stage7-document"),
+        ):
+            result = operations.delete(
+                other_principal,
+                document_id,
+                DeleteRequest(operation_key=operation_key),
+            )
+            other_delete_results.append(
+                (result.payload["job"]["status"], result.payload["job"]["outcome"])
+            )
+        self.assertEqual(other_delete_results[0], other_delete_results[1])
+        self.assertEqual(
+            other_delete_results[0],
+            (JobStatus.NOOP.value, "ALREADY_ABSENT"),
+        )
+        owning_document = self._records(
+            """
+            MATCH (document:Document {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot)
+            RETURN snapshot.snapshot_id AS snapshot_id
+            """,
+            tenant_id=planned.tenant_id,
+            document_id=planned.document_id,
+        )
+        self.assertEqual(owning_document[0]["snapshot_id"], planned.snapshot_id)
+
+        deleted = operations.delete(
+            principal,
+            planned.document_id,
+            DeleteRequest(
+                operation_key="stage7-owner-delete-real-001",
+                expected_active_snapshot_id=planned.snapshot_id,
+                source_generation=planned.source_generation,
+            ),
+        )
+        deletion_job = deleted.payload["job"]
+        self.assertEqual(deletion_job["status"], JobStatus.SUCCEEDED.value)
+        self.assertEqual(deletion_job["outcome"], "DELETED")
+        self.assertEqual(
+            operations.get_job(principal, deletion_job["job_id"]).payload,
+            deletion_job,
+        )
+        self.assertEqual(
+            self._records(
+                """
+                MATCH (document:Document {
+                    tenant_id: $tenant_id,
+                    document_id: $document_id
+                })
+                RETURN count(document) AS count
+                """,
+                tenant_id=planned.tenant_id,
+                document_id=planned.document_id,
+            )[0]["count"],
+            0,
         )
 
     def test_provider_failure_is_durable_and_retry_computes_only_missing_artifacts(

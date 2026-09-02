@@ -1,6 +1,12 @@
 """Bounded, permission-safe production retrieval."""
 
-from .engine import Neo4jRetrievalEngine, RetrievalUnavailable
+from .engine import (
+    Neo4jRetrievalEngine,
+    RetrievalBackendError,
+    RetrievalBackendTimeout,
+    RetrievalBackendUnavailable,
+    RetrievalUnavailable,
+)
 from .metrics import RetrievalMetrics, evaluate_retrieval_dataset
 from .models import (
     Citation,
@@ -23,6 +29,9 @@ __all__ = [
     "Citation",
     "ContextSelection",
     "Neo4jRetrievalEngine",
+    "RetrievalBackendError",
+    "RetrievalBackendTimeout",
+    "RetrievalBackendUnavailable",
     "RetrievalLimits",
     "RetrievalMetrics",
     "RetrievalRequest",

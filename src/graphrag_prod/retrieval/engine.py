@@ -7,8 +7,19 @@ from dataclasses import fields
 from datetime import datetime
 import hashlib
 import json
+import math
 import re
 from typing import Any
+
+from neo4j import unit_of_work
+from neo4j.exceptions import (
+    ConnectionAcquisitionTimeoutError,
+    DriverError,
+    Neo4jError,
+    ServiceUnavailable,
+    SessionExpired,
+    TransientError,
+)
 
 from .models import (
     Citation,
@@ -30,10 +41,35 @@ from .ranking import (
 FULLTEXT_INDEX_NAME = "graphrag_chunk_text_v1"
 METHOD = "vector cosine + BM25 + RRF(k=60) + Resource Allocation"
 _LUCENE_TERM = re.compile(r"[^\W_]+", re.UNICODE)
+_TRANSACTION_TIMEOUT_CODES = frozenset(
+    {
+        "Neo.ClientError.Transaction.TransactionTimedOut",
+        "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration",
+        "Neo.TransientError.Transaction.TransactionTimedOut",
+        "Neo.TransientError.Transaction.TransactionTimedOutClientConfiguration",
+        "Neo.ClientError.Transaction.LockAcquisitionTimeout",
+        "Neo.TransientError.Transaction.LockAcquisitionTimeout",
+    }
+)
 
 
 class RetrievalUnavailable(RuntimeError):
     """The tenant has no compatible, active retrieval state."""
+
+
+class RetrievalBackendError(RuntimeError):
+    """A sanitized, deterministic Neo4j retrieval failure."""
+
+    def __init__(self) -> None:
+        super().__init__("the retrieval store could not complete the query")
+
+
+class RetrievalBackendUnavailable(RetrievalBackendError):
+    """The retrieval store is temporarily unavailable."""
+
+
+class RetrievalBackendTimeout(RetrievalBackendError):
+    """The retrieval store exceeded a configured deadline."""
 
 
 CORPUS_STATE_QUERY = """
@@ -375,13 +411,53 @@ def _trace_hits(
 class Neo4jRetrievalEngine:
     """Run a complete bounded retrieval in one consistent read transaction."""
 
-    def __init__(self, driver: Any, database: str = "neo4j") -> None:
+    def __init__(
+        self,
+        driver: Any,
+        database: str = "neo4j",
+        *,
+        transaction_timeout_seconds: float = 60.0,
+    ) -> None:
+        if driver is None:
+            raise ValueError("driver must not be None")
+        if not isinstance(database, str) or not database.strip():
+            raise ValueError("database must not be empty")
+        if any(character in database for character in ("\x00", "\r", "\n")):
+            raise ValueError("database contains a forbidden control character")
+        if (
+            isinstance(transaction_timeout_seconds, bool)
+            or not isinstance(transaction_timeout_seconds, (int, float))
+            or not math.isfinite(float(transaction_timeout_seconds))
+            or not 0.0 < float(transaction_timeout_seconds) <= 300.0
+        ):
+            raise ValueError(
+                "transaction_timeout_seconds must be a finite number "
+                "between zero and 300"
+            )
         self.driver = driver
-        self.database = database
+        self.database = database.strip()
+        self.transaction_timeout_seconds = float(transaction_timeout_seconds)
+        self._transaction_work = unit_of_work(
+            metadata={"component": "graphrag-retrieval", "operation": "retrieve"},
+            timeout=self.transaction_timeout_seconds,
+        )(self._retrieve_tx)
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
-        with self.driver.session(database=self.database) as session:
-            return session.execute_read(self._retrieve_tx, request)
+        try:
+            with self.driver.session(database=self.database) as session:
+                return session.execute_read(self._transaction_work, request)
+        except ConnectionAcquisitionTimeoutError as error:
+            raise RetrievalBackendTimeout() from error
+        except Neo4jError as error:
+            if getattr(error, "code", None) in _TRANSACTION_TIMEOUT_CODES:
+                raise RetrievalBackendTimeout() from error
+            if isinstance(error, TransientError):
+                raise RetrievalBackendUnavailable() from error
+            raise RetrievalBackendError() from error
+        except (ServiceUnavailable, SessionExpired) as error:
+            raise RetrievalBackendUnavailable() from error
+        except DriverError as error:
+            raise RetrievalBackendUnavailable() from error
 
     @staticmethod
     def _retrieve_tx(tx: Any, request: RetrievalRequest) -> RetrievalResult:
