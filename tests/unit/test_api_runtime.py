@@ -21,7 +21,6 @@ from graphrag_prod.api.runtime import (
     RateLimitAlgorithm,
     RateLimitExceeded,
     RateLimitPolicy,
-    RequestValidationError,
     RetryableBackendError,
     RuntimeClosedError,
     RuntimeOverloadedError,

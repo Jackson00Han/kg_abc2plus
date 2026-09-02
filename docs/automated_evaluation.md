@@ -285,5 +285,7 @@ are stable but remain non-qualifying.
 - The retrieval exposure metric counts the query-specific forbidden Chunk
   canaries; broader identity, HTTP, log, and existence-signal behavior is
   enforced by the separately fixed security and integration suites.
-- The Neo4j runner invokes `neo4j:5.26.12-community` by tag. It records an
-  independently observed digest but does not enforce that digest at runtime.
+- The standalone Neo4j runner invokes `neo4j:5.26.12-community` by tag and
+  records, but does not enforce, an independently observed digest. Stage 9
+  resolves and verifies its pinned digest first, then supplies that exact image
+  reference through `STAGE8_NEO4J_IMAGE`.

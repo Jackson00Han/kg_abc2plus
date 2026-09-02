@@ -43,6 +43,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 "002_incremental_ingestion_schema.cypher",
                 "003_graph_governance_schema.cypher",
                 "004_retrieval_schema.cypher",
+                "005_retrieval_partition_schema.cypher",
             ],
         )
         statements = migration_statements()

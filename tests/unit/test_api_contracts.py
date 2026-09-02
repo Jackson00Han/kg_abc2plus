@@ -10,10 +10,12 @@ from pydantic import ValidationError
 
 from graphrag_prod.api.contracts import (
     AnswerRequest,
+    DeleteResponse,
     ErrorResponse,
     GenerationLimitsRequest,
     HealthResponse,
     IngestionRequest,
+    IngestionResponse,
     JobResponse,
     MAX_DOCUMENT_BYTES,
     MetricsResponse,
@@ -209,6 +211,37 @@ class APIResponseContractTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 with self.assertRaises(ValidationError):
                     JobResponse.model_validate(_job_payload(**changes))
+
+    def test_synchronous_write_responses_require_a_terminal_job(self) -> None:
+        ingestion_payload = {
+            "job": _job_payload(),
+            "snapshot_id": "snapshot-1",
+            "active_snapshot_id": "snapshot-1",
+        }
+        deletion_payload = {"job": _job_payload(operation="DELETE")}
+        IngestionResponse.model_validate(ingestion_payload)
+        DeleteResponse.model_validate(deletion_payload)
+        IngestionResponse.model_validate(
+            {**ingestion_payload, "job": _job_payload(status="NOOP")}
+        )
+        DeleteResponse.model_validate(
+            {"job": _job_payload(operation="DELETE", status="NOOP")}
+        )
+
+        for changes in (
+            {"status": "QUEUED", "phase": "PLAN"},
+            {"status": "RUNNING", "phase": "STAGE"},
+            {"status": "SUCCEEDED", "phase": "PUBLISH"},
+            {"status": "FAILED_PERMANENT", "phase": "COMPLETE"},
+        ):
+            with self.subTest(changes=changes):
+                job = _job_payload(**changes)
+                with self.assertRaises(ValidationError):
+                    IngestionResponse.model_validate(
+                        {**ingestion_payload, "job": job}
+                    )
+                with self.assertRaises(ValidationError):
+                    DeleteResponse.model_validate({"job": job})
 
     def test_health_readiness_metrics_and_errors_are_strict(self) -> None:
         health = HealthResponse(service="sample-graphrag", version="0.1.0")

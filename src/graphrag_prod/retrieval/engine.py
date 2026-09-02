@@ -21,6 +21,8 @@ from neo4j.exceptions import (
     TransientError,
 )
 
+from graphrag_prod.domain import retrieval_scope_token
+
 from .models import (
     Citation,
     RetrievalRequest,
@@ -38,7 +40,7 @@ from .ranking import (
 )
 
 
-FULLTEXT_INDEX_NAME = "graphrag_chunk_text_v1"
+FULLTEXT_INDEX_NAME = "graphrag_chunk_text_v2"
 METHOD = "vector cosine + BM25 + RRF(k=60) + Resource Allocation"
 _LUCENE_TERM = re.compile(r"[^\W_]+", re.UNICODE)
 _TRANSACTION_TIMEOUT_CODES = frozenset(
@@ -51,10 +53,15 @@ _TRANSACTION_TIMEOUT_CODES = frozenset(
         "Neo.TransientError.Transaction.LockAcquisitionTimeout",
     }
 )
+_CORPUS_STATE_ATTEMPTS = 2
 
 
 class RetrievalUnavailable(RuntimeError):
     """The tenant has no compatible, active retrieval state."""
+
+
+class _CorpusStateChanged(RuntimeError):
+    """Discard a read whose active corpus identity changed between statements."""
 
 
 class RetrievalBackendError(RuntimeError):
@@ -85,11 +92,38 @@ RETURN state.corpus_revision AS corpus_revision,
 """
 
 
+_ACTIVE_CORPUS_GUARD = """
+CALL () {
+    MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
+          -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
+              generation_id: $generation_id,
+              tenant_id: $tenant_id,
+              state: 'ACTIVE'
+          })
+    USING INDEX state:TenantCorpusState(tenant_id)
+    WHERE state.corpus_revision = $corpus_revision
+      AND generation.corpus_revision = $corpus_revision
+    RETURN true AS active_corpus_guard
+}
+"""
+
+
 VECTOR_RECALL_QUERY = """
-MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
-      -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
-          tenant_id: $tenant_id, state: 'ACTIVE'
-      })
+CALL () {
+    MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
+          -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
+              generation_id: $generation_id,
+              tenant_id: $tenant_id,
+              state: 'ACTIVE'
+          })
+    USING INDEX state:TenantCorpusState(tenant_id)
+    WHERE state.corpus_revision = $corpus_revision
+      AND generation.corpus_revision = state.corpus_revision
+      AND generation.embedding_space_id = $embedding_space_id
+      AND generation.dimensions = $dimensions
+    RETURN generation.embedding_space_id AS active_embedding_space_id,
+           generation.dimensions AS active_dimensions
+}
 MATCH (document:Document {tenant_id: $tenant_id})
       -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
           tenant_id: $tenant_id, build_state: 'PUBLISHED'
@@ -101,14 +135,12 @@ MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (chunk)-[:HAS_EMBEDDING]->(embedding:ChunkEmbedding {
     tenant_id: $tenant_id
 })
-WHERE state.corpus_revision = $corpus_revision
-  AND generation.corpus_revision = state.corpus_revision
-  AND embedding.embedding_space_id = generation.embedding_space_id
+WHERE embedding.embedding_space_id = active_embedding_space_id
   AND embedding.chunk_id = chunk.chunk_id
   AND embedding.cosine_indexable = true
   AND embedding.vector IS NOT NULL
-  AND size(embedding.vector) = generation.dimensions
-  AND size($query_vector) = generation.dimensions
+  AND size(embedding.vector) = active_dimensions
+  AND size($query_vector) = active_dimensions
   AND any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN chunk.access_groups WHERE group IN $groups)
   AND chunk.document_id = document.document_id
@@ -118,8 +150,8 @@ WHERE state.corpus_revision = $corpus_revision
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-WITH DISTINCT chunk,
-     vector.similarity.cosine(embedding.vector, $query_vector) AS score
+WITH DISTINCT chunk, embedding
+WITH chunk, vector.similarity.cosine(embedding.vector, $query_vector) AS score
 WHERE score >= $minimum_score
 RETURN chunk.chunk_id AS chunk_id, score
 ORDER BY score DESC, chunk_id
@@ -127,7 +159,7 @@ LIMIT $limit
 """
 
 
-BM25_RECALL_QUERY = """
+BM25_RECALL_QUERY = _ACTIVE_CORPUS_GUARD + """
 CALL db.index.fulltext.queryNodes(
     $index_name, $lucene_query, {limit: $scan_limit}
 )
@@ -158,7 +190,7 @@ LIMIT $limit
 """
 
 
-GRAPH_EXPANSION_QUERY = """
+GRAPH_EXPANSION_QUERY = _ACTIVE_CORPUS_GUARD + """
 MATCH (seed_document:Document {tenant_id: $tenant_id})
       -[:ACTIVE_SNAPSHOT]->(seed_snapshot:KnowledgeSnapshot {
           tenant_id: $tenant_id, build_state: 'PUBLISHED'
@@ -246,14 +278,28 @@ LIMIT $edge_limit
 
 
 CANDIDATE_VECTOR_QUERY = """
-MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
-      -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
-          tenant_id: $tenant_id, state: 'ACTIVE'
-      })
+CALL () {
+    MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
+          -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
+              generation_id: $generation_id,
+              tenant_id: $tenant_id,
+              state: 'ACTIVE'
+          })
+    USING INDEX state:TenantCorpusState(tenant_id)
+    WHERE state.corpus_revision = $corpus_revision
+      AND generation.corpus_revision = state.corpus_revision
+      AND generation.embedding_space_id = $embedding_space_id
+      AND generation.dimensions = $dimensions
+    RETURN generation.embedding_space_id AS active_embedding_space_id,
+           generation.dimensions AS active_dimensions
+}
+UNWIND $candidate_ids AS candidate_id
+MATCH (chunk:Chunk {chunk_id: candidate_id})
+USING INDEX chunk:Chunk(chunk_id)
 MATCH (document:Document {tenant_id: $tenant_id})
       -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
           tenant_id: $tenant_id, build_state: 'PUBLISHED'
-      })-[:INCLUDES_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
+      })-[:INCLUDES_CHUNK]->(chunk)
 MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
@@ -261,14 +307,13 @@ MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (chunk)-[:HAS_EMBEDDING]->(embedding:ChunkEmbedding {
     tenant_id: $tenant_id
 })
-WHERE state.corpus_revision = $corpus_revision
-  AND generation.corpus_revision = state.corpus_revision
-  AND chunk.chunk_id IN $candidate_ids
-  AND embedding.embedding_space_id = generation.embedding_space_id
+WHERE chunk.tenant_id = $tenant_id
+  AND embedding.embedding_space_id = active_embedding_space_id
   AND embedding.chunk_id = chunk.chunk_id
   AND embedding.cosine_indexable = true
   AND embedding.vector IS NOT NULL
-  AND size(embedding.vector) = generation.dimensions
+  AND size(embedding.vector) = active_dimensions
+  AND size($query_vector) = active_dimensions
   AND any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN chunk.access_groups WHERE group IN $groups)
   AND chunk.document_id = document.document_id
@@ -278,8 +323,8 @@ WHERE state.corpus_revision = $corpus_revision
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-WITH DISTINCT chunk,
-     vector.similarity.cosine(embedding.vector, $query_vector) AS score
+WITH DISTINCT chunk, embedding
+WITH chunk, vector.similarity.cosine(embedding.vector, $query_vector) AS score
 WHERE score >= $minimum_score
 RETURN chunk.chunk_id AS chunk_id, score
 ORDER BY score DESC, chunk_id
@@ -287,7 +332,7 @@ LIMIT $limit
 """
 
 
-ADJACENT_QUERY = """
+ADJACENT_QUERY = _ACTIVE_CORPUS_GUARD + """
 UNWIND range(0, size($anchor_ids) - 1) AS anchor_position
 WITH anchor_position, $anchor_ids[anchor_position] AS anchor_id
 MATCH (document:Document {tenant_id: $tenant_id})
@@ -326,7 +371,7 @@ LIMIT $limit
 """
 
 
-HYDRATE_QUERY = """
+HYDRATE_QUERY = _ACTIVE_CORPUS_GUARD + """
 UNWIND $chunk_ids AS requested_id
 MATCH (document:Document {tenant_id: $tenant_id})
       -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
@@ -370,6 +415,28 @@ ORDER BY chunk_id
 def _query_terms(query_text: str) -> str:
     """Produce literal word terms so user text cannot become Lucene syntax."""
     return " ".join(_LUCENE_TERM.findall(query_text))
+
+
+def _partitioned_lucene_query(
+    query_text: str,
+    tenant_id: str,
+    groups: frozenset[str],
+) -> str:
+    """Apply tenant, active-version, and ACL filters inside BM25 recall."""
+
+    terms = _query_terms(query_text)
+    if not terms:
+        return ""
+    tenant = retrieval_scope_token("tenant", tenant_id)
+    group_terms = " OR ".join(
+        f"retrieval_scope:{retrieval_scope_token('group', group)}^0"
+        for group in sorted(groups)
+    )
+    return (
+        "retrieval_scope:grscopeactive^0 "
+        f"AND retrieval_scope:{tenant}^0 "
+        f"AND ({group_terms}) AND text:({terms})"
+    )
 
 
 def _records(tx: Any, query: str, parameters: dict[str, Any]) -> list[dict[str, Any]]:
@@ -445,7 +512,15 @@ class Neo4jRetrievalEngine:
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         try:
             with self.driver.session(database=self.database) as session:
-                return session.execute_read(self._transaction_work, request)
+                for attempt in range(_CORPUS_STATE_ATTEMPTS):
+                    try:
+                        return session.execute_read(self._transaction_work, request)
+                    except _CorpusStateChanged as error:
+                        if attempt + 1 == _CORPUS_STATE_ATTEMPTS:
+                            raise RetrievalUnavailable(
+                                "tenant corpus changed repeatedly during retrieval"
+                            ) from error
+                raise AssertionError("bounded corpus-state attempts were exhausted")
         except ConnectionAcquisitionTimeoutError as error:
             raise RetrievalBackendTimeout() from error
         except Neo4jError as error:
@@ -490,6 +565,9 @@ class Neo4jRetrievalEngine:
         common.update(
             {
                 "corpus_revision": corpus_revision,
+                "dimensions": dimensions,
+                "embedding_space_id": str(state["embedding_space_id"]),
+                "generation_id": str(state["generation_id"]),
                 "query_vector": list(request.query_vector),
             }
         )
@@ -503,7 +581,11 @@ class Neo4jRetrievalEngine:
                 "limit": limits.vector_recall_k,
             },
         )
-        lucene_query = _query_terms(request.query_text)
+        lucene_query = _partitioned_lucene_query(
+            request.query_text,
+            principal.tenant_id,
+            principal.groups,
+        )
         bm25_records = (
             _records(
                 tx,
@@ -635,6 +717,27 @@ class Neo4jRetrievalEngine:
             if hydrate_ids
             else []
         )
+        final_state_records = _records(tx, CORPUS_STATE_QUERY, common)
+        if len(final_state_records) != 1:
+            raise _CorpusStateChanged()
+        final_state = final_state_records[0]
+        try:
+            final_identity = (
+                int(final_state["corpus_revision"]),
+                str(final_state["generation_id"]),
+                str(final_state["embedding_space_id"]),
+                int(final_state["dimensions"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            raise _CorpusStateChanged() from None
+        captured_identity = (
+            corpus_revision,
+            str(state["generation_id"]),
+            str(state["embedding_space_id"]),
+            dimensions,
+        )
+        if final_identity != captured_identity:
+            raise _CorpusStateChanged()
         hydrated = {str(record["chunk_id"]): record for record in hydrated_records}
         for chunk_id in hydrate_ids:
             if chunk_id not in hydrated:

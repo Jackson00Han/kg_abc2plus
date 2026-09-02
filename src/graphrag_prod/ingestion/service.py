@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from graphrag_prod.domain import active_retrieval_scope
 from graphrag_prod.domain.ids import (
     derivation_artifact_id,
     ingestion_task_id,
@@ -56,6 +57,24 @@ def _noop_failpoint(checkpoint: Checkpoint, context: dict[str, Any]) -> None:
 
 def _optional(value: Any) -> Any | None:
     return None if value in (None, "") else value
+
+
+def _chunk_access_rows(plan: IngestionPlan) -> list[dict[str, Any]]:
+    """Return the publication ACL and BM25 partition for every Chunk."""
+
+    return [
+        {
+            "chunk_id": bundle.chunk.chunk_id,
+            "access_policy_id": bundle.chunk.access_policy_id,
+            "access_policy_version": bundle.chunk.access_policy_version,
+            "access_groups": sorted(bundle.chunk.access_groups),
+            "retrieval_scope": active_retrieval_scope(
+                bundle.chunk.tenant_id,
+                bundle.chunk.access_groups,
+            ),
+        }
+        for bundle in sorted(plan.bundles, key=lambda item: item.chunk.ordinal)
+    ]
 
 
 def _native_datetime(value: Any) -> datetime | None:
@@ -1051,6 +1070,7 @@ class Neo4jIngestionService:
             raise IngestionConflict("active snapshot CAS failed")
 
         document = plan.bundles[0].document
+        chunk_access_rows = _chunk_access_rows(plan)
         current_policy_version = state.get("access_policy_version")
         if current_policy_version is not None:
             if document.access_policy_version < current_policy_version:
@@ -1082,11 +1102,12 @@ class Neo4jIngestionService:
                 document.access_groups = $groups,
                 document.generation = $generation
             WITH document
-            UNWIND $chunk_ids AS chunk_id
-            MATCH (chunk:Chunk {chunk_id: chunk_id, tenant_id: $tenant_id})
-            SET chunk.access_policy_id = $policy_id,
-                chunk.access_policy_version = $policy_version,
-                chunk.access_groups = $groups
+            UNWIND $chunk_access_rows AS row
+            MATCH (chunk:Chunk {chunk_id: row.chunk_id, tenant_id: $tenant_id})
+            SET chunk.access_policy_id = row.access_policy_id,
+                chunk.access_policy_version = row.access_policy_version,
+                chunk.access_groups = row.access_groups,
+                chunk.retrieval_scope = row.retrieval_scope
             """,
             document_id=plan.document_id,
             tenant_id=plan.tenant_id,
@@ -1095,7 +1116,7 @@ class Neo4jIngestionService:
             policy_version=document.access_policy_version,
             groups=sorted(document.access_groups),
             generation=plan.source_generation,
-            chunk_ids=chunk_ids,
+            chunk_access_rows=chunk_access_rows,
         ).consume()
 
         # Entity identity is shared. A new governed publication may fill an
@@ -1131,6 +1152,17 @@ class Neo4jIngestionService:
             ).consume()
 
         old_snapshot_id = current_snapshot
+        if old_snapshot_id:
+            tx.run(
+                """
+                MATCH (:KnowledgeSnapshot {snapshot_id: $snapshot_id})
+                      -[:INCLUDES_CHUNK]->(chunk:Chunk)
+                WHERE NOT chunk.chunk_id IN $new_chunk_ids
+                REMOVE chunk.retrieval_scope
+                """,
+                snapshot_id=old_snapshot_id,
+                new_chunk_ids=chunk_ids,
+            ).consume()
         tx.run(
             """
             MATCH (document:Document {document_id: $document_id, tenant_id: $tenant_id})
@@ -1221,12 +1253,47 @@ class Neo4jIngestionService:
             != sorted(state.get("access_groups") or [])
         ):
             raise IngestionConflict("access policy changed without a new version")
+        chunk_access_rows = _chunk_access_rows(plan)
+        chunk_access = tx.run(
+            """
+            UNWIND $chunk_access_rows AS row
+            MATCH (snapshot:KnowledgeSnapshot {snapshot_id: $snapshot_id})
+                  -[:INCLUDES_CHUNK]->(chunk:Chunk {
+                      tenant_id: $tenant_id,
+                      chunk_id: row.chunk_id
+                  })
+            WITH chunk, row,
+                 chunk.access_policy_id = row.access_policy_id
+                 AND chunk.access_policy_version = row.access_policy_version
+                 AND chunk.access_groups = row.access_groups AS access_matches,
+                 chunk.retrieval_scope = row.retrieval_scope AS scope_matches
+            RETURN count(chunk) AS matched,
+                   count(CASE WHEN access_matches THEN 1 END) AS access_matches,
+                   count(CASE WHEN scope_matches THEN 1 END) AS scope_matches
+            """,
+            chunk_access_rows=chunk_access_rows,
+            snapshot_id=plan.snapshot.snapshot_id,
+            tenant_id=plan.tenant_id,
+        ).single()
+        if (
+            chunk_access is None
+            or int(chunk_access["matched"]) != len(chunk_access_rows)
+        ):
+            raise IngestionConflict("active snapshot Chunk membership is incomplete")
+        access_matches = int(chunk_access["access_matches"])
+        scope_matches = int(chunk_access["scope_matches"])
+        if (
+            document.access_policy_version == current_policy_version
+            and access_matches != len(chunk_access_rows)
+        ):
+            raise IngestionConflict("Chunk access changed without a new policy version")
         changed = (
             document.title != state.get("title")
             or document.access_policy_version != current_policy_version
             or document.access_policy_id != state.get("access_policy_id")
             or sorted(document.access_groups)
             != sorted(state.get("access_groups") or [])
+            or scope_matches != len(chunk_access_rows)
         )
         if not changed:
             self._finish_job_tx(
@@ -1241,7 +1308,7 @@ class Neo4jIngestionService:
         if plan.expected_active_snapshot_id != plan.snapshot.snapshot_id:
             raise IngestionConflict("active snapshot CAS failed for metadata update")
 
-        tx.run(
+        updated = tx.run(
             """
             MATCH (document:Document {tenant_id: $tenant_id, document_id: $document_id})
                   -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot)
@@ -1250,10 +1317,16 @@ class Neo4jIngestionService:
                 document.access_policy_version = $policy_version,
                 document.access_groups = $groups
             WITH snapshot
-            MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk:Chunk)
-            SET chunk.access_policy_id = $policy_id,
-                chunk.access_policy_version = $policy_version,
-                chunk.access_groups = $groups
+            UNWIND $chunk_access_rows AS row
+            MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk:Chunk {
+                tenant_id: $tenant_id,
+                chunk_id: row.chunk_id
+            })
+            SET chunk.access_policy_id = row.access_policy_id,
+                chunk.access_policy_version = row.access_policy_version,
+                chunk.access_groups = row.access_groups,
+                chunk.retrieval_scope = row.retrieval_scope
+            RETURN count(chunk) AS updated
             """,
             tenant_id=plan.tenant_id,
             document_id=plan.document_id,
@@ -1261,7 +1334,10 @@ class Neo4jIngestionService:
             policy_id=document.access_policy_id,
             policy_version=document.access_policy_version,
             groups=sorted(document.access_groups),
-        ).consume()
+            chunk_access_rows=chunk_access_rows,
+        ).single()
+        if updated is None or int(updated["updated"]) != len(chunk_access_rows):
+            raise IngestionConflict("active snapshot Chunk access update is incomplete")
         self._finish_job_tx(
             tx,
             plan.job_id,
@@ -1739,6 +1815,13 @@ class Neo4jIngestionService:
         # Every destructive query is tenant/document scoped and remains in this
         # transaction. A late error restores both the active pointer and data.
         deletion_queries = (
+            """
+            MATCH (snapshot:KnowledgeSnapshot {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })-[:HAS_GOVERNANCE_FINDING]->(finding:GraphGovernanceFinding)
+            DETACH DELETE finding
+            """,
             """
             MATCH (:Document {tenant_id: $tenant_id, document_id: $document_id})
                   -[:HAS_VERSION]->(:DocumentVersion)-[:HAS_CHUNK]->(chunk:Chunk)

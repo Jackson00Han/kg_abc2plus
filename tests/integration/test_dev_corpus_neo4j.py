@@ -25,6 +25,10 @@ from graphrag_prod.api.backend import (
 from graphrag_prod.api.contracts import ReadinessResponse, RetrievalResponse
 from graphrag_prod.api.runtime import BackendResult
 from graphrag_prod.domain import Principal
+from graphrag_prod.evaluation.production_config import (
+    PRODUCTION_ANSWER_RETRIEVAL_LIMITS,
+    resolve_production_answer_retrieval_limits,
+)
 from graphrag_prod.generation import (
     AnswerModelRequest,
     AnswerStatus,
@@ -190,6 +194,21 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             raise RuntimeError(f"schema verification failed: {errors}")
 
         cls.fixture = load_dev_corpus_fixture()
+        production_config = json.loads(
+            (
+                Path(__file__).parents[2]
+                / "evaluation"
+                / "production-reference-config.v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        cls.production_answer_retrieval_limits = (
+            resolve_production_answer_retrieval_limits(production_config)
+        )
+        if (
+            cls.production_answer_retrieval_limits
+            != PRODUCTION_ANSWER_RETRIEVAL_LIMITS
+        ):
+            raise RuntimeError("production answer retrieval profile drifted")
         service = Neo4jIngestionService(
             cls.driver,
             cls.database,
@@ -300,11 +319,7 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             result = cls.engine.retrieve(
                 cls._request(
                     question,
-                    limits=RetrievalLimits(
-                        top_k=10,
-                        anchor_k=5,
-                        minimum_vector_score=0.75,
-                    ),
+                    limits=cls.production_answer_retrieval_limits,
                 )
             )
             cls.generation_retrieval_results[question["id"]] = result
@@ -684,6 +699,15 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             with self.subTest(question=question["id"]):
                 gold = answers_by_id[question["id"]]
                 retrieval_result = self._generation_retrieval(question)
+                if question["id"] == "graph_relationship-boundary-02":
+                    selected = set(retrieval_result.trace.selected_chunk_ids)
+                    self.assertTrue(
+                        all(
+                            selected.intersection(claim["evidence_chunk_ids"])
+                            for claim in gold["claims"]
+                        ),
+                        "production answer profile must retain both ATC and ATL evidence",
+                    )
                 payload = (
                     self._answer_payload(gold, retrieval_result)
                     if gold["expected_status"] == "answered"

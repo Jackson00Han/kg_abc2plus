@@ -1,6 +1,11 @@
 """Domain models with no database or model-provider dependencies."""
 
-from .access import Principal, can_access
+from .access import (
+    Principal,
+    active_retrieval_scope,
+    can_access,
+    retrieval_scope_token,
+)
 from .ids import (
     assertion_id,
     canonicalize_uri,
@@ -43,6 +48,7 @@ __all__ = [
     "KnowledgeSnapshot",
     "Principal",
     "assertion_id",
+    "active_retrieval_scope",
     "can_access",
     "canonicalize_uri",
     "chunk_embedding_id",
@@ -58,5 +64,6 @@ __all__ = [
     "knowledge_snapshot_id",
     "mention_id",
     "pipeline_profile_id",
+    "retrieval_scope_token",
     "version_id",
 ]

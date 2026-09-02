@@ -1,0 +1,6 @@
+SYNTHETIC LOAD DATA ONLY
+
+load-v1 is a deterministic generated workload, not a real filing, customer
+record, or provider-quality dataset. The repository stores only this notice
+and a checksummed generation manifest. Materialized JSONL belongs in an
+explicit external output directory and must not be committed.

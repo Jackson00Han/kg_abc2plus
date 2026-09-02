@@ -391,6 +391,13 @@ EXPECTED_SCHEMA = (
         ("text",),
     ),
     SchemaExpectation(
+        "graphrag_chunk_text_v2",
+        "index",
+        "FULLTEXT",
+        "Chunk",
+        ("text", "retrieval_scope"),
+    ),
+    SchemaExpectation(
         "chunk_retrieval_scope_lookup",
         "index",
         "RANGE",

@@ -1,0 +1,123 @@
+name: Stage 9 production-candidate validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage9-production-reference-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  production-reference:
+    name: Fixed production-reference qualification
+    # Scheduling labels are not capacity evidence. The runner fail-closes unless
+    # Docker reports .NCPU >= the committed production-reference CPU envelope.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+      STAGE9_REPORT_DIR: ${{ runner.temp }}/sample-graphrag-stage9-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out the exact requested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.9.7"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the locked environment
+        run: uv sync --locked
+
+      - name: Verify the production-reference revision and inputs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          git ls-files --error-unmatch \
+            contracts/profiles/production-reference.v1.json \
+            datasets/load-v1/manifest.json \
+            evaluation/baselines/dev-mini.v1.json \
+            evaluation/production-reference-config.v1.json \
+            evaluation/reference-answer-predictions.v1.json \
+            scripts/run_stage9_validation.sh \
+            src/graphrag_prod/evaluation/production_config.py
+          python3 scripts/validate_acceptance_contract.py \
+            --profile production-reference
+          docker version
+          docker info --format 'Docker daemon CPUs: {{.NCPU}}'
+
+      - name: Run the complete Stage 9 production-reference workflow
+        timeout-minutes: 105
+        run: |
+          set -euo pipefail
+          ./scripts/run_stage9_validation.sh \
+            --output-dir "$STAGE9_REPORT_DIR"
+
+      - name: Publish the qualification summary
+        if: success()
+        run: |
+          python3 - "$STAGE9_REPORT_DIR/report.json" >>"$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          report_path = Path(sys.argv[1])
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          metrics = {
+              row["id"]: row["observed"] for row in report["contract_metrics"]
+          }
+          versions = report["versions"]
+          print("## Stage 9 production-reference result")
+          print()
+          print(f"- Passed: `{report['passed']}`")
+          print(
+              "- Production-candidate eligible: "
+              f"`{report['production_candidate_eligible']}`"
+          )
+          print(f"- Implementation commit: `{versions['code_commit']}`")
+          print(f"- Semantic digest: `{report['semantic_digest']}`")
+          print(f"- Retrieval p95: `{metrics['retrieval_p95_ms']:.3f} ms`")
+          print(f"- Answer p95: `{metrics['answer_p95_ms']:.3f} ms`")
+          print(
+              "- Sustained retrieval throughput: "
+              f"`{metrics['retrieval_throughput_rps']:.3f} requests/s`"
+          )
+          print()
+          print(
+              "This qualifies only the recorded reference envelope; it is not "
+              "a live-production deployment approval."
+          )
+          PY
+
+      - name: Upload Stage 9 reports and diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stage9-production-reference-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.STAGE9_REPORT_DIR }}
+            !${{ env.STAGE9_REPORT_DIR }}/raw/backup/*.dump
+            !${{ env.STAGE9_REPORT_DIR }}/evidence/*.dump
+            !${{ env.STAGE9_REPORT_DIR }}/reproduction/evidence/*.dump
+            !${{ env.STAGE9_REPORT_DIR }}/raw/materialized-load-v1/**
+            !${{ env.STAGE9_REPORT_DIR }}/pycache/**
+            !${{ env.STAGE9_REPORT_DIR }}/dist/**
+            !${{ env.STAGE9_REPORT_DIR }}/stage8/**/dist/**
+            !${{ env.STAGE9_REPORT_DIR }}/.qualification-working/**
+          if-no-files-found: warn
+          retention-days: 30

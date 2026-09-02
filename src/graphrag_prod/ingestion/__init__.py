@@ -13,6 +13,7 @@ from .embedding import (
     EmbeddingGenerationView,
     Neo4jEmbeddingIndexManager,
 )
+from .bulk import InitialLoadResult, Neo4jBulkInitialLoader
 from .service import (
     IngestionConflict,
     IngestionInterrupted,
@@ -39,12 +40,14 @@ __all__ = [
     "IngestionInterrupted",
     "IngestionPlan",
     "IngestionResult",
+    "InitialLoadResult",
     "IncrementalIngestionRequest",
     "JobLeaseConflict",
     "JobPhase",
     "JobStatus",
     "JobView",
     "Neo4jIngestionService",
+    "Neo4jBulkInitialLoader",
     "Neo4jIncrementalPipeline",
     "Neo4jEmbeddingIndexManager",
     "SystemClock",

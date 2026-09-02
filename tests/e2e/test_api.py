@@ -24,11 +24,13 @@ from graphrag_prod.api.contracts import (
     VersionFilterRequest,
 )
 from graphrag_prod.api.runtime import (
+    Backend,
     BackendResult,
     OperationEnvelope,
     OperationKind,
     RateLimitAlgorithm,
     RateLimitPolicy,
+    RuntimePolicy,
     UsageMetadata,
 )
 from graphrag_prod.generation import REFUSAL_ANSWER
@@ -76,18 +78,18 @@ def _job(*, operation: str = "INGEST", job_id: str = "job-1") -> JobResponse:
     return JobResponse(
         job_id=job_id,
         operation=operation,
-        status="QUEUED",
-        phase="PLAN",
+        status="SUCCEEDED",
+        phase="COMPLETE",
         document_id="document-1",
         target_version_id=None,
         target_snapshot_id=None,
         expected_active_snapshot_id=None,
         source_generation=1,
-        attempts=0,
+        attempts=1,
         max_attempts=3,
-        completed_tasks=0,
+        completed_tasks=4,
         expected_tasks=4,
-        outcome=None,
+        outcome="completed",
         last_error_code=None,
     )
 
@@ -192,9 +194,10 @@ class FakeBackend:
 
 
 def _app(
-    backend: FakeBackend,
+    backend: Backend,
     *,
     rate_limit_policy: RateLimitPolicy | None = None,
+    runtime_policy: RuntimePolicy | None = None,
     shutdown_callbacks: tuple[object, ...] = (),
 ):
     return create_app(
@@ -207,6 +210,7 @@ def _app(
             )
         ),
         backend=backend,
+        runtime_policy=runtime_policy,
         settings=APISettings(
             service_name="stage7-test-api",
             version="7.0.0-test",
@@ -272,9 +276,9 @@ class APIEndToEndTests(unittest.TestCase):
             )
             metrics = client.get("/v1/metrics", headers=observer)
 
-        self.assertEqual(ingestion.status_code, 202)
+        self.assertEqual(ingestion.status_code, 200)
         self.assertEqual(ingestion.json()["job"]["operation"], "INGEST")
-        self.assertEqual(deletion.status_code, 202)
+        self.assertEqual(deletion.status_code, 200)
         self.assertEqual(deletion.json()["job"]["operation"], "DELETE")
         self.assertEqual(job.status_code, 200)
         self.assertEqual(job.json()["job_id"], "job-1")
@@ -385,6 +389,84 @@ class APIEndToEndTests(unittest.TestCase):
         self.assertNotIn("attacker-tenant", invalid.text)
         self.assertEqual(denied_metrics.status_code, 403)
         self.assertEqual(len(backend.envelopes), 1)
+
+    def test_timed_out_write_requires_same_operation_key_retry(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        completed = threading.Event()
+
+        class TimeoutResolutionBackend:
+            def __init__(self) -> None:
+                self.envelopes: list[OperationEnvelope] = []
+                self._lock = threading.Lock()
+
+            def execute(self, envelope: OperationEnvelope, /) -> BackendResult:
+                if envelope.operation is not OperationKind.INGESTION:
+                    raise AssertionError("only ingestion is expected")
+                with self._lock:
+                    self.envelopes.append(envelope)
+                    call_number = len(self.envelopes)
+                if call_number == 1:
+                    started.set()
+                    release.wait(timeout=2)
+                    completed.set()
+                return BackendResult(
+                    IngestionResponse(
+                        job=_job(),
+                        snapshot_id="snapshot-1",
+                        active_snapshot_id="snapshot-1",
+                    )
+                )
+
+        backend = TimeoutResolutionBackend()
+        body = {
+            "operation_key": "timeout-operation-0001",
+            "canonical_uri": "s3://trusted-bucket/timeout-document.txt",
+            "title": "Timeout resolution report",
+            "source_name": "controlled-upload",
+            "content": "Authorized source text.",
+            "access_policy_id": "policy-1",
+            "access_policy_version": 1,
+            "access_groups": ["finance"],
+        }
+        try:
+            with TestClient(
+                _app(
+                    backend,
+                    runtime_policy=RuntimePolicy(
+                        max_workers=1,
+                        max_queue_size=0,
+                        timeout_seconds=0.03,
+                        max_attempts=3,
+                    ),
+                )
+            ) as client:
+                timed_out = client.post(
+                    "/v1/documents:ingest",
+                    headers=_headers(),
+                    json=body,
+                )
+                self.assertTrue(started.is_set())
+                self.assertEqual(timed_out.status_code, 504)
+                self.assertEqual(timed_out.json()["code"], "dependency_timeout")
+
+                release.set()
+                self.assertTrue(completed.wait(timeout=2))
+                resolved = client.post(
+                    "/v1/documents:ingest",
+                    headers=_headers(),
+                    json=body,
+                )
+        finally:
+            release.set()
+
+        self.assertEqual(resolved.status_code, 200)
+        self.assertEqual(resolved.json()["job"]["status"], "SUCCEEDED")
+        self.assertEqual(len(backend.envelopes), 2)
+        self.assertEqual(
+            [envelope.payload["operation_key"] for envelope in backend.envelopes],
+            [body["operation_key"], body["operation_key"]],
+        )
 
     def test_rate_limit_and_readiness_failure_are_bounded(self) -> None:
         backend = FakeBackend()

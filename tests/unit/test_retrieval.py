@@ -17,6 +17,7 @@ from graphrag_prod.retrieval.engine import (
     HYDRATE_QUERY,
     VECTOR_RECALL_QUERY,
     _content_deduplication_key,
+    _partitioned_lucene_query,
     _query_terms,
 )
 from graphrag_prod.retrieval.metrics import (
@@ -173,6 +174,61 @@ class RetrievalContractTests(unittest.TestCase):
         self.assertEqual(_query_terms('revenue +(margin): "cash"'), "revenue margin cash")
         self.assertEqual(_query_terms("???"), "")
 
+    def test_recall_candidate_windows_are_authorized_before_ranking(self) -> None:
+        self.assertNotIn("db.index.vector.queryNodes", VECTOR_RECALL_QUERY)
+        self.assertIn("vector.similarity.cosine", VECTOR_RECALL_QUERY)
+        lucene = _partitioned_lucene_query(
+            "revenue +(margin)",
+            "tenant-one",
+            frozenset({"readers", "finance"}),
+        )
+        self.assertIn("retrieval_scope:grscopeactive", lucene)
+        self.assertIn("AND text:(revenue margin)", lucene)
+        self.assertEqual(lucene.count("^0"), 4)
+        self.assertNotIn("tenant-one", lucene)
+        self.assertNotIn("readers", lucene)
+        self.assertNotIn("finance", lucene)
+
+    def test_exact_vector_queries_pin_generation_and_rank_only_authorized_rows(self) -> None:
+        for query in (VECTOR_RECALL_QUERY, CANDIDATE_VECTOR_QUERY):
+            with self.subTest(query=query[:40]):
+                self.assertEqual(query.count("MATCH (state:TenantCorpusState"), 1)
+                self.assertIn(
+                    "USING INDEX state:TenantCorpusState(tenant_id)",
+                    query,
+                )
+                self.assertIn("generation_id: $generation_id", query)
+                self.assertIn("state.corpus_revision = $corpus_revision", query)
+                self.assertIn(
+                    "generation.embedding_space_id = $embedding_space_id",
+                    query,
+                )
+                self.assertIn("generation.dimensions = $dimensions", query)
+                score_position = query.index("vector.similarity.cosine")
+                self.assertLess(
+                    query.index("any(group IN document.access_groups"),
+                    score_position,
+                )
+                self.assertLess(
+                    query.index("any(group IN chunk.access_groups"),
+                    score_position,
+                )
+                self.assertLess(query.index("ACTIVE_VERSION"), score_position)
+                self.assertLess(query.index("$version_ids"), score_position)
+                self.assertLess(score_position, query.rindex("LIMIT $limit"))
+
+        candidate_start = CANDIDATE_VECTOR_QUERY.index(
+            "UNWIND $candidate_ids AS candidate_id"
+        )
+        unique_seek = CANDIDATE_VECTOR_QUERY.index(
+            "MATCH (chunk:Chunk {chunk_id: candidate_id})"
+        )
+        active_check = CANDIDATE_VECTOR_QUERY.index("ACTIVE_SNAPSHOT")
+        self.assertLess(candidate_start, unique_seek)
+        self.assertLess(unique_seek, active_check)
+        self.assertIn("USING INDEX chunk:Chunk(chunk_id)", CANDIDATE_VECTOR_QUERY)
+        self.assertNotIn("chunk.chunk_id IN $candidate_ids", CANDIDATE_VECTOR_QUERY)
+
     def test_every_data_path_has_tenant_acl_active_version_and_stable_ids(self) -> None:
         for query in (
             VECTOR_RECALL_QUERY,
@@ -183,6 +239,9 @@ class RetrievalContractTests(unittest.TestCase):
             HYDRATE_QUERY,
         ):
             self.assertIn("$tenant_id", query)
+            self.assertIn("TenantCorpusState", query)
+            self.assertIn("generation_id: $generation_id", query)
+            self.assertIn("state.corpus_revision = $corpus_revision", query)
             self.assertIn("access_groups", query)
             self.assertIn("ACTIVE_SNAPSHOT", query)
             self.assertIn("ACTIVE_VERSION", query)

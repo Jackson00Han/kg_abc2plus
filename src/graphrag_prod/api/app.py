@@ -19,7 +19,6 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from graphrag_prod.domain import Principal
 from graphrag_prod.observability.logging import StructuredJsonLogger
 from graphrag_prod.observability.metrics import MetricsRegistry
 
@@ -617,7 +616,7 @@ def create_app(
     @app.post(
         "/v1/documents:ingest",
         response_model=IngestionResponse,
-        status_code=status.HTTP_202_ACCEPTED,
+        status_code=status.HTTP_200_OK,
     )
     async def ingest_document(
         request: Request,
@@ -637,7 +636,7 @@ def create_app(
     @app.delete(
         "/v1/documents/{document_id}",
         response_model=DeleteResponse,
-        status_code=status.HTTP_202_ACCEPTED,
+        status_code=status.HTTP_200_OK,
     )
     async def delete_document(
         request: Request,

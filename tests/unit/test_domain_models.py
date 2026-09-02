@@ -6,7 +6,12 @@ import dataclasses
 from pathlib import Path
 import unittest
 
-from graphrag_prod.domain.access import Principal, can_access
+from graphrag_prod.domain.access import (
+    Principal,
+    active_retrieval_scope,
+    can_access,
+    retrieval_scope_token,
+)
 from graphrag_prod.domain.ids import (
     assertion_id,
     canonicalize_uri,
@@ -230,6 +235,22 @@ class AccessPolicyTests(unittest.TestCase):
     def test_principal_requires_an_explicit_group(self) -> None:
         with self.assertRaisesRegex(ValueError, "groups"):
             Principal("alice", "tenant", frozenset())
+
+    def test_active_retrieval_scope_is_hashed_stable_and_lucene_safe(self) -> None:
+        scope = active_retrieval_scope(
+            "tenant-stage2",
+            frozenset({"legal", "finance-readers"}),
+        )
+        self.assertEqual(scope.split()[0], "grscopeactive")
+        self.assertEqual(scope, active_retrieval_scope(
+            "tenant-stage2",
+            frozenset({"finance-readers", "legal"}),
+        ))
+        self.assertNotIn("tenant-stage2", scope)
+        self.assertNotIn("finance-readers", scope)
+        self.assertIn(retrieval_scope_token("group", "legal"), scope)
+        with self.assertRaises(ValueError):
+            retrieval_scope_token("unknown", "value")
 
 
 if __name__ == "__main__":

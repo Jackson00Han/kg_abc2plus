@@ -22,6 +22,7 @@ from graphrag_prod.retrieval import (
     RetrievalRequest,
     RetrievalUnavailable,
 )
+from graphrag_prod.retrieval.engine import _CorpusStateChanged
 
 
 def _request() -> RetrievalRequest:
@@ -67,7 +68,64 @@ class _FailingDriver:
         return _FailingSession(self)
 
 
+class _ScriptedSession:
+    def __init__(self, driver: _ScriptedDriver) -> None:
+        self.driver = driver
+
+    def __enter__(self) -> _ScriptedSession:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        del exc_type, exc, traceback
+
+    def execute_read(self, work: Any, request: RetrievalRequest) -> Any:
+        self.driver.calls += 1
+        self.driver.work_metadata = work.metadata
+        self.driver.work_timeout = work.timeout
+        self.driver.requests.append(request)
+        outcome = self.driver.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class _ScriptedDriver:
+    def __init__(self, outcomes: list[Any]) -> None:
+        self.outcomes = outcomes
+        self.calls = 0
+        self.databases: list[str] = []
+        self.requests: list[RetrievalRequest] = []
+        self.work_metadata: dict[str, str] | None = None
+        self.work_timeout: float | None = None
+
+    def session(self, *, database: str) -> _ScriptedSession:
+        self.databases.append(database)
+        return _ScriptedSession(self)
+
+
 class Neo4jRetrievalResourceTests(unittest.TestCase):
+    def test_corpus_state_change_retries_once_in_a_fresh_read_transaction(self) -> None:
+        expected = object()
+        driver = _ScriptedDriver([_CorpusStateChanged(), expected])
+        engine = Neo4jRetrievalEngine(driver)
+
+        self.assertIs(engine.retrieve(_request()), expected)
+        self.assertEqual(driver.calls, 2)
+        self.assertEqual(driver.databases, ["neo4j"])
+        self.assertEqual(driver.requests, [_request(), _request()])
+
+    def test_repeated_corpus_state_change_fails_closed_after_two_attempts(self) -> None:
+        driver = _ScriptedDriver([_CorpusStateChanged(), _CorpusStateChanged()])
+        engine = Neo4jRetrievalEngine(driver)
+
+        with self.assertRaisesRegex(
+            RetrievalUnavailable,
+            "changed repeatedly during retrieval",
+        ):
+            engine.retrieve(_request())
+        self.assertEqual(driver.calls, 2)
+        self.assertEqual(driver.databases, ["neo4j"])
+
     def test_managed_transaction_has_bounded_server_timeout_and_safe_metadata(
         self,
     ) -> None:

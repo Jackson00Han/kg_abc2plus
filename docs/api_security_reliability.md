@@ -9,8 +9,8 @@ assembly must inject those trusted resources into `create_app`.
 
 | Method | Path | Purpose | Success |
 | --- | --- | --- | --- |
-| `POST` | `/v1/documents:ingest` | Submit one authoritative UTF-8 source version | `202` |
-| `DELETE` | `/v1/documents/{document_id}` | Delete one tenant-scoped document lifecycle | `202` |
+| `POST` | `/v1/documents:ingest` | Synchronously ingest one authoritative UTF-8 source version | `200` |
+| `DELETE` | `/v1/documents/{document_id}` | Synchronously delete one tenant-scoped document lifecycle | `200` |
 | `GET` | `/v1/jobs/{job_id}` | Read a tenant-scoped durable job projection | `200` |
 | `POST` | `/v1/retrieval` | Run bounded retrieval and return traceable Chunks | `200` |
 | `POST` | `/v1/answers` | Retrieve and generate a grounded cited answer | `200` |
@@ -84,16 +84,33 @@ API-level automatic retries are restricted to explicitly marked retryable
 failures from provider-free job-status and health/readiness reads.  Retrieval
 is attempted once at this boundary because it first invokes the embedding
 provider; its Neo4j managed read transaction may still use the driver's
-bounded retry policy without repeating the embedding call.  Ingestion,
-deletion, and answer generation are also attempted once.  Writes already use
-their Stage 3 idempotency keys and durable jobs; answer generation is not
-retried because it can duplicate billable model calls.  Timeouts and
-unclassified exceptions are never retried.
+bounded retry policy without repeating the embedding call. The retrieval
+engine also performs at most one new read transaction when its captured corpus
+revision or embedding generation changes mid-pipeline; it discards the first
+transaction's rows and reuses the already validated query embedding. A second
+change fails closed. See `docs/production_retrieval.md` for the guarded
+linearization contract. Ingestion, deletion, and answer generation are also
+attempted once. Writes already use their Stage 3 idempotency keys and durable
+jobs; answer generation is not retried because it can duplicate billable model
+calls. Timeouts and unclassified exceptions are never retried.
 
-A timed-out write may still finish in its worker thread.  Clients must use the
-operation key and job-status endpoint to resolve that outcome instead of
-submitting a different operation.  Application shutdown first stops new work
-and closes the rate limiter, then invokes bounded resource-close callbacks.
+A successful ingestion or deletion response is `200`, contains a terminal
+`SUCCEEDED` or `NOOP` job in the `COMPLETE` phase, and therefore does not imply
+that work was merely queued.  There is no in-process background queue behind
+these endpoints.
+
+A timed-out write may still finish in its worker thread.  Because the timeout
+response cannot safely claim a job identifier before the synchronous backend
+returns, clients must retry the exact request after bounded backoff with the
+same operation key to resolve the outcome.  The durable idempotency fingerprint
+returns the existing
+terminal result when the first attempt completed and rejects reuse of the key
+with different input.  Once a response supplies its job identifier, the
+job-status endpoint can be used for later audit.  Clients must not substitute a
+new operation key merely because the HTTP response timed out.
+
+Application shutdown first stops new work and closes the rate limiter, then
+invokes bounded resource-close callbacks.
 It does not wait without limit for synchronous provider threads; closing their
 owned resources interrupts remaining I/O while completion callbacks retain
 correct capacity accounting.
@@ -172,16 +189,19 @@ documentation, the current Neo4j Python driver API, and the PyJWT API:
 - <https://neo4j.com/docs/api/python-driver/current/api.html>
 - <https://pyjwt.readthedocs.io/en/stable/api.html>
 
-## Known boundaries before production-candidate validation
+## Known deployment boundaries
 
 - HS256 key distribution and rotation remain deployment responsibilities; a
   production identity platform may require an asymmetric/JWKS verifier.
 - The in-process rate limiter is per process.  A multi-replica deployment
   needs a shared gateway or limiter with the same semantic policy.
-- Stage 7 verifies usage-accounting transport with deterministic providers;
-  real model token, price, latency, and failure distributions remain Stage 9
-  evidence.
-- The local runner uses a tagged Neo4j image and records, but does not enforce,
-  the independently observed digest.
+- Stage 7 verifies usage-accounting transport with deterministic providers.
+  The Stage 9 reference envelope measures deterministic token and cost
+  accounting, but real external-provider tokenization, pricing, latency,
+  availability, quota, and retention behavior remain deployment checks.
+- Development runners use the configured Neo4j tag. The Stage 9 qualification
+  runner instead pulls and runs the committed repository digest directly,
+  verifies its RepoDigest without changing any pre-existing local tag, and
+  records the observed source and restored container resource envelopes.
 - `dev-mini` API and Neo4j results are functional/security evidence only and
   cannot qualify the production-reference workload.

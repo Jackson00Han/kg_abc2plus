@@ -175,6 +175,22 @@ class AcceptanceContractTests(unittest.TestCase):
                     ]
                     self.assertEqual(assignments, [expected])
 
+        stage8_runner = (ROOT / "scripts" / "run_stage8_neo4j_tests.sh").read_text(
+            encoding="utf-8"
+        )
+        for expected in expected_lines:
+            self.assertIn(expected, stage8_runner)
+        self.assertIn(
+            "image=${STAGE8_NEO4J_IMAGE:-neo4j:5.26.12-community}",
+            stage8_runner,
+        )
+        self.assertIn(
+            '--label "$ownership_label_key=$ownership_label_value"', stage8_runner
+        )
+        self.assertIn(
+            'if [ "$actual_owner" = "$ownership_label_value" ]', stage8_runner
+        )
+
     def test_dev_resource_caps_and_mode_cannot_be_removed(self) -> None:
         unbounded = copy.deepcopy(self.profiles["dev-mini"])
         unbounded["execution"]["neo4j"] = {"mode": "deployment_sized"}

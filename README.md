@@ -19,9 +19,10 @@ The profile command validates and previews the declared workload; it does not
 run a load test. Stage 5A materializes the bounded development corpus described
 below. Stage 8 provides the unified, versioned `dev-mini` evaluation and CI
 regression gate documented in
-[`docs/automated_evaluation.md`](docs/automated_evaluation.md); Stage 9 retains
-the production-reference load and recovery qualification. Disposable Neo4j
-runners enforce the checked local resource cap.
+[`docs/automated_evaluation.md`](docs/automated_evaluation.md); Stage 9 performs
+the production-reference load and recovery qualification documented in
+[`docs/production_candidate_validation.md`](docs/production_candidate_validation.md).
+Disposable Neo4j runners enforce the checked local resource cap.
 
 Stage 5A adds a separate, versioned `dev-corpus-v1`: 10 deterministic
 synthetic filings across two tenants and five company identities, with 120
@@ -62,6 +63,30 @@ Stage 8 gate with:
   --baseline evaluation/baselines/dev-mini.v1.json \
   --output-dir /tmp/sample-graphrag-stage8
 ```
+
+Run the Stage 9 production-reference qualification from a clean committed
+revision, with Docker available and a new output directory outside the
+repository:
+
+```bash
+./scripts/run_stage9_validation.sh \
+  --output-dir /tmp/sample-graphrag-stage9
+```
+
+The Stage 9 command is intentionally a five-minute-plus integrated run. It
+rebuilds the 24,000-Chunk corpus, drives sustained retrieval from the
+manifest's 64 versioned query anchors, independently recomputes all metrics
+from prose-redacted, checksum-committed evidence for the 49 adjudicated quality
+cases, exercises real API timeout deadlines, and binds the exact Neo4j dump
+bytes used by the restore check into the report evidence.
+
+Its ingestion-rate metric covers the bounded bulk graph-write interval; index
+activation and time-to-query-ready are separate observations and are not part
+of that throughput number. The reference envelope uses deterministic local
+providers, one five-minute loopback window, and one Neo4j Community container.
+Neo4j is resource-capped, while the API and load-generator processes use the
+recorded host-default-unbounded limits. A passing result therefore validates
+only that envelope, not a live deployment or an external model provider.
 
 ## Prerequisites
 

@@ -380,13 +380,33 @@ class JobResponse(StrictAPIModel):
 
 
 class IngestionResponse(StrictAPIModel):
+    """Terminal result from the synchronous ingestion endpoint."""
+
     job: JobResponse
     snapshot_id: Identifier | None = None
     active_snapshot_id: Identifier | None = None
 
+    @model_validator(mode="after")
+    def validate_terminal_job(self) -> Self:
+        if self.job.status not in {"SUCCEEDED", "NOOP"}:
+            raise ValueError("a successful synchronous write must be terminal")
+        if self.job.phase != "COMPLETE":
+            raise ValueError("a successful synchronous write must be complete")
+        return self
+
 
 class DeleteResponse(StrictAPIModel):
+    """Terminal result from the synchronous deletion endpoint."""
+
     job: JobResponse
+
+    @model_validator(mode="after")
+    def validate_terminal_job(self) -> Self:
+        if self.job.status not in {"SUCCEEDED", "NOOP"}:
+            raise ValueError("a successful synchronous write must be terminal")
+        if self.job.phase != "COMPLETE":
+            raise ValueError("a successful synchronous write must be complete")
+        return self
 
 
 class CitationResponse(StrictAPIModel):

@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+EVALUATION_BASELINE_SCHEMA_VERSION = "evaluation-baseline-v1"
+EVALUATION_BASELINE_VERSION = "1.1.0"
+
+
 def compare(operator: str, observed: int | float, target: int | float) -> bool:
     if operator == ">=":
         return observed >= target
@@ -93,8 +97,10 @@ def baseline_failures(
     deterministic_projection: Mapping[str, Any],
     semantic_digest: str,
 ) -> list[str]:
-    if baseline.get("schema_version") != "evaluation-baseline-v1":
+    if baseline.get("schema_version") != EVALUATION_BASELINE_SCHEMA_VERSION:
         raise ValueError("evaluation baseline schema is invalid")
+    if baseline.get("version") != EVALUATION_BASELINE_VERSION:
+        raise ValueError("evaluation baseline version is stale")
     if baseline.get("profile_id") != profile_id:
         raise ValueError("evaluation baseline profile does not match")
     if baseline.get("gold_version") != gold_version:
@@ -120,7 +126,7 @@ def baseline_candidate(
         "gold_version": gold_version,
         "profile_id": profile_id,
         "rationale": rationale,
-        "schema_version": "evaluation-baseline-v1",
+        "schema_version": EVALUATION_BASELINE_SCHEMA_VERSION,
         "semantic_digest": semantic_digest,
-        "version": "1.0.0",
+        "version": EVALUATION_BASELINE_VERSION,
     }

@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import neo4j
 
-from graphrag_prod.domain import pipeline_profile_id
+from graphrag_prod.domain import active_retrieval_scope, pipeline_profile_id
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.ingestion import (
@@ -158,6 +158,22 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
         )
         return records
 
+    def _assert_chunk_access(self, plan, rows) -> None:
+        expected = {bundle.chunk.chunk_id: bundle.chunk for bundle in plan.bundles}
+        actual_rows = list(rows)
+        actual = {row["chunk_id"]: row for row in actual_rows}
+        self.assertEqual(len(actual_rows), len(expected))
+        self.assertEqual(set(actual), set(expected))
+        for chunk_id, chunk in expected.items():
+            row = actual[chunk_id]
+            self.assertEqual(row["policy_id"], chunk.access_policy_id)
+            self.assertEqual(row["policy_version"], chunk.access_policy_version)
+            self.assertEqual(set(row["groups"]), set(chunk.access_groups))
+            self.assertEqual(
+                row["retrieval_scope"],
+                active_retrieval_scope(chunk.tenant_id, chunk.access_groups),
+            )
+
     @staticmethod
     def _with_document_metadata(
         plan: IngestionPlan,
@@ -167,7 +183,12 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
         access_policy_id: str,
         access_policy_version: int,
         access_groups: frozenset[str],
+        chunk_access_groups: tuple[frozenset[str], ...] | None = None,
     ) -> IngestionPlan:
+        if chunk_access_groups is None:
+            chunk_access_groups = tuple(access_groups for _ in plan.bundles)
+        if len(chunk_access_groups) != len(plan.bundles):
+            raise ValueError("chunk_access_groups must cover every Chunk")
         bundles = tuple(
             dataclasses.replace(
                 bundle,
@@ -182,10 +203,10 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
                     bundle.chunk,
                     access_policy_id=access_policy_id,
                     access_policy_version=access_policy_version,
-                    access_groups=access_groups,
+                    access_groups=chunk_access_groups[index],
                 ),
             )
-            for bundle in plan.bundles
+            for index, bundle in enumerate(plan.bundles)
         )
         return IngestionPlan.build(
             operation_key=operation_key,
@@ -438,25 +459,13 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             RETURN chunk.chunk_id AS chunk_id,
                    chunk.access_policy_id AS policy_id,
                    chunk.access_policy_version AS policy_version,
-                   chunk.access_groups AS groups
+                   chunk.access_groups AS groups,
+                   chunk.retrieval_scope AS retrieval_scope
             ORDER BY chunk.chunk_id
             """,
             chunk_ids=sorted(expected_members["INCLUDES_CHUNK"]),
         )
-        self.assertEqual(len(chunk_access), len(plan.bundles))
-        for chunk in chunk_access:
-            self.assertEqual(
-                chunk["policy_id"],
-                plan.bundles[0].document.access_policy_id,
-            )
-            self.assertEqual(
-                chunk["policy_version"],
-                plan.bundles[0].document.access_policy_version,
-            )
-            self.assertEqual(
-                set(chunk["groups"]),
-                set(plan.bundles[0].document.access_groups),
-            )
+        self._assert_chunk_access(plan, chunk_access)
 
         principal = make_principal(plan.tenant_id)
         for bundle in plan.bundles:
@@ -552,6 +561,31 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             chunk_specs=CHUNKS_V2,
             version_number=2,
             expected_active_snapshot_id=v1.snapshot.snapshot_id,
+        )
+        document_groups = frozenset({"knowledge-readers", "audit-readers"})
+        chunk_groups = (
+            frozenset({"knowledge-readers"}),
+            frozenset({"knowledge-readers", "audit-readers"}),
+            frozenset({"knowledge-readers"}),
+        )
+        v2 = dataclasses.replace(
+            v2,
+            bundles=tuple(
+                dataclasses.replace(
+                    bundle,
+                    document=dataclasses.replace(
+                        bundle.document,
+                        access_policy_version=2,
+                        access_groups=document_groups,
+                    ),
+                    chunk=dataclasses.replace(
+                        bundle.chunk,
+                        access_policy_version=2,
+                        access_groups=chunk_groups[index],
+                    ),
+                )
+                for index, bundle in enumerate(v2.bundles)
+            ),
         )
         self.assertEqual(len(self.service.pending_artifact_ids(v2)), 2)
 
@@ -865,6 +899,11 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             access_policy_id=f"{original.tenant_id}:legal-readers",
             access_policy_version=2,
             access_groups=frozenset({"legal-readers", "audit-readers"}),
+            chunk_access_groups=(
+                frozenset({"legal-readers"}),
+                frozenset({"audit-readers"}),
+                frozenset({"legal-readers", "audit-readers"}),
+            ),
         )
         result = self.service.ingest(updated)
 
@@ -883,9 +922,13 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
                    document.access_policy_id AS document_policy_id,
                    document.access_policy_version AS document_policy_version,
                    document.access_groups AS document_groups,
-                   collect(DISTINCT chunk.access_policy_id) AS chunk_policy_ids,
-                   collect(DISTINCT chunk.access_policy_version) AS chunk_policy_versions,
-                   collect(DISTINCT chunk.access_groups) AS chunk_group_sets,
+                   collect({
+                       chunk_id: chunk.chunk_id,
+                       policy_id: chunk.access_policy_id,
+                       policy_version: chunk.access_policy_version,
+                       groups: chunk.access_groups,
+                       retrieval_scope: chunk.retrieval_scope
+                   }) AS chunks,
                    count(DISTINCT chunk) AS chunk_count
             """,
             tenant_id=updated.tenant_id,
@@ -901,17 +944,8 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             set(projection["document_groups"]),
             set(updated.bundles[0].document.access_groups),
         )
-        self.assertEqual(
-            projection["chunk_policy_ids"],
-            [updated.bundles[0].document.access_policy_id],
-        )
-        self.assertEqual(projection["chunk_policy_versions"], [2])
         self.assertEqual(projection["chunk_count"], len(updated.bundles))
-        self.assertEqual(len(projection["chunk_group_sets"]), 1)
-        self.assertEqual(
-            set(projection["chunk_group_sets"][0]),
-            set(updated.bundles[0].document.access_groups),
-        )
+        self._assert_chunk_access(updated, projection["chunks"])
         revision_after = self._records(
             """
             MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
@@ -920,6 +954,24 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             tenant_id=updated.tenant_id,
         )[0]["revision"]
         self.assertEqual(revision_after, revision_before + 1)
+
+        same_version_broader_chunks = self._with_document_metadata(
+            updated,
+            operation_key="metadata-chunk-policy-version-reuse-conflict",
+            title=updated.bundles[0].document.title,
+            access_policy_id=updated.bundles[0].document.access_policy_id,
+            access_policy_version=2,
+            access_groups=updated.bundles[0].document.access_groups,
+        )
+        with self.assertRaisesRegex(
+            IngestionConflict,
+            "Chunk access changed without a new policy version",
+        ):
+            self.service.ingest(same_version_broader_chunks)
+        self.assertEqual(
+            self.service.get_job(same_version_broader_chunks.job_id).status,
+            JobStatus.FAILED_PERMANENT,
+        )
 
         same_version_different_policy = self._with_document_metadata(
             updated,
@@ -948,9 +1000,13 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
                    document.access_policy_id AS document_policy_id,
                    document.access_policy_version AS document_policy_version,
                    document.access_groups AS document_groups,
-                   collect(DISTINCT chunk.access_policy_id) AS chunk_policy_ids,
-                   collect(DISTINCT chunk.access_policy_version) AS chunk_policy_versions,
-                   collect(DISTINCT chunk.access_groups) AS chunk_group_sets
+                   collect({
+                       chunk_id: chunk.chunk_id,
+                       policy_id: chunk.access_policy_id,
+                       policy_version: chunk.access_policy_version,
+                       groups: chunk.access_groups,
+                       retrieval_scope: chunk.retrieval_scope
+                   }) AS chunks
             """,
             tenant_id=updated.tenant_id,
             document_id=updated.document_id,
@@ -965,16 +1021,7 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             set(unchanged["document_groups"]),
             set(updated.bundles[0].document.access_groups),
         )
-        self.assertEqual(
-            unchanged["chunk_policy_ids"],
-            [updated.bundles[0].document.access_policy_id],
-        )
-        self.assertEqual(unchanged["chunk_policy_versions"], [2])
-        self.assertEqual(len(unchanged["chunk_group_sets"]), 1)
-        self.assertEqual(
-            set(unchanged["chunk_group_sets"][0]),
-            set(updated.bundles[0].document.access_groups),
-        )
+        self._assert_chunk_access(updated, unchanged["chunks"])
 
     def test_same_snapshot_fast_path_rejects_changed_source_identity_metadata(
         self,
@@ -1408,6 +1455,24 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
     def test_delete_is_repeatable_and_tombstone_blocks_stale_resurrection(self) -> None:
         plan = make_plan(operation_key="delete-target-create")
         self.service.ingest(plan)
+        self.driver.execute_query(
+            """
+            MATCH (snapshot:KnowledgeSnapshot {snapshot_id: $snapshot_id})
+            CREATE (finding:GraphGovernanceFinding {
+                finding_id: $finding_id,
+                snapshot_id: $snapshot_id,
+                code: 'TEST_FINDING',
+                action: 'QUARANTINE',
+                object_kind: 'Assertion',
+                object_id: 'test-object',
+                detail: 'deletion cleanup regression fixture'
+            })
+            MERGE (snapshot)-[:HAS_GOVERNANCE_FINDING]->(finding)
+            """,
+            snapshot_id=plan.snapshot.snapshot_id,
+            finding_id="delete-cleanup-finding",
+            database_=self.database,
+        )
 
         deleted = self.service.delete_document(
             tenant_id=plan.tenant_id,
@@ -1423,6 +1488,15 @@ class Neo4jIngestionIntegrationTests(unittest.TestCase):
             self._document_projection(plan.tenant_id, plan.document_id)
         )
         self._assert_plan_hidden(plan)
+        remaining_findings = self._records(
+            """
+            MATCH (finding:GraphGovernanceFinding {
+                finding_id: 'delete-cleanup-finding'
+            })
+            RETURN count(finding) AS count
+            """
+        )
+        self.assertEqual(remaining_findings[0]["count"], 0)
         tombstone = self._records(
             """
             MATCH (tombstone:DocumentTombstone {

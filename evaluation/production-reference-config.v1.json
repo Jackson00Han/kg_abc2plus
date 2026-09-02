@@ -1,0 +1,137 @@
+{
+  "answer": {
+    "gold_case_ids": [
+      "cross_chunk-boundary-01",
+      "cross_chunk-boundary-02",
+      "cross_chunk-success-01",
+      "cross_chunk-success-02",
+      "cross_chunk-success-03",
+      "cross_chunk-success-04",
+      "exact_value-boundary-01",
+      "exact_value-boundary-02",
+      "exact_value-success-01",
+      "exact_value-success-02",
+      "exact_value-success-03",
+      "exact_value-success-04",
+      "graph_relationship-boundary-01",
+      "graph_relationship-boundary-02",
+      "graph_relationship-success-01",
+      "graph_relationship-success-02",
+      "graph_relationship-success-03",
+      "graph_relationship-success-04",
+      "single_chunk-boundary-01",
+      "single_chunk-boundary-02",
+      "single_chunk-success-01",
+      "single_chunk-success-02",
+      "single_chunk-success-03",
+      "single_chunk-success-04",
+      "temporal_conflict-boundary-01",
+      "temporal_conflict-boundary-02",
+      "temporal_conflict-success-01",
+      "temporal_conflict-success-02",
+      "temporal_conflict-success-03",
+      "temporal_conflict-success-04"
+    ],
+    "latency_samples": 30,
+    "provider_delay_ms": 20,
+    "provider_input_tokens": 96,
+    "provider_output_tokens": 48,
+    "provider_request_cost_usd": "0.00012",
+    "retrieval_limits": {
+      "adjacent_window": 1,
+      "anchor_k": 5,
+      "bm25_recall_k": 20,
+      "bm25_scan_k": 100,
+      "candidate_limit": 100,
+      "deduplicate_content": true,
+      "graph_candidates_per_seed": 20,
+      "graph_edges_per_seed": 100,
+      "graph_entities_per_seed": 20,
+      "max_context_chars": 12000,
+      "minimum_bm25_score": 0,
+      "minimum_rrf_channels": 1,
+      "minimum_vector_score": 0.75,
+      "rrf_rank_constant": 60,
+      "seed_k": 5,
+      "top_k": 10,
+      "vector_recall_k": 20
+    },
+    "warmup_requests": 30
+  },
+  "api": {
+    "max_attempts": 1,
+    "max_queue_size": 16,
+    "max_workers": 8,
+    "rate_limit_burst": 20000,
+    "rate_limit_requests": 20000,
+    "rate_limit_window_seconds": 600,
+    "timeout_observation_early_tolerance_ms": 100,
+    "timeout_observation_late_tolerance_ms": 1000,
+    "timeout_seconds": 5
+  },
+  "container": {
+    "cpus": 8,
+    "heap_initial_mb": 512,
+    "heap_max_mb": 1024,
+    "memory_mb": 3072,
+    "pagecache_mb": 512
+  },
+  "dependencies": {
+    "embedding_provider": {
+      "failure_code": "embedding_provider_unavailable",
+      "model": "deterministic-load-sparse",
+      "provider": "fixture",
+      "revision": "load-v1.0",
+      "success_delay_ms": 5,
+      "timeout_delay_ms": 7000
+    },
+    "llm_provider": {
+      "failure_code": "llm_provider_unavailable",
+      "model": "deterministic-grounded-answer",
+      "provider": "local-reference-llm",
+      "revision": "1.0.0",
+      "success_delay_ms": 20,
+      "timeout_delay_ms": 7000
+    }
+  },
+  "neo4j": {
+    "database": "neo4j",
+    "image": "neo4j:5.26.12-community",
+    "image_digest": "sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37",
+    "initial_load_transaction_timeout_seconds": 60,
+    "max_connection_pool_size": 32,
+    "online_transaction_timeout_seconds": 5,
+    "readiness_timeout_seconds": 120,
+    "transaction_timeout_seconds": 300
+  },
+  "profile_id": "production-reference",
+  "retrieval": {
+    "concurrency": 8,
+    "limits": {
+      "adjacent_window": 1,
+      "anchor_k": 2,
+      "bm25_recall_k": 10,
+      "bm25_scan_k": 50,
+      "candidate_limit": 40,
+      "graph_candidates_per_seed": 5,
+      "graph_edges_per_seed": 20,
+      "graph_entities_per_seed": 5,
+      "max_context_chars": 6000,
+      "minimum_bm25_score": 0,
+      "minimum_rrf_channels": 1,
+      "minimum_vector_score": 0.75,
+      "rrf_rank_constant": 60,
+      "seed_k": 2,
+      "top_k": 5,
+      "vector_recall_k": 10
+    },
+    "sustained_seconds": 300,
+    "warmup_requests": 64
+  },
+  "schema_version": "production-reference-config-v1",
+  "version": "1.0.5",
+  "workload": {
+    "load_corpus_id": "load-v1",
+    "minimum_chunks": 10000
+  }
+}

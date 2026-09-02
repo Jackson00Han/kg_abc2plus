@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 
 
 def _normalized_set(values: frozenset[str], name: str) -> frozenset[str]:
@@ -38,3 +39,26 @@ def can_access(
         group.strip() for group in allowed_groups if group.strip()
     )
     return bool(normalized_allowed & principal.groups)
+
+
+def retrieval_scope_token(kind: str, value: str) -> str:
+    """Return a Lucene-safe, non-reversible token for an authorization scope."""
+
+    if kind not in {"tenant", "group"}:
+        raise ValueError("retrieval scope kind must be tenant or group")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("retrieval scope value must not be empty")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"grscope{kind}{digest}"
+
+
+def active_retrieval_scope(tenant_id: str, groups: frozenset[str]) -> str:
+    """Build the indexed tenant/ACL partition attached only to active Chunks."""
+
+    normalized_groups = _normalized_set(groups, "groups")
+    tokens = ["grscopeactive", retrieval_scope_token("tenant", tenant_id)]
+    tokens.extend(
+        retrieval_scope_token("group", group) for group in sorted(normalized_groups)
+    )
+    return " ".join(tokens)

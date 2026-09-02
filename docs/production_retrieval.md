@@ -10,8 +10,10 @@ One Neo4j read transaction performs the complete pipeline against a consistent
 corpus snapshot:
 
 1. Read the tenant corpus revision and atomically active embedding generation.
-2. Run exact cosine vector recall over authorized active-generation embeddings.
-3. Run BM25 recall through the versioned Chunk full-text index.
+2. Match only authorized Chunks in the atomically active Version and embedding
+   generation, then compute exact cosine recall over that set.
+3. Run BM25 recall through the v2 Chunk full-text index, with tenant,
+   active-publication, and access-group partition terms inside the Lucene query.
 4. Fuse both rankings with standard Reciprocal Rank Fusion (RRF).
 5. Expand bounded seeds through shared accepted Entities and rank candidates
    with the standard Resource Allocation (RA) index.
@@ -30,12 +32,45 @@ RRF uses `sum(1 / (k + rank))`, with the documented default `k=60`. RA uses
 stable Chunk IDs. No Neo4j internal `elementId`, custom relevance formula, or
 graph fact is returned as answer evidence.
 
-Exact cosine recall deliberately matches the authorized active Chunk set
-before scoring. A global approximate vector-index top-N cannot pre-filter
-arbitrary access groups and could allow inaccessible vectors to crowd out
-authorized results. The active vector generation still fixes the vector space,
-dimension, and lifecycle boundary. Representative-scale latency is deferred to
-Stage 9 rather than weakening the authorization invariant.
+Vector recall deliberately does not take a global approximate-index top-N
+window. Its Cypher first matches the request tenant, active Snapshot and
+Version, compatible active embedding generation, Document and Chunk ACLs,
+access-policy identity, and optional Version filters. It then evaluates
+`vector.similarity.cosine` for those rows, applies the score gate, orders by
+score and stable Chunk ID, and finally applies `vector_recall_k`. Consequently,
+same-tenant ACL-hidden, historical, and cross-tenant vectors cannot crowd an
+authorized result out of an earlier candidate window or alter the returned
+trace.
+
+The active generation is revalidated inside each exact-vector query by its
+generation ID, corpus revision, embedding-space ID, and dimensions in a
+single-row subquery. Candidate re-ranking starts from the bounded candidate
+IDs through the unique Chunk ID index, then repeats the complete active,
+tenant, ACL, policy, Version, generation, and vector-shape checks before
+cosine scoring. This changes the query plan, not ranking or authorization
+semantics.
+
+A read transaction alone is not a snapshot guarantee: Neo4j's default
+read-committed isolation permits
+[non-repeatable reads](https://neo4j.com/docs/operations-manual/current/database-internals/concurrent-data-access/).
+The engine therefore captures the tenant corpus revision and active embedding
+generation before recall, guards every vector, BM25, graph, adjacency, and
+hydration statement with that identity, and reads the identity again after the
+last data statement. A successful result was evaluated while that identity
+remained unchanged and its trace names that exact revision and generation. If
+publication, deletion, an access-policy change, or an embedding cutover occurs
+mid-pipeline, the engine discards all intermediate rows and retries once in a
+new read transaction. A second change fails closed as retrieval unavailable;
+no mixed-version result or stale authorization trace is returned. Real-Neo4j
+integration tests place deterministic barriers between recall stages and
+concurrently publish a new Version or revoke access.
+
+Embedding generations and their managed Neo4j vector indexes still define and
+audit vector-space coverage and atomic lifecycle cutover. The production
+retrieval path nevertheless uses exact authorized cosine for correctness and
+existence-signal resistance. An approximate alternative would require a
+prefilter design plus comparative security, quality, and performance evidence;
+bounded overfetch followed by authorization is not equivalent.
 
 ## Security and lifecycle boundary
 
@@ -49,11 +84,29 @@ Every vector, BM25, graph-expansion, adjacency, and hydration query requires:
 - caller-supplied Document, Version, and publication-time filters; and
 - accepted Entity governance state for graph navigation.
 
-BM25 uses a global Neo4j full-text candidate index, but authorization and
-version predicates execute in the same database query before any hit is
-returned to application code. The BM25 scan and returned rank are independently
-bounded. Graph degrees are calculated only from Chunks visible to the same
-Principal, so protected connectivity cannot influence the returned RA trace.
+BM25 uses `graphrag_chunk_text_v2`, whose indexed properties are `text` and
+`retrieval_scope`. An active Chunk's scope contains an active marker plus
+SHA-256-derived tenant and access-group tokens. The Lucene query requires the
+active marker, exact tenant token, and at least one Principal-group token before
+the bounded full-text candidate window is selected. Retiring a Version removes
+the scope property. Raw tenant and group values are not placed in the Lucene
+query. Migration 005 creates this v2 index; the older text-only v1 index remains
+for migration safety but production retrieval never queries it.
+
+Those partition tokens reduce the global index to an authorized candidate
+partition; they are not the source of authorization truth. The same database
+query still rechecks tenant, Document and Chunk ACLs, active Snapshot/Version,
+access-policy identity, and requested Version filters before returning a hit.
+The BM25 scan and returned rank are independently bounded. Graph degrees are
+calculated only from Chunks visible to the same Principal, so protected
+connectivity cannot influence the returned RA trace.
+
+The required active, tenant, and group clauses use Lucene zero boosts. They
+therefore constrain the candidate set without contributing to the BM25 score;
+only the `text` clause determines relevance. A real-Neo4j integration check
+uses equal text with different ACL-list lengths and requires identical scores.
+The production-reference workflow pins the validated Neo4j patch release, so
+an upgrade must re-run this parser/scoring compatibility check.
 
 Retired versions cannot be re-enabled by a Version filter. Retrieval fails
 closed when the tenant has no active embedding generation or the query-vector
@@ -121,6 +174,7 @@ uv run --locked python scripts/evaluate_retrieval.py
 ```
 
 The evaluator calculates the Stage 1 definitions for Recall@5, MRR, nDCG@5,
-and unauthorized exposure count. Stage 8 will connect this metric code to the
-unified automated evaluation workflow; Stage 9 will run representative scale
-and concurrency measurements.
+and unauthorized exposure count. Stage 8 connects this metric code to the
+unified automated evaluation workflow. The Stage 9 workflow retains the exact
+authorized-cosine and partitioned-BM25 invariants while measuring the fixed
+production-reference scale and concurrency envelope.

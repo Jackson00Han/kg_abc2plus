@@ -715,6 +715,21 @@ class ApplicationBackendTests(unittest.TestCase):
             self.backend.execute(
                 _envelope(OperationKind.INGESTION, _ingestion_payload())
             )
+        self.documents.invalid_result = BackendResult(
+            {
+                "job": {
+                    **_job_payload(),
+                    "status": "RUNNING",
+                    "phase": "STAGE",
+                },
+                "snapshot_id": "snapshot-001",
+                "active_snapshot_id": "snapshot-001",
+            }
+        )
+        with self.assertRaises(DependencyUnavailableError):
+            self.backend.execute(
+                _envelope(OperationKind.INGESTION, _ingestion_payload())
+            )
         self.documents.invalid_result = BackendResult({"unexpected": "payload"})
         with self.assertRaises(DependencyUnavailableError):
             self.backend.execute(

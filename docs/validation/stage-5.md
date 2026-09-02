@@ -87,6 +87,8 @@ This is `dev-mini` functional and quality evidence, not production-candidate
 performance evidence. The 49-case fixture is a deterministic adjudicated
 regression baseline; future customer-corpus adjudication and unified Stage 8
 execution remain required. Exact authorized cosine recall favors security and
-correctness over approximate-index speed. Representative 10,000-Chunk,
-eight-client latency/throughput validation and any evaluated alternative
-prefiltered ANN design remain Stage 9 work.
+correctness over approximate-index speed. Stage 9 retains that invariant, adds
+authorization-partitioned BM25 recall, and measures the design under the fixed
+10,000-Chunk, eight-client reference envelope. Any approximate alternative is
+separate future work and requires comparative security, quality, and
+performance evidence before adoption.

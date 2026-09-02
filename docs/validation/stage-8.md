@@ -3,6 +3,7 @@
 - Date: 2026-09-02
 - Acceptance contract: `contracts/acceptance.v1.json` version 1.0.1
 - Validation profile: `dev-mini` version 1.0.0
+- Reviewed regression baseline: `dev-mini.v1.json` version 1.1.0
 - Unified gold: `evaluation/gold-v1/manifest.json` version 2.0.0
 - Representative corpus: `dev-corpus-v1` version 1.0.1
 - Answer gold: version 1.1.0
@@ -108,18 +109,32 @@ silently dropping negative cases or complete answers.
 ## Final measured evidence
 
 <!-- STAGE8_FINAL_RESULTS_BEGIN -->
-The authoritative two-run command completed successfully in approximately 15
-minutes 30 seconds. Each run passed 263 unit tests, four HTTP end-to-end tests,
+The original Stage 8 completion at commit `ce2f729` ran the authoritative
+workflow twice. Each run passed 263 unit tests, four HTTP end-to-end tests,
 eleven adversarial security tests, two Stage 8 regression tests, and all 64
 disposable-Neo4j integration tests with no skips. The two Neo4j suites took
-346.273 and 373.078 seconds. Gold/corpus rebuilds, acceptance-profile
-validation, lock verification, package build, bytecode compilation, shell
-syntax, and `git diff --check` also passed.
-
-Both reports are byte-identical and reproduce semantic digest
+346.273 and 373.078 seconds, and both reports reproduced semantic digest
 `20b75cba22c3e9b65dbdd7d7006e52db1cb3a42b71387378baa89605d4d752ce`.
-They match the reviewed `evaluation/baselines/dev-mini.v1.json` baseline
-exactly and contain no failures.
+
+Stage 9 subsequently added regression coverage without rewriting that
+published history. A controlled baseline-maintenance run on 2026-09-03 passed
+327 unit tests, five HTTP end-to-end tests, fifteen adversarial security tests,
+two Stage 8 regression tests, and all 75 disposable-Neo4j integration tests
+with no skips; the Neo4j suite took 396.925 seconds. Relative to the earlier
+unqualified Stage 9 draft baseline with 317 unit and 72 integration tests, the
+reviewed changes are ten additional unit test IDs and three additional
+integration test IDs for Stage 9 evidence, resource checks, backup timing,
+optimized retrieval, and concurrent corpus/ACL cutover safety. Baseline version
+1.1.0 reproduces
+semantic digest
+`af94664fb502498b884eada4b27af892d13d73b9fcf66790601957e672cb126d`.
+The Stage 9 authoritative workflow must replay this current baseline twice
+from its clean implementation commit before it can qualify the candidate.
+
+For both the historical completion and current maintenance capture,
+gold/corpus rebuilds, acceptance-profile validation, lock verification,
+package build, bytecode compilation, shell syntax, and `git diff --check`
+passed.
 
 Measured gating quality results are graph entity precision 1.0, relationship
 precision 1.0, entity-resolution accuracy 1.0, complete-evidence Recall@5

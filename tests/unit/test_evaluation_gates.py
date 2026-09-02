@@ -7,6 +7,7 @@ import unittest
 
 from graphrag_prod.evaluation.datasets import load_json
 from graphrag_prod.evaluation.gates import (
+    EVALUATION_BASELINE_VERSION,
     baseline_candidate,
     baseline_failures,
     contract_metric_rows,
@@ -52,6 +53,7 @@ class EvaluationGateTests(unittest.TestCase):
             semantic_digest="digest",
             rationale="reviewed baseline",
         )
+        self.assertEqual(candidate["version"], EVALUATION_BASELINE_VERSION)
         self.assertEqual(
             baseline_failures(
                 candidate,
@@ -71,6 +73,16 @@ class EvaluationGateTests(unittest.TestCase):
                 semantic_digest="changed",
             )
         )
+        stale = dict(candidate)
+        stale["version"] = "1.0.0"
+        with self.assertRaisesRegex(ValueError, "version is stale"):
+            baseline_failures(
+                stale,
+                profile_id="dev-mini",
+                gold_version="2.0.0",
+                deterministic_projection=projection,
+                semantic_digest="digest",
+            )
 
 
 if __name__ == "__main__":
