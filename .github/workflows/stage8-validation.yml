@@ -1,0 +1,74 @@
+name: Stage 8 validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage8-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dev-mini:
+    name: Versioned dev-mini regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
+      STAGE8_BASELINE: evaluation/baselines/dev-mini.v1.json
+      STAGE8_REPORT_DIR: ${{ runner.temp }}/sample-graphrag-stage8
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.7"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the locked environment
+        run: uv sync --locked
+
+      - name: Verify the reviewed baseline
+        run: |
+          set -euo pipefail
+          test -f "$STAGE8_BASELINE"
+          git ls-files --error-unmatch "$STAGE8_BASELINE"
+
+      - name: Verify Docker and cache the Neo4j fixture
+        run: |
+          set -euo pipefail
+          docker version
+          docker info
+          docker pull neo4j:5.26.12-community
+
+      - name: Run the complete Stage 8 workflow twice
+        run: |
+          set -euo pipefail
+          ./scripts/run_stage8_validation.sh \
+            --repeat 2 \
+            --baseline "$STAGE8_BASELINE" \
+            --output-dir "$STAGE8_REPORT_DIR"
+
+      - name: Upload Stage 8 reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage8-dev-mini-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.STAGE8_REPORT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14

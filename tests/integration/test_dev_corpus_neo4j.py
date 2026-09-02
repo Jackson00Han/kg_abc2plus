@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import ipaddress
+import json
 import os
+from pathlib import Path
 import time
 import unittest
 from urllib.parse import urlparse
@@ -42,6 +44,31 @@ from graphrag_prod.retrieval import (
 from graphrag_prod.retrieval.metrics import evaluate_retrieval_items
 from scripts.evaluate_grounded_answers import evaluate_answer_results
 from tests.fixtures.dev_corpus import DevCorpusFixture, load_dev_corpus_fixture
+
+
+def _write_evaluation_observation(name: str, value: object) -> None:
+    """Write non-content Stage 8 observations only when the runner requests it."""
+
+    output = os.getenv("GRAPHRAG_EVALUATION_OUTPUT_DIR")
+    if output is None:
+        return
+    directory = Path(output)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    if name.endswith(".jsonl"):
+        assert isinstance(value, list)
+        path.write_text(
+            "".join(
+                json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n"
+                for item in value
+            ),
+            encoding="utf-8",
+        )
+    else:
+        path.write_text(
+            json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
 
 
 class _StaticAnswerModel:
@@ -483,6 +510,7 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
     def test_actual_retrieval_meets_quality_targets(self) -> None:
         measured: list[dict] = []
         selected_context: list[dict] = []
+        evaluation_results: list[dict[str, object]] = []
         trace_diagnostics: dict[str, dict[str, object]] = {}
 
         def chunk_keys(chunk_ids) -> list[str]:
@@ -531,6 +559,33 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
             selected_context.append(
                 {**item, "ranking": list(result.trace.selected_chunk_ids)}
             )
+            visible_resources: list[dict[str, str]] = []
+            for stage_name, hits in (
+                ("vector_recall", result.trace.vector_recall),
+                ("bm25_recall", result.trace.bm25_recall),
+                ("seed_ranking", result.trace.seed_ranking),
+                ("graph_expansion", result.trace.graph_expansion),
+                (
+                    "candidate_vector_ranking",
+                    result.trace.candidate_vector_ranking,
+                ),
+                ("final_ranking", result.trace.final_ranking),
+            ):
+                visible_resources.extend(
+                    {"id": hit.chunk_id, "kind": "chunk", "stage": stage_name}
+                    for hit in hits
+                )
+            visible_resources.extend(
+                {"id": chunk_id, "kind": "chunk", "stage": "selected_context"}
+                for chunk_id in result.trace.selected_chunk_ids
+            )
+            evaluation_results.append(
+                {
+                    "id": question["id"],
+                    "ranking": [hit.chunk_id for hit in accepted_final],
+                    "visible_resources": visible_resources,
+                }
+            )
             if question["id"] in {
                 "cross_chunk-boundary-02",
                 "cross_chunk-success-05",
@@ -568,6 +623,14 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
                 }
         metrics = evaluate_retrieval_items(measured)
         selected_metrics = evaluate_retrieval_items(selected_context)
+        _write_evaluation_observation(
+            "retrieval-results.json",
+            {
+                "items": evaluation_results,
+                "producer": "real-neo4j-dev-corpus-retrieval-v1",
+                "schema_version": "retrieval-results-v1",
+            },
+        )
 
         def recall_misses(items: list[dict]) -> list[str]:
             return [
@@ -649,6 +712,7 @@ class DevCorpusNeo4jIntegrationTests(unittest.TestCase):
                 actual.append(record)
 
         metrics = evaluate_answer_results(self.fixture.build.answers, actual)
+        _write_evaluation_observation("answer-results.jsonl", actual)
         print(f"\nStage 6 actual grounded answers: metrics={metrics}")
         self.assertEqual(metrics.item_count, 49)
         self.assertEqual(metrics.generation_failure_count, 0)

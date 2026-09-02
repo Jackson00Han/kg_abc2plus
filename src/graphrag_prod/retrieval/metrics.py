@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 from numbers import Real
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 
 QUESTION_CLASSES = frozenset(
@@ -28,6 +28,7 @@ class RetrievalMetrics:
     item_count: int
     answerable_count: int
     recall_at_5: float
+    evidence_recall_at_5: float
     mrr: float
     ndcg_at_5: float
     unauthorized_exposure_count: int
@@ -64,12 +65,20 @@ def _ndcg_at_k(item: dict[str, Any], k: int) -> float:
 
 
 def evaluate_retrieval_items(items: Sequence[dict[str, Any]]) -> RetrievalMetrics:
+    """Evaluate already-paired rows using standard fractional Recall@5.
+
+    Stage 8 callers should use :func:`evaluate_retrieval_results`, which
+    additionally applies the acceptance contract's per-fact evidence groups.
+    This lower-level helper remains useful for historical fixtures that only
+    carry graded relevance judgments.
+    """
     if not items:
         raise ValueError("retrieval dataset must not be empty")
     answerable = [item for item in items if item["answerable"]]
     if not answerable:
         raise ValueError("retrieval dataset must contain answerable items")
     recalls: list[float] = []
+    evidence_recalls: list[float] = []
     reciprocal_ranks: list[float] = []
     ndcgs: list[float] = []
     for item in answerable:
@@ -77,7 +86,10 @@ def evaluate_retrieval_items(items: Sequence[dict[str, Any]]) -> RetrievalMetric
         if not relevant:
             raise ValueError(f"answerable item {item['id']} has no relevant chunks")
         ranking = [str(value) for value in item["ranking"]]
-        recalls.append(float(bool(set(ranking[:5]) & relevant)))
+        retrieved = set(ranking[:5])
+        evidence_recall = len(relevant & retrieved) / len(relevant)
+        recalls.append(evidence_recall)
+        evidence_recalls.append(evidence_recall)
         reciprocal_ranks.append(_reciprocal_rank(ranking, relevant))
         ndcgs.append(_ndcg_at_k(item, 5))
     exposures = sum(len(item["unauthorized_exposures"]) for item in items)
@@ -85,9 +97,177 @@ def evaluate_retrieval_items(items: Sequence[dict[str, Any]]) -> RetrievalMetric
         item_count=len(items),
         answerable_count=len(answerable),
         recall_at_5=math.fsum(recalls) / len(recalls),
+        evidence_recall_at_5=math.fsum(evidence_recalls) / len(evidence_recalls),
         mrr=math.fsum(reciprocal_ranks) / len(reciprocal_ranks),
         ndcg_at_5=math.fsum(ndcgs) / len(ndcgs),
         unauthorized_exposure_count=exposures,
+    )
+
+
+def evaluate_retrieval_results(
+    gold_items: Sequence[dict[str, Any]],
+    actual_items: Sequence[dict[str, Any]],
+) -> RetrievalMetrics:
+    """Pair independent gold annotations with actual runtime rankings."""
+
+    def by_id(items: Sequence[dict[str, Any]], name: str) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError(f"{name}[{index}] must be an object")
+            item_id = str(item.get("id", "")).strip()
+            if not item_id or item_id in result:
+                raise ValueError(f"{name} IDs must be unique and non-empty")
+            result[item_id] = item
+        return result
+
+    gold_by_id = by_id(gold_items, "retrieval gold")
+    actual_by_id = by_id(actual_items, "retrieval results")
+    if set(gold_by_id) != set(actual_by_id):
+        missing = sorted(set(gold_by_id) - set(actual_by_id))
+        extra = sorted(set(actual_by_id) - set(gold_by_id))
+        raise ValueError(
+            f"retrieval result coverage mismatch: missing={missing}, extra={extra}"
+        )
+    paired: list[dict[str, Any]] = []
+    required_groups_by_id: dict[str, tuple[frozenset[str], ...]] = {}
+    forbidden_fields = {"ranking", "unauthorized_exposures", "visible_resources"}
+    for item_id, gold in gold_by_id.items():
+        leaked = forbidden_fields & set(gold)
+        if leaked:
+            raise ValueError(
+                f"retrieval gold {item_id} contains actual-result fields: {sorted(leaked)}"
+            )
+        actual = actual_by_id[item_id]
+        answerable = gold.get("answerable")
+        relevance_value = gold.get("relevance")
+        if not isinstance(answerable, bool) or not isinstance(
+            relevance_value, Mapping
+        ):
+            raise ValueError(
+                f"retrieval gold {item_id} requires boolean answerable and relevance"
+            )
+        relevance: dict[str, float] = {}
+        for chunk_id, grade in relevance_value.items():
+            if (
+                not isinstance(chunk_id, str)
+                or not chunk_id.strip()
+                or isinstance(grade, bool)
+                or not isinstance(grade, Real)
+                or not math.isfinite(float(grade))
+                or not 0.0 <= float(grade) <= 3.0
+            ):
+                raise ValueError(
+                    f"retrieval gold {item_id} relevance grades are invalid"
+                )
+            relevance[chunk_id] = float(grade)
+        if answerable != any(grade > 0.0 for grade in relevance.values()):
+            raise ValueError(
+                f"retrieval gold {item_id} relevance disagrees with answerable"
+            )
+        if set(actual) - {"id", "ranking", "visible_resources"}:
+            raise ValueError(f"retrieval result {item_id} contains unknown fields")
+        ranking = actual.get("ranking")
+        visible = actual.get("visible_resources")
+        if not isinstance(ranking, list) or not isinstance(visible, list):
+            raise ValueError(
+                f"retrieval result {item_id} requires ranking and visible_resources lists"
+            )
+        if any(not isinstance(value, str) for value in ranking):
+            raise ValueError(
+                f"retrieval result {item_id} ranking IDs must be text"
+            )
+        ranking_ids = [value.strip() for value in ranking]
+        if any(not value for value in ranking_ids) or len(ranking_ids) != len(set(ranking_ids)):
+            raise ValueError(
+                f"retrieval result {item_id} ranking IDs must be unique and non-empty"
+            )
+        visible_ids: set[str] = set()
+        for index, event in enumerate(visible):
+            if not isinstance(event, dict) or set(event) != {"stage", "kind", "id"}:
+                raise ValueError(
+                    f"retrieval result {item_id} visible_resources[{index}] is invalid"
+                )
+            if any(
+                not isinstance(event[field], str)
+                for field in ("stage", "kind", "id")
+            ):
+                raise ValueError(
+                    f"retrieval result {item_id} visible resource fields must be text"
+                )
+            stage = event["stage"].strip()
+            kind = event["kind"].strip()
+            resource_id = event["id"].strip()
+            if not stage or not kind or not resource_id:
+                raise ValueError(
+                    f"retrieval result {item_id} visible resource fields are required"
+                )
+            visible_ids.add(resource_id)
+        forbidden = {
+            str(value).strip() for value in gold.get("forbidden_chunk_ids", [])
+        }
+        positive = {
+            chunk_id for chunk_id, grade in relevance.items() if grade > 0.0
+        }
+        groups_value = gold.get("required_evidence_groups")
+        if groups_value is None:
+            groups_value = [[chunk_id] for chunk_id in sorted(positive)]
+        if not isinstance(groups_value, list):
+            raise ValueError(
+                f"retrieval gold {item_id} required_evidence_groups must be a list"
+            )
+        groups: list[frozenset[str]] = []
+        for index, group in enumerate(groups_value):
+            if not isinstance(group, list):
+                raise ValueError(
+                    f"retrieval gold {item_id} evidence group {index} must be a list"
+                )
+            if any(not isinstance(value, str) for value in group):
+                raise ValueError(
+                    f"retrieval gold {item_id} evidence group {index} must contain text IDs"
+                )
+            normalized = frozenset(value.strip() for value in group)
+            if (
+                not normalized
+                or any(not value for value in normalized)
+                or len(normalized) != len(group)
+                or not normalized <= positive
+            ):
+                raise ValueError(
+                    f"retrieval gold {item_id} evidence group {index} is invalid"
+                )
+            groups.append(normalized)
+        if bool(gold.get("answerable")) != bool(groups):
+            raise ValueError(
+                f"retrieval gold {item_id} evidence groups disagree with answerable"
+            )
+        required_groups_by_id[item_id] = tuple(groups)
+        paired.append(
+            {
+                "id": item_id,
+                "answerable": answerable,
+                "relevance": relevance,
+                "ranking": ranking_ids,
+                "unauthorized_exposures": sorted(visible_ids & forbidden),
+            }
+        )
+    metrics = evaluate_retrieval_items(paired)
+    complete_queries: list[float] = []
+    for item in paired:
+        if not item["answerable"]:
+            continue
+        retrieved = set(item["ranking"][:5])
+        complete_queries.append(
+            float(
+                all(
+                    bool(retrieved & group)
+                    for group in required_groups_by_id[item["id"]]
+                )
+            )
+        )
+    return replace(
+        metrics,
+        recall_at_5=math.fsum(complete_queries) / len(complete_queries),
     )
 
 

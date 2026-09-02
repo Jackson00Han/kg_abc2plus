@@ -17,8 +17,10 @@ qualification evidence.
 
 The profile command validates and previews the declared workload; it does not
 run a load test. Stage 5A materializes the bounded development corpus described
-below, while Stage 8/9 will make a unified evaluation runner consume the
-declared corpus, concurrency, sample, and duration values. Disposable Neo4j
+below. Stage 8 provides the unified, versioned `dev-mini` evaluation and CI
+regression gate documented in
+[`docs/automated_evaluation.md`](docs/automated_evaluation.md); Stage 9 retains
+the production-reference load and recovery qualification. Disposable Neo4j
 runners enforce the checked local resource cap.
 
 Stage 5A adds a separate, versioned `dev-corpus-v1`: 10 deterministic
@@ -49,6 +51,17 @@ The authenticated API boundary, bounded execution and retries, Neo4j resource
 lifecycle, error taxonomy, protected-content-safe logs, and aggregate metrics
 are documented in
 [`docs/api_security_reliability.md`](docs/api_security_reliability.md).
+Automated gold/result separation, metrics, baselines, and the two-run workflow
+are documented in
+[`docs/automated_evaluation.md`](docs/automated_evaluation.md). Run the complete
+Stage 8 gate with:
+
+```bash
+./scripts/run_stage8_validation.sh \
+  --repeat 2 \
+  --baseline evaluation/baselines/dev-mini.v1.json \
+  --output-dir /tmp/sample-graphrag-stage8
+```
 
 ## Prerequisites
 

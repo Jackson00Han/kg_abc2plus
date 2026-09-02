@@ -1,0 +1,27 @@
+{
+  "baseline_policy": "exact_deterministic_projection",
+  "hard_invariants": {
+    "answer_correctness": 1.0,
+    "conflict_handling_rate": 1.0,
+    "forbidden_answer_exposure_count": 0,
+    "generation_failure_count": 0,
+    "graph_case_outcome_accuracy": 1.0,
+    "security_suite_complete": true,
+    "temporal_comparison_rate": 1.0
+  },
+  "informational_metrics": [
+    "answer_sample_count",
+    "estimated_cost_usd",
+    "evidence_recall_at_5",
+    "input_token_count",
+    "mean_answer_cost_usd",
+    "model_call_count",
+    "output_token_count",
+    "retrieval_sample_count"
+  ],
+  "policy_id": "stage8-dev-mini-regression-v1",
+  "profile_id": "dev-mini",
+  "rationale": "All deterministic quality, security, case, and version projections are exact. Dev-mini performance and cost remain non-qualifying observations.",
+  "schema_version": "evaluation-regression-policy-v1",
+  "version": "1.0.0"
+}

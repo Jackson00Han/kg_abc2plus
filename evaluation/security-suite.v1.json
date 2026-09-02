@@ -1,0 +1,18 @@
+{
+  "required_test_ids": [
+    "test_api_security.APISecurityTests.test_backend_custom_error_message_never_crosses_http_boundary",
+    "test_api_security.APISecurityTests.test_client_cannot_supply_identity_scope_or_query_vector",
+    "test_api_security.APISecurityTests.test_cross_tenant_job_and_delete_match_same_tenant_unknown_responses",
+    "test_api_security.APISecurityTests.test_duplicate_and_injected_request_ids_are_replaced",
+    "test_api_security.APISecurityTests.test_ingestion_acl_escalation_is_rejected_before_backend_submission",
+    "test_api_security.APISecurityTests.test_logs_never_contain_token_query_content_or_uri_credentials",
+    "test_api_security.APISecurityTests.test_metrics_require_both_system_tenant_and_observer_group",
+    "test_api_security.APISecurityTests.test_missing_expired_wrong_algorithm_and_duplicate_authorization_fail_closed",
+    "test_api_security.APISecurityTests.test_oversized_content_length_and_chunked_body_are_rejected",
+    "test_api_security.APISecurityTests.test_unknown_routes_collapse_to_one_low_cardinality_metric_label",
+    "test_api_security.APISecurityTests.test_validation_errors_do_not_echo_protected_input"
+  ],
+  "schema_version": "security-suite-manifest-v1",
+  "suite_id": "stage8-security-v1",
+  "version": "1.0.0"
+}

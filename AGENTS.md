@@ -342,5 +342,5 @@ tests/
 | 5A. Representative development corpus | Complete | `docs/representative_dev_corpus.md`; `docs/validation/stage-5a.md`; 120-Chunk corpus; 99 unit + 60 disposable-Neo4j tests |
 | 6. Grounded answer generation | Complete | `docs/grounded_answer_generation.md`; `docs/validation/stage-6.md`; 153 unit + 62 disposable-Neo4j tests; 49-case cited-answer regression |
 | 7. API, security, reliability, observability | Complete | `docs/api_security_reliability.md`; `docs/validation/stage-7.md`; 248 unit + 4 HTTP E2E + 11 security + 64 disposable-Neo4j tests |
-| 8. Automated evaluation and regression gates | Not started | |
+| 8. Automated evaluation and regression gates | Complete | `docs/automated_evaluation.md`; `docs/validation/stage-8.md`; 263 unit + 4 HTTP E2E + 11 security + 2 regression + 64 disposable-Neo4j tests per run; exact two-run baseline reproduction |
 | 9. Integrated production-candidate validation | Not started | |

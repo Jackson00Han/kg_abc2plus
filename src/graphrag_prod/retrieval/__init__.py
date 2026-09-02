@@ -7,7 +7,11 @@ from .engine import (
     RetrievalBackendUnavailable,
     RetrievalUnavailable,
 )
-from .metrics import RetrievalMetrics, evaluate_retrieval_dataset
+from .metrics import (
+    RetrievalMetrics,
+    evaluate_retrieval_dataset,
+    evaluate_retrieval_results,
+)
 from .models import (
     Citation,
     RetrievalLimits,
@@ -41,6 +45,7 @@ __all__ = [
     "RetrievedChunk",
     "VersionFilter",
     "evaluate_retrieval_dataset",
+    "evaluate_retrieval_results",
     "reciprocal_rank_fusion",
     "resource_allocation_score",
     "select_context",
