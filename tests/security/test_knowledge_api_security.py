@@ -32,6 +32,7 @@ def _token(
     *,
     tenant_id: str = "tenant-alpha",
     scope: str = "ontology:read",
+    groups: tuple[str, ...] = ("engineers",),
 ) -> str:
     now = int(datetime.now(UTC).timestamp())
     return jwt.encode(
@@ -42,7 +43,7 @@ def _token(
             "exp": now + 300,
             "sub": "industrial-expert",
             "tenant_id": tenant_id,
-            "groups": ["engineers"],
+            "groups": list(groups),
             "scope": scope,
         },
         SECRET,
@@ -50,7 +51,7 @@ def _token(
     )
 
 
-def _headers(**kwargs: str) -> dict[str, str]:
+def _headers(**kwargs: object) -> dict[str, str]:
     return {"Authorization": f"Bearer {_token(**kwargs)}"}
 
 
@@ -63,6 +64,7 @@ def _construct_body(**changes: object) -> dict[str, object]:
         "mime_type": "text/plain",
         "language": "en",
         "tbox_key": "industrial-assets",
+        "access_groups": ["engineers"],
         "content_base64": base64.b64encode(b"Acme owns Pump-7.").decode(),
     }
     body.update(changes)
@@ -146,7 +148,6 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
             "tenant_id",
             "principal_id",
             "capabilities",
-            "access_groups",
         ):
             with self.subTest(forbidden=forbidden):
                 response = self.client.post(
@@ -158,6 +159,39 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
                 self.assertEqual(response.json()["code"], "invalid_request")
                 self.assertNotIn("tenant-victim", response.text)
         self.assertEqual(self.backend.envelopes, [])
+
+    def test_construction_acl_is_bounded_before_worker_submission(self) -> None:
+        for groups in ([], ["engineers", "engineers"]):
+            with self.subTest(groups=groups):
+                response = self.client.post(
+                    "/v1/knowledge:construct",
+                    headers=_headers(scope="knowledge:construct"),
+                    json=_construct_body(access_groups=groups),
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json()["code"], "invalid_request")
+        unauthorized = self.client.post(
+            "/v1/knowledge:construct",
+            headers=_headers(scope="knowledge:construct"),
+            json=_construct_body(access_groups=["board"]),
+        )
+        self.assertEqual(unauthorized.status_code, 403)
+        self.assertEqual(unauthorized.json()["code"], "forbidden")
+        self.assertEqual(self.backend.envelopes, [])
+
+    def test_multi_group_identity_preserves_the_selected_narrow_acl(self) -> None:
+        response = self.client.post(
+            "/v1/knowledge:construct",
+            headers=_headers(
+                scope="knowledge:construct",
+                groups=("engineers", "public"),
+            ),
+            json=_construct_body(access_groups=["engineers"]),
+        )
+        self.assertEqual(response.status_code, 200)
+        envelope = self.backend.envelopes[0]
+        self.assertEqual(envelope.access_groups, frozenset({"engineers", "public"}))
+        self.assertEqual(envelope.payload["access_groups"], ("engineers",))
 
     def test_upload_mime_and_base64_fail_closed_before_worker_submission(self) -> None:
         for changes in (
@@ -196,9 +230,9 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
             "tenant_id",
             "principal_id",
             "capabilities",
-            "access_groups",
         ):
             self.assertNotIn(forbidden, envelope.payload)
+        self.assertEqual(envelope.payload["access_groups"], ("engineers",))
 
     def test_missing_and_cross_tenant_ids_have_identical_public_response(self) -> None:
         responses = tuple(

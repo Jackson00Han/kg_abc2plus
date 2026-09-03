@@ -12,6 +12,9 @@ from datetime import datetime
 from enum import StrEnum
 
 
+SYSTEM_CANDIDATE_NAMESPACE = "llm-candidate"
+
+
 class KnowledgeOrigin(StrEnum):
     """How a knowledge record entered the system."""
 

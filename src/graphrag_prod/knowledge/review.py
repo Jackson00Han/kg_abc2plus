@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Iterable, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 from uuid import uuid5
 
 from graphrag_prod.domain.access import Principal
@@ -293,6 +293,7 @@ class ReviewBatchResult:
 class KnowledgePublicationView:
     publication_id: str
     tenant_id: str
+    ontology_version_id: str
     generation: int
     manifest_hash: str
     source_revision_ids: tuple[str, ...]
@@ -311,6 +312,7 @@ def _publication_view(properties: dict[str, Any]) -> KnowledgePublicationView:
     return KnowledgePublicationView(
         publication_id=properties["publication_id"],
         tenant_id=properties["tenant_id"],
+        ontology_version_id=_publication_ontology_id(properties),
         generation=int(properties["generation"]),
         manifest_hash=properties["manifest_hash"],
         source_revision_ids=tuple(properties.get("source_revision_ids", ())),
@@ -342,6 +344,18 @@ def _publication_view(properties: dict[str, Any]) -> KnowledgePublicationView:
             )
         ),
     )
+
+
+def _publication_ontology_id(properties: Mapping[str, Any]) -> str:
+    try:
+        return _required_text(
+            properties["ontology_version_id"],
+            "publication ontology_version_id",
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise KnowledgePublicationConflict(
+            "knowledge publication is not bound to an immutable T-Box"
+        ) from exc
 
 
 def _active_revision_query(
@@ -1098,6 +1112,22 @@ class Neo4jKnowledgePublicationService:
                     publication_id: $publication_id
                 })
                 WHERE EXISTS {
+                    MATCH (publication)-[:USES_TBOX_VERSION]->(
+                        bound_tbox:TBoxVersion {tenant_id: $tenant_id}
+                    )
+                    WHERE bound_tbox.tbox_id =
+                          publication.ontology_version_id
+                      AND bound_tbox.status IN ['PUBLISHED', 'RETIRED']
+                }
+                  AND NOT EXISTS {
+                    MATCH (publication)-[:USES_TBOX_VERSION]->(
+                        wrong_tbox:TBoxVersion
+                    )
+                    WHERE wrong_tbox.tenant_id <> $tenant_id
+                       OR wrong_tbox.tbox_id <>
+                          publication.ontology_version_id
+                }
+                  AND EXISTS {
                     MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->()
                 }
                   AND NOT EXISTS {
@@ -1177,6 +1207,22 @@ class Neo4jKnowledgePublicationService:
                       status: 'ACTIVE'
                   })
                 WHERE EXISTS {
+                    MATCH (publication)-[:USES_TBOX_VERSION]->(
+                        bound_tbox:TBoxVersion {tenant_id: $tenant_id}
+                    )
+                    WHERE bound_tbox.tbox_id =
+                          publication.ontology_version_id
+                      AND bound_tbox.status IN ['PUBLISHED', 'RETIRED']
+                }
+                  AND NOT EXISTS {
+                    MATCH (publication)-[:USES_TBOX_VERSION]->(
+                        wrong_tbox:TBoxVersion
+                    )
+                    WHERE wrong_tbox.tenant_id <> $tenant_id
+                       OR wrong_tbox.tbox_id <>
+                          publication.ontology_version_id
+                }
+                  AND EXISTS {
                     MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->()
                 }
                   AND NOT EXISTS {
@@ -1254,6 +1300,22 @@ class Neo4jKnowledgePublicationService:
                     tenant_id: $tenant_id
                 })
                 WHERE EXISTS {
+                    MATCH (publication)-[:USES_TBOX_VERSION]->(
+                        bound_tbox:TBoxVersion {tenant_id: $tenant_id}
+                    )
+                    WHERE bound_tbox.tbox_id =
+                          publication.ontology_version_id
+                      AND bound_tbox.status IN ['PUBLISHED', 'RETIRED']
+                }
+                  AND NOT EXISTS {
+                    MATCH (publication)-[:USES_TBOX_VERSION]->(
+                        wrong_tbox:TBoxVersion
+                    )
+                    WHERE wrong_tbox.tenant_id <> $tenant_id
+                       OR wrong_tbox.tbox_id <>
+                          publication.ontology_version_id
+                }
+                  AND EXISTS {
                     MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->()
                 }
                   AND NOT EXISTS {
@@ -1391,15 +1453,24 @@ class Neo4jKnowledgePublicationService:
                 raise KnowledgePublicationConflict(
                     "existing publication is not active; use rollback"
                 )
+            existing = cls._load_completed_publication_tx(
+                tx,
+                principal.tenant_id,
+                publication_id,
+            )
+            ontology_version_id = _publication_ontology_id(existing)
             records = cls._load_manifest_records_tx(
                 tx,
                 principal,
                 tuple(existing.get("published_revision_ids", ())),
+                ontology_version_id=ontology_version_id,
             )
             cls._validate_property_cardinality_tx(
                 tx,
                 principal.tenant_id,
                 records,
+                ontology_version_id=ontology_version_id,
+                require_active_tbox=False,
             )
             return
         if current_id != expected_active_id:
@@ -1420,6 +1491,7 @@ class Neo4jKnowledgePublicationService:
                 tx,
                 principal,
                 tuple(current.get("published_revision_ids", ())),
+                ontology_version_id=_publication_ontology_id(current),
             )
 
         carried_by_record = {
@@ -1600,10 +1672,11 @@ class Neo4jKnowledgePublicationService:
                     "endpoint mentions"
                 )
 
-        cls._validate_property_cardinality_tx(
+        ontology_version_id = cls._validate_property_cardinality_tx(
             tx,
             principal.tenant_id,
             tuple(published_records),
+            require_active_tbox=True,
         )
 
         published_records.sort(key=lambda record: record.revision_id)
@@ -1619,6 +1692,7 @@ class Neo4jKnowledgePublicationService:
             )
         manifest = {
             "tenant_id": principal.tenant_id,
+            "ontology_version_id": ontology_version_id,
             "base_publication_id": current_id,
             "source_revision_ids": source_ids,
             "published_revision_ids": published_ids,
@@ -1642,8 +1716,9 @@ class Neo4jKnowledgePublicationService:
                 published_revision_ids: $published_revision_ids,
                 removed_record_ids: $removed_record_ids,
                 replaced_record_ids: $replaced_record_ids,
+                ontology_version_id: $ontology_version_id,
                 base_publication_id: $base_publication_id,
-                manifest_version: 2,
+                manifest_version: 3,
                 status: 'BUILDING',
                 created_by: $created_by,
                 created_at: $now
@@ -1659,6 +1734,7 @@ class Neo4jKnowledgePublicationService:
             published_revision_ids=list(published_ids),
             removed_record_ids=list(removed_record_ids),
             replaced_record_ids=list(replaced_record_ids),
+            ontology_version_id=ontology_version_id,
             base_publication_id=current_id,
             created_by=principal.principal_id,
             now=now,
@@ -1673,6 +1749,7 @@ class Neo4jKnowledgePublicationService:
             publication_id,
             published_records,
             published_snapshots,
+            ontology_version_id,
         )
         cls._deactivate_materialization_tx(
             tx,
@@ -1726,17 +1803,21 @@ class Neo4jKnowledgePublicationService:
                 principal.tenant_id,
                 target_id,
             )
+            ontology_version_id = _publication_ontology_id(properties)
             # Even an idempotent rollback must not become an ACL or stale-
             # evidence bypass merely because the target is already active.
             records = cls._load_manifest_records_tx(
                 tx,
                 principal,
                 tuple(properties.get("published_revision_ids", ())),
+                ontology_version_id=ontology_version_id,
             )
             cls._validate_property_cardinality_tx(
                 tx,
                 principal.tenant_id,
                 records,
+                ontology_version_id=ontology_version_id,
+                require_active_tbox=False,
             )
             return
         if current_id != expected_active_id:
@@ -1748,15 +1829,19 @@ class Neo4jKnowledgePublicationService:
             principal.tenant_id,
             target_id,
         )
+        ontology_version_id = _publication_ontology_id(properties)
         records = cls._load_manifest_records_tx(
             tx,
             principal,
             tuple(properties.get("published_revision_ids", ())),
+            ontology_version_id=ontology_version_id,
         )
         cls._validate_property_cardinality_tx(
             tx,
             principal.tenant_id,
             records,
+            ontology_version_id=ontology_version_id,
+            require_active_tbox=False,
         )
         cls._deactivate_materialization_tx(
             tx,
@@ -1785,24 +1870,52 @@ class Neo4jKnowledgePublicationService:
         tx: Any,
         tenant_id: str,
         records: tuple[EntityMentionRecord | AssertionRecord, ...],
-    ) -> None:
-        """Validate the complete prospective manifest against active T-Box facts."""
+        *,
+        ontology_version_id: str | None = None,
+        require_active_tbox: bool = True,
+    ) -> str:
+        """Validate a complete manifest against one exact immutable T-Box.
+
+        Fresh publications require the tenant's currently active published
+        version. Historical replay and rollback validate against the version
+        immutably bound to that publication, even after that T-Box is retired.
+        """
 
         ontology_ids = {record.trust.ontology_version_id for record in records}
         if len(ontology_ids) != 1:
             raise KnowledgePublicationConflict(
-                "one publication must use exactly one active T-Box version"
+                "one publication must use exactly one T-Box version"
             )
         ontology_id = next(iter(ontology_ids))
+        if (
+            ontology_version_id is not None
+            and ontology_id != _required_text(
+                ontology_version_id,
+                "ontology_version_id",
+            )
+        ):
+            raise KnowledgePublicationConflict(
+                "publication revisions do not match its immutable T-Box"
+            )
         rows = tuple(
             tx.run(
                 """
-                MATCH (:TBoxCatalog {tenant_id: $tenant_id})
-                      -[:ACTIVE_TBOX_VERSION]->(tbox:TBoxVersion {
-                          tenant_id: $tenant_id,
-                          tbox_id: $tbox_id,
-                          status: 'PUBLISHED'
-                      })-[:DECLARES_ENTITY_TYPE]->(type:TBoxEntityType)
+                MATCH (tbox:TBoxVersion {
+                    tenant_id: $tenant_id,
+                    tbox_id: $tbox_id
+                })-[:DECLARES_ENTITY_TYPE]->(type:TBoxEntityType)
+                WHERE tbox.status IN ['PUBLISHED', 'RETIRED']
+                  AND (
+                      NOT $require_active_tbox
+                      OR (
+                          tbox.status = 'PUBLISHED'
+                          AND EXISTS {
+                              MATCH (:TBoxCatalog {
+                                  tenant_id: $tenant_id
+                              })-[:ACTIVE_TBOX_VERSION]->(tbox)
+                          }
+                      )
+                  )
                 OPTIONAL MATCH (type)-[:DECLARES_PROPERTY]->
                                (property:TBoxPropertyDefinition)
                 RETURN type.name AS entity_type,
@@ -1814,6 +1927,7 @@ class Neo4jKnowledgePublicationService:
                 """,
                 tenant_id=tenant_id,
                 tbox_id=ontology_id,
+                require_active_tbox=require_active_tbox,
             )
         )
         try:
@@ -1833,7 +1947,7 @@ class Neo4jKnowledgePublicationService:
             ) from exc
         if not definitions:
             raise KnowledgePublicationConflict(
-                "active T-Box has no entity definitions"
+                "required T-Box is unavailable or has no entity definitions"
             )
 
         entities: dict[str, EntityIdentity] = {}
@@ -1886,6 +2000,7 @@ class Neo4jKnowledgePublicationService:
                         f"property {entity.entity_type}.{name} exceeds its "
                         "single-valued cardinality"
                     )
+        return ontology_id
 
     @staticmethod
     def _lock_publication_state_tx(
@@ -1938,6 +2053,16 @@ class Neo4jKnowledgePublicationService:
                 tenant_id: $tenant_id,
                 publication_id: $publication_id
             })
+            MATCH (publication)-[:USES_TBOX_VERSION]->(tbox:TBoxVersion {
+                tenant_id: $tenant_id
+            })
+            WHERE publication.ontology_version_id = tbox.tbox_id
+              AND tbox.status IN ['PUBLISHED', 'RETIRED']
+              AND NOT EXISTS {
+                  MATCH (publication)-[:USES_TBOX_VERSION]->(other:TBoxVersion)
+                  WHERE other.tenant_id <> $tenant_id
+                     OR other.tbox_id <> publication.ontology_version_id
+              }
             RETURN publication {.*} AS publication
             """,
             tenant_id=tenant_id,
@@ -1969,6 +2094,8 @@ class Neo4jKnowledgePublicationService:
                 GovernanceStatus.APPROVED,
                 GovernanceStatus.PUBLISHED,
             ),
+            ontology_version_id=None,
+            require_active_tbox=True,
         )
 
     @staticmethod
@@ -1979,6 +2106,8 @@ class Neo4jKnowledgePublicationService:
         *,
         require_current: bool,
         required_statuses: tuple[GovernanceStatus, ...],
+        ontology_version_id: str | None,
+        require_active_tbox: bool,
     ) -> tuple[EntityMentionRecord | AssertionRecord, str]:
         row = tx.run(
             """
@@ -2001,13 +2130,24 @@ class Neo4jKnowledgePublicationService:
                 tenant_id: $tenant_id
             })
             MATCH (snapshot)-[:OF_VERSION]->(version)
-            MATCH (:TBoxCatalog {tenant_id: $tenant_id})
-                  -[:ACTIVE_TBOX_VERSION]->(tbox:TBoxVersion {
-                      tenant_id: $tenant_id,
-                      status: 'PUBLISHED'
-                  })
+            MATCH (tbox:TBoxVersion {tenant_id: $tenant_id})
             WHERE revision.governance_status IN $required_statuses
               AND revision.ontology_version_id = tbox.tbox_id
+              AND tbox.status IN ['PUBLISHED', 'RETIRED']
+              AND (
+                  $ontology_version_id IS NULL
+                  OR tbox.tbox_id = $ontology_version_id
+              )
+              AND (
+                  NOT $require_active_tbox
+                  OR (
+                      tbox.status = 'PUBLISHED'
+                      AND EXISTS {
+                          MATCH (:TBoxCatalog {tenant_id: $tenant_id})
+                                -[:ACTIVE_TBOX_VERSION]->(tbox)
+                      }
+                  )
+              )
               AND (
                   NOT $require_current
                   OR current.revision_id = revision.revision_id
@@ -2046,6 +2186,8 @@ class Neo4jKnowledgePublicationService:
             groups=sorted(principal.groups),
             require_current=require_current,
             required_statuses=[status.value for status in required_statuses],
+            ontology_version_id=ontology_version_id,
+            require_active_tbox=require_active_tbox,
         ).single()
         if row is None:
             raise KnowledgeReviewUnavailable(
@@ -2069,6 +2211,8 @@ class Neo4jKnowledgePublicationService:
         tx: Any,
         principal: Principal,
         revision_ids: tuple[str, ...],
+        *,
+        ontology_version_id: str,
     ) -> tuple[EntityMentionRecord | AssertionRecord, ...]:
         return tuple(
             record
@@ -2076,6 +2220,7 @@ class Neo4jKnowledgePublicationService:
                 tx,
                 principal,
                 revision_ids,
+                ontology_version_id=ontology_version_id,
             )
         )
 
@@ -2085,6 +2230,8 @@ class Neo4jKnowledgePublicationService:
         tx: Any,
         principal: Principal,
         revision_ids: tuple[str, ...],
+        *,
+        ontology_version_id: str,
     ) -> tuple[
         tuple[EntityMentionRecord | AssertionRecord, str], ...
     ]:
@@ -2099,6 +2246,8 @@ class Neo4jKnowledgePublicationService:
                 revision_id,
                 require_current=False,
                 required_statuses=(GovernanceStatus.PUBLISHED,),
+                ontology_version_id=ontology_version_id,
+                require_active_tbox=False,
             )
             for revision_id in revision_ids
         )
@@ -2115,6 +2264,7 @@ class Neo4jKnowledgePublicationService:
         publication_id: str,
         records: list[EntityMentionRecord | AssertionRecord],
         snapshots: dict[str, str],
+        ontology_version_id: str,
     ) -> None:
         rows = [
             {
@@ -2134,6 +2284,15 @@ class Neo4jKnowledgePublicationService:
                 tenant_id: $tenant_id,
                 publication_id: $publication_id
             })
+            MATCH (tbox:TBoxVersion {
+                tenant_id: $tenant_id,
+                tbox_id: $ontology_version_id,
+                status: 'PUBLISHED'
+            })
+            MATCH (:TBoxCatalog {tenant_id: $tenant_id})
+                  -[:ACTIVE_TBOX_VERSION]->(tbox)
+            MERGE (publication)-[:USES_TBOX_VERSION]->(tbox)
+            WITH publication
             UNWIND $rows AS row
             MATCH (revision {
                 tenant_id: $tenant_id,
@@ -2155,6 +2314,7 @@ class Neo4jKnowledgePublicationService:
             """,
             tenant_id=tenant_id,
             publication_id=publication_id,
+            ontology_version_id=ontology_version_id,
             rows=rows,
         ).single()
         if result is None or result["count"] != len(records):

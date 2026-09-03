@@ -15,6 +15,7 @@ assembly must inject those trusted resources into `create_app`.
 | `POST` | `/v1/retrieval` | Return traceable Chunks and optional governed graph context | `200` |
 | `POST` | `/v1/answers` | Retrieve and generate a grounded cited answer | `200` |
 | `POST` | `/v1/knowledge/authoritative:import` | Import expert A-Box records against the active published T-Box | `200` |
+| `POST` | `/v1/knowledge:construct` | Upload one bounded source and create review-gated LLM extraction candidates | `200` |
 | `GET` | `/v1/knowledge/review-queue` | Read bounded candidate/quarantine revisions | `200` |
 | `POST` | `/v1/knowledge/reviews:batch` | Apply compare-and-swap expert review decisions and raw-source edits | `200` |
 | `GET` | `/health/live` | Check only the local process boundary | `200` |
@@ -60,10 +61,21 @@ queries by `principal.tenant_id` and return the same `404` for a cross-tenant
 identifier and an unknown identifier; the HTTP boundary cannot add a tenant
 after an unsafe lookup.
 
+Knowledge construction follows the same non-delegation rule. Its
+`access_groups` field is mandatory, unique, non-empty, and must be a subset of
+the verified JWT groups. The application adapter and workflow both enforce the
+subset. Only the selected groups are placed on the Document, Chunks,
+construction outcomes, and governed evidence; a principal that also belongs
+to a broad group cannot accidentally widen a restricted upload to that group.
+Existing sources cannot have their ACL silently changed through this endpoint.
+
 Every retrieval data path continues to apply the Stage 5 tenant, group,
 active-version, and optional version filters inside Neo4j.  The API does not
 post-filter results.  Graph information remains navigation data; only exact
 source Chunks are returned as factual context.
+The optional evidence-subgraph projection reuses the retrieval trace's exact
+Document, Version, and publication-time filter for both seeds and expanded
+assertions; it cannot widen the caller's retrieval boundary.
 
 ## Validation and output integrity
 
@@ -100,8 +112,24 @@ temporal tokens. The field is `null` only for readable historical legacy
 records that predate typed literals. New authoritative imports and review edits
 accept raw source tokens only; unknown/canonical client fields are rejected and
 the server recomputes semantics from the assertion's active published T-Box.
+Ontology imports reject units that Pint cannot parse before writing a draft and
+return `422 invalid_request`; this is semantic request validation, not a `409`
+compare-and-swap conflict. Publication, rollback, and history payloads expose
+the immutable `ontology_version_id` used to validate that publication.
 
 ## Bounded execution and retry rules
+
+Knowledge construction applies a second, operation-specific bound before any
+embedding, ingestion, or extraction provider work. The parsed source must fit
+configured maximums for Chunks, potential model calls, and total extraction
+characters. Server configuration cannot raise those limits above the module
+ceilings of 512 Chunks, 512 model calls, 5 MiB of extraction text, or a
+900-second cooperative deadline. A monotonic workflow deadline is checked
+between stages and before every model call, and the extractor's single-call
+timeout must be shorter than the workflow deadline. A request that cannot fit
+starts no additional provider call: static budget violations are
+`invalid_request`, while an elapsed cooperative deadline is
+`dependency_timeout`.
 
 Synchronous provider/database work runs in a fixed thread pool with a hard
 capacity of `max_workers + max_queue_size`.  Submission is non-blocking when

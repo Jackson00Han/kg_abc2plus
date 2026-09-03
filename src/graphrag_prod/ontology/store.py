@@ -7,11 +7,20 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+import pint
+
 from .models import TBoxStatus, TBoxVersion
+
+
+_UNIT_REGISTRY = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
 
 
 class TBoxConflict(RuntimeError):
     """The requested T-Box write conflicts with durable or concurrent state."""
+
+
+class TBoxValidationError(ValueError):
+    """The requested T-Box contains a semantically invalid declaration."""
 
 
 def _component_id(tbox_id: str, kind: str, *parts: str) -> str:
@@ -39,6 +48,29 @@ def _required(value: str, name: str) -> str:
     if not normalized:
         raise ValueError(f"{name} must not be empty")
     return normalized
+
+
+def _validate_declared_units(value: TBoxVersion) -> None:
+    for owner_kind, owner_name, definitions in (
+        *(
+            ("entity", item.name, item.properties)
+            for item in value.entity_types
+        ),
+        *(
+            ("relationship", item.name, item.properties)
+            for item in value.relationship_types
+        ),
+    ):
+        for definition in definitions:
+            if definition.unit is None:
+                continue
+            try:
+                _UNIT_REGISTRY.parse_units(definition.unit)
+            except (pint.PintError, TypeError, ValueError) as exc:
+                raise TBoxValidationError(
+                    f"{owner_kind} property {owner_name}.{definition.name} "
+                    f"declares an unrecognized Pint unit"
+                ) from exc
 
 
 def _version_record(value: TBoxVersion) -> dict[str, Any]:
@@ -169,6 +201,7 @@ class Neo4jTBoxStore:
             raise TypeError("value must be a TBoxVersion")
         if value.status is not TBoxStatus.DRAFT:
             raise ValueError("only DRAFT T-Box versions can be imported")
+        _validate_declared_units(value)
         expected_checksum = _checked_checksum(expected_checksum)
         now = datetime.now(UTC)
         with self.driver.session(database=self.database) as session:

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import math
+import time
 from typing import Any, Callable, Protocol
 
 from graphrag_prod.domain.access import Principal
@@ -66,6 +68,7 @@ from graphrag_prod.ontology.store import Neo4jTBoxStore
 from .extraction import (
     AuditedExtraction,
     ExtractionFinding,
+    ExtractionLimits,
     ExtractionRejected,
 )
 from .parser import BoundedDocumentParser, ParsedDocument
@@ -75,6 +78,10 @@ AUDIT_ARTIFACT_KIND = "ONTOLOGY_EXTRACTION_AUDIT"
 KNOWLEDGE_CONSTRUCTION_CAPABILITY = "knowledge:construct"
 CANONICAL_EMPTY_EXTRACTOR_SIGNATURE = "canonical-empty-extraction:v1"
 CANONICAL_EMPTY_PROMPT_SIGNATURE = "no-model-prompt:v1"
+MAX_CONSTRUCTION_CHUNKS = 512
+MAX_CONSTRUCTION_MODEL_CALLS = 512
+MAX_CONSTRUCTION_EXTRACTION_CHARS = 5 * 1024 * 1024
+MAX_CONSTRUCTION_DEADLINE_SECONDS = 900.0
 
 
 def _required(value: object, name: str) -> str:
@@ -121,7 +128,7 @@ def _profile(
 
 @dataclass(frozen=True, slots=True)
 class ConstructionMetadata:
-    """Caller-supplied source metadata; tenant and ACL are intentionally absent."""
+    """Caller-supplied source metadata with an explicitly selected source ACL."""
 
     operation_key: str
     canonical_uri: str
@@ -130,6 +137,7 @@ class ConstructionMetadata:
     mime_type: str
     language: str
     tbox_key: str
+    access_groups: frozenset[str]
     published_at: datetime | None = None
     max_attempts: int = 3
 
@@ -144,6 +152,12 @@ class ConstructionMetadata:
         ):
             object.__setattr__(self, name, _required(getattr(self, name), name))
         object.__setattr__(self, "canonical_uri", canonicalize_uri(self.canonical_uri))
+        if not isinstance(self.access_groups, frozenset):
+            raise TypeError("access_groups must be a frozenset")
+        groups = frozenset(_required(item, "access group") for item in self.access_groups)
+        if not groups:
+            raise ValueError("access_groups must not be empty")
+        object.__setattr__(self, "access_groups", groups)
         _aware(self.published_at, "published_at")
         if (
             isinstance(self.max_attempts, bool)
@@ -155,12 +169,16 @@ class ConstructionMetadata:
 
 @dataclass(frozen=True, slots=True)
 class ConstructionConfig:
-    """Pinned construction signatures used in stable artifacts and snapshots."""
+    """Pinned signatures plus hard request and provider-work budgets."""
 
     extractor_signature: str
     prompt_signature: str
     code_signature: str = "knowledge-construction:v1"
     normalizer_signature: str = "unicode-nfc:v1"
+    max_chunks: int = 100
+    max_model_calls: int = 100
+    max_total_extraction_chars: int = 120_000
+    deadline_seconds: float = 150.0
 
     def __post_init__(self) -> None:
         for name in (
@@ -170,6 +188,34 @@ class ConstructionConfig:
             "normalizer_signature",
         ):
             object.__setattr__(self, name, _required(getattr(self, name), name))
+        ceilings = {
+            "max_chunks": MAX_CONSTRUCTION_CHUNKS,
+            "max_model_calls": MAX_CONSTRUCTION_MODEL_CALLS,
+            "max_total_extraction_chars": MAX_CONSTRUCTION_EXTRACTION_CHARS,
+        }
+        for name, ceiling in ceilings.items():
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+                or value > ceiling
+            ):
+                raise ValueError(
+                    f"{name} must be a positive integer no greater than {ceiling}"
+                )
+        if (
+            isinstance(self.deadline_seconds, bool)
+            or not isinstance(self.deadline_seconds, (int, float))
+            or not math.isfinite(float(self.deadline_seconds))
+            or float(self.deadline_seconds) <= 0.0
+            or float(self.deadline_seconds) > MAX_CONSTRUCTION_DEADLINE_SECONDS
+        ):
+            raise ValueError(
+                "deadline_seconds must be a positive finite number no greater than "
+                f"{MAX_CONSTRUCTION_DEADLINE_SECONDS}"
+            )
+        object.__setattr__(self, "deadline_seconds", float(self.deadline_seconds))
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +314,14 @@ class ConstructionAuthorizationError(PermissionError):
     """The principal cannot update an existing source identity."""
 
 
+class ConstructionBudgetExceeded(ValueError):
+    """The parsed source exceeds a configured construction work budget."""
+
+
+class ConstructionDeadlineExceeded(TimeoutError):
+    """The cooperative construction deadline expired before more work began."""
+
+
 class IncrementalPipeline(Protocol):
     def run(
         self,
@@ -285,6 +339,7 @@ class OntologyExtractor(Protocol):
     active_tbox: TBoxVersion
     model: str
     prompt_version: str
+    limits: ExtractionLimits
 
     def extract_audited(
         self,
@@ -327,6 +382,7 @@ class ConstructionAuditStore(Protocol):
         version_id_value: str,
         canonical_uri: str,
         source_name: str,
+        access_groups: frozenset[str],
     ) -> ObservedDocumentState: ...
 
     def ensure_job(
@@ -410,8 +466,13 @@ class Neo4jConstructionAuditStore:
         version_id_value: str,
         canonical_uri: str,
         source_name: str,
+        access_groups: frozenset[str],
     ) -> ObservedDocumentState:
         _require_construction_capability(principal)
+        if not access_groups or not access_groups <= principal.groups:
+            raise ConstructionAuthorizationError(
+                "source access groups must be a non-empty principal-group subset"
+            )
         with self.driver.session(database=self.database) as session:
             row = session.run(
                 """
@@ -469,10 +530,14 @@ class Neo4jConstructionAuditStore:
             raise ConstructionConflict("source identity conflicts with the stored Document")
         if exists:
             groups = frozenset(row["access_groups"] or ())
+            if groups != access_groups:
+                raise ConstructionConflict(
+                    "source access groups differ from the stored Document"
+                )
             policy_id = row["access_policy_id"]
             policy_version = int(row["access_policy_version"])
         else:
-            groups = principal.groups
+            groups = access_groups
             policy_id = "principal-acl:" + content_checksum(
                 json.dumps(
                     [principal.tenant_id, sorted(groups)],
@@ -1381,6 +1446,7 @@ class Neo4jKnowledgeConstructionWorkflow:
         knowledge_store: KnowledgeStore | None = None,
         audit_store: ConstructionAuditStore | None = None,
         clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.embedding_provider = embedding_provider
@@ -1392,6 +1458,63 @@ class Neo4jKnowledgeConstructionWorkflow:
         self.knowledge_store = knowledge_store or Neo4jKnowledgeStore(driver, database)
         self.audit_store = audit_store or Neo4jConstructionAuditStore(driver, database)
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.monotonic = monotonic or time.monotonic
+
+    def _monotonic_now(self) -> float:
+        value = self.monotonic()
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ConstructionConflict("monotonic clock returned an invalid value")
+        return float(value)
+
+    def _require_deadline(
+        self,
+        deadline: float,
+        *,
+        minimum_remaining: float = 0.0,
+    ) -> None:
+        if self._monotonic_now() + minimum_remaining >= deadline:
+            raise ConstructionDeadlineExceeded(
+                "knowledge construction reached its cooperative deadline"
+            )
+
+    def _preflight_budget(self, parsed: ParsedDocument) -> None:
+        chunk_count = len(parsed.chunks)
+        total_chars = sum(len(chunk.text) for chunk in parsed.chunks)
+        if chunk_count > self.config.max_chunks:
+            raise ConstructionBudgetExceeded("source exceeds the configured Chunk budget")
+        if chunk_count > self.config.max_model_calls:
+            raise ConstructionBudgetExceeded(
+                "source exceeds the configured model-call budget"
+            )
+        if total_chars > self.config.max_total_extraction_chars:
+            raise ConstructionBudgetExceeded(
+                "source exceeds the configured extraction-character budget"
+            )
+
+    def _provider_timeout(self, extractor: OntologyExtractor) -> float:
+        limits = getattr(extractor, "limits", None)
+        value = getattr(limits, "timeout_seconds", None)
+        if value is None:
+            raise ConstructionConflict(
+                "extractor must expose a bounded provider timeout"
+            )
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= 0.0
+        ):
+            raise ConstructionConflict("extractor provider timeout is invalid")
+        timeout = float(value)
+        if timeout >= self.config.deadline_seconds:
+            raise ConstructionConflict(
+                "extractor provider timeout must be shorter than the workflow deadline"
+            )
+        return timeout
 
     def run(
         self,
@@ -1404,10 +1527,19 @@ class Neo4jKnowledgeConstructionWorkflow:
         _require_construction_capability(principal)
         if not isinstance(metadata, ConstructionMetadata):
             raise TypeError("metadata must be ConstructionMetadata")
+        if not metadata.access_groups <= principal.groups:
+            raise ConstructionAuthorizationError(
+                "source access groups must be a principal-group subset"
+            )
+        deadline = self._monotonic_now() + self.config.deadline_seconds
+        self._require_deadline(deadline)
         parsed = self.parser.parse(payload, mime_type=metadata.mime_type)
+        self._preflight_budget(parsed)
+        self._require_deadline(deadline)
         tbox = self.tbox_store.active(principal.tenant_id, metadata.tbox_key)
         if tbox is None or tbox.status is not TBoxStatus.PUBLISHED:
             raise ConstructionConflict("tenant has no active PUBLISHED T-Box for this key")
+        self._require_deadline(deadline)
         extractor = self.extractor_factory(tbox)
         if (
             extractor.active_tbox.tenant_id != principal.tenant_id
@@ -1417,6 +1549,8 @@ class Neo4jKnowledgeConstructionWorkflow:
             raise ConstructionConflict("extractor is not pinned to the active tenant T-Box")
         if extractor.prompt_version != self.config.prompt_signature:
             raise ConstructionConflict("extractor prompt version differs from configuration")
+        provider_timeout = self._provider_timeout(extractor)
+        self._require_deadline(deadline)
 
         governance = tbox.compile_governance_policy()
         ingestion_profile = _profile(
@@ -1445,13 +1579,16 @@ class Neo4jKnowledgeConstructionWorkflow:
             version_id_value,
             ingestion_profile.profile_id,
         )
+        self._require_deadline(deadline)
         observed = self.audit_store.observe_document(
             principal,
             document_id_value=document_id_value,
             version_id_value=version_id_value,
             canonical_uri=metadata.canonical_uri,
             source_name=metadata.source_name,
+            access_groups=metadata.access_groups,
         )
+        self._require_deadline(deadline)
         request_fingerprint = content_checksum(
             json.dumps(
                 {
@@ -1473,7 +1610,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                     "tbox_checksum": tbox.checksum,
                     "ingestion_profile_id": ingestion_profile.profile_id,
                     "extraction_profile_id": extraction_profile.profile_id,
-                    "principal_groups": sorted(principal.groups),
+                    "access_groups": sorted(metadata.access_groups),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -1507,6 +1644,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             ),
             expected_chunks=len(parsed.chunks),
         )
+        self._require_deadline(deadline)
         ingestion_request = self._ingestion_request(
             metadata,
             parsed,
@@ -1519,20 +1657,36 @@ class Neo4jKnowledgeConstructionWorkflow:
             _empty_canonical_extraction,
             self.embedding_provider,
         )
+        self._require_deadline(deadline)
         document, version, chunks = ingestion_request.domain_inputs()
-        results = tuple(
-            self._process_chunk(
-                principal=principal,
-                job=job,
-                tbox=tbox,
-                extractor=extractor,
-                profile=extraction_profile,
-                document=document,
-                version=version,
-                chunk=chunk,
+        results: list[ConstructionChunkResult] = []
+        model_calls_started = [0]
+
+        def reserve_model_call() -> None:
+            if model_calls_started[0] >= self.config.max_model_calls:
+                raise ConstructionBudgetExceeded(
+                    "construction reached the configured model-call budget"
+                )
+            model_calls_started[0] += 1
+
+        for chunk in chunks:
+            self._require_deadline(deadline)
+            results.append(
+                self._process_chunk(
+                    principal=principal,
+                    job=job,
+                    tbox=tbox,
+                    extractor=extractor,
+                    profile=extraction_profile,
+                    document=document,
+                    version=version,
+                    chunk=chunk,
+                    deadline=deadline,
+                    provider_timeout=provider_timeout,
+                    reserve_model_call=reserve_model_call,
+                )
             )
-            for chunk in chunks
-        )
+        self._require_deadline(deadline)
         self.audit_store.complete_job(
             tenant_id=principal.tenant_id,
             job_id=job.job_id,
@@ -1546,7 +1700,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             snapshot_id=ingestion_request.snapshot_id,
             tbox_id=tbox.tbox_id,
             ingestion=ingestion,
-            chunks=results,
+            chunks=tuple(results),
         )
 
     def _ingestion_request(
@@ -1592,6 +1746,9 @@ class Neo4jKnowledgeConstructionWorkflow:
         document: Document,
         version: DocumentVersion,
         chunk: Chunk,
+        deadline: float,
+        provider_timeout: float,
+        reserve_model_call: Callable[[], None],
     ) -> ConstructionChunkResult:
         completed = self.audit_store.read_outcome(
             principal,
@@ -1614,6 +1771,11 @@ class Neo4jKnowledgeConstructionWorkflow:
             profile_id=profile.profile_id,
         )
         if payload is None:
+            self._require_deadline(
+                deadline,
+                minimum_remaining=provider_timeout,
+            )
+            reserve_model_call()
             extracted_at = self.clock()
             try:
                 audited = extractor.extract_audited(
@@ -1722,10 +1884,16 @@ __all__ = [
     "CANONICAL_EMPTY_EXTRACTOR_SIGNATURE",
     "CANONICAL_EMPTY_PROMPT_SIGNATURE",
     "KNOWLEDGE_CONSTRUCTION_CAPABILITY",
+    "MAX_CONSTRUCTION_CHUNKS",
+    "MAX_CONSTRUCTION_DEADLINE_SECONDS",
+    "MAX_CONSTRUCTION_EXTRACTION_CHARS",
+    "MAX_CONSTRUCTION_MODEL_CALLS",
     "ConstructionAuthorizationError",
+    "ConstructionBudgetExceeded",
     "ConstructionChunkResult",
     "ConstructionConfig",
     "ConstructionConflict",
+    "ConstructionDeadlineExceeded",
     "ConstructionJobState",
     "ConstructionMetadata",
     "KnowledgeConstructionResult",

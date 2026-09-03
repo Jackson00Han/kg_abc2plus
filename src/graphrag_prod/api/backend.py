@@ -182,6 +182,7 @@ class EvidenceSubgraphProjector(Protocol):
         selected_chunk_ids: tuple[str, ...],
         *,
         trust_policy: SubgraphTrustPolicy,
+        version_filter: VersionFilter,
     ) -> EvidenceSubgraph: ...
 
 
@@ -767,6 +768,7 @@ class GraphRAGQueryOperations:
                         principal,
                         result.trace.selected_chunk_ids,
                         trust_policy=policy,
+                        version_filter=result.trace.version_filter,
                     )
                 else:
                     graph = EvidenceSubgraph(
@@ -803,6 +805,29 @@ class GraphRAGQueryOperations:
                 for entity in graph.entities
             ) or any(
                 item.citation.tenant_id != principal.tenant_id
+                for item in evidence
+            ):
+                raise DependencyUnavailableError()
+            graph_version_filter = result.trace.version_filter
+            if any(
+                (
+                    graph_version_filter.document_ids
+                    and item.citation.document_id
+                    not in graph_version_filter.document_ids
+                )
+                or (
+                    graph_version_filter.version_ids
+                    and item.citation.version_id
+                    not in graph_version_filter.version_ids
+                )
+                or (
+                    graph_version_filter.published_at_or_before is not None
+                    and (
+                        item.citation.published_at is None
+                        or item.citation.published_at
+                        > graph_version_filter.published_at_or_before
+                    )
+                )
                 for item in evidence
             ):
                 raise DependencyUnavailableError()
@@ -997,6 +1022,8 @@ class GraphRAGApplicationBackend:
                 )
             if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCT:
                 request = _validated(KnowledgeConstructionRequest, envelope.payload)
+                if not frozenset(request.access_groups).issubset(principal.groups):
+                    raise AuthorizationError()
                 return _response(
                     self._knowledge.construct(principal, request),
                     KnowledgeConstructionResponse,

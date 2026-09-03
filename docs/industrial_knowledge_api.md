@@ -2,8 +2,10 @@
 
 The governed property-graph workflow is exposed through the same authenticated,
 rate-limited, body-limited, and bounded worker runtime as the existing GraphRAG
-API. The request contracts never accept a tenant ID, principal ID, capability,
-or access-group override. These values come only from the verified JWT.
+API. The request contracts never accept a tenant ID, principal ID, or
+capability override. These values come only from the verified JWT. A
+construction request must explicitly select its source `access_groups`; every
+selected group must be a non-empty subset of the verified JWT groups.
 
 | Operation | Route | Required scope |
 | --- | --- | --- |
@@ -20,8 +22,26 @@ or access-group override. These values come only from the verified JWT.
 
 Upload content is canonical base64 and decodes to at most 5 MiB. Supported MIME
 types are `text/plain`, `text/markdown`, `text/csv`, and `application/json`.
-The construction workflow derives a new document ACL from the authenticated
-principal and preserves the persisted ACL for updates.
+The construction workflow persists only the caller's selected group subset and
+requires an exact ACL match on later updates; it never widens a source to all
+groups held by a multi-group principal. Before embedding, ingestion, or LLM
+work, the workflow rejects sources exceeding its configured Chunk, model-call,
+or extraction-character budget. Module ceilings prevent configuration above
+512 Chunks, 512 model calls, 5 MiB of extraction text, or a 900-second
+cooperative deadline. Provider calls must expose a smaller per-call timeout.
+
+T-Box contracts can carry typed relationship-property definitions and declared
+entity `identity_properties`, but the current A-Box API does not accept,
+extract, review, or publish relationship-property values, and automatic entity
+resolution does not yet use `identity_properties`. They are governance metadata
+until those evidence-backed instance paths are implemented.
+
+Model extraction uses only the system-reserved `llm-candidate` identity
+namespace. Every extractable entity type must declare that namespace; an
+incompatible T-Box or an alternate extractor namespace fails before provider
+work begins. The persistence boundary verifies both origin and declaration:
+model-derived identities cannot use expert namespaces, and authoritative or
+other non-model identities cannot use the reserved candidate namespace.
 
 Authoritative imports identify evidence only by document, immutable version,
 Chunk, exact character range, and exact quoted text. The server resolves the

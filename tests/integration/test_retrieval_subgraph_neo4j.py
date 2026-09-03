@@ -59,6 +59,7 @@ from graphrag_prod.retrieval import (
     EvidenceSubgraphLimits,
     Neo4jEvidenceSubgraphProjector,
     SubgraphTrustPolicy,
+    VersionFilter,
 )
 
 
@@ -132,7 +133,11 @@ def _source_bundles(
             version_number=1,
             mime_type="text/plain",
             language="en",
-            published_at=CREATED_AT,
+            published_at=(
+                CREATED_AT
+                if scope == "public"
+                else CREATED_AT + timedelta(days=1)
+            ),
             ingested_at=CREATED_AT,
         )
         chunk = Chunk(
@@ -181,10 +186,13 @@ def _tbox(tenant_id: str) -> TBoxVersion:
         version=1,
         status=TBoxStatus.DRAFT,
         entity_types=(
-            EntityTypeDefinition("Company", ("company-id",)),
+            EntityTypeDefinition(
+                "Company",
+                ("company-id", "llm-candidate"),
+            ),
             EntityTypeDefinition(
                 "Asset",
-                ("asset-id",),
+                ("asset-id", "llm-candidate"),
                 properties=(_pressure_property(),),
             ),
         ),
@@ -720,6 +728,54 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
             )
         )
 
+    def test_version_filter_bounds_seed_and_cross_document_expansion(self) -> None:
+        projector = Neo4jEvidenceSubgraphProjector(self.driver, self.database)
+        filters = (
+            VersionFilter(
+                document_ids=frozenset(
+                    {self.alpha_public_chunk.document_id}
+                )
+            ),
+            VersionFilter(
+                version_ids=frozenset({self.alpha_public_chunk.version_id})
+            ),
+            VersionFilter(published_at_or_before=CREATED_AT),
+        )
+        for version_filter in filters:
+            with self.subTest(version_filter=version_filter):
+                result = projector.project(
+                    self.alpha_expert,
+                    (self.alpha_public_chunk.chunk_id,),
+                    version_filter=version_filter,
+                )
+                self.assertEqual(len(result.entities), 2)
+                self.assertEqual(result.assertions, ())
+                self.assertEqual(
+                    result.matched_chunk_ids,
+                    (self.alpha_public_chunk.chunk_id,),
+                )
+                self.assertTrue(
+                    all(
+                        evidence.citation.document_id
+                        == self.alpha_public_chunk.document_id
+                        for entity in result.entities
+                        for evidence in entity.evidence
+                    )
+                )
+
+        excluded_seed = projector.project(
+            self.alpha_expert,
+            (self.alpha_public_chunk.chunk_id,),
+            version_filter=VersionFilter(
+                document_ids=frozenset(
+                    {self.alpha_restricted_chunk.document_id}
+                )
+            ),
+        )
+        self.assertEqual(excluded_seed.entities, ())
+        self.assertEqual(excluded_seed.assertions, ())
+        self.assertEqual(excluded_seed.publication_ids, ())
+
     def test_tenant_acl_and_active_lifecycle_boundaries_fail_closed(self) -> None:
         projector = Neo4jEvidenceSubgraphProjector(self.driver, self.database)
         public = projector.project(
@@ -790,17 +846,19 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
                 """,
             ),
             (
-                "tbox",
+                "publication-tbox-binding",
                 """
-                MATCH (:TBoxCatalog {tenant_id: $tenant_id})
-                      -[edge:ACTIVE_TBOX_VERSION]->(tbox)
+                MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication)
+                      -[edge:USES_TBOX_VERSION]->(tbox)
                 DELETE edge
                 RETURN tbox.tbox_id AS value
                 """,
                 """
-                MATCH (catalog:TBoxCatalog {tenant_id: $tenant_id}),
+                MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication),
                       (tbox:TBoxVersion {tbox_id: $value})
-                CREATE (catalog)-[:ACTIVE_TBOX_VERSION]->(tbox)
+                CREATE (publication)-[:USES_TBOX_VERSION]->(tbox)
                 """,
             ),
             (
@@ -843,6 +901,41 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
                         value=rows[0]["value"],
                         database_=self.database,
                     )
+
+        try:
+            self.driver.execute_query(
+                """
+                MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication),
+                      (wrong:TBoxVersion {tenant_id: $wrong_tenant_id})
+                WITH publication, wrong ORDER BY wrong.version DESC LIMIT 1
+                CREATE (publication)-[:USES_TBOX_VERSION]->(wrong)
+                """,
+                tenant_id=self.alpha,
+                wrong_tenant_id=self.beta,
+                database_=self.database,
+            )
+            hidden = projector.project(
+                self.alpha_expert,
+                (self.alpha_public_chunk.chunk_id,),
+            )
+            self.assertEqual(hidden.entities, ())
+            self.assertEqual(hidden.assertions, ())
+            self.assertEqual(hidden.publication_ids, ())
+        finally:
+            self.driver.execute_query(
+                """
+                MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication)
+                      -[edge:USES_TBOX_VERSION]->(
+                          wrong:TBoxVersion {tenant_id: $wrong_tenant_id}
+                      )
+                DELETE edge
+                """,
+                tenant_id=self.alpha,
+                wrong_tenant_id=self.beta,
+                database_=self.database,
+            )
 
     def test_projection_hard_limits_are_enforced_after_graph_expansion(self) -> None:
         limits = EvidenceSubgraphLimits(

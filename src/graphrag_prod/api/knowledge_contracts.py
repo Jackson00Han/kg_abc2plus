@@ -1,8 +1,9 @@
 """Strict HTTP contracts for governed property-graph knowledge operations.
 
-Tenant identity, access groups, principals, and capabilities are deliberately
-absent from every request.  Those values are reconstructed from a verified JWT
-at the application boundary.
+Tenant identity, principals, and capabilities are reconstructed from a verified
+JWT at the application boundary.  Construction callers must select the source
+ACL explicitly; the adapter verifies that every selected group belongs to the
+authenticated principal.
 """
 
 from __future__ import annotations
@@ -14,11 +15,13 @@ from typing import Annotated, Literal, Self
 from pydantic import AwareDatetime, Field, StringConstraints, field_validator, model_validator
 
 from .contracts import (
+    GroupName,
     Identifier,
     LiteralSourceText,
     LiteralTemporalText,
     LiteralUnitText,
     MAX_DOCUMENT_BYTES,
+    MAX_GROUPS,
     ShortText,
     StrictAPIModel,
     TypedLiteralSemanticsResponse,
@@ -396,6 +399,10 @@ class KnowledgeConstructionRequest(StrictAPIModel):
         ),
     ] = "en"
     tbox_key: OntologyKey
+    access_groups: Annotated[
+        tuple[GroupName, ...],
+        Field(min_length=1, max_length=MAX_GROUPS),
+    ]
     published_at: AwareDatetime | None = None
     max_attempts: Annotated[int, Field(strict=True, ge=1, le=10)] = 3
     content_base64: Annotated[
@@ -418,6 +425,16 @@ class KnowledgeConstructionRequest(StrictAPIModel):
     @classmethod
     def accept_json_datetime(cls, value: object) -> object:
         return _json_aware_datetime(value)
+
+    @field_validator("access_groups", mode="before")
+    @classmethod
+    def accept_json_access_groups(cls, value: object) -> object:
+        return _json_array(value)
+
+    @field_validator("access_groups")
+    @classmethod
+    def unique_access_groups(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _unique(value, "access_groups")
 
     @field_validator("title", "source_name")
     @classmethod
@@ -444,7 +461,7 @@ class KnowledgeConstructionRequest(StrictAPIModel):
 class ConstructionChunkResponse(StrictAPIModel):
     chunk_id: Identifier
     artifact_id: Identifier
-    status: Literal["CANDIDATE", "QUARANTINED", "REJECTED"]
+    status: Literal["CANDIDATE", "QUARANTINED", "REJECTED", "EMPTY"]
     finding_codes: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
     mention_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
     assertion_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
@@ -732,6 +749,7 @@ class PublicationHistoryRequest(StrictAPIModel):
 
 class PublicationResponse(StrictAPIModel):
     publication_id: Identifier
+    ontology_version_id: Identifier
     generation: Annotated[int, Field(strict=True, ge=1)]
     manifest_hash: Digest
     source_revision_ids: Annotated[

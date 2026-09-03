@@ -28,9 +28,9 @@ the distinction between source quality and workflow state.
 A tenant-owned T-Box declares:
 
 - entity types and canonical-key namespaces;
-- typed entity properties and identity properties;
+- typed entity properties and declared identity properties;
 - directed relationship types and allowed source/target types;
-- typed relationship properties;
+- typed relationship-property definitions as T-Box metadata;
 - property and endpoint cardinality;
 - numeric units and human-readable descriptions.
 
@@ -39,10 +39,21 @@ checksum compare-and-swap, activation requires an active-version
 compare-and-swap, and activating a newer version retires the previous version.
 Every A-Box record pins the exact `ontology_version_id` under which it was
 validated, so a new T-Box cannot silently reinterpret old facts.
+Declared numeric units are validated against the pinned Pint registry before
+any draft write; an unrecognized unit is invalid input, not a concurrent-write
+conflict.
 
 The T-Box is persisted as ordinary Neo4j property-graph nodes and
 relationships. User-defined type names are stored as data; they are never
 concatenated into Cypher labels or relationship types.
+
+The current A-Box implementation extracts and materializes relationship
+instances and typed **entity** property facts. Although relationship-property
+definitions can be represented and persisted in the T-Box, relationship
+property values are not yet accepted by the extraction schema, authoritative
+import, review model, or publication materialization. They must not be treated
+as an implemented instance capability until those evidence-backed paths are
+added.
 
 ## Evidence rule
 
@@ -61,6 +72,13 @@ The normalized source is split into deterministic, gapless `ChunkSeed`
 records, preserving exact source offsets. Richer binary formats can be added
 only through explicit parser plugins with the same output bounds.
 
+Every construction request selects a non-empty source `access_groups` ACL. The
+selected groups must be a subset of the authenticated principal's JWT groups;
+the workflow independently rechecks the subset before parsing and persists
+only the selected groups. It never widens a document to every group held by a
+multi-group operator. Updating an existing source with a different ACL is
+rejected rather than silently reclassifying its evidence.
+
 The LLM extractor receives an injected OpenAI-compatible client and a
 `PUBLISHED` tenant T-Box; it never reads credentials itself. The prompt and
 strict response schema enumerate permitted types and directions. The server
@@ -69,6 +87,23 @@ evidence substring, and offset. Model-supplied persistent IDs and unknown
 fields are rejected. Valid output is marked `LLM_EXTRACTED + SECONDARY +
 CANDIDATE`; low-confidence output is quarantined rather than silently
 published.
+
+The extractor supports provider-neutral response handling: strict JSON Schema,
+generic JSON-object mode, or no provider `response_format` parameter. The latter
+two modes embed the same compact response schema in the prompt, and all three
+still pass through identical server-side JSON, T-Box, and evidence validation.
+
+Every entity type exposed to model extraction must explicitly allow the
+system-reserved provisional canonical-key namespace `llm-candidate`.
+Extractor construction fails before a model call if any type omits it, and the
+extractor rejects alternate provisional namespaces. The A-Box store retains a
+second hard check: model-derived identities must use `llm-candidate` and their
+entity type must declare it, while non-model identities must use a declared
+ordinary namespace and may never use the reserved candidate namespace. This
+prevents models from occupying expert identities and authoritative imports
+from masquerading as machine candidates. A future customizable candidate
+namespace requires a distinct T-Box declaration rather than reuse of the
+ordinary canonical-key namespace list.
 
 ### Typed property facts, units, and time
 
@@ -133,6 +168,18 @@ Chunk, and Embedding. Separately cached ontology extraction artifacts are then
 converted into governed candidate revisions. Provider failures remain
 retryable; structural model failures are recorded as rejected outcomes.
 
+Parsed uploads are rejected before embedding, ingestion, or extraction if they
+exceed the configured Chunk count, potential model-call count, or total
+extraction-character budget. Configuration itself is capped at 512 Chunks,
+512 model calls, 5 MiB of extraction text, and a 900-second deadline, so an
+operator cannot turn the per-request guard into an unbounded value. The
+workflow also has a monotonic cooperative deadline. It checks that deadline
+before each stage and before reserving each model call, and starts no call
+unless the configured provider timeout fits in the remaining budget. An
+in-flight synchronous provider call still relies on its own timeout;
+cooperative cancellation prevents subsequent calls, not an unsafe
+interruption of a running thread.
+
 ## Resolution, review, and publication
 
 Entity resolution is deliberately conservative. Exact canonical keys and a
@@ -141,6 +188,13 @@ Canonical-name and similarity matches are review suggestions only, and
 homonyms or ambiguous aliases are conflicts. Every proposal records its rule
 and matcher versions plus the authorized evidence supporting the target; it
 never rewires graph records by itself.
+
+`identity_properties` are currently validated and persisted as ontology
+declarations and are included in the extraction prompt. They are not yet an
+automatic entity-resolution key: resolution currently uses canonical keys,
+governed aliases, exact names, and review-only name similarity. Industrial
+deployments must therefore supply stable canonical keys or retain human review
+until an evidence-backed identity-property matcher is implemented.
 
 Review decisions create immutable record revisions through optimistic
 compare-and-swap. Reviewers may approve, reject, quarantine, or edit a bounded
@@ -159,6 +213,17 @@ activates a monotonically versioned tenant publication. Rollback changes the
 active publication pointer while retaining all revisions, manifests, and
 activation history. Stale source snapshots, unauthorized evidence, and T-Box
 mismatches fail closed.
+
+Every `KnowledgePublication` stores its exact immutable
+`ontology_version_id` and a `USES_TBOX_VERSION` edge. A fresh publication may
+bind only the tenant's currently active `PUBLISHED` T-Box. After a newer T-Box
+is activated, an existing publication remains queryable and may be replayed or
+selected by rollback against its now-`RETIRED` bound version; upgrading the
+published knowledge requires a new extraction/import and publication. API
+publication, rollback, and history responses expose the binding. Migration 010
+backfills a legacy publication only when all immutable manifest revisions
+prove one exact T-Box; ambiguous or missing legacy bindings remain invisible
+and fail closed until repaired through an audited migration.
 
 ## Retrieval rule
 

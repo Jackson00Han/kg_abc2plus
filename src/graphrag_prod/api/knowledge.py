@@ -14,6 +14,7 @@ from graphrag_prod.construction import (
 )
 from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
+    ConstructionBudgetExceeded,
     ConstructionConflict,
 )
 from graphrag_prod.domain import Principal, TypedLiteralValue
@@ -51,7 +52,7 @@ from graphrag_prod.ontology import (
     TBoxStatus,
     TBoxVersion,
 )
-from graphrag_prod.ontology.store import TBoxConflict
+from graphrag_prod.ontology.store import TBoxConflict, TBoxValidationError
 
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
@@ -268,6 +269,7 @@ def _review_record_payload(item: Any) -> dict[str, object]:
 def _publication_payload(value: Any) -> dict[str, object]:
     return {
         "publication_id": value.publication_id,
+        "ontology_version_id": value.ontology_version_id,
         "generation": value.generation,
         "manifest_hash": value.manifest_hash,
         "source_revision_ids": value.source_revision_ids,
@@ -454,6 +456,8 @@ class Neo4jKnowledgeOperations:
             raise
         except TimeoutError as error:
             raise DependencyTimeoutError() from error
+        except TBoxValidationError as error:
+            raise RequestValidationError() from error
         except TBoxConflict as error:
             raise ConflictError() from error
         except Exception as error:
@@ -680,6 +684,8 @@ class Neo4jKnowledgeOperations:
         self, principal: Principal, request: KnowledgeConstructionRequest
     ) -> BackendResult:
         _require_capability(principal, "knowledge:construct")
+        if not frozenset(request.access_groups) <= principal.groups:
+            raise AuthorizationError()
         try:
             metadata = ConstructionMetadata(
                 operation_key=request.operation_key,
@@ -689,6 +695,7 @@ class Neo4jKnowledgeOperations:
                 mime_type=request.mime_type,
                 language=request.language,
                 tbox_key=request.tbox_key,
+                access_groups=frozenset(request.access_groups),
                 published_at=request.published_at,
                 max_attempts=request.max_attempts,
             )
@@ -707,7 +714,7 @@ class Neo4jKnowledgeOperations:
             raise ResourceNotFoundError() from error
         except (ConstructionConflict, IngestionConflict) as error:
             raise ConflictError() from error
-        except DocumentParseError as error:
+        except (ConstructionBudgetExceeded, DocumentParseError) as error:
             raise RequestValidationError() from error
         except TimeoutError as error:
             raise DependencyTimeoutError() from error

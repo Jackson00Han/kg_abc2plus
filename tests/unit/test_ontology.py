@@ -9,8 +9,13 @@ import unittest
 
 from graphrag_prod.ontology import (
     Cardinality,
+    EntityTypeDefinition,
+    Neo4jTBoxStore,
     PropertyDataType,
+    PropertyDefinition,
+    TBoxConflict,
     TBoxStatus,
+    TBoxValidationError,
     TBoxVersion,
 )
 
@@ -183,6 +188,41 @@ class TBoxModelTests(unittest.TestCase):
             with self.subTest(message=message):
                 with self.assertRaisesRegex(ValueError, message):
                     TBoxVersion.from_mapping(payload)
+
+    def test_tbox_import_rejects_unrecognized_pint_unit_before_database_access(
+        self,
+    ) -> None:
+        class _NoSessionDriver:
+            def session(self, **_kwargs: object) -> object:
+                raise AssertionError(
+                    "invalid declared units must fail before database access"
+                )
+
+        value = TBoxVersion(
+            tenant_id="tenant-industrial",
+            key="invalid-units",
+            version=1,
+            status=TBoxStatus.DRAFT,
+            entity_types=(
+                EntityTypeDefinition(
+                    "Equipment",
+                    ("asset",),
+                    properties=(
+                        PropertyDefinition(
+                            "design_pressure",
+                            PropertyDataType.DECIMAL,
+                            False,
+                            Cardinality.ZERO_OR_ONE,
+                            unit="definitely_not_a_pint_unit_xyz",
+                        ),
+                    ),
+                ),
+            ),
+            relationship_types=(),
+        )
+
+        with self.assertRaisesRegex(TBoxValidationError, "unrecognized Pint unit"):
+            Neo4jTBoxStore(_NoSessionDriver()).import_version(value)
 
     def test_property_and_identity_names_are_validated(self) -> None:
         duplicate = tbox_mapping()

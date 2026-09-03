@@ -26,6 +26,7 @@ from .trust import (
     AuthorityLevel,
     GovernanceStatus,
     KnowledgeOrigin,
+    SYSTEM_CANDIDATE_NAMESPACE,
     TrustMetadata,
 )
 
@@ -562,10 +563,14 @@ class Neo4jKnowledgeStore:
                 if assertion.object_entity is not None
             }
         )
-        model_derived = all(
-            record.trust.origin is KnowledgeOrigin.LLM_EXTRACTED
-            for record in (*batch.mentions, *batch.assertions)
-        )
+        origins = {
+            record.trust.origin for record in (*batch.mentions, *batch.assertions)
+        }
+        if len(origins) != 1:
+            raise KnowledgeSchemaError(
+                "one A-Box write must use exactly one knowledge origin"
+            )
+        model_derived = next(iter(origins)) is KnowledgeOrigin.LLM_EXTRACTED
         for entity in entities.values():
             contract = entity_contracts.get(entity.entity_type)
             if contract is None:
@@ -574,10 +579,11 @@ class Neo4jKnowledgeStore:
                 )
             namespace, separator, _ = entity.canonical_key.partition(":")
             normalized_namespace = namespace.casefold()
-            allowed_namespace = (
-                normalized_namespace == "llm-candidate"
+            namespace_is_declared = normalized_namespace in contract["namespaces"]
+            allowed_namespace = namespace_is_declared and (
+                normalized_namespace == SYSTEM_CANDIDATE_NAMESPACE
                 if model_derived
-                else normalized_namespace in contract["namespaces"]
+                else normalized_namespace != SYSTEM_CANDIDATE_NAMESPACE
             )
             if not separator or not allowed_namespace:
                 raise KnowledgeSchemaError(

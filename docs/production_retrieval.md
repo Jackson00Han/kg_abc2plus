@@ -40,6 +40,16 @@ This projection is a separate response field with its own limits, exact Chunk
 citations, and latency stage. It does not alter ranking and is never passed to
 answer generation as factual evidence.
 
+The projector receives the engine's effective `VersionFilter`, rather than a
+new client-derived filter. Document IDs, version IDs, and the inclusive
+`published_at_or_before` cutoff are enforced inside both seed and one-hop
+evidence queries and checked again during projection. An expanded assertion
+cannot reintroduce evidence excluded from initial retrieval. Each publication
+must also have one exact, same-tenant `USES_TBOX_VERSION` binding matching its
+manifest revisions; missing or additional T-Box edges fail closed. The bound
+T-Box may be `PUBLISHED` or `RETIRED`, preserving immutable historical
+publication replay without reinterpreting it under the current ontology.
+
 Projected literal assertions and matching one-hop paths preserve the complete
 server-normalized typed literal semantics (raw/canonical value and unit plus
 temporal validity/observation qualifiers). Every non-null raw token remains

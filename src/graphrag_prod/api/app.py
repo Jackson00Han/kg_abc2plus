@@ -801,6 +801,8 @@ def create_app(
         body: KnowledgeConstructionRequest,
         identity: IdentityDependency,
     ) -> Any:
+        if not frozenset(body.access_groups).issubset(identity.principal.groups):
+            raise AuthorizationError()
         return await run_operation(
             request,
             identity,

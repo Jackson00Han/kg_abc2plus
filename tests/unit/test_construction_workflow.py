@@ -9,10 +9,19 @@ import unittest
 
 from graphrag_prod.construction import (
     AuditedExtraction,
+    BoundedDocumentParser,
+    ChunkingConfig,
+    ConstructionAuthorizationError,
+    ConstructionBudgetExceeded,
     ConstructionConfig,
     ConstructionConflict,
+    ConstructionDeadlineExceeded,
     ConstructionChunkResult,
     ConstructionMetadata,
+    MAX_CONSTRUCTION_CHUNKS,
+    MAX_CONSTRUCTION_DEADLINE_SECONDS,
+    MAX_CONSTRUCTION_EXTRACTION_CHARS,
+    MAX_CONSTRUCTION_MODEL_CALLS,
     Neo4jConstructionAuditStore,
     Neo4jKnowledgeConstructionWorkflow,
     ObservedDocumentState,
@@ -78,6 +87,7 @@ class _AuditStore:
         version_id_value: str,
         canonical_uri: str,
         source_name: str,
+        access_groups: frozenset[str],
     ) -> ObservedDocumentState:
         del document_id_value, version_id_value, canonical_uri, source_name
         self.observed_principals.append(principal)
@@ -87,7 +97,7 @@ class _AuditStore:
             version_number=1,
             access_policy_id="server-derived-policy",
             access_policy_version=1,
-            access_groups=principal.groups,
+            access_groups=access_groups,
         )
 
     def ensure_job(self, state, *, expected_chunks: int):  # type: ignore[no-untyped-def]
@@ -223,9 +233,10 @@ class _KnowledgeStore:
 
 
 class _Pipeline:
-    def __init__(self) -> None:
+    def __init__(self, *, after_run=None) -> None:  # type: ignore[no-untyped-def]
         self.requests = []
         self.canonical_outputs: list[ExtractionOutput] = []
+        self.after_run = after_run
 
     def run(  # type: ignore[no-untyped-def]
         self, request, extraction_provider, embedding_provider
@@ -242,6 +253,8 @@ class _Pipeline:
                 )
             )
         del embedding_provider
+        if self.after_run is not None:
+            self.after_run()
         return SimpleNamespace(
             snapshot_id=request.snapshot_id,
             active_snapshot_id=request.snapshot_id,
@@ -300,12 +313,15 @@ class _Extractor:
         *,
         status: GovernanceStatus = GovernanceStatus.CANDIDATE,
         reject: tuple[ExtractionFinding, ...] | None = None,
+        on_call=None,  # type: ignore[no-untyped-def]
     ) -> None:
         self.active_tbox = tbox
         self.model = "qwen-plus"
         self.prompt_version = "industrial-prompt:v1"
+        self.limits = SimpleNamespace(timeout_seconds=1.0)
         self.status = status
         self.reject = reject
+        self.on_call = on_call
         self.calls = 0
 
     def extract_audited(  # type: ignore[no-untyped-def]
@@ -313,6 +329,8 @@ class _Extractor:
     ):
         del artifact_id, input_hash
         self.calls += 1
+        if self.on_call is not None:
+            self.on_call(self.calls)
         if self.reject is not None:
             raise ExtractionRejected(self.reject)
         company_key = "llm-candidate:company"
@@ -426,7 +444,11 @@ class _Extractor:
         )
 
 
-def _metadata(*, operation_key: str = "upload-1") -> ConstructionMetadata:
+def _metadata(
+    *,
+    operation_key: str = "upload-1",
+    access_groups: frozenset[str] = frozenset({"engineers"}),
+) -> ConstructionMetadata:
     return ConstructionMetadata(
         operation_key=operation_key,
         canonical_uri="urn:industrial:asset-report-1",
@@ -435,6 +457,7 @@ def _metadata(*, operation_key: str = "upload-1") -> ConstructionMetadata:
         mime_type="text/plain",
         language="en",
         tbox_key="industrial-assets",
+        access_groups=access_groups,
         published_at=NOW,
     )
 
@@ -446,6 +469,9 @@ def _workflow(
     knowledge: _KnowledgeStore | None = None,
     pipeline: _Pipeline | None = None,
     tbox_store: _TBoxStore | None = None,
+    config: ConstructionConfig | None = None,
+    parser: BoundedDocumentParser | None = None,
+    monotonic=None,  # type: ignore[no-untyped-def]
 ):
     selected_audit = audit or _AuditStore()
     selected_knowledge = knowledge or _KnowledgeStore()
@@ -462,14 +488,17 @@ def _workflow(
             "l2",
         ),
         extractor_factory=lambda _tbox_value: extractor,
-        config=ConstructionConfig(
+        config=config
+        or ConstructionConfig(
             extractor_signature="qwen-ontology:v1",
             prompt_signature="industrial-prompt:v1",
         ),
+        parser=parser,
         tbox_store=tbox_store or _TBoxStore(extractor.active_tbox),
         knowledge_store=selected_knowledge,
         audit_store=selected_audit,
         clock=lambda: NOW,
+        monotonic=monotonic,
     )
     return workflow, selected_audit, selected_knowledge, selected_pipeline
 
@@ -501,7 +530,7 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         )
         request = pipeline.requests[0]
         self.assertEqual(request.tenant_id, self.principal.tenant_id)
-        self.assertEqual(request.access_groups, self.principal.groups)
+        self.assertEqual(request.access_groups, frozenset({"engineers"}))
         self.assertEqual(request.access_policy_id, "server-derived-policy")
         self.assertEqual(knowledge.last_batch.mentions[0].evidence.quoted_text, "Acme")
         self.assertEqual(
@@ -554,6 +583,231 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
             workflow.run(reader, SOURCE, _metadata())
         self.assertEqual(audit.observed_principals, [])
         self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(pipeline.requests, [])
+
+    def test_selected_acl_is_not_widened_to_all_principal_groups(self) -> None:
+        principal = Principal(
+            "engineer:alice",
+            "tenant-industrial",
+            frozenset({"engineers", "public"}),
+            frozenset({"knowledge:construct"}),
+        )
+        extractor = _Extractor(_tbox())
+        workflow, _audit, knowledge, pipeline = _workflow(extractor=extractor)
+        workflow.run(
+            principal,
+            SOURCE,
+            _metadata(access_groups=frozenset({"engineers"})),
+        )
+        self.assertEqual(
+            pipeline.requests[0].access_groups,
+            frozenset({"engineers"}),
+        )
+        self.assertEqual(
+            knowledge.last_batch.mentions[0].evidence.access_groups,
+            frozenset({"engineers"}),
+        )
+
+        with self.assertRaises(ConstructionAuthorizationError):
+            workflow.run(
+                principal,
+                SOURCE,
+                _metadata(
+                    operation_key="upload-unauthorized",
+                    access_groups=frozenset({"operators"}),
+                ),
+            )
+        self.assertEqual(extractor.calls, 1)
+
+    def test_preflight_budgets_stop_before_ingestion_or_provider_calls(self) -> None:
+        cases = (
+            (
+                b"x" * 18,
+                BoundedDocumentParser(
+                    chunking=ChunkingConfig(max_chars=5, minimum_boundary_ratio=1.0)
+                ),
+                ConstructionConfig(
+                    "qwen-ontology:v1",
+                    "industrial-prompt:v1",
+                    max_chunks=1,
+                    max_model_calls=100,
+                    max_total_extraction_chars=100,
+                ),
+            ),
+            (
+                SOURCE * 2,
+                BoundedDocumentParser(
+                    chunking=ChunkingConfig(
+                        max_chars=len(SOURCE), minimum_boundary_ratio=1.0
+                    )
+                ),
+                ConstructionConfig(
+                    "qwen-ontology:v1",
+                    "industrial-prompt:v1",
+                    max_chunks=2,
+                    max_model_calls=1,
+                    max_total_extraction_chars=100,
+                ),
+            ),
+            (
+                SOURCE,
+                BoundedDocumentParser(),
+                ConstructionConfig(
+                    "qwen-ontology:v1",
+                    "industrial-prompt:v1",
+                    max_chunks=100,
+                    max_model_calls=100,
+                    max_total_extraction_chars=10,
+                ),
+            ),
+        )
+        for payload, parser, config in cases:
+            with self.subTest(config=config):
+                extractor = _Extractor(_tbox())
+                workflow, audit, knowledge, pipeline = _workflow(
+                    extractor=extractor,
+                    config=config,
+                    parser=parser,
+                )
+                with self.assertRaises(ConstructionBudgetExceeded):
+                    workflow.run(self.principal, payload, _metadata())
+                self.assertEqual(extractor.calls, 0)
+                self.assertEqual(audit.observed_principals, [])
+                self.assertEqual(knowledge.candidate_writes, 0)
+                self.assertEqual(pipeline.requests, [])
+
+    def test_construction_budget_configuration_rejects_unbounded_values(self) -> None:
+        for field, invalid in (
+            ("max_chunks", 0),
+            ("max_chunks", True),
+            ("max_model_calls", -1),
+            ("max_total_extraction_chars", 1.5),
+            ("deadline_seconds", 0.0),
+            ("deadline_seconds", float("inf")),
+            ("deadline_seconds", float("nan")),
+            ("deadline_seconds", True),
+            ("max_chunks", MAX_CONSTRUCTION_CHUNKS + 1),
+            ("max_model_calls", MAX_CONSTRUCTION_MODEL_CALLS + 1),
+            (
+                "max_total_extraction_chars",
+                MAX_CONSTRUCTION_EXTRACTION_CHARS + 1,
+            ),
+            (
+                "deadline_seconds",
+                MAX_CONSTRUCTION_DEADLINE_SECONDS + 0.1,
+            ),
+        ):
+            with self.subTest(field=field, invalid=invalid):
+                with self.assertRaises(ValueError):
+                    ConstructionConfig(
+                        "qwen-ontology:v1",
+                        "industrial-prompt:v1",
+                        **{field: invalid},  # type: ignore[arg-type]
+                    )
+        bounded = ConstructionConfig(
+            "qwen-ontology:v1",
+            "industrial-prompt:v1",
+            max_chunks=MAX_CONSTRUCTION_CHUNKS,
+            max_model_calls=MAX_CONSTRUCTION_MODEL_CALLS,
+            max_total_extraction_chars=MAX_CONSTRUCTION_EXTRACTION_CHARS,
+            deadline_seconds=MAX_CONSTRUCTION_DEADLINE_SECONDS,
+        )
+        self.assertEqual(bounded.max_chunks, MAX_CONSTRUCTION_CHUNKS)
+        self.assertEqual(
+            bounded.deadline_seconds,
+            MAX_CONSTRUCTION_DEADLINE_SECONDS,
+        )
+
+    def test_deadline_stops_before_the_next_model_call(self) -> None:
+        timer = SimpleNamespace(value=0.0)
+        extractor = _Extractor(
+            _tbox(),
+            on_call=lambda _calls: setattr(timer, "value", 10.0),
+        )
+        parser = BoundedDocumentParser(
+            chunking=ChunkingConfig(
+                max_chars=len(SOURCE), minimum_boundary_ratio=1.0
+            )
+        )
+        workflow, audit, knowledge, pipeline = _workflow(
+            extractor=extractor,
+            parser=parser,
+            monotonic=lambda: timer.value,
+            config=ConstructionConfig(
+                "qwen-ontology:v1",
+                "industrial-prompt:v1",
+                max_chunks=2,
+                max_model_calls=2,
+                max_total_extraction_chars=100,
+                deadline_seconds=10.0,
+            ),
+        )
+        with self.assertRaises(ConstructionDeadlineExceeded):
+            workflow.run(self.principal, SOURCE * 2, _metadata())
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(len(pipeline.requests), 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertEqual(len(audit.outcomes), 1)
+        self.assertEqual(audit.completed_jobs, [])
+
+    def test_deadline_after_parse_stops_before_ingestion_and_providers(self) -> None:
+        times = iter((0.0, 0.0, 10.0))
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, pipeline = _workflow(
+            extractor=extractor,
+            monotonic=lambda: next(times),
+            config=ConstructionConfig(
+                "qwen-ontology:v1",
+                "industrial-prompt:v1",
+                deadline_seconds=10.0,
+            ),
+        )
+        with self.assertRaises(ConstructionDeadlineExceeded):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(extractor.calls, 0)
+        self.assertEqual(audit.observed_principals, [])
+        self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(pipeline.requests, [])
+
+    def test_deadline_after_ingestion_starts_no_model_call(self) -> None:
+        timer = SimpleNamespace(value=0.0)
+        pipeline = _Pipeline(after_run=lambda: setattr(timer, "value", 10.0))
+        extractor = _Extractor(_tbox())
+        workflow, _audit, knowledge, _pipeline = _workflow(
+            extractor=extractor,
+            pipeline=pipeline,
+            monotonic=lambda: timer.value,
+            config=ConstructionConfig(
+                "qwen-ontology:v1",
+                "industrial-prompt:v1",
+                deadline_seconds=10.0,
+            ),
+        )
+        with self.assertRaises(ConstructionDeadlineExceeded):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(extractor.calls, 0)
+        self.assertEqual(knowledge.candidate_writes, 0)
+
+    def test_provider_timeout_must_fit_inside_workflow_deadline(self) -> None:
+        extractor = _Extractor(_tbox())
+        extractor.limits = SimpleNamespace(timeout_seconds=10.0)
+        workflow, audit, _knowledge, pipeline = _workflow(
+            extractor=extractor,
+            config=ConstructionConfig(
+                "qwen-ontology:v1",
+                "industrial-prompt:v1",
+                deadline_seconds=10.0,
+            ),
+        )
+        with self.assertRaisesRegex(ConstructionConflict, "provider timeout"):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(audit.observed_principals, [])
+        self.assertEqual(pipeline.requests, [])
+
+        del extractor.limits
+        with self.assertRaisesRegex(ConstructionConflict, "bounded provider timeout"):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(audit.observed_principals, [])
         self.assertEqual(pipeline.requests, [])
 
     def test_low_confidence_output_uses_quarantine_not_candidate_lane(self) -> None:

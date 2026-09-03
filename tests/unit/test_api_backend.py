@@ -21,6 +21,7 @@ from graphrag_prod.api.contracts import (
     AnswerResponse,
     RetrievalRequest as APIRetrievalRequest,
     RetrievalResponse,
+    VersionFilterRequest,
 )
 from graphrag_prod.api.runtime import (
     AuthorizationError,
@@ -102,6 +103,7 @@ def _retrieval_result(
     *,
     chunks: tuple[RetrievedChunk, ...] | None = None,
     tenant_id: str = "tenant-alpha",
+    version_filter: VersionFilter = VersionFilter(),
 ) -> RetrievalResult:
     selected = (_chunk(),) if chunks is None else chunks
     limits = RetrievalLimits()
@@ -122,7 +124,7 @@ def _retrieval_result(
         selected_chunk_ids=tuple(chunk.citation.chunk_id for chunk in selected),
         context_chars=sum(len(chunk.text) for chunk in selected),
         limits=limits,
-        version_filter=VersionFilter(),
+        version_filter=version_filter,
     )
     return RetrievalResult(chunks=selected, trace=trace)
 
@@ -130,6 +132,9 @@ def _retrieval_result(
 def _evidence_subgraph(
     *,
     tenant_id: str = "tenant-alpha",
+    document_id: str = "document-001",
+    version_id: str = "version-001",
+    published_at: datetime | None = datetime(2026, 2, 1, tzinfo=UTC),
     trust_policy: SubgraphTrustPolicy = (
         SubgraphTrustPolicy.PUBLISHED_SECONDARY_INCLUSIVE
     ),
@@ -140,11 +145,11 @@ def _evidence_subgraph(
         chunk_id="chunk-001",
         chunk_checksum=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         chunk_text=text,
-        document_id="document-001",
+        document_id=document_id,
         document_title="Acme annual filing",
         canonical_uri="https://example.test/filing",
         source_name="Acme filing",
-        version_id="version-001",
+        version_id=version_id,
         version_checksum="b" * 64,
         version_number=1,
         ordinal=0,
@@ -152,7 +157,7 @@ def _evidence_subgraph(
         char_end=len(text),
         page_number=1,
         section="Results",
-        published_at=datetime(2026, 2, 1, tzinfo=UTC),
+        published_at=published_at,
     )
     authority = (
         AuthorityLevel.AUTHORITATIVE
@@ -364,7 +369,14 @@ class RecordingRetrievalEngine:
 class RecordingSubgraphProjector:
     def __init__(self, result: object | None = None) -> None:
         self.result = result
-        self.calls: list[tuple[Principal, tuple[str, ...], SubgraphTrustPolicy]] = []
+        self.calls: list[
+            tuple[
+                Principal,
+                tuple[str, ...],
+                SubgraphTrustPolicy,
+                VersionFilter,
+            ]
+        ] = []
         self.error: BaseException | None = None
 
     def project(
@@ -373,8 +385,11 @@ class RecordingSubgraphProjector:
         selected_chunk_ids: tuple[str, ...],
         *,
         trust_policy: SubgraphTrustPolicy,
+        version_filter: VersionFilter,
     ) -> object:
-        self.calls.append((principal, selected_chunk_ids, trust_policy))
+        self.calls.append(
+            (principal, selected_chunk_ids, trust_policy, version_filter)
+        )
         if self.error is not None:
             raise self.error
         if self.result is not None:
@@ -560,8 +575,15 @@ class QueryOperationsTests(unittest.TestCase):
         self.assertIsNone(result.payload.graph)
 
     def test_retrieve_projects_governed_graph_from_exact_selected_chunks(self) -> None:
+        cutoff = datetime(2026, 2, 2, tzinfo=UTC)
+        version_filter = VersionFilter(
+            document_ids=frozenset({"document-001"}),
+            version_ids=frozenset({"version-001"}),
+            published_at_or_before=cutoff,
+        )
         projector = RecordingSubgraphProjector()
         operations, _, _, _ = self._operations(
+            retrieval_result=_retrieval_result(version_filter=version_filter),
             subgraph_projector=projector,
             clock=SequenceClock(1.0, 1.004, 2.0, 2.012, 3.0, 3.006),
         )
@@ -570,7 +592,14 @@ class QueryOperationsTests(unittest.TestCase):
         )
         result = operations.retrieve(
             principal,
-            APIRetrievalRequest(query_text="What connects Acme and revenue?"),
+            APIRetrievalRequest(
+                query_text="What connects Acme and revenue?",
+                version_filter=VersionFilterRequest(
+                    document_ids=("document-001",),
+                    version_ids=("version-001",),
+                    published_at_or_before=cutoff,
+                ),
+            ),
         )
 
         self.assertEqual(
@@ -580,6 +609,7 @@ class QueryOperationsTests(unittest.TestCase):
                     principal,
                     ("chunk-001",),
                     SubgraphTrustPolicy.PUBLISHED_SECONDARY_INCLUSIVE,
+                    version_filter,
                 )
             ],
         )
@@ -692,6 +722,43 @@ class QueryOperationsTests(unittest.TestCase):
             with self.subTest(output=type(invalid).__name__):
                 operations, *_ = self._operations(
                     subgraph_projector=RecordingSubgraphProjector(invalid),
+                )
+                with self.assertRaises(DependencyUnavailableError):
+                    operations.retrieve(principal, request)
+
+    def test_graph_output_cannot_escape_the_retrieval_version_filter(self) -> None:
+        principal = Principal(
+            "principal-001", "tenant-alpha", frozenset({"finance"})
+        )
+        cutoff = datetime(2026, 2, 2, tzinfo=UTC)
+        version_filter = VersionFilter(
+            document_ids=frozenset({"document-001"}),
+            version_ids=frozenset({"version-001"}),
+            published_at_or_before=cutoff,
+        )
+        request = APIRetrievalRequest(
+            query_text="Revenue?",
+            version_filter=VersionFilterRequest(
+                document_ids=("document-001",),
+                version_ids=("version-001",),
+                published_at_or_before=cutoff,
+            ),
+        )
+        invalid_graphs = (
+            _evidence_subgraph(document_id="document-outside-filter"),
+            _evidence_subgraph(version_id="version-outside-filter"),
+            _evidence_subgraph(
+                published_at=datetime(2026, 2, 3, tzinfo=UTC)
+            ),
+            _evidence_subgraph(published_at=None),
+        )
+        for graph in invalid_graphs:
+            with self.subTest(citation=graph.entities[0].evidence[0].citation):
+                operations, *_ = self._operations(
+                    retrieval_result=_retrieval_result(
+                        version_filter=version_filter
+                    ),
+                    subgraph_projector=RecordingSubgraphProjector(graph),
                 )
                 with self.assertRaises(DependencyUnavailableError):
                     operations.retrieve(principal, request)

@@ -8,6 +8,7 @@ import unittest
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum, entity_id
 from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.retrieval.models import VersionFilter
 from graphrag_prod.retrieval.subgraph import (
     EvidenceSubgraphLimits,
     HARD_MAX_ASSERTIONS,
@@ -275,11 +276,30 @@ class _Session:
         if self.required_group not in parameters["groups"]:  # type: ignore[operator]
             return _Result(())
         authority_levels = set(parameters["authority_levels"])  # type: ignore[arg-type]
+
+        def within_version_filter(row: dict[str, object]) -> bool:
+            citation = row["citation"]  # type: ignore[assignment]
+            document_ids = set(parameters["document_ids"])  # type: ignore[arg-type]
+            version_ids = set(parameters["version_ids"])  # type: ignore[arg-type]
+            cutoff = parameters["published_before"]
+            return (
+                (not document_ids or citation["document_id"] in document_ids)
+                and (not version_ids or citation["version_id"] in version_ids)
+                and (
+                    cutoff is None
+                    or (
+                        citation["published_at"] is not None
+                        and citation["published_at"] <= cutoff
+                    )
+                )
+            )
+
         if "governed-subgraph:assertions" in query:
             rows = tuple(
                 row
                 for row in self.assertion_rows
-                if row["assertion"]["authority_level"]  # type: ignore[index]
+                if within_version_filter(row)
+                and row["assertion"]["authority_level"]  # type: ignore[index]
                 in authority_levels
                 and row["subject_mention"]["authority_level"]  # type: ignore[index]
                 in authority_levels
@@ -296,7 +316,8 @@ class _Session:
             rows = tuple(
                 row
                 for row in self.mention_rows
-                if row["mention"]["authority_level"]  # type: ignore[index]
+                if within_version_filter(row)
+                and row["mention"]["authority_level"]  # type: ignore[index]
                 in authority_levels
             )
             return _Result(rows[: parameters["mention_limit"]])  # type: ignore[index]
@@ -476,6 +497,11 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
             _principal(),
             (selected_id,),
             trust_policy=SubgraphTrustPolicy.AUTHORITATIVE_ONLY,
+            version_filter=VersionFilter(
+                document_ids=frozenset({"document-1"}),
+                version_ids=frozenset({"version-1"}),
+                published_at_or_before=NOW,
+            ),
         )
 
         for query, parameters in session.calls:
@@ -489,13 +515,17 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
                 "ACTIVE_SNAPSHOT",
                 "ACTIVE_VERSION",
                 "USES_KNOWLEDGE_SNAPSHOT",
-                "ACTIVE_TBOX_VERSION",
+                "USES_TBOX_VERSION",
+                "wrong_tbox.tbox_id <>",
                 "DECLARES_ENTITY_TYPE",
                 "authority_level IN $authority_levels",
                 "substring(",
                 "any(group IN $groups",
             ):
                 self.assertIn(required, query)
+            self.assertEqual(parameters["document_ids"], ["document-1"])
+            self.assertEqual(parameters["version_ids"], ["version-1"])
+            self.assertEqual(parameters["published_before"], NOW)
         assertion_query = next(
             query
             for query, _parameters in session.calls
@@ -510,6 +540,60 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
         self.assertNotIn(
             "object IS NOT NULL AND object_type.name",
             assertion_query,
+        )
+
+    def test_version_filter_applies_to_seed_and_expansion_and_fails_closed(self) -> None:
+        for version_filter in (
+            VersionFilter(document_ids=frozenset({"other-document"})),
+            VersionFilter(version_ids=frozenset({"other-version"})),
+            VersionFilter(
+                published_at_or_before=datetime(2026, 1, 1, tzinfo=UTC)
+            ),
+        ):
+            with self.subTest(version_filter=version_filter):
+                result = Neo4jEvidenceSubgraphProjector(
+                    _Driver(_Session())
+                ).project(
+                    _principal(),
+                    (CHUNK_ID,),
+                    version_filter=version_filter,
+                )
+                self.assertEqual(result.entities, ())
+                self.assertEqual(result.assertions, ())
+                self.assertEqual(result.publication_ids, ())
+
+        session = _Session(assertion_rows=(), mention_rows=())
+        Neo4jEvidenceSubgraphProjector(_Driver(session)).project(
+            _principal(),
+            (CHUNK_ID,),
+            version_filter=VersionFilter(
+                document_ids=frozenset({"document-1"}),
+                version_ids=frozenset({"version-1"}),
+                published_at_or_before=NOW,
+            ),
+        )
+        mention_query = next(
+            query
+            for query, _ in session.calls
+            if "governed-subgraph:mentions" in query
+        )
+        assertion_query = next(
+            query
+            for query, _ in session.calls
+            if "governed-subgraph:assertions" in query
+        )
+        self.assertIn("document.document_id IN $document_ids", mention_query)
+        self.assertIn("version.version_id IN $version_ids", mention_query)
+        self.assertIn("version.published_at <= $published_before", mention_query)
+        self.assertIn("seed_document.document_id IN $document_ids", assertion_query)
+        self.assertIn("seed_version.version_id IN $version_ids", assertion_query)
+        self.assertGreaterEqual(
+            assertion_query.count("document.document_id IN $document_ids"),
+            2,
+        )
+        self.assertGreaterEqual(
+            assertion_query.count("version.version_id IN $version_ids"),
+            2,
         )
 
 

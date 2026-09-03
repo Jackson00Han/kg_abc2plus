@@ -13,7 +13,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from graphrag_prod.domain.ids import assertion_id, entity_id, mention_id
 from graphrag_prod.domain.models import (
@@ -30,6 +30,7 @@ from graphrag_prod.knowledge.trust import (
     AuthorityLevel,
     GovernanceStatus,
     KnowledgeOrigin,
+    SYSTEM_CANDIDATE_NAMESPACE,
 )
 from graphrag_prod.ontology.models import Cardinality, TBoxStatus, TBoxVersion
 
@@ -37,7 +38,9 @@ from .literals import LiteralNormalizationError, TBoxLiteralNormalizer
 
 
 _LOCAL_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-_PROVISIONAL_NAMESPACE = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
+SYSTEM_PROVISIONAL_NAMESPACE = SYSTEM_CANDIDATE_NAMESPACE
+ResponseFormatMode = Literal["schema", "json_object", "none"]
+_RESPONSE_FORMAT_MODES = frozenset({"schema", "json_object", "none"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,8 +399,8 @@ class OpenAICompatibleOntologyExtractor:
         active_tbox: TBoxVersion,
         prompt_version: str,
         limits: ExtractionLimits | None = None,
-        provisional_namespace: str = "llm-candidate",
-        use_json_schema_response: bool = True,
+        provisional_namespace: str = SYSTEM_PROVISIONAL_NAMESPACE,
+        response_format_mode: ResponseFormatMode = "schema",
         seed: int | None = 0,
     ) -> None:
         if client is None:
@@ -408,8 +411,28 @@ class OpenAICompatibleOntologyExtractor:
             raise ValueError("prompt_version must not be empty")
         if active_tbox.status is not TBoxStatus.PUBLISHED:
             raise ValueError("extraction requires the active published T-Box version")
-        if _PROVISIONAL_NAMESPACE.fullmatch(provisional_namespace) is None:
-            raise ValueError("provisional_namespace is invalid")
+        if provisional_namespace != SYSTEM_PROVISIONAL_NAMESPACE:
+            raise ValueError(
+                "provisional_namespace must use the system-reserved "
+                f"{SYSTEM_PROVISIONAL_NAMESPACE!r} namespace"
+            )
+        unsupported_types = tuple(
+            item.name
+            for item in active_tbox.entity_types
+            if provisional_namespace not in item.canonical_key_namespaces
+        )
+        if unsupported_types:
+            raise ValueError(
+                "provisional_namespace must be allowed by every extractable "
+                "entity type; missing from: " + ", ".join(unsupported_types)
+            )
+        if (
+            not isinstance(response_format_mode, str)
+            or response_format_mode not in _RESPONSE_FORMAT_MODES
+        ):
+            raise ValueError(
+                "response_format_mode must be schema, json_object, or none"
+            )
         if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
             raise ValueError("seed must be an integer or None")
         self.client = client
@@ -418,7 +441,7 @@ class OpenAICompatibleOntologyExtractor:
         self.prompt_version = prompt_version.strip()
         self.limits = limits or ExtractionLimits()
         self.provisional_namespace = provisional_namespace
-        self.use_json_schema_response = use_json_schema_response
+        self.response_format_mode: ResponseFormatMode = response_format_mode
         self.seed = seed
         self._literal_normalizer = TBoxLiteralNormalizer()
         for entity_type in self.active_tbox.entity_types:
@@ -467,14 +490,14 @@ class OpenAICompatibleOntologyExtractor:
         schema = self.response_schema()
         request: dict[str, Any] = {
             "model": self.model,
-            "messages": self._messages(chunk),
+            "messages": self._messages(chunk, response_schema=schema),
             "temperature": 0,
             "max_tokens": self.limits.max_output_tokens,
             "timeout": float(self.limits.timeout_seconds),
         }
         if self.seed is not None:
             request["seed"] = self.seed
-        if self.use_json_schema_response:
+        if self.response_format_mode == "schema":
             request["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -483,7 +506,7 @@ class OpenAICompatibleOntologyExtractor:
                     "schema": schema,
                 },
             }
-        else:
+        elif self.response_format_mode == "json_object":
             request["response_format"] = {"type": "json_object"}
 
         try:
@@ -722,7 +745,12 @@ class OpenAICompatibleOntologyExtractor:
             },
         }
 
-    def _messages(self, chunk: Chunk) -> list[dict[str, str]]:
+    def _messages(
+        self,
+        chunk: Chunk,
+        *,
+        response_schema: Mapping[str, Any],
+    ) -> list[dict[str, str]]:
         ontology = {
             "ontology_version_id": self.active_tbox.tbox_id,
             "ontology_checksum": self.active_tbox.checksum,
@@ -773,6 +801,13 @@ class OpenAICompatibleOntologyExtractor:
             "inside this one response. An empty extraction is valid when unsupported.\n"
             + json.dumps(ontology, ensure_ascii=False, sort_keys=True)
         )
+        if self.response_format_mode != "schema":
+            instructions += "\nresponse_schema=" + json.dumps(
+                response_schema,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         source = json.dumps(
             {
                 "chunk_text": chunk.text,

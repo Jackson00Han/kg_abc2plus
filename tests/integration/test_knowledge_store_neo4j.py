@@ -96,7 +96,7 @@ class Neo4jKnowledgeStoreIntegrationTests(unittest.TestCase):
             entity_types=(
                 EntityTypeDefinition(
                     "Company",
-                    ("ticker",),
+                    ("ticker", "llm-candidate"),
                     properties=(
                         PropertyDefinition(
                             "DISPLAY_NAME",
@@ -106,7 +106,10 @@ class Neo4jKnowledgeStoreIntegrationTests(unittest.TestCase):
                         ),
                     ),
                 ),
-                EntityTypeDefinition("Product", ("apple-product",)),
+                EntityTypeDefinition(
+                    "Product",
+                    ("apple-product", "llm-candidate"),
+                ),
             ),
             relationship_types=(
                 RelationshipTypeDefinition(

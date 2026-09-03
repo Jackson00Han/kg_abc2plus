@@ -36,7 +36,7 @@ from graphrag_prod.api.runtime import (
     ResourceNotFoundError,
     required_scope,
 )
-from graphrag_prod.construction import DocumentParseError
+from graphrag_prod.construction import ConstructionBudgetExceeded, DocumentParseError
 from graphrag_prod.domain import Principal, TypedLiteralValue
 from graphrag_prod.domain.ids import entity_id as make_entity_id
 from graphrag_prod.knowledge import (
@@ -61,6 +61,7 @@ from graphrag_prod.ontology import (
     PropertyDataType,
     PropertyDefinition,
     TBoxStatus,
+    TBoxValidationError,
     TBoxVersion,
 )
 
@@ -99,6 +100,7 @@ def _construct_payload(**changes: object) -> dict[str, object]:
         "mime_type": "text/plain",
         "language": "en",
         "tbox_key": "industrial-assets",
+        "access_groups": ["engineers"],
         "content_base64": base64.b64encode(b"Acme owns Pump-7.").decode(),
     }
     value.update(changes)
@@ -233,15 +235,21 @@ class KnowledgeContractTests(unittest.TestCase):
             ),
         )
         for model, payload in targets:
-            for forbidden in (
-                "tenant_id",
-                "principal_id",
-                "capabilities",
-                "access_groups",
-            ):
+            forbidden_fields = ["tenant_id", "principal_id", "capabilities"]
+            if model is not KnowledgeConstructionRequest:
+                forbidden_fields.append("access_groups")
+            for forbidden in forbidden_fields:
                 with self.subTest(model=model.__name__, forbidden=forbidden):
                     with self.assertRaises(ValidationError):
                         model.model_validate({**payload, forbidden: "forged"})
+
+    def test_construction_requires_a_unique_nonempty_source_acl(self) -> None:
+        for access_groups in ([], ["engineers", "engineers"]):
+            with self.subTest(access_groups=access_groups):
+                with self.assertRaises(ValidationError):
+                    KnowledgeConstructionRequest.model_validate(
+                        _construct_payload(access_groups=access_groups)
+                    )
 
     def test_literal_writes_accept_raw_source_tokens_only(self) -> None:
         quote = "Pump-7 pressure was 100 psi at 2025-01-02T03:04:05Z"
@@ -456,8 +464,9 @@ class _Driver:
 
 
 class _Construction:
-    def __init__(self) -> None:
+    def __init__(self, *, status: str = "CANDIDATE") -> None:
         self.call = None
+        self.status = status
 
     def run(self, *_args: object) -> object:
         self.call = _args
@@ -471,9 +480,11 @@ class _Construction:
                 SimpleNamespace(
                     chunk_id="chunk-1",
                     artifact_id="artifact-1",
-                    status="CANDIDATE",
+                    status=self.status,
                     finding_codes=(),
-                    mention_record_ids=("mention-1",),
+                    mention_record_ids=(
+                        () if self.status == "EMPTY" else ("mention-1",)
+                    ),
                     assertion_record_ids=(),
                     replayed=False,
                 ),
@@ -539,9 +550,15 @@ class _KnowledgeStore:
 
 
 class _TBoxes:
-    def __init__(self, *, active: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        active: bool = True,
+        import_failure: Exception | None = None,
+    ) -> None:
         self.value = ACTIVE_TBOX
         self.is_active = active
+        self.import_failure = import_failure
         self.imported = None
         self.publish_call = None
 
@@ -551,6 +568,8 @@ class _TBoxes:
     def import_version(
         self, value: TBoxVersion, *, expected_checksum: str | None
     ) -> TBoxVersion:
+        if self.import_failure is not None:
+            raise self.import_failure
         self.imported = (value, expected_checksum)
         return value
 
@@ -614,6 +633,7 @@ class _Publications:
         self.value = KnowledgePublicationView(
             publication_id="publication-1",
             tenant_id="tenant-alpha",
+            ontology_version_id="tbox-1",
             generation=1,
             manifest_hash="b" * 64,
             source_revision_ids=("revision-2",),
@@ -968,6 +988,43 @@ class KnowledgeAdapterTests(unittest.TestCase):
             ("tenant-alpha", tboxes.value.tbox_id, None),
         )
 
+    def test_tbox_semantic_validation_error_is_a_client_error(self) -> None:
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"ontology:write"}),
+        )
+        adapter = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            tboxes=_TBoxes(
+                import_failure=TBoxValidationError("unrecognized Pint unit")
+            ),
+        )
+        request = OntologyImportRequest(
+            key="industrial-assets",
+            version=1,
+            entity_types=(
+                {
+                    "name": "Asset",
+                    "canonical_key_namespaces": ("asset-id",),
+                    "properties": (
+                        {
+                            "name": "pressure",
+                            "datatype": "DECIMAL",
+                            "required": False,
+                            "cardinality": "ZERO_OR_ONE",
+                            "unit": "not_a_real_unit_xyz",
+                        },
+                    ),
+                },
+            ),
+        )
+
+        with self.assertRaises(RequestValidationError):
+            adapter.ontology_import(principal, request)
+
     def test_construct_review_and_publication_adapters_preserve_capabilities(self) -> None:
         construction = _Construction()
         reviews = _Reviews()
@@ -1020,13 +1077,20 @@ class KnowledgeAdapterTests(unittest.TestCase):
         assert construction.call is not None
         self.assertEqual(construction.call[0], principal)
         self.assertEqual(construction.call[1], b"Acme owns Pump-7.")
+        self.assertEqual(
+            construction.call[2].access_groups,
+            frozenset({"engineers"}),
+        )
         self.assertEqual(queued.payload.items, ())
         self.assertEqual(reviewed.payload.outcomes[0].status, "REJECTED")
         assert reviews.batch_call is not None
         self.assertEqual(reviews.batch_call[1][0].reviewed_at, NOW)
         self.assertEqual(published.payload.publication_id, "publication-1")
+        self.assertEqual(published.payload.ontology_version_id, "tbox-1")
         self.assertEqual(rolled_back.payload.publication_id, "publication-1")
+        self.assertEqual(rolled_back.payload.ontology_version_id, "tbox-1")
         self.assertEqual(len(history.payload.items), 1)
+        self.assertEqual(history.payload.items[0].ontology_version_id, "tbox-1")
         rollback = next(value for name, value in publications.calls if name == "rollback")
         self.assertEqual(rollback[0], principal)
         self.assertEqual(rollback[1], "publication-1")
@@ -1034,6 +1098,25 @@ class KnowledgeAdapterTests(unittest.TestCase):
             rollback[2]["expected_active_publication_id"],
             "publication-2",
         )
+
+    def test_construct_returns_empty_for_a_valid_no_fact_extraction(self) -> None:
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:construct"}),
+        )
+        result = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            construction=_Construction(status="EMPTY"),
+        ).construct(
+            principal,
+            KnowledgeConstructionRequest.model_validate(_construct_payload()),
+        )
+        self.assertEqual(result.payload.chunks[0].status, "EMPTY")
+        self.assertEqual(result.payload.chunks[0].mention_record_ids, ())
+        self.assertEqual(result.payload.chunks[0].assertion_record_ids, ())
 
     def test_malformed_dependency_output_is_not_reported_as_client_input(self) -> None:
         principal = Principal(
@@ -1066,6 +1149,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
             (RuntimeError("provider failure detail"), DependencyUnavailableError),
             (ValueError("malformed provider output"), DependencyUnavailableError),
             (DocumentParseError("invalid uploaded JSON"), RequestValidationError),
+            (ConstructionBudgetExceeded("too many calls"), RequestValidationError),
             (ConflictError(), ConflictError),
         )
         for failure, expected in cases:
@@ -1077,6 +1161,37 @@ class KnowledgeAdapterTests(unittest.TestCase):
                 )
                 with self.assertRaises(expected):
                     adapter.construct(principal, request)
+
+    def test_construct_acl_must_be_a_nonempty_principal_group_subset(self) -> None:
+        construction = _Construction()
+        adapter = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            construction=construction,
+        )
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"board", "public"}),
+            frozenset({"knowledge:construct"}),
+        )
+        request = KnowledgeConstructionRequest.model_validate(
+            _construct_payload(access_groups=["board"])
+        )
+        adapter.construct(principal, request)
+        assert construction.call is not None
+        self.assertEqual(
+            construction.call[2].access_groups,
+            frozenset({"board"}),
+        )
+
+        construction.call = None
+        unauthorized = KnowledgeConstructionRequest.model_validate(
+            _construct_payload(access_groups=["operators"])
+        )
+        with self.assertRaises(AuthorizationError):
+            adapter.construct(principal, unauthorized)
+        self.assertIsNone(construction.call)
 
     def test_rollback_unknown_and_cross_tenant_targets_are_indistinguishable(self) -> None:
         publications = _Publications()

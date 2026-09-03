@@ -26,7 +26,7 @@ from graphrag_prod.api.knowledge_contracts import (
     ReviewBatchResponse,
     ReviewQueueResponse,
 )
-from graphrag_prod.api.runtime import BackendResult
+from graphrag_prod.api.runtime import BackendResult, RequestValidationError
 
 
 SECRET = "knowledge-api-e2e-key-with-32-plus-diverse-bytes!"
@@ -85,6 +85,7 @@ def _ontology(status: str = "DRAFT") -> OntologyVersionResponse:
 def _publication() -> PublicationResponse:
     return PublicationResponse(
         publication_id="publication-1",
+        ontology_version_id="tbox-1",
         generation=1,
         manifest_hash="b" * 64,
         source_revision_ids=("revision-1",),
@@ -113,8 +114,9 @@ class _Readiness:
 
 
 class _Knowledge:
-    def __init__(self) -> None:
+    def __init__(self, *, construction_status: str = "CANDIDATE") -> None:
         self.calls: list[tuple[str, object, object]] = []
+        self.construction_status = construction_status
 
     def _record(self, name: str, principal: object, request: object) -> None:
         self.calls.append((name, principal, request))
@@ -159,9 +161,13 @@ class _Knowledge:
                     {
                         "chunk_id": "chunk-1",
                         "artifact_id": "artifact-1",
-                        "status": "CANDIDATE",
+                        "status": self.construction_status,
                         "finding_codes": (),
-                        "mention_record_ids": ("mention-1",),
+                        "mention_record_ids": (
+                            ()
+                            if self.construction_status == "EMPTY"
+                            else ("mention-1",)
+                        ),
                         "assertion_record_ids": (),
                         "replayed": False,
                     },
@@ -206,6 +212,87 @@ class _Knowledge:
 
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
+    def test_invalid_declared_unit_returns_http_422(self) -> None:
+        class _RejectingKnowledge(_Knowledge):
+            def ontology_import(
+                self, principal: object, request: object
+            ) -> BackendResult:
+                self._record("ontology_import", principal, request)
+                raise RequestValidationError()
+
+        knowledge = _RejectingKnowledge()
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=GraphRAGApplicationBackend(
+                documents=_Documents(),
+                queries=_Queries(),
+                readiness=_Readiness(),
+                knowledge=knowledge,
+            ),
+        )
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/ontologies:import",
+                headers=_headers(),
+                json={
+                    "key": "industrial-assets",
+                    "version": 1,
+                    "entity_types": [
+                        {
+                            "name": "Asset",
+                            "canonical_key_namespaces": ["asset-id"],
+                            "properties": [
+                                {
+                                    "name": "pressure",
+                                    "datatype": "DECIMAL",
+                                    "required": False,
+                                    "cardinality": "ZERO_OR_ONE",
+                                    "unit": "not_a_real_unit_xyz",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["code"], "invalid_request")
+        self.assertEqual(len(knowledge.calls), 1)
+
+    def test_valid_no_fact_upload_returns_http_200_and_empty_chunk(self) -> None:
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=GraphRAGApplicationBackend(
+                documents=_Documents(),
+                queries=_Queries(),
+                readiness=_Readiness(),
+                knowledge=_Knowledge(construction_status="EMPTY"),
+            ),
+        )
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/knowledge:construct",
+                headers=_headers(),
+                json={
+                    "operation_key": "construction-empty-000001",
+                    "canonical_uri": "https://example.test/no-facts.txt",
+                    "title": "No ontology facts",
+                    "source_name": "controlled upload",
+                    "mime_type": "text/plain",
+                    "tbox_key": "industrial-assets",
+                    "access_groups": ["engineers"],
+                    "content_base64": base64.b64encode(
+                        b"No ontology facts are stated."
+                    ).decode(),
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["chunks"][0]["status"], "EMPTY")
+
     def test_literal_import_and_review_http_contracts_are_raw_only(self) -> None:
         knowledge = _Knowledge()
         app = create_app(
@@ -363,6 +450,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                         "source_name": "controlled upload",
                         "mime_type": "text/plain",
                         "tbox_key": "industrial-assets",
+                        "access_groups": ["engineers"],
                         "content_base64": base64.b64encode(
                             b"Acme owns Pump-7."
                         ).decode(),

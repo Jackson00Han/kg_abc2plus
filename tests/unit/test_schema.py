@@ -30,6 +30,8 @@ class SchemaMigrationTests(unittest.TestCase):
         for statement in migration_statements():
             if statement.startswith("DROP "):
                 self.assertIn("IF EXISTS", statement)
+            elif statement.startswith("MATCH "):
+                self.assertIn("MERGE ", statement)
             else:
                 self.assertIn("IF NOT EXISTS", statement)
 
@@ -48,6 +50,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 "007_governed_abox_schema.cypher",
                 "008_knowledge_review_publication_schema.cypher",
                 "009_knowledge_construction_schema.cypher",
+                "010_knowledge_publication_tbox_binding.cypher",
             ],
         )
         statements = migration_statements()
@@ -72,6 +75,22 @@ class SchemaMigrationTests(unittest.TestCase):
             )
         )
         self.assertLess(len(legacy_statements), len(migration_statements()))
+
+    def test_publication_tbox_backfill_requires_every_revision_to_prove_binding(
+        self,
+    ) -> None:
+        statement = next(
+            value
+            for value in migration_statements()
+            if "proven_revision_count" in value
+        )
+        self.assertIn("revision_count > 0", statement)
+        self.assertIn("proven_revision_count = revision_count", statement)
+        self.assertIn(
+            "revision.tenant_id = publication.tenant_id",
+            statement,
+        )
+        self.assertIn("revision.ontology_version_id IS NOT NULL", statement)
 
 
 if __name__ == "__main__":

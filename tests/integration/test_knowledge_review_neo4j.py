@@ -46,6 +46,7 @@ from graphrag_prod.ontology import (
     TBoxStatus,
     TBoxVersion,
 )
+from graphrag_prod.retrieval import Neo4jEvidenceSubgraphProjector
 from tests.fixtures.domain import make_bundle
 from tests.fixtures.knowledge import KNOWLEDGE_TIME, make_knowledge_batch
 
@@ -114,7 +115,7 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             entity_types=(
                 EntityTypeDefinition(
                     "Company",
-                    ("ticker",),
+                    ("ticker", "llm-candidate"),
                     properties=(
                         PropertyDefinition(
                             "DISPLAY_NAME",
@@ -124,7 +125,10 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
                         ),
                     ),
                 ),
-                EntityTypeDefinition("Product", ("apple-product",)),
+                EntityTypeDefinition(
+                    "Product",
+                    ("apple-product", "llm-candidate"),
+                ),
             ),
             relationship_types=(
                 RelationshipTypeDefinition(
@@ -142,6 +146,7 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             expected_active_tbox_id=None,
         )
         self.tbox_id = tbox.tbox_id
+        self.tbox = tbox
         self.bundle = make_bundle(tenant_id=self.tenant_id)
         Neo4jProvenanceStore(self.driver, self.database).write_bundle(self.bundle)
         # Stage 2's compatibility writer intentionally stops before the
@@ -992,6 +997,76 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             expected_active_publication_id=publication_one.publication_id,
             published_at=PUBLISHED_AT + timedelta(minutes=1),
         )
+        # Simulate publications created before the immutable binding migration
+        # and prove the replay-safe migration derives only a single exact
+        # ontology version from the immutable revision manifest.
+        self.driver.execute_query(
+            """
+            MATCH (publication:KnowledgePublication)-[
+                binding:USES_TBOX_VERSION
+            ]->(:TBoxVersion)
+            DELETE binding
+            REMOVE publication.ontology_version_id
+            """,
+            database_=self.database,
+        )
+        apply_schema(self.driver, self.database)
+        tbox_v2 = dataclasses.replace(self.tbox, version=2)
+        tbox_store = Neo4jTBoxStore(self.driver, self.database)
+        tbox_store.import_version(tbox_v2)
+        tbox_store.publish(
+            self.tenant_id,
+            tbox_v2.tbox_id,
+            expected_active_tbox_id=self.tbox_id,
+        )
+        active_after_tbox_upgrade = self.publication.active(self.principal)
+        self.assertIsNotNone(active_after_tbox_upgrade)
+        assert active_after_tbox_upgrade is not None
+        self.assertEqual(
+            active_after_tbox_upgrade.publication_id,
+            publication_two.publication_id,
+        )
+        self.assertEqual(active_after_tbox_upgrade.ontology_version_id, self.tbox_id)
+        bound, _, _ = self.driver.execute_query(
+            """
+            MATCH (publication:KnowledgePublication {
+                publication_id: $publication_id
+            })-[:USES_TBOX_VERSION]->(tbox:TBoxVersion)
+            RETURN publication.ontology_version_id AS publication_tbox_id,
+                   tbox.tbox_id AS bound_tbox_id,
+                   tbox.status AS bound_tbox_status
+            """,
+            publication_id=publication_two.publication_id,
+            database_=self.database,
+        )
+        self.assertEqual(
+            dict(bound[0]),
+            {
+                "publication_tbox_id": self.tbox_id,
+                "bound_tbox_id": self.tbox_id,
+                "bound_tbox_status": "RETIRED",
+            },
+        )
+        projected = Neo4jEvidenceSubgraphProjector(
+            self.driver,
+            self.database,
+        ).project(
+            self.principal,
+            (self.bundle.chunk.chunk_id,),
+        )
+        self.assertEqual(len(projected.entities), 2)
+        self.assertEqual(
+            projected.publication_ids,
+            (publication_two.publication_id,),
+        )
+        with self.assertRaises(KnowledgePublicationConflict):
+            self.publication.publish(
+                self.principal,
+                (),
+                expected_active_publication_id=publication_two.publication_id,
+                published_at=PUBLISHED_AT + timedelta(minutes=2),
+                remove_record_ids=(first.record_id,),
+            )
         wrong_group = Principal(
             "outsider",
             self.tenant_id,
@@ -1046,13 +1121,39 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             rolled_back_at=PUBLISHED_AT + timedelta(minutes=2),
         )
         self.assertEqual(restored.status, "ACTIVE")
+        self.assertEqual(restored.ontology_version_id, self.tbox_id)
         self.assertEqual(
             self.publication.active(
                 self.principal
             ).publication_id,  # type: ignore[union-attr]
             publication_one.publication_id,
         )
-        self.assertEqual(len(self.publication.history(self.principal)), 2)
+        history = self.publication.history(self.principal)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(
+            {item.ontology_version_id for item in history},
+            {self.tbox_id},
+        )
+        replayed = self.publication.publish(
+            self.principal,
+            (first_approved.revision_id,),
+            expected_active_publication_id=None,
+            published_at=PUBLISHED_AT + timedelta(minutes=3),
+        )
+        self.assertEqual(replayed.publication_id, publication_one.publication_id)
+        self.assertEqual(replayed.ontology_version_id, self.tbox_id)
+        projected_after_rollback = Neo4jEvidenceSubgraphProjector(
+            self.driver,
+            self.database,
+        ).project(
+            self.principal,
+            (self.bundle.chunk.chunk_id,),
+        )
+        self.assertEqual(len(projected_after_rollback.entities), 1)
+        self.assertEqual(
+            projected_after_rollback.publication_ids,
+            (publication_one.publication_id,),
+        )
 
         counts, _, _ = self.driver.execute_query(
             """

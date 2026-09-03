@@ -6,11 +6,13 @@ import dataclasses
 import unittest
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import entity_id
 from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.knowledge import (
     ABoxRecordBatch,
     AssertionRecord,
     AuthorityLevel,
+    EntityIdentity,
     EntityMentionRecord,
     GovernanceStatus,
     KnowledgeConflict,
@@ -51,6 +53,47 @@ def _typed_literal_batch(*, canonical_value: str = "Apple") -> ABoxRecordBatch:
     return dataclasses.replace(batch, assertions=(assertion,))
 
 
+def _rekey_batch(
+    batch: ABoxRecordBatch,
+    namespaces: dict[str, str],
+) -> ABoxRecordBatch:
+    identities: dict[str, EntityIdentity] = {}
+    for mention in batch.mentions:
+        source = mention.entity
+        if source.entity_id in identities:
+            continue
+        canonical_key = f"{namespaces[source.entity_type]}:{source.entity_id}"
+        identities[source.entity_id] = EntityIdentity(
+            entity_id=entity_id(
+                source.tenant_id,
+                source.entity_type,
+                canonical_key,
+            ),
+            tenant_id=source.tenant_id,
+            entity_type=source.entity_type,
+            canonical_key=canonical_key,
+            canonical_name=source.canonical_name,
+            aliases=source.aliases,
+        )
+    mentions = tuple(
+        dataclasses.replace(item, entity=identities[item.entity.entity_id])
+        for item in batch.mentions
+    )
+    assertions = tuple(
+        dataclasses.replace(
+            item,
+            subject=identities[item.subject.entity_id],
+            object_entity=(
+                None
+                if item.object_entity is None
+                else identities[item.object_entity.entity_id]
+            ),
+        )
+        for item in batch.assertions
+    )
+    return dataclasses.replace(batch, mentions=mentions, assertions=assertions)
+
+
 class _Result:
     def __init__(
         self,
@@ -79,11 +122,13 @@ class _WriteTx:
         stale: bool = False,
         missing_tbox: bool = False,
         historical_evidence: bool = False,
+        declare_candidate_namespace: bool = True,
     ) -> None:
         self.batch = batch
         self.stale = stale
         self.missing_tbox = missing_tbox
         self.historical_evidence = historical_evidence
+        self.declare_candidate_namespace = declare_candidate_namespace
         self.queries: list[tuple[str, dict[str, object]]] = []
         self.profile_writes = 0
 
@@ -98,11 +143,14 @@ class _WriteTx:
                 )
             )
         if "DECLARES_ENTITY_TYPE" in query:
+            candidate_namespaces = (
+                ["llm-candidate"] if self.declare_candidate_namespace else []
+            )
             return _Result(
                 rows=(
                     {
                         "name": "Company",
-                        "namespaces": ["ticker"],
+                        "namespaces": ["ticker", *candidate_namespaces],
                         "literal_properties": [
                             {
                                 "name": "DISPLAY_NAME",
@@ -115,7 +163,7 @@ class _WriteTx:
                     },
                     {
                         "name": "Product",
-                        "namespaces": ["apple-product"],
+                        "namespaces": ["apple-product", *candidate_namespaces],
                         "literal_properties": [],
                     },
                 )
@@ -198,12 +246,14 @@ class _WriteDriver:
         stale: bool = False,
         missing_tbox: bool = False,
         historical_evidence: bool = False,
+        declare_candidate_namespace: bool = True,
     ) -> None:
         self.tx = _WriteTx(
             batch,
             stale=stale,
             missing_tbox=missing_tbox,
             historical_evidence=historical_evidence,
+            declare_candidate_namespace=declare_candidate_namespace,
         )
         self.session_calls = 0
 
@@ -466,6 +516,47 @@ class Neo4jKnowledgeStoreUnitTests(unittest.TestCase):
         self.assertEqual(driver.tx.profile_writes, 0)
         self.assertFalse(
             any("MERGE (entity:Entity" in query for query, _ in driver.tx.queries)
+        )
+
+    def test_llm_candidate_namespace_must_be_declared_by_the_exact_tbox(self) -> None:
+        batch = _batch(authoritative=False)
+        driver = _WriteDriver(batch, declare_candidate_namespace=False)
+
+        with self.assertRaisesRegex(KnowledgeSchemaError, "namespace"):
+            Neo4jKnowledgeStore(driver).persist_llm_candidates(batch)
+
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
+        )
+
+    def test_llm_candidate_cannot_occupy_an_expert_identity_namespace(self) -> None:
+        batch = _rekey_batch(
+            _batch(authoritative=False),
+            {"Company": "ticker", "Product": "apple-product"},
+        )
+        driver = _WriteDriver(batch)
+
+        with self.assertRaisesRegex(KnowledgeSchemaError, "namespace"):
+            Neo4jKnowledgeStore(driver).persist_llm_candidates(batch)
+
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
+        )
+
+    def test_authoritative_import_cannot_occupy_machine_candidate_namespace(
+        self,
+    ) -> None:
+        batch = _rekey_batch(
+            _batch(authoritative=True),
+            {"Company": "llm-candidate", "Product": "llm-candidate"},
+        )
+        driver = _WriteDriver(batch)
+
+        with self.assertRaisesRegex(KnowledgeSchemaError, "namespace"):
+            Neo4jKnowledgeStore(driver).import_authoritative(batch)
+
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
         )
 
     def test_llm_quarantine_has_its_own_noncanonical_persistence_lane(self) -> None:

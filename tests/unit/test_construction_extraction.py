@@ -37,10 +37,10 @@ def _tbox(*, status: TBoxStatus = TBoxStatus.PUBLISHED) -> TBoxVersion:
         version=1,
         status=status,
         entity_types=(
-            EntityTypeDefinition("Company", ("company-id",)),
+            EntityTypeDefinition("Company", ("company-id", "llm-candidate")),
             EntityTypeDefinition(
                 "Asset",
-                ("asset-id",),
+                ("asset-id", "llm-candidate"),
                 properties=(
                     PropertyDefinition(
                         "pressure",
@@ -211,6 +211,7 @@ def _extractor(
     payload: object,
     *,
     limits: ExtractionLimits | None = None,
+    response_format_mode: str = "schema",
 ) -> tuple[OpenAICompatibleOntologyExtractor, FakeCompletions]:
     completions = FakeCompletions(payload)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
@@ -220,6 +221,7 @@ def _extractor(
         active_tbox=_tbox(),
         prompt_version="industrial-extraction-prompt:v1",
         limits=limits,
+        response_format_mode=response_format_mode,  # type: ignore[arg-type]
     )
     return extractor, completions
 
@@ -254,6 +256,7 @@ class ConstructionExtractionTests(unittest.TestCase):
         )
 
         request = completions.calls[0]
+        self.assertEqual(request["timeout"], 60.0)
         schema = request["response_format"]["json_schema"]["schema"]  # type: ignore[index]
         self.assertEqual(
             schema["properties"]["entities"]["items"]["properties"]["type"]["enum"],  # type: ignore[index]
@@ -262,6 +265,52 @@ class ConstructionExtractionTests(unittest.TestCase):
         prompt = request["messages"][0]["content"]  # type: ignore[index]
         self.assertIn("Never return database IDs", prompt)
         self.assertNotIn("api_key", request)
+
+    def test_provider_neutral_response_format_modes_are_explicit(self) -> None:
+        for mode, expected_format in (
+            ("schema", "json_schema"),
+            ("json_object", "json_object"),
+            ("none", None),
+        ):
+            with self.subTest(mode=mode):
+                extractor, completions = _extractor(
+                    _valid_payload(),
+                    response_format_mode=mode,
+                )
+                extractor.extract_audited(
+                    artifact_id=f"artifact-{mode}",
+                    input_hash=f"input-{mode}",
+                    chunk=_chunk(),
+                    profile=_profile(),
+                )
+                request = completions.calls[0]
+                if expected_format is None:
+                    self.assertNotIn("response_format", request)
+                else:
+                    self.assertEqual(
+                        request["response_format"]["type"],  # type: ignore[index]
+                        expected_format,
+                    )
+                prompt = request["messages"][0]["content"]  # type: ignore[index]
+                if mode == "schema":
+                    self.assertNotIn("\nresponse_schema=", prompt)
+                else:
+                    marker = "\nresponse_schema="
+                    self.assertIn(marker, prompt)
+                    embedded = json.loads(prompt.split(marker, 1)[1])
+                    self.assertEqual(embedded, extractor.response_schema())
+
+    def test_response_format_mode_rejects_unknown_and_non_string_values(self) -> None:
+        for mode in ("tool", "", True, None):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "response_format_mode"):
+                    OpenAICompatibleOntologyExtractor(
+                        client=object(),
+                        model="qwen-plus",
+                        active_tbox=_tbox(),
+                        prompt_version="v1",
+                        response_format_mode=mode,  # type: ignore[arg-type]
+                    )
 
     def test_model_local_references_never_determine_persistent_ids(self) -> None:
         first, _ = _extractor(_valid_payload())
@@ -406,6 +455,45 @@ class ConstructionExtractionTests(unittest.TestCase):
                 profile=_profile(),
             )
         self.assertIn("UNKNOWN_FIELDS", {item.code for item in captured.exception.findings})
+
+    def test_provisional_namespace_must_be_approvable_for_every_entity_type(self) -> None:
+        incompatible = TBoxVersion(
+            tenant_id="tenant-industrial",
+            key="industrial-assets",
+            version=1,
+            status=TBoxStatus.PUBLISHED,
+            entity_types=(
+                EntityTypeDefinition(
+                    "Company",
+                    ("company-id", "llm-candidate"),
+                ),
+                EntityTypeDefinition("Asset", ("asset-id",)),
+            ),
+            relationship_types=(
+                RelationshipTypeDefinition("OWNS", ("Company",), ("Asset",)),
+            ),
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "every extractable entity type; missing from: Asset",
+        ):
+            OpenAICompatibleOntologyExtractor(
+                client=object(),
+                model="qwen-plus",
+                active_tbox=incompatible,
+                prompt_version="v1",
+            )
+
+        for custom_namespace in ("auto-candidate", "LLM-CANDIDATE"):
+            with self.subTest(custom_namespace=custom_namespace):
+                with self.assertRaisesRegex(ValueError, "system-reserved"):
+                    OpenAICompatibleOntologyExtractor(
+                        client=object(),
+                        model="qwen-plus",
+                        active_tbox=_tbox(),
+                        prompt_version="v1",
+                        provisional_namespace=custom_namespace,
+                    )
 
     def test_property_fact_is_typed_unit_normalized_temporal_and_auditable(self) -> None:
         extractor, completions = _extractor(_property_payload())

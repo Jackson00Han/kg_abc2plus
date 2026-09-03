@@ -149,8 +149,8 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             version=1,
             status=TBoxStatus.DRAFT,
             entity_types=(
-                EntityTypeDefinition("Company", ("company-id",)),
-                EntityTypeDefinition("Asset", ("asset-id",)),
+                EntityTypeDefinition("Company", ("company-id", "llm-candidate")),
+                EntityTypeDefinition("Asset", ("asset-id", "llm-candidate")),
             ),
             relationship_types=(
                 RelationshipTypeDefinition("OWNS", ("Company",), ("Asset",)),
@@ -166,7 +166,7 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
         self.principal = Principal(
             "reviewer:alice",
             self.tenant_id,
-            frozenset({"engineers"}),
+            frozenset({"board", "public"}),
             frozenset({"knowledge:construct", "knowledge:review"}),
         )
         self.completions = _Completions()
@@ -218,6 +218,7 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             mime_type="text/plain",
             language="en",
             tbox_key="industrial-assets",
+            access_groups=frozenset({"board"}),
             published_at=NOW,
         )
 
@@ -252,6 +253,15 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
         self.assertFalse(first.chunks[0].replayed)
         self.assertEqual(len(self.completions.calls), 1)
         self.assertEqual(self.embedding_calls, 1)
+        document_acl, _, _ = self.driver.execute_query(
+            """
+            MATCH (document:Document {tenant_id: $tenant_id})
+            RETURN document.access_groups AS access_groups
+            """,
+            tenant_id=self.tenant_id,
+            database_=self.database,
+        )
+        self.assertEqual(document_acl[0]["access_groups"], ["board"])
 
         counts, _, _ = self.driver.execute_query(
             """
@@ -314,13 +324,13 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
         wrong_group = Principal(
             "reviewer:mallory",
             self.tenant_id,
-            frozenset({"legal"}),
+            frozenset({"public"}),
             frozenset({"knowledge:review"}),
         )
         wrong_tenant = Principal(
             "reviewer:mallory",
             "tenant-other",
-            frozenset({"engineers"}),
+            frozenset({"board"}),
             frozenset({"knowledge:review"}),
         )
         self.assertEqual(review.review_queue(wrong_group), ())

@@ -10,7 +10,7 @@ from .models import (
     TBoxVersion,
     load_tbox,
 )
-from .store import Neo4jTBoxStore, TBoxConflict
+from .store import Neo4jTBoxStore, TBoxConflict, TBoxValidationError
 
 __all__ = [
     "Cardinality",
@@ -20,6 +20,7 @@ __all__ = [
     "PropertyDefinition",
     "RelationshipTypeDefinition",
     "TBoxConflict",
+    "TBoxValidationError",
     "TBoxStatus",
     "TBoxVersion",
     "load_tbox",

@@ -24,6 +24,8 @@ from graphrag_prod.knowledge.trust import (
     KnowledgeOrigin,
 )
 
+from .models import VersionFilter
+
 
 HARD_MAX_SELECTED_CHUNKS = 50
 HARD_MAX_ENTITIES = 500
@@ -516,12 +518,19 @@ MATCH (document:Document {tenant_id: $tenant_id})
 MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
 MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
-MATCH (:TBoxCatalog {tenant_id: $tenant_id})-[:ACTIVE_TBOX_VERSION]->
-      (tbox:TBoxVersion {tenant_id: $tenant_id, status: 'PUBLISHED'})
+MATCH (publication)-[:USES_TBOX_VERSION]->
+      (tbox:TBoxVersion {tenant_id: $tenant_id})
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(entity_type:TBoxEntityType)
 WHERE chunk.chunk_id IN $chunk_ids
   AND size(chunk.text) <= $max_chunk_chars
   AND mention.authority_level IN $authority_levels
+  AND publication.ontology_version_id = tbox.tbox_id
+  AND tbox.status IN ['PUBLISHED', 'RETIRED']
+  AND NOT EXISTS {
+      MATCH (publication)-[:USES_TBOX_VERSION]->(wrong_tbox:TBoxVersion)
+      WHERE wrong_tbox.tenant_id <> $tenant_id
+         OR wrong_tbox.tbox_id <> publication.ontology_version_id
+  }
   AND mention.ontology_version_id = tbox.tbox_id
   AND mention.entity_id = entity.entity_id
   AND mention.entity_type = entity.entity_type
@@ -543,6 +552,9 @@ WHERE chunk.chunk_id IN $chunk_ids
   AND any(group IN $groups WHERE group IN mention.access_groups)
   AND any(group IN $groups WHERE group IN chunk.access_groups)
   AND any(group IN $groups WHERE group IN document.access_groups)
+  AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
+  AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
+  AND ($published_before IS NULL OR version.published_at <= $published_before)
 RETURN publication.publication_id AS publication_id,
        entity {
            .entity_id, .tenant_id, .entity_type, .canonical_key,
@@ -578,8 +590,8 @@ _ASSERTION_QUERY = """
 MATCH (state:KnowledgePublicationState {tenant_id: $tenant_id})
       -[:ACTIVE_KNOWLEDGE_PUBLICATION]->
       (publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-MATCH (:TBoxCatalog {tenant_id: $tenant_id})-[:ACTIVE_TBOX_VERSION]->
-      (tbox:TBoxVersion {tenant_id: $tenant_id, status: 'PUBLISHED'})
+MATCH (publication)-[:USES_TBOX_VERSION]->
+      (tbox:TBoxVersion {tenant_id: $tenant_id})
 MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
       (seed_mention:GovernedEntityMentionRevision {
           tenant_id: $tenant_id,
@@ -600,6 +612,13 @@ MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(seed_type:TBoxEntityType)
 WHERE seed_chunk.chunk_id IN $chunk_ids
   AND size(seed_chunk.text) <= $max_chunk_chars
   AND seed_mention.authority_level IN $authority_levels
+  AND publication.ontology_version_id = tbox.tbox_id
+  AND tbox.status IN ['PUBLISHED', 'RETIRED']
+  AND NOT EXISTS {
+      MATCH (publication)-[:USES_TBOX_VERSION]->(wrong_tbox:TBoxVersion)
+      WHERE wrong_tbox.tenant_id <> $tenant_id
+         OR wrong_tbox.tbox_id <> publication.ontology_version_id
+  }
   AND seed_mention.ontology_version_id = tbox.tbox_id
   AND seed_mention.entity_id = seed_entity.entity_id
   AND seed_mention.entity_type = seed_entity.entity_type
@@ -621,6 +640,12 @@ WHERE seed_chunk.chunk_id IN $chunk_ids
   AND any(group IN $groups WHERE group IN seed_mention.access_groups)
   AND any(group IN $groups WHERE group IN seed_chunk.access_groups)
   AND any(group IN $groups WHERE group IN seed_document.access_groups)
+  AND (size($document_ids) = 0 OR seed_document.document_id IN $document_ids)
+  AND (size($version_ids) = 0 OR seed_version.version_id IN $version_ids)
+  AND (
+      $published_before IS NULL
+      OR seed_version.published_at <= $published_before
+  )
 WITH publication, tbox, seed_entity,
      min(seed_chunk.chunk_id) AS seed_chunk_id
 ORDER BY seed_entity.entity_id
@@ -777,6 +802,9 @@ WHERE (seed_entity = subject OR seed_entity = object)
   )
   AND any(group IN $groups WHERE group IN chunk.access_groups)
   AND any(group IN $groups WHERE group IN document.access_groups)
+  AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
+  AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
+  AND ($published_before IS NULL OR version.published_at <= $published_before)
 WITH publication, assertion, subject, object, subject_mention,
      object_mention, chunk, document, version,
      min(seed_chunk_id) AS seed_chunk_id,
@@ -837,11 +865,14 @@ class Neo4jEvidenceSubgraphProjector:
         trust_policy: SubgraphTrustPolicy = (
             SubgraphTrustPolicy.PUBLISHED_SECONDARY_INCLUSIVE
         ),
+        version_filter: VersionFilter = VersionFilter(),
     ) -> EvidenceSubgraph:
         selected_limits = limits or EvidenceSubgraphLimits()
         chunk_ids = self._chunk_ids(selected_chunk_ids, selected_limits)
         if not isinstance(trust_policy, SubgraphTrustPolicy):
             raise TypeError("trust_policy must be SubgraphTrustPolicy")
+        if not isinstance(version_filter, VersionFilter):
+            raise TypeError("version_filter must be VersionFilter")
         parameters: dict[str, object] = {
             "tenant_id": principal.tenant_id,
             "groups": sorted(principal.groups),
@@ -851,6 +882,9 @@ class Neo4jEvidenceSubgraphProjector:
             ],
             "max_chunk_chars": selected_limits.max_chunk_chars,
             "seed_entity_limit": selected_limits.max_entities,
+            "document_ids": sorted(version_filter.document_ids),
+            "version_ids": sorted(version_filter.version_ids),
+            "published_before": version_filter.published_at_or_before,
         }
         with self.driver.session(  # type: ignore[attr-defined]
             database=self.database
@@ -876,6 +910,7 @@ class Neo4jEvidenceSubgraphProjector:
             mention_rows,
             selected_limits,
             trust_policy,
+            version_filter,
         )
 
     @staticmethod
@@ -902,6 +937,7 @@ class Neo4jEvidenceSubgraphProjector:
         mention_rows: Iterable[Mapping[str, object]],
         limits: EvidenceSubgraphLimits,
         trust_policy: SubgraphTrustPolicy,
+        version_filter: VersionFilter,
     ) -> EvidenceSubgraph:
         entity_state: dict[str, tuple[EntityIdentity, dict[str, SubgraphEvidence]]] = {}
         assertions: dict[str, SubgraphAssertion] = {}
@@ -925,6 +961,7 @@ class Neo4jEvidenceSubgraphProjector:
                 limits,
                 require_selected=require_selected,
             )
+            cls._check_version_filter(value, version_filter)
             previous = citations.get(value.chunk_id)
             if previous is not None and previous != value:
                 raise SubgraphProjectionError("conflicting citation state")
@@ -1265,6 +1302,33 @@ class Neo4jEvidenceSubgraphProjector:
             matched_chunk_ids=matched_chunk_ids,
             publication_ids=tuple(sorted(publication_ids)),
         )
+
+    @staticmethod
+    def _check_version_filter(
+        citation: SubgraphCitation,
+        version_filter: VersionFilter,
+    ) -> None:
+        if (
+            version_filter.document_ids
+            and citation.document_id not in version_filter.document_ids
+        ):
+            raise SubgraphProjectionError(
+                "citation crossed the requested document filter"
+            )
+        if (
+            version_filter.version_ids
+            and citation.version_id not in version_filter.version_ids
+        ):
+            raise SubgraphProjectionError(
+                "citation crossed the requested version filter"
+            )
+        cutoff = version_filter.published_at_or_before
+        if cutoff is not None and (
+            citation.published_at is None or citation.published_at > cutoff
+        ):
+            raise SubgraphProjectionError(
+                "citation crossed the requested publication-time filter"
+            )
 
     @staticmethod
     def _mapping(value: object, name: str) -> Mapping[str, Any]:
