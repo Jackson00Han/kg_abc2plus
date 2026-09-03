@@ -1,9 +1,11 @@
 """Local browser playground for the validated GraphRAG retrieval core."""
 
 from .runtime import (
+    DEFAULT_INDUSTRIAL_TBOX_TEMPLATE,
     PLAYGROUND_AUDIENCE,
     PLAYGROUND_ISSUER,
     PLAYGROUND_RETRIEVAL_LIMITS,
+    PLAYGROUND_SCOPES,
     PLAYGROUND_TOKEN_LIFETIME_SECONDS,
     FixtureQueryEmbedder,
     PlaygroundCatalog,
@@ -12,9 +14,11 @@ from .runtime import (
 )
 
 __all__ = [
+    "DEFAULT_INDUSTRIAL_TBOX_TEMPLATE",
     "PLAYGROUND_AUDIENCE",
     "PLAYGROUND_ISSUER",
     "PLAYGROUND_RETRIEVAL_LIMITS",
+    "PLAYGROUND_SCOPES",
     "PLAYGROUND_TOKEN_LIFETIME_SECONDS",
     "FixtureQueryEmbedder",
     "PlaygroundCatalog",

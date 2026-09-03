@@ -34,18 +34,30 @@ from graphrag_prod.api import (
     GraphRAGQueryOperations,
     JWTAuthConfig,
     JWTAuthenticator,
+    Neo4jKnowledgeOperations,
     ProviderUsage,
     QueryEmbedding,
     create_app,
 )
 from graphrag_prod.api.contracts import ReadinessResponse
 from graphrag_prod.api.runtime import BackendResult, AuthorizationError, RuntimePolicy
+from graphrag_prod.construction import (
+    ConstructionConfig,
+    ExtractionLimits,
+    Neo4jKnowledgeConstructionWorkflow,
+    OpenAICompatibleOntologyExtractor,
+)
 from graphrag_prod.domain import Principal
 from graphrag_prod.domain.ids import chunk_embedding_id, embedding_space_id
 from graphrag_prod.domain.models import ChunkEmbedding
 from graphrag_prod.generation import GroundedGenerationService
 from graphrag_prod.graph.schema import apply_schema, verify_schema
-from graphrag_prod.ingestion import Neo4jEmbeddingIndexManager, Neo4jIngestionService
+from graphrag_prod.ingestion import (
+    EmbeddingProfile,
+    Neo4jEmbeddingIndexManager,
+    Neo4jIncrementalPipeline,
+    Neo4jIngestionService,
+)
 from graphrag_prod.playground import (
     PLAYGROUND_AUDIENCE,
     PLAYGROUND_ISSUER,
@@ -56,14 +68,26 @@ from graphrag_prod.playground import (
     require_loopback_host,
 )
 from graphrag_prod.retrieval import (
+    Neo4jEvidenceSubgraphProjector,
     Neo4jRetrievalEngine,
     RetrievalRequest as DomainRetrievalRequest,
 )
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
 
 
+_PLAYGROUND_CONSTRUCTION_LIMITS = {
+    "max_document_bytes": 5 * 1024 * 1024,
+    "max_chunks": 4,
+    "max_model_calls": 4,
+    "max_total_extraction_chars": 16_000,
+    "deadline_seconds": 90.0,
+    "per_model_call_timeout_seconds": 30.0,
+    "max_model_output_tokens": 2_048,
+}
+
+
 class _ReadOnlyDocuments:
-    """The fixture Playground does not claim arbitrary-document provider support."""
+    """Keep generic lifecycle routes closed; governed upload uses construction."""
 
     @staticmethod
     def ingest(*_args: object, **_kwargs: object) -> BackendResult:
@@ -97,6 +121,119 @@ class _Neo4jReadiness:
                 status="ready" if ready else "not_ready",
                 checks={"neo4j": "ok" if ready else "error"},
             )
+        )
+
+
+class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
+    """Keep the live vector generation aligned after document construction."""
+
+    def __init__(
+        self,
+        *,
+        driver: neo4j.Driver,
+        construction: Any,
+        embedder: _OpenAICompatibleEmbedder,
+        database: str,
+    ) -> None:
+        super().__init__(driver=driver, construction=construction, database=database)
+        self._driver = driver
+        self._database = database
+        self._embedder = embedder
+        self._generation_lock = threading.Lock()
+
+    def construct(self, principal: Principal, request: Any) -> BackendResult:
+        # One local process serializes construction plus the matching index CAS.
+        # This does not weaken the database-side source/publication CAS rules.
+        with self._generation_lock:
+            try:
+                result = super().construct(principal, request)
+            except Exception:
+                # The evidence snapshot is intentionally published before LLM
+                # extraction.  A provider failure may therefore advance the
+                # corpus even though the API call fails; repair index parity
+                # without masking the original bounded error.
+                try:
+                    self._refresh_embedding_generation(principal.tenant_id)
+                except Exception:
+                    pass
+                raise
+            self._refresh_embedding_generation(principal.tenant_id)
+            return result
+
+    def _refresh_embedding_generation(self, tenant_id: str) -> None:
+        manager = Neo4jEmbeddingIndexManager(self._driver, self._database)
+        active = manager.active_generation(tenant_id)
+        expected_active_generation_id: str | None
+        if active is None:
+            # Incremental ingestion deliberately detaches and marks the old
+            # generation STALE before this adapter can prepare the replacement.
+            # Recover the latest matching generation as the version baseline;
+            # activation still uses a null CAS expectation and therefore fails
+            # closed if another writer cut over meanwhile.
+            previous_rows, _, _ = self._driver.execute_query(
+                "MATCH (generation:EmbeddingIndexGeneration {"
+                "tenant_id: $tenant_id, embedding_space_id: $embedding_space_id}) "
+                "RETURN generation.generation_id AS generation_id, "
+                "generation.generation_version AS generation_version, "
+                "generation.corpus_revision AS corpus_revision "
+                "ORDER BY generation.generation_version DESC LIMIT 2",
+                tenant_id=tenant_id,
+                embedding_space_id=self._embedder.embedding_space_id,
+                database_=self._database,
+            )
+            if not previous_rows:
+                raise RuntimeError(
+                    "tenant has no prior Playground embedding generation"
+                )
+            baseline = previous_rows[0]
+            baseline_generation_version = int(baseline["generation_version"])
+            baseline_corpus_revision = int(baseline["corpus_revision"])
+            expected_active_generation_id = None
+        else:
+            baseline_generation_version = active.generation_version
+            baseline_corpus_revision = int(active.corpus_revision or 0)
+            expected_active_generation_id = active.generation_id
+        records, _, _ = self._driver.execute_query(
+            "MATCH (state:TenantCorpusState {tenant_id: $tenant_id}) "
+            "RETURN state.corpus_revision AS corpus_revision",
+            tenant_id=tenant_id,
+            database_=self._database,
+        )
+        if len(records) != 1:
+            raise RuntimeError("tenant corpus revision is unavailable")
+        if (
+            active is not None
+            and int(records[0]["corpus_revision"]) == baseline_corpus_revision
+        ):
+            return
+        vector = (1.0,) + (0.0,) * (self._embedder.dimensions - 1)
+        profile = ChunkEmbedding(
+            embedding_id=chunk_embedding_id(
+                "local-playground-generation-profile",
+                self._embedder.embedding_space_id,
+            ),
+            tenant_id=tenant_id,
+            chunk_id="local-playground-generation-profile",
+            embedding_space_id=self._embedder.embedding_space_id,
+            provider=self._embedder.provider,
+            model=self._embedder.model,
+            revision=self._embedder.revision,
+            dimensions=self._embedder.dimensions,
+            normalization=self._embedder.normalization,
+            created_at=datetime.now(UTC),
+            vector=vector,
+        )
+        target = manager.prepare(
+            tenant_id=tenant_id,
+            embedding_profile=profile,
+            generation_version=baseline_generation_version + 1,
+        )
+        coverage = manager.coverage(target.generation_id)
+        if not coverage.complete:
+            raise RuntimeError("uploaded Chunk embedding coverage is incomplete")
+        manager.activate(
+            target.generation_id,
+            expected_active_generation_id=expected_active_generation_id,
         )
 
 
@@ -154,6 +291,19 @@ class _OpenAICompatibleEmbedder:
         for offset in range(0, len(texts), 10):
             vectors.extend(self._request(texts[offset : offset + 10]))
         return vectors
+
+    def __call__(
+        self,
+        *,
+        chunk: object,
+        **_kwargs: object,
+    ) -> tuple[float, ...]:
+        """Provide the Stage 3 keyword-call shape for uploaded Chunks."""
+
+        text = getattr(chunk, "text", None)
+        if not isinstance(text, str) or not text:
+            raise ValueError("embedding Chunk must contain text")
+        return self._request([text])[0]
 
     def embed(self, query_text: str, *, tenant_id: str):
         del tenant_id
@@ -330,6 +480,7 @@ def build_playground_app(
     *,
     signing_key: bytes,
     embedder: _OpenAICompatibleEmbedder,
+    extraction_model: str = "qwen-plus",
 ):
     fixture = _load_corpus(driver, database, embedder)
     catalog = PlaygroundCatalog(
@@ -340,6 +491,19 @@ def build_playground_app(
             "model": embedder.model,
             "dimensions": embedder.dimensions,
             "warning": "External provider embeddings; usage may incur cost.",
+        },
+        capabilities={
+            "document_upload": True,
+            "ontology_governance": True,
+            "human_review": True,
+            "knowledge_publication": True,
+            "evidence_subgraph": True,
+            "extraction_provider": {
+                "protocol": "openai-compatible",
+                "model": extraction_model,
+                "purpose": "ontology-constrained extraction only",
+            },
+            "construction_limits": dict(_PLAYGROUND_CONSTRUCTION_LIMITS),
         },
     )
     retrieval_engine = Neo4jRetrievalEngine(
@@ -352,11 +516,65 @@ def build_playground_app(
         retrieval_engine,
         embedder,
         GroundedGenerationService(_DisabledAnswerModel()),
+        subgraph_projector=Neo4jEvidenceSubgraphProjector(driver, database),
+    )
+    prompt_signature = "industrial-property-graph-extraction:v1"
+    construction = Neo4jKnowledgeConstructionWorkflow(
+        driver=driver,
+        database=database,
+        pipeline=Neo4jIncrementalPipeline(
+            driver,
+            database,
+            worker_id="local-playground-construction",
+        ),
+        embedding_provider=embedder,
+        embedding_profile=EmbeddingProfile(
+            embedder.provider,
+            embedder.model,
+            embedder.revision,
+            embedder.dimensions,
+            embedder.normalization,
+        ),
+        extractor_factory=lambda tbox: OpenAICompatibleOntologyExtractor(
+            # Embedding startup may retry transient provider errors, but one
+            # governed extraction call must fit inside its own explicit budget.
+            client=embedder.client.with_options(max_retries=0, timeout=30.0),
+            model=extraction_model,
+            active_tbox=tbox,
+            prompt_version=prompt_signature,
+            # DashScope receives a compact response shape in the prompt, while
+            # provider-specific response_format handling stays disabled. The
+            # server still strictly validates JSON, evidence, and the T-Box.
+            response_format_mode="none",
+            seed=None,
+            limits=ExtractionLimits(
+                max_response_chars=16_384,
+                max_output_tokens=2_048,
+                timeout_seconds=30.0,
+            ),
+        ),
+        config=ConstructionConfig(
+            extractor_signature=f"openai-compatible:{extraction_model}:v1",
+            prompt_signature=prompt_signature,
+            max_chunks=_PLAYGROUND_CONSTRUCTION_LIMITS["max_chunks"],
+            max_model_calls=_PLAYGROUND_CONSTRUCTION_LIMITS["max_model_calls"],
+            max_total_extraction_chars=_PLAYGROUND_CONSTRUCTION_LIMITS[
+                "max_total_extraction_chars"
+            ],
+            deadline_seconds=_PLAYGROUND_CONSTRUCTION_LIMITS["deadline_seconds"],
+        ),
+    )
+    knowledge_operations = _PlaygroundKnowledgeOperations(
+        driver=driver,
+        database=database,
+        construction=construction,
+        embedder=embedder,
     )
     backend = GraphRAGApplicationBackend(
         documents=_ReadOnlyDocuments(),
         queries=query_operations,
         readiness=_Neo4jReadiness(driver, database),
+        knowledge=knowledge_operations,
     )
     app = create_app(
         authenticator=JWTAuthenticator(
@@ -371,13 +589,15 @@ def build_playground_app(
         backend=backend,
         settings=APISettings(
             service_name="sample-graphrag-local-playground",
-            version="1.0.0",
+            version="1.1.0",
             expose_openapi=True,
         ),
         runtime_policy=RuntimePolicy(
             max_workers=8,
             max_queue_size=8,
-            timeout_seconds=45.0,
+            # A small document can require several sequential extraction calls;
+            # every provider call is independently capped by the extractor.
+            timeout_seconds=105.0,
             max_attempts=1,
         ),
         shutdown_callbacks=(driver.close,),
@@ -423,10 +643,16 @@ def _run_http_check(app: Any) -> None:
         retrieval_response = client.post(
             "/v1/retrieval",
             headers=headers,
-            json={"query_text": default_question["query"], "limits": retrieval_limits},
+            json={
+                "query_text": default_question["query"],
+                "limits": retrieval_limits,
+                "include_graph": True,
+            },
         )
         if retrieval_response.status_code != 200 or not retrieval_response.json()["chunks"]:
             raise RuntimeError("Playground default retrieval check failed")
+        if "graph" not in retrieval_response.json():
+            raise RuntimeError("Playground graph projection contract check failed")
         default_chunk_ids = {
             item["citation"]["chunk_id"]
             for item in retrieval_response.json()["chunks"]
@@ -442,6 +668,10 @@ def _run_http_check(app: Any) -> None:
         )
         if answer_response.status_code != 403:
             raise RuntimeError("Playground token unexpectedly authorized answers")
+
+        ontology_response = client.get("/v1/ontologies", headers=headers)
+        if ontology_response.status_code != 200 or ontology_response.json() != {"items": []}:
+            raise RuntimeError("Playground ontology workspace check failed")
 
         failures: list[str] = []
         actual_rankings: list[dict[str, Any]] = []
@@ -600,6 +830,7 @@ def main() -> None:
     api_key = _required_environment("OPENAI_API_KEY")
     base_url = _required_environment("OPENAI_BASE_URL")
     embedding_model = _required_environment("EMBEDDING_MODEL")
+    extraction_model = _required_environment("MODEL_NAME")
     try:
         embedding_dimensions = int(_required_environment("EMBEDDING_DIMENSIONS"))
     except ValueError as error:
@@ -665,6 +896,7 @@ def main() -> None:
             database,
             signing_key=secrets.token_bytes(32),
             embedder=embedder,
+            extraction_model=extraction_model,
         )
     except Exception:
         driver.close()

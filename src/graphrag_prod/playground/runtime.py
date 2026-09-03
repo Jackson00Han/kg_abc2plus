@@ -8,6 +8,7 @@ the normal JWT, tenant, group, rate-limit, and bounded-runtime controls.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from importlib.resources import files
 import ipaddress
@@ -26,6 +27,16 @@ from graphrag_prod.retrieval import RetrievalLimits
 PLAYGROUND_ISSUER = "sample-graphrag-local-playground"
 PLAYGROUND_AUDIENCE = "sample-graphrag-local-api"
 PLAYGROUND_TOKEN_LIFETIME_SECONDS = 900
+PLAYGROUND_SCOPES = (
+    "retrieval:read",
+    "ontology:read",
+    "ontology:write",
+    "ontology:publish",
+    "knowledge:import",
+    "knowledge:construct",
+    "knowledge:review",
+    "knowledge:publish",
+)
 PLAYGROUND_RETRIEVAL_LIMITS = RetrievalLimits(
     top_k=5,
     seed_k=3,
@@ -37,6 +48,94 @@ PLAYGROUND_RETRIEVAL_LIMITS = RetrievalLimits(
     minimum_vector_score=0.75,
 )
 _PERSONA_ID = re.compile(r"^persona-[0-9]{2}$")
+
+# This is a visible, editable starting point only.  The Playground never
+# imports or publishes it implicitly: a human must perform both API actions.
+DEFAULT_INDUSTRIAL_TBOX_TEMPLATE: dict[str, Any] = {
+    "key": "industrial-assets",
+    "version": 1,
+    "description": (
+        "Starter property-graph ontology for governed industrial asset knowledge"
+    ),
+    "entity_types": [
+        {
+            "name": "Organization",
+            "canonical_key_namespaces": ["organization-id", "llm-candidate"],
+            "properties": [],
+            "identity_properties": [],
+            "description": "Operator, supplier, manufacturer, or service company",
+        },
+        {
+            "name": "Site",
+            "canonical_key_namespaces": ["site-id", "llm-candidate"],
+            "properties": [],
+            "identity_properties": [],
+            "description": "Physical plant, facility, line, or operating location",
+        },
+        {
+            "name": "Equipment",
+            "canonical_key_namespaces": ["equipment-id", "llm-candidate"],
+            "properties": [
+                {
+                    "name": "RatedPower",
+                    "datatype": "DECIMAL",
+                    "required": False,
+                    "cardinality": "ZERO_OR_ONE",
+                    "unit": "kW",
+                    "description": "Nameplate rated power in kilowatts",
+                }
+            ],
+            "identity_properties": [],
+            "description": "Maintainable industrial equipment or machine",
+        },
+        {
+            "name": "Component",
+            "canonical_key_namespaces": ["component-id", "llm-candidate"],
+            "properties": [],
+            "identity_properties": [],
+            "description": "Replaceable component belonging to equipment",
+        },
+        {
+            "name": "Risk",
+            "canonical_key_namespaces": ["risk-id", "llm-candidate"],
+            "properties": [],
+            "identity_properties": [],
+            "description": "Operational, safety, supply, or reliability risk",
+        },
+    ],
+    "relationship_types": [
+        {
+            "name": "OPERATES",
+            "source_types": ["Organization"],
+            "target_types": ["Site", "Equipment"],
+            "description": "Organization operates a site or equipment",
+        },
+        {
+            "name": "INSTALLED_AT",
+            "source_types": ["Equipment", "Component"],
+            "target_types": ["Site"],
+            "description": "Asset is installed at a governed site",
+        },
+        {
+            "name": "CONTAINS",
+            "source_types": ["Equipment"],
+            "target_types": ["Component"],
+            "description": "Equipment contains a component",
+        },
+        {
+            "name": "SUPPLIED_BY",
+            "source_types": ["Equipment", "Component"],
+            "target_types": ["Organization"],
+            "description": "Asset is supplied by an organization",
+        },
+        {
+            "name": "EXPOSED_TO",
+            "source_types": ["Organization", "Site", "Equipment", "Component"],
+            "target_types": ["Risk"],
+            "description": "Industrial subject is exposed to a stated risk",
+        },
+    ],
+}
 
 
 class DevelopmentCorpus(Protocol):
@@ -55,6 +154,7 @@ class PlaygroundPersona:
     label: str
     tenant_id: str
     groups: tuple[str, ...]
+    scopes: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +162,7 @@ class PlaygroundPersona:
             "label": self.label,
             "tenant_id": self.tenant_id,
             "groups": list(self.groups),
+            "scopes": list(self.scopes),
         }
 
 
@@ -88,6 +189,25 @@ def _persona_label(tenant_id: str, groups: tuple[str, ...]) -> str:
     return f"Tenant {tenant} · {' + '.join(names)}"
 
 
+def _persona_scopes(tenant_id: str, groups: tuple[str, ...]) -> tuple[str, ...]:
+    """Assign local demo duties without weakening production-style RBAC."""
+
+    selected = {"retrieval:read", "ontology:read"}
+    group_set = frozenset(groups)
+    is_alpha_steward = tenant_id == "tenant-alpha" and {
+        "alpha-finance",
+        "alpha-legal",
+    }.issubset(group_set)
+    is_beta_steward = tenant_id == "tenant-beta" and "beta-board" in group_set
+    if is_alpha_steward or is_beta_steward:
+        selected.update(PLAYGROUND_SCOPES)
+    elif "alpha-finance" in group_set:
+        selected.add("knowledge:construct")
+    elif "alpha-legal" in group_set:
+        selected.add("knowledge:review")
+    return tuple(scope for scope in PLAYGROUND_SCOPES if scope in selected)
+
+
 class PlaygroundCatalog:
     """Expose only public synthetic fixtures and issue bounded local JWTs."""
 
@@ -97,6 +217,7 @@ class PlaygroundCatalog:
         signing_key: bytes,
         *,
         embedding_metadata: Mapping[str, Any] | None = None,
+        capabilities: Mapping[str, Any] | None = None,
     ) -> None:
         if not isinstance(signing_key, bytes) or len(signing_key) < 32:
             raise ValueError("Playground signing key must contain at least 32 bytes")
@@ -105,6 +226,7 @@ class PlaygroundCatalog:
         self._embedding_metadata = (
             dict(embedding_metadata) if embedding_metadata is not None else None
         )
+        self._capabilities = dict(capabilities or {})
         raw_questions = tuple(fixture.build.questions)
         if not raw_questions:
             raise ValueError("Playground corpus must contain questions")
@@ -125,6 +247,7 @@ class PlaygroundCatalog:
                 label=_persona_label(tenant_id, groups),
                 tenant_id=tenant_id,
                 groups=groups,
+                scopes=_persona_scopes(tenant_id, groups),
             )
             for index, (tenant_id, groups) in enumerate(identities, start=1)
         )
@@ -156,9 +279,27 @@ class PlaygroundCatalog:
     def bootstrap(self) -> dict[str, Any]:
         manifest = self.fixture.build.manifest
         profile = manifest["embedding_profile"]
+        capabilities = {
+            "reviewed_questions": True,
+            "custom_semantic_retrieval": self._embedding_metadata is not None,
+            "custom_bm25_retrieval": True,
+            "document_upload": False,
+            "ontology_governance": False,
+            "human_review": False,
+            "knowledge_publication": False,
+            "evidence_subgraph": False,
+            **self._capabilities,
+        }
+        # This deployment intentionally has no final-answer route authorization;
+        # callers cannot make the bootstrap claim otherwise.
+        capabilities["answer_generation"] = False
         return {
             "schema_version": "local-playground-bootstrap-v1",
-            "mode": "retrieval",
+            "mode": (
+                "retrieval-and-governance"
+                if capabilities.get("ontology_governance")
+                else "retrieval"
+            ),
             "dataset": {
                 "id": manifest["dataset_id"],
                 "version": manifest["version"],
@@ -176,14 +317,11 @@ class PlaygroundCatalog:
             "defaults": {
                 "question_id": "single_chunk-success-01",
                 "retrieval_limits": asdict(PLAYGROUND_RETRIEVAL_LIMITS),
+                "industrial_tbox_template": deepcopy(
+                    DEFAULT_INDUSTRIAL_TBOX_TEMPLATE
+                ),
             },
-            "capabilities": {
-                "reviewed_questions": True,
-                "custom_semantic_retrieval": self._embedding_metadata is not None,
-                "custom_bm25_retrieval": True,
-                "answer_generation": False,
-                "document_upload": False,
-            },
+            "capabilities": capabilities,
         }
 
     def issue_session(self, persona_id: str, *, now: int | None = None) -> dict[str, Any]:
@@ -201,7 +339,7 @@ class PlaygroundCatalog:
                 "sub": persona.principal_id,
                 "tenant_id": persona.tenant_id,
                 "groups": list(persona.groups),
-                "scope": "retrieval:read",
+                "scope": " ".join(persona.scopes),
                 "iat": issued_at,
                 "exp": expires_at,
             },

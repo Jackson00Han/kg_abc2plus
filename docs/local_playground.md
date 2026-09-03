@@ -1,9 +1,10 @@
-# Local GraphRAG Retrieval Playground
+# Local GraphRAG Retrieval and Knowledge-Governance Playground
 
 The local Playground is a one-command, browser-based way to exercise the
-validated GraphRAG retrieval core. It runs against a new disposable Neo4j
-container, loads the committed `dev-corpus-v1`, and sends every query through
-the real authenticated `/v1/retrieval` API.
+validated GraphRAG retrieval and governed property-graph construction paths. It
+runs against a new disposable Neo4j container, loads the committed
+`dev-corpus-v1`, and sends every action through the real authenticated `/v1`
+API. It remains a retrieval service: it does not generate a final answer.
 
 ## Run it
 
@@ -12,7 +13,8 @@ Requirements:
 - Python 3.12 or newer
 - `uv`
 - Docker with at least 1.5 GiB available
-- an Alibaba Cloud Model Studio API key with access to `text-embedding-v4`
+- an Alibaba Cloud Model Studio API key with access to `text-embedding-v4` and
+  the selected Qwen extraction model
 
 Configure the OpenAI-compatible embedding endpoint in the untracked `.env`:
 
@@ -21,10 +23,14 @@ OPENAI_API_KEY=replace-with-a-current-key
 OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 EMBEDDING_MODEL=text-embedding-v4
 EMBEDDING_DIMENSIONS=1024
+MODEL_NAME=qwen-plus
 ```
 
-`MODEL_NAME` is not used by the Playground. Never commit `.env` or paste an API
-key into source code, logs, screenshots, or chat.
+`EMBEDDING_MODEL` is used for document/query vectors. `MODEL_NAME` is used only
+for ontology-constrained entity, relationship, and typed-property extraction;
+it is never used to write a final answer. Never commit `.env` or paste an API
+key into source code, logs, screenshots, or chat. The browser receives only
+provider/model capability metadata and never receives the credential.
 
 From the repository root:
 
@@ -46,14 +52,21 @@ already occupied:
 PLAYGROUND_BOLT_PORT=17693 ./scripts/run_playground.sh
 ```
 
-Startup now includes provider calls to embed all 120 Chunks, so its duration
-depends on provider latency and quota. Press Ctrl-C to stop the API. The exact disposable container is then stopped
-and removed; no database volume is retained. The launcher refuses non-loopback
-API and Neo4j addresses. It reads the OpenAI-compatible embedding settings from
-`.env` and uses them only for document and query embeddings.
-Retrieval transactions and API work remain bounded at 30 and 45 seconds
-respectively. Playground JWTs contain only the `retrieval:read` scope; answer
-generation is deliberately unavailable.
+Startup includes provider calls to embed all 120 Chunks, so its duration depends
+on provider latency and quota. Press Ctrl-C to stop the API. The exact disposable
+container is then stopped and removed; no database volume is retained. The
+launcher refuses non-loopback API and Neo4j addresses. It reads the
+OpenAI-compatible settings from `.env` and uses them server-side for embeddings
+and governed extraction. Retrieval transactions remain bounded at 30 seconds.
+Local construction is preflighted at four Chunks, four model calls, and 16,000
+extraction characters, then cooperatively capped at 90 seconds inside a
+105-second API deadline. Answer
+generation is deliberately unavailable. Extraction uses a separate no-retry
+provider client with a 30-second per-call timeout, a 2,048-token output cap,
+and provider-neutral response-format mode. The compact output shape remains in
+the prompt and the server strictly validates JSON, evidence, and the T-Box; a
+provider timeout is returned as a bounded dependency failure rather than
+silently retrying costly model calls.
 
 ## What the page exercises
 
@@ -65,7 +78,7 @@ short-lived JWT -> tenant/access-group authorization
   -> provider query embedding -> vector + BM25 recall
   -> RRF fusion -> bounded Resource Allocation graph expansion
   -> gating/deduplication/adjacent context
-  -> structured Chunks, provenance, and Retrieval Trace
+  -> structured Chunks, provenance, Retrieval Trace, and authorized subgraph
 ```
 
 The page shows:
@@ -73,12 +86,76 @@ The page shows:
 - seven synthetic test identities across two tenants and their access groups;
 - reviewed retrieval cases including conflict, unanswerable, and unauthorized scenarios;
 - selected source text with document version and exact Chunk character range;
+- the published, trust-aware one-hop knowledge subgraph connected to selected
+  Chunks, including entities, relationship/literal assertions, exact evidence,
+  authority, origin, status, and confidence;
 - Vector, BM25, RRF, graph expansion, reranking, and final-ranking traces;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a
 developer verify that recall, graph expansion, adjacent context, and returned
 Chunks remain inside that identity's tenant and access groups.
+
+The original fixture graph predates the governed publication layer. It remains
+useful for retrieval/RA tests, but its entities do not masquerade as reviewed
+knowledge. Subgraph results appear for instances that have passed the governed
+import or extraction, review, and publication flow.
+
+## Knowledge-construction workbench
+
+Use the **知识构建** view for the complete property-graph governance loop:
+
+1. Edit and import the visible default industrial T-Box JSON. This creates a
+   draft only; a human must explicitly publish it. Each starter entity type
+   declares both its expert-managed namespace and the explicit
+   `llm-candidate` provisional namespace required for reviewable model
+   proposals. Approval never silently promotes that namespace to expert truth;
+   authority and origin remain separate governed fields.
+2. Optionally import expert-controlled A-Box records. Every record must bind to
+   an active document version and an exact, ACL-authorized Chunk substring.
+   Typed literal assertions accept only source-owned `raw_literal`, optional
+   raw unit, and optional raw temporal strings; datatype parsing, unit
+   canonicalization, canonical values, and normalized timestamps are generated
+   by the server from the published T-Box and are never trusted from a client.
+3. Upload one UTF-8 `txt`, `md`, `csv`, or `json` document (maximum 5 MiB),
+   select a non-empty subset of the current persona's access groups plus a
+   published T-Box key, and run construction. The UI defaults to one narrow
+   group rather than silently broadening document visibility. The server parses
+   and chunks the document, embeds each Chunk in the configured vector space,
+   and asks the configured LLM for T-Box-constrained proposals. The page shows
+   the server-advertised Chunk/model-call/deadline cost boundaries when present.
+   The 5 MiB transport limit is not a promise that a large file will pass these
+   tighter local construction budgets; oversize parsed workloads are rejected
+   before extraction calls begin.
+4. Inspect each Chunk's findings and each candidate/quarantined record. A human
+   may approve, reject, quarantine, or submit a strict JSON edit, individually
+   or in a batch.
+5. Publish approved immutable revision IDs. View publication history and use
+   CAS-protected rollback when required. History shows the exact published
+   T-Box version so schema lineage remains visible.
+6. Retrieve the uploaded content. Only records in the active publication that
+   remain bound to current authorized evidence appear in **知识子图**.
+
+Expert imports are marked `AUTHORITATIVE`; LLM-extracted records are marked
+`SECONDARY` and cannot enter the active graph until review. Graph data is
+navigation context. The exact Chunk remains factual evidence. Review cards and
+the retrieval subgraph display the complete optional `literal_semantics`
+projection (raw and canonical forms); legacy records may legitimately return
+that projection as `null`.
+
+Local identities demonstrate separation of duties rather than giving every
+persona administrator access:
+
+| Identity group | Local scopes |
+| --- | --- |
+| `alpha-public`, `beta-public` | retrieval and ontology read |
+| `alpha-finance` | read plus knowledge construction |
+| `alpha-legal` | read plus knowledge review |
+| `alpha-finance + alpha-legal` | full local ontology/knowledge governance |
+| any `beta-board` identity | full local ontology/knowledge governance |
+
+The page shows the selected persona's scopes. A `403` is an expected,
+non-leaking result when a persona attempts a duty it does not hold.
 
 ## Two query modes
 
@@ -104,10 +181,10 @@ retrieval contract retains its independently versioned defaults.
 This Playground proves that the local reference implementation is wired and
 usable; it is not a live production deployment or a general-purpose chatbot.
 
-- It does not upload documents. Arbitrary ingestion still needs concrete
-  splitter, extractor, embedding, and lifecycle provider adapters.
-- It does not generate answers or call a chat LLM. Returned Chunks are intended
-  for a downstream model or orchestration layer.
+- It supports bounded document upload and calls a chat-capable model only for
+  ontology-constrained extraction. Returned Chunks and subgraph evidence are
+  intended for a downstream model or orchestration layer.
+- It does not generate final answers.
 - It calls the configured embedding provider during startup and for each query,
   so provider availability, quota, latency, data handling, and cost apply.
 - It uses synthetic filing-like data only. The short-lived local JWTs grant
@@ -125,8 +202,9 @@ The final command is the repeatable integration check: it builds a clean schema,
 ingests all 120 Chunks, activates the tenant-specific embedding generations,
 refreshes full-text indexes, and prewarms one bounded query per tenant before
 exercising the authenticated retrieval path for all 49 reviewed cases, a
-custom hybrid query, answer-scope denial, changed-tenant isolation, and
-readiness. The provider run is evaluated against the Gold annotations and
+custom hybrid query, graph-response contract, ontology-list authorization,
+answer-scope denial, changed-tenant isolation, and readiness. The provider run
+is evaluated against the Gold annotations and
 requires MRR and fractional evidence Recall@5 of at least 0.80 for both final
 ranking and selected context, with zero unauthorized exposure. These are local
 provider smoke gates, not the stricter production-reference Recall@5 and

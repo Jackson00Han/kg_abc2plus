@@ -141,6 +141,7 @@
       font-size: 11px;
     }
     .top-button:hover { color: #fff; background: rgba(255,255,255,.11); }
+    .top-button.active { border-color: rgba(111,218,208,.55); color: #fff; background: rgba(8,127,123,.45); }
     .mobile-questions { display: none; }
 
     .workspace { display: grid; grid-template-columns: 286px minmax(480px, 1fr) 286px; min-height: calc(100vh - 66px); }
@@ -284,6 +285,55 @@
 
     .raw-json { max-height: 520px; margin: 0; overflow: auto; padding: 16px; border-radius: 9px; color: #cde1e5; background: #0c202b; font-family: var(--mono); font-size: 9px; line-height: 1.6; white-space: pre; }
 
+    .graph-summary { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 13px; }
+    .graph-count { padding: 5px 8px; border-radius: 6px; color: var(--blue); background: var(--blue-soft); font-family: var(--mono); font-size: 8px; }
+    .graph-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .graph-card { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+    .graph-card.wide { grid-column: 1 / -1; }
+    .graph-card h3 { display: flex; align-items: center; gap: 7px; }
+    .graph-item { padding: 9px 0; border-top: 1px solid var(--line); }
+    .graph-item:first-of-type { border-top: 0; }
+    .graph-item strong { display: block; color: var(--strong); font-size: 10px; overflow-wrap: anywhere; }
+    .graph-item p { margin: 4px 0; color: var(--muted); font-size: 9px; white-space: pre-wrap; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 4px; }
+    .trust-badge { padding: 2px 5px; border-radius: 4px; color: var(--purple); background: var(--purple-soft); font-family: var(--mono); font-size: 7px; }
+    .trust-badge.authoritative { color: var(--green); background: var(--green-soft); }
+    .exact-evidence { margin-top: 7px; padding: 7px 8px; border-left: 2px solid var(--teal); color: var(--muted); background: var(--surface); font-size: 8px; white-space: pre-wrap; }
+
+    .governance-workspace { min-height: calc(100vh - 66px); padding: 28px; }
+    .governance-inner { width: min(1240px, 100%); margin: 0 auto; }
+    .governance-hero { display: flex; align-items: start; justify-content: space-between; gap: 24px; margin-bottom: 18px; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-small); }
+    .governance-hero p { max-width: 760px; margin: 6px 0 0; color: var(--muted); }
+    .capability-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: 430px; }
+    .capability { padding: 4px 7px; border-radius: 999px; color: var(--green); background: var(--green-soft); font-family: var(--mono); font-size: 8px; }
+    .governance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .workbench-card { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-small); }
+    .workbench-card.full { grid-column: 1 / -1; }
+    .workbench-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+    .workbench-head p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+    .step-chip { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; border-radius: 7px; color: var(--teal); background: var(--teal-soft); font-family: var(--mono); font-size: 8px; font-weight: 800; }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { display: block; margin-bottom: 5px; color: var(--muted); font-size: 9px; font-weight: 700; }
+    .field input, .field select, .json-editor { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; outline: none; background: var(--panel); }
+    .field input, .field select { height: 38px; padding: 0 10px; }
+    .field input:focus, .field select:focus, .json-editor:focus { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 12%, transparent); }
+    .json-editor { min-height: 220px; resize: vertical; padding: 11px; font-family: var(--mono); font-size: 9px; line-height: 1.55; tab-size: 2; }
+    .json-editor.compact { min-height: 130px; }
+    .file-drop { display: block; padding: 18px; border: 1px dashed var(--line-strong); border-radius: 9px; color: var(--muted); background: var(--panel); text-align: center; }
+    .file-drop input { display: block; width: min(360px, 100%); height: auto; margin: 8px auto 0; }
+    .workbench-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 11px; }
+    .output-box { min-height: 62px; max-height: 350px; margin-top: 11px; overflow: auto; padding: 11px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--surface-2); font-family: var(--mono); font-size: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .ontology-list, .review-list, .history-list { display: grid; gap: 8px; margin-top: 11px; }
+    .governance-item { padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .governance-item-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+    .governance-item strong { color: var(--strong); font-size: 10px; overflow-wrap: anywhere; }
+    .governance-item p { margin: 5px 0; color: var(--muted); font-size: 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .governance-item .json-editor { margin-top: 8px; }
+    .checkbox-label { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; }
+    .danger { color: var(--red) !important; }
+    .provider-note { padding: 9px 10px; border-left: 3px solid var(--teal); border-radius: 0 7px 7px 0; color: var(--muted); background: var(--teal-soft); font-size: 9px; }
+
     .inspector { min-width: 0; border-left: 1px solid var(--line); background: var(--panel); }
     .inspector-inner { position: sticky; top: 66px; height: calc(100vh - 66px); padding: 19px 16px; overflow-y: auto; }
     .inspector-section { margin-bottom: 19px; }
@@ -333,6 +383,13 @@
       .composer-bottom { align-items: stretch; flex-direction: column; }
       .persona-field { min-width: 0; }
       .actions { justify-content: flex-end; }
+      .governance-workspace { padding: 18px; }
+      .governance-grid { grid-template-columns: 1fr; }
+      .workbench-card.full { grid-column: auto; }
+      .governance-hero { flex-direction: column; }
+      .capability-list { justify-content: flex-start; }
+      .graph-grid { grid-template-columns: 1fr; }
+      .graph-card.wide { grid-column: auto; }
     }
     @media (max-width: 560px) {
       .top-actions .api-link { display: none; }
@@ -360,12 +417,14 @@
     </div>
     <div class="top-actions">
       <div class="connection" id="connection"><span class="connection-dot"></span><span id="connection-label">正在连接内核</span></div>
+      <button class="top-button active" id="retrieval-nav" type="button">检索台</button>
+      <button class="top-button" id="governance-nav" type="button">知识构建</button>
       <a class="top-button api-link" href="/docs" target="_blank" rel="noreferrer">API Docs ↗</a>
       <button class="top-button" id="theme-button" type="button" aria-label="切换明暗主题">◐</button>
     </div>
   </header>
 
-  <div class="workspace">
+  <div class="workspace" id="retrieval-workspace">
     <aside class="sidebar" id="question-sidebar" aria-label="版本化测试题库">
       <div class="sidebar-inner">
         <div class="sidebar-head">
@@ -421,10 +480,12 @@
             <div class="result-panel">
               <div class="result-tabs" role="tablist" aria-label="查询结果视图">
                 <button class="result-tab" id="tab-evidence" type="button" role="tab" aria-selected="true" aria-controls="panel-evidence">相关 Chunks</button>
+                <button class="result-tab" id="tab-graph" type="button" role="tab" aria-selected="false" aria-controls="panel-graph" tabindex="-1">知识子图</button>
                 <button class="result-tab" id="tab-trace" type="button" role="tab" aria-selected="false" aria-controls="panel-trace" tabindex="-1">检索 Trace</button>
                 <button class="result-tab" id="tab-raw" type="button" role="tab" aria-selected="false" aria-controls="panel-raw" tabindex="-1">原始 JSON</button>
               </div>
               <div class="tab-content" id="panel-evidence" role="tabpanel" aria-labelledby="tab-evidence"><div class="evidence-list" id="evidence-list"></div></div>
+              <div class="tab-content" id="panel-graph" role="tabpanel" aria-labelledby="tab-graph" hidden><div id="graph-content"></div></div>
               <div class="tab-content" id="panel-trace" role="tabpanel" aria-labelledby="tab-trace" hidden><div id="trace-content"></div></div>
               <div class="tab-content" id="panel-raw" role="tabpanel" aria-labelledby="tab-raw" hidden><pre class="raw-json" id="raw-json"></pre></div>
             </div>
@@ -466,6 +527,87 @@
     </aside>
   </div>
 
+  <section class="governance-workspace hidden" id="governance-workspace" aria-labelledby="governance-title">
+    <div class="governance-inner">
+      <div class="governance-hero">
+        <div>
+          <span class="overline">Governed property graph</span>
+          <h1 id="governance-title">工业属性图知识构建工作台</h1>
+          <p>T-Box 先定义实体、关系、属性与基数；专家实例进入权威层，LLM 抽取进入次权威候选层，人工审核后才可发布。所有动作都通过当前身份的 JWT、租户和 ACL。</p>
+        </div>
+        <div style="min-width:min(380px,100%)">
+          <div class="field"><label for="governance-persona-select">当前治理身份（JWT tenant / groups / scopes）</label><select id="governance-persona-select"></select></div>
+          <div class="capability-list" id="capability-list" aria-label="工作台能力" style="margin-top:9px"></div>
+          <p id="governance-scope-note" style="font-family:var(--mono);font-size:8px;text-align:right"></p>
+        </div>
+      </div>
+
+      <div class="governance-grid">
+        <section class="workbench-card" aria-labelledby="ontology-title">
+          <div class="workbench-head"><div><h2 id="ontology-title">定义与发布 T-Box</h2><p>模板只是可编辑草稿，不会静默导入或发布。</p></div><span class="step-chip">01</span></div>
+          <label class="query-label" for="ontology-editor">属性图本体 JSON</label>
+          <textarea class="json-editor" id="ontology-editor" spellcheck="false"></textarea>
+          <div class="workbench-actions">
+            <button class="button" id="ontology-reset" type="button">恢复模板</button>
+            <button class="button" id="ontology-list-button" type="button">刷新版本</button>
+            <button class="button primary" id="ontology-import-button" type="button">导入为草稿</button>
+          </div>
+          <div class="ontology-list" id="ontology-list" aria-live="polite"></div>
+        </section>
+
+        <section class="workbench-card" aria-labelledby="abox-title">
+          <div class="workbench-head"><div><h2 id="abox-title">导入权威 A-Box</h2><p>专家实例必须引用当前有效文档中的精确 Chunk 字符范围；字面量只提交 raw 值、单位和时间，canonical 语义由服务端按 T-Box 生成；导入后仍需在第 05 步激活 publication。</p></div><span class="step-chip">02</span></div>
+          <label class="query-label" for="abox-editor">权威实体 / 关系 JSON</label>
+          <textarea class="json-editor" id="abox-editor" spellcheck="false"></textarea>
+          <div class="workbench-actions"><button class="button primary" id="abox-import-button" type="button">校验并导入权威层</button></div>
+          <div class="output-box" id="abox-output">请先上传文档或从“相关 Chunks”复制 document/version/chunk ID 与精确引文。</div>
+        </section>
+
+        <section class="workbench-card full" aria-labelledby="upload-title">
+          <div class="workbench-head"><div><h2 id="upload-title">上传文档并由 LLM 自动抽取</h2><p>支持 UTF-8 txt / md / csv / json，单文件最多 5 MiB；浏览器不会接触模型密钥。</p></div><span class="step-chip">03</span></div>
+          <div class="provider-note" id="provider-note">正在读取抽取 provider 配置…</div>
+          <div class="provider-note" id="construction-cost-note" style="margin-top:8px">正在读取服务端构建边界…</div>
+          <div class="field-grid" style="margin-top:12px">
+            <div class="field full"><label for="document-file">文档</label><label class="file-drop">选择本地文档<input id="document-file" type="file" accept=".txt,.md,.markdown,.csv,.json,text/plain,text/markdown,text/csv,application/json"></label></div>
+            <div class="field full"><label>新文档访问组（必须是当前身份访问组的非空子集）</label><div class="capability-list" id="document-access-groups" style="justify-content:flex-start"></div><p id="document-access-note" style="margin:6px 0 0;color:var(--muted);font-size:9px"></p></div>
+            <div class="field"><label for="document-title">标题</label><input id="document-title" maxlength="512" placeholder="例如：A 工厂泵组检修报告"></div>
+            <div class="field"><label for="document-uri">稳定来源 URI</label><input id="document-uri" maxlength="2048" placeholder="urn:industrial:report:001"></div>
+            <div class="field"><label for="document-source">来源名称</label><input id="document-source" maxlength="256" value="local-controlled-upload"></div>
+            <div class="field"><label for="document-tbox">已发布 T-Box key</label><input id="document-tbox" maxlength="128" value="industrial-assets"></div>
+            <div class="field"><label for="document-language">语言</label><input id="document-language" maxlength="32" value="zh-CN"></div>
+          </div>
+          <div class="workbench-actions"><button class="button primary" id="construct-button" type="button">上传、切块、向量化并抽取</button></div>
+          <div class="output-box" id="construction-output">等待上传。抽取结果先进入 CANDIDATE / QUARANTINED，不会自动成为已发布知识。</div>
+        </section>
+
+        <section class="workbench-card full" aria-labelledby="review-title">
+          <div class="workbench-head"><div><h2 id="review-title">人工审核候选实体与关系</h2><p>可逐条或批量批准、拒绝、隔离；每条记录保留精确证据与修改后的不可变 revision。</p></div><span class="step-chip">04</span></div>
+          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0">
+            <button class="button" id="review-refresh-button" type="button">刷新审核队列</button>
+            <button class="button" id="review-approve-button" type="button">批量批准勾选项</button>
+            <button class="button danger" id="review-reject-button" type="button">批量拒绝勾选项</button>
+            <button class="button" id="review-quarantine-button" type="button">批量隔离勾选项</button>
+          </div>
+          <div class="review-list" id="review-list" aria-live="polite"><div class="output-box">审核队列尚未加载。</div></div>
+        </section>
+
+        <section class="workbench-card" aria-labelledby="publication-title">
+          <div class="workbench-head"><div><h2 id="publication-title">发布审核通过的知识</h2><p>发布是租户内不可变、累积且 CAS 保护的 active publication。</p></div><span class="step-chip">05</span></div>
+          <label class="query-label" for="publication-revisions">APPROVED revision IDs（每行一个）</label>
+          <textarea class="json-editor compact" id="publication-revisions" spellcheck="false" placeholder="review 后会自动填入，也可手工粘贴"></textarea>
+          <div class="workbench-actions"><button class="button primary" id="publication-button" type="button">发布变更集</button></div>
+          <div class="output-box" id="publication-output">等待审核通过的 revisions。</div>
+        </section>
+
+        <section class="workbench-card" aria-labelledby="history-title">
+          <div class="workbench-head"><div><h2 id="history-title">发布历史与回滚</h2><p>回滚会创建受预期 active publication 保护的新激活状态。</p></div><span class="step-chip">06</span></div>
+          <div class="workbench-actions"><button class="button" id="history-refresh-button" type="button">刷新历史</button></div>
+          <div class="history-list" id="history-list" aria-live="polite"><div class="output-box">发布历史尚未加载。</div></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
   <div class="toast" id="toast" role="status"></div>
 
   <script>
@@ -478,6 +620,11 @@
         retrieval: null,
         raw: null,
         busy: false,
+        view: 'retrieval',
+        ontologies: [],
+        reviews: [],
+        publications: [],
+        approvedRevisions: new Set(),
       };
 
       const $ = id => document.getElementById(id);
@@ -490,7 +637,12 @@
         error: $('error-state'), errorMessage: $('error-message'), view: $('result-view'),
         summaryStatus: $('summary-status'), summaryChunks: $('summary-chunks'), summaryLatency: $('summary-latency'),
         summaryRevision: $('summary-revision'), evidenceList: $('evidence-list'),
-        traceContent: $('trace-content'), rawJson: $('raw-json'), toast: $('toast'),
+        graphContent: $('graph-content'), traceContent: $('trace-content'), rawJson: $('raw-json'), toast: $('toast'),
+        ontologyEditor: $('ontology-editor'), ontologyList: $('ontology-list'),
+        aboxEditor: $('abox-editor'), aboxOutput: $('abox-output'),
+        constructionOutput: $('construction-output'), reviewList: $('review-list'),
+        publicationRevisions: $('publication-revisions'), publicationOutput: $('publication-output'),
+        historyList: $('history-list'),
       };
 
       const classLabels = {
@@ -504,6 +656,8 @@
       const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
       const shortId = value => value ? `${String(value).slice(0, 8)}…${String(value).slice(-5)}` : '—';
       const number = value => new Intl.NumberFormat('zh-CN').format(value ?? 0);
+      const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+      const mimeByExtension = {txt:'text/plain', md:'text/markdown', markdown:'text/markdown', csv:'text/csv', json:'application/json'};
 
       function showToast(message) {
         elements.toast.textContent = message;
@@ -520,12 +674,37 @@
         return state.bootstrap?.personas.find(item => item.id === elements.persona.value) || null;
       }
 
+      function renderDocumentAccessGroups() {
+        const container = $('document-access-groups');
+        const note = $('document-access-note');
+        const persona = currentPersona();
+        if (!persona || !Array.isArray(persona.groups) || !persona.groups.length) {
+          container.textContent = '';
+          note.textContent = '当前身份没有可分配的访问组。';
+          return;
+        }
+        const preferred = persona.groups.find(group => !String(group).endsWith('-public')) || persona.groups[0];
+        container.innerHTML = persona.groups.map(group => `<label class="checkbox-label"><input type="checkbox" name="document-access-group" value="${escapeHtml(group)}" ${group === preferred ? 'checked' : ''}> ${escapeHtml(group)}</label>`).join('');
+        note.textContent = `默认仅选择较窄的 ${preferred}；需要共享给同一身份的其他组时再显式勾选。`;
+      }
+
+      function selectedDocumentAccessGroups() {
+        return [...document.querySelectorAll('input[name="document-access-group"]:checked')]
+          .map(input => input.value);
+      }
+
       function renderIdentity() {
         const persona = currentPersona();
         if (!persona) return;
         $('identity-label').textContent = persona.label;
         $('identity-tenant').textContent = persona.tenant_id;
-        $('identity-groups').innerHTML = persona.groups.map(group => `<span class="group-tag">${escapeHtml(group)}</span>`).join('');
+        $('identity-groups').innerHTML = [
+          ...persona.groups.map(group => `<span class="group-tag">${escapeHtml(group)}</span>`),
+          ...(persona.scopes || []).map(scope => `<span class="group-tag">${escapeHtml(scope)}</span>`),
+        ].join('');
+        if ($('governance-persona-select').value !== persona.id) $('governance-persona-select').value = persona.id;
+        $('governance-scope-note').textContent = (persona.scopes || []).join(' · ');
+        renderDocumentAccessGroups();
       }
 
       function updateMode() {
@@ -584,6 +763,7 @@
         state.selectedQuestion = question;
         elements.query.value = question.query;
         elements.persona.value = question.recommended_persona_id;
+        $('governance-persona-select').value = question.recommended_persona_id;
         renderIdentity();
         updateMode();
         if (closeDrawer) {
@@ -597,9 +777,15 @@
         let payload = null;
         try { payload = await response.json(); } catch (_) {}
         if (!response.ok) {
-          const error = new Error(payload?.message || payload?.detail || `HTTP ${response.status}`);
+          const messages = {
+            400: '请求格式或字段无效', 401: '本地会话已失效', 403: '当前身份没有执行该职责的 scope',
+            404: '资源不存在或当前身份不可见', 409: '版本或并发状态发生冲突',
+            413: '请求超过服务端大小限制', 422: 'JSON 不符合严格接口合同',
+            429: '请求过于频繁，请稍后重试', 503: '依赖暂不可用', 504: '依赖调用超时',
+          };
+          const error = new Error(messages[response.status] || `请求失败（HTTP ${response.status}）`);
           error.status = response.status;
-          error.payload = payload;
+          error.payload = payload && typeof payload === 'object' ? {request_id: payload.request_id} : null;
           throw error;
         }
         return payload;
@@ -613,8 +799,35 @@
         return payload.access_token;
       }
 
+      async function apiRequest(url, options = {}) {
+        const persona = currentPersona();
+        if (!persona) throw new Error('请先选择测试身份');
+        const token = await sessionToken(persona.id);
+        const headers = {Authorization: `Bearer ${token}`, ...(options.headers || {})};
+        return jsonRequest(url, {...options, headers});
+      }
+
+      function parseJsonEditor(element, label) {
+        try {
+          const value = JSON.parse(element.value);
+          if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error();
+          return value;
+        } catch (_) {
+          throw new Error(`${label}必须是一个有效 JSON object`);
+        }
+      }
+
+      function output(element, value) {
+        element.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+      }
+
       function requestPayload(queryText) {
-        return {query_text: queryText, limits: state.bootstrap.defaults.retrieval_limits};
+        return {
+          query_text: queryText,
+          limits: state.bootstrap.defaults.retrieval_limits,
+          include_graph: true,
+          graph_trust_policy: 'PUBLISHED_SECONDARY_INCLUSIVE',
+        };
       }
 
       function showLoading() {
@@ -684,6 +897,74 @@
         }).join('');
       }
 
+      function provenanceBadges(provenance) {
+        if (!provenance) return '';
+        const authorityClass = provenance.authority === 'AUTHORITATIVE' ? ' authoritative' : '';
+        return `<div class="badge-row">
+          <span class="trust-badge${authorityClass}">${escapeHtml(provenance.authority)}</span>
+          <span class="trust-badge">${escapeHtml(provenance.origin)}</span>
+          <span class="trust-badge">${escapeHtml(provenance.status)}</span>
+          <span class="trust-badge">confidence ${escapeHtml(provenance.confidence)}</span>
+        </div>`;
+      }
+
+      function graphEvidenceMarkup(evidence) {
+        if (!evidence) return '';
+        const citation = evidence.citation || {};
+        return `${provenanceBadges(evidence.provenance)}<div class="exact-evidence"><strong>Exact Chunk evidence</strong> · ${escapeHtml(citation.document_title || citation.source_name)} · Chunk <span title="${escapeHtml(citation.chunk_id)}">${escapeHtml(shortId(citation.chunk_id))}</span> · chars ${escapeHtml(evidence.char_start)}:${escapeHtml(evidence.char_end)}<br>${escapeHtml(evidence.quoted_text)}</div>`;
+      }
+
+      function literalSemantics(item) {
+        if (item?.literal_semantics && typeof item.literal_semantics === 'object') {
+          return item.literal_semantics;
+        }
+        // Keep old local snapshots readable while treating the versioned nested
+        // response as authoritative. Unknown/new nested fields are retained.
+        const fieldAliases = {
+          datatype: ['datatype', 'literal_datatype'],
+          typed_value: ['typed_value', 'literal_typed_value'],
+          raw_value: ['raw_value', 'literal_raw_value'],
+          raw_unit: ['raw_unit', 'literal_raw_unit'],
+          canonical_value: ['canonical_value', 'literal_canonical_value'],
+          canonical_unit: ['canonical_unit', 'literal_canonical_unit'],
+          valid_from: ['valid_from', 'literal_valid_from'],
+          valid_to: ['valid_to', 'literal_valid_to'],
+          observed_at: ['observed_at', 'literal_observed_at'],
+          raw_valid_from: ['raw_valid_from', 'literal_raw_valid_from'],
+          raw_valid_to: ['raw_valid_to', 'literal_raw_valid_to'],
+          raw_observed_at: ['raw_observed_at', 'literal_raw_observed_at'],
+        };
+        return Object.entries(fieldAliases).reduce((result, [field, aliases]) => {
+          const found = aliases.find(alias => item?.[alias] != null);
+          if (found) result[field] = item[found];
+          return result;
+        }, {});
+      }
+
+      function literalSemanticsMarkup(item) {
+        const semantics = literalSemantics(item);
+        return Object.keys(semantics).length
+          ? `<p>${escapeHtml(JSON.stringify(semantics, null, 2))}</p>`
+          : '';
+      }
+
+      function graphMarkup() {
+        const graph = state.retrieval?.graph;
+        if (!graph) return '<div class="initial-state"><div class="initial-icon">KG</div><h3>当前检索没有可投影的治理图</h3><p>dev-corpus-v1 的旧 fixture 仍可用于检索测试；通过“知识构建”工作台审核并发布的新实例，才会按 active T-Box、publication 和 ACL 出现在这里。</p></div>';
+        const entities = Array.isArray(graph.entities) ? graph.entities : [];
+        const relationships = Array.isArray(graph.relationship_assertions) ? graph.relationship_assertions : [];
+        const literals = Array.isArray(graph.literal_assertions) ? graph.literal_assertions : [];
+        const paths = Array.isArray(graph.paths) ? graph.paths : [];
+        if (!entities.length && !relationships.length && !literals.length && !paths.length) {
+          return '<div class="initial-state"><div class="initial-icon">0</div><h3>没有已发布且获授权的图实例</h3><p>子图投影不会显示候选、隔离或未发布知识，也不会泄漏其他租户和访问组的数据。</p></div>';
+        }
+        const entityRows = entities.map(entity => `<div class="graph-item"><strong>${escapeHtml(entity.canonical_name)} · ${escapeHtml(entity.entity_type)}</strong><p>${escapeHtml(entity.canonical_key)}<br>${escapeHtml(entity.entity_id)}</p>${(entity.evidence || []).map(graphEvidenceMarkup).join('')}</div>`).join('');
+        const relationshipRows = relationships.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(item.object_entity_id)}</strong><p>revision ${escapeHtml(item.revision_id)}</p>${graphEvidenceMarkup(item.evidence)}</div>`).join('');
+        const literalRows = literals.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} · ${escapeHtml(item.predicate)} = ${escapeHtml(item.literal_value)}</strong>${literalSemanticsMarkup(item)}${graphEvidenceMarkup(item.evidence)}</div>`).join('');
+        const pathRows = paths.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(item.object_entity_id ?? item.literal_value)}</strong>${item.object_entity_id == null ? literalSemanticsMarkup(item) : ''}${graphEvidenceMarkup(item.evidence)}</div>`).join('');
+        return `<div class="graph-summary"><span class="graph-count">${entities.length} entities</span><span class="graph-count">${relationships.length} relationships</span><span class="graph-count">${literals.length} literal facts</span><span class="graph-count">${paths.length} one-hop paths</span><span class="graph-count">${escapeHtml(graph.trust_policy)}</span></div><div class="graph-grid"><section class="graph-card"><h3>实体</h3>${entityRows || '<p>—</p>'}</section><section class="graph-card"><h3>关系</h3>${relationshipRows || '<p>—</p>'}</section><section class="graph-card"><h3>字面量属性</h3>${literalRows || '<p>—</p>'}</section><section class="graph-card"><h3>一步路径</h3>${pathRows || '<p>—</p>'}</section></div>`;
+      }
+
       function traceMarkup() {
         const trace = state.retrieval?.trace;
         if (!trace) return '';
@@ -707,6 +988,7 @@
         elements.summaryLatency.textContent = `${Math.round(latency)} ms`;
         elements.summaryRevision.textContent = trace.corpus_revision;
         elements.evidenceList.innerHTML = evidenceMarkup();
+        elements.graphContent.innerHTML = graphMarkup();
         elements.traceContent.innerHTML = traceMarkup();
         elements.rawJson.textContent = JSON.stringify(state.raw, null, 2);
         activateTab($('tab-evidence'));
@@ -739,11 +1021,345 @@
         });
       }
 
+      function switchWorkspace(view) {
+        state.view = view;
+        const governance = view === 'governance';
+        $('retrieval-workspace').classList.toggle('hidden', governance);
+        $('governance-workspace').classList.toggle('hidden', !governance);
+        $('retrieval-nav').classList.toggle('active', !governance);
+        $('governance-nav').classList.toggle('active', governance);
+        if (governance) {
+          Promise.allSettled([loadOntologies(), loadReviews(), loadHistory()]);
+        }
+      }
+
+      function activeOntology() {
+        return state.ontologies.find(item => item.status === 'PUBLISHED') || null;
+      }
+
+      function renderOntologies() {
+        if (!state.ontologies.length) {
+          elements.ontologyList.innerHTML = '<div class="output-box">当前租户尚无 T-Box。导入模板后还需显式点击“发布”。</div>';
+          return;
+        }
+        elements.ontologyList.innerHTML = state.ontologies.map((item, index) => {
+          const entityNames = (item.entity_types || []).map(value => value.name).join(', ');
+          const relationNames = (item.relationship_types || []).map(value => value.name).join(', ');
+          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${item.status === 'DRAFT' ? `<div class="workbench-actions"><button class="button" type="button" data-publish-tbox="${index}">发布此版本</button></div>` : ''}</article>`;
+        }).join('');
+        elements.ontologyList.querySelectorAll('[data-publish-tbox]').forEach(button => {
+          button.addEventListener('click', () => publishOntology(Number(button.dataset.publishTbox)));
+        });
+      }
+
+      async function loadOntologies() {
+        try {
+          const payload = await apiRequest('/v1/ontologies?limit=100');
+          state.ontologies = Array.isArray(payload.items) ? payload.items : [];
+          renderOntologies();
+        } catch (error) {
+          elements.ontologyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function importOntology() {
+        try {
+          const body = parseJsonEditor(elements.ontologyEditor, 'T-Box');
+          const payload = await apiRequest('/v1/ontologies:import', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+          });
+          showToast(`T-Box 草稿已导入：${shortId(payload.tbox_id)}`);
+          await loadOntologies();
+        } catch (error) {
+          showToast(error.message);
+        }
+      }
+
+      async function publishOntology(index) {
+        const item = state.ontologies[index];
+        if (!item) return;
+        try {
+          const payload = await apiRequest(`/v1/ontologies/${encodeURIComponent(item.tbox_id)}:publish`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({expected_active_tbox_id: activeOntology()?.tbox_id || null}),
+          });
+          showToast(`T-Box 已发布：${shortId(payload.tbox_id)}`);
+          await loadOntologies();
+        } catch (error) {
+          showToast(error.message);
+        }
+      }
+
+      async function importABox() {
+        try {
+          const body = parseJsonEditor(elements.aboxEditor, '权威 A-Box');
+          output(elements.aboxOutput, '正在校验 T-Box、当前文档版本、ACL 与精确证据…');
+          const payload = await apiRequest('/v1/knowledge/authoritative:import', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+          });
+          for (const revisionId of payload.revision_ids || []) state.approvedRevisions.add(revisionId);
+          elements.publicationRevisions.value = [...state.approvedRevisions].join('\n');
+          output(elements.aboxOutput, payload);
+          showToast('权威 A-Box 已导入；revision 已加入待发布列表');
+        } catch (error) {
+          output(elements.aboxOutput, error.message);
+        }
+      }
+
+      function detectedMime(file) {
+        const extension = String(file.name || '').split('.').pop().toLowerCase();
+        const inferred = mimeByExtension[extension];
+        const selected = file.type || inferred;
+        if (!inferred || selected !== inferred) throw new Error('仅支持匹配扩展名的 UTF-8 txt/md/csv/json');
+        return inferred;
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        return btoa(binary);
+      }
+
+      async function constructKnowledge() {
+        const file = $('document-file').files?.[0];
+        if (!file) { output(elements.constructionOutput, '请选择一个文档。'); return; }
+        if (!file.size || file.size > MAX_UPLOAD_BYTES) { output(elements.constructionOutput, '文件必须在 1 byte 到 5 MiB 之间。'); return; }
+        try {
+          const mime = detectedMime(file);
+          const title = $('document-title').value.trim();
+          const canonicalUri = $('document-uri').value.trim();
+          const sourceName = $('document-source').value.trim();
+          const tboxKey = $('document-tbox').value.trim();
+          const language = $('document-language').value.trim();
+          const accessGroups = selectedDocumentAccessGroups();
+          if (!title || !canonicalUri || !sourceName || !tboxKey || !language) throw new Error('请完整填写文档元数据');
+          if (!accessGroups.length) throw new Error('至少选择一个新文档访问组');
+          output(elements.constructionOutput, '正在上传、解析、切块、向量化，并按已发布 T-Box 调用抽取模型…');
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const nonce = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const payload = await apiRequest('/v1/knowledge:construct', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              operation_key: `playground-${nonce}`,
+              canonical_uri: canonicalUri,
+              title,
+              source_name: sourceName,
+              mime_type: mime,
+              language,
+              tbox_key: tboxKey,
+              access_groups: accessGroups,
+              max_attempts: 1,
+              content_base64: bytesToBase64(bytes),
+            }),
+          });
+          const summary = payload.chunks.map(item => ({
+            chunk_id: item.chunk_id, status: item.status, findings: item.finding_codes,
+            mentions: item.mention_record_ids.length, assertions: item.assertion_record_ids.length,
+            replayed: item.replayed,
+          }));
+          output(elements.constructionOutput, {job_id: payload.job_id, document_id: payload.document_id, version_id: payload.version_id, tbox_id: payload.tbox_id, chunks: summary});
+          showToast(`构建完成：${payload.chunks.length} Chunks，等待人工审核`);
+          await loadReviews();
+        } catch (error) {
+          output(elements.constructionOutput, error.message);
+        }
+      }
+
+      function reviewEdit(item) {
+        if (item.record_kind === 'ENTITY_MENTION') {
+          return {entity: item.entity, confidence: item.confidence};
+        }
+        const edit = {
+          subject: item.subject,
+          predicate: item.predicate,
+          subject_mention_revision_id: item.subject_mention_revision_id,
+          confidence: item.confidence,
+        };
+        if (item.object_entity) {
+          edit.object_entity = item.object_entity;
+          edit.object_mention_revision_id = item.object_mention_revision_id;
+          return edit;
+        }
+        const semantics = literalSemantics(item);
+        edit.literal = {raw_literal: semantics.raw_value ?? item.literal_value};
+        for (const field of ['raw_unit', 'raw_valid_from', 'raw_valid_to', 'raw_observed_at']) {
+          if (semantics[field] != null) edit.literal[field] = semantics[field];
+        }
+        return edit;
+      }
+
+      function renderReviews() {
+        if (!state.reviews.length) {
+          elements.reviewList.innerHTML = '<div class="output-box">没有当前身份可见的 CANDIDATE / QUARANTINED 记录。</div>';
+          return;
+        }
+        elements.reviewList.innerHTML = state.reviews.map((item, index) => {
+          const entity = item.entity || item.subject || {};
+          const object = item.object_entity?.canonical_name ?? item.literal_value ?? '';
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : ''}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div><label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
+        }).join('');
+        elements.reviewList.querySelectorAll('[data-review-action]').forEach(button => {
+          button.addEventListener('click', () => submitReviews(button.dataset.reviewAction, [Number(button.dataset.reviewIndex)]));
+        });
+      }
+
+      async function loadReviews() {
+        try {
+          const payload = await apiRequest('/v1/knowledge/review-queue?status=CANDIDATE&status=QUARANTINED&limit=100');
+          state.reviews = Array.isArray(payload.items) ? payload.items : [];
+          renderReviews();
+        } catch (error) {
+          elements.reviewList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      function chosenReviews() {
+        return [...elements.reviewList.querySelectorAll('[data-review-select]:checked')].map(input => Number(input.dataset.reviewSelect));
+      }
+
+      async function submitReviews(decision, indexes) {
+        if (!indexes.length) { showToast('请先勾选审核记录'); return; }
+        try {
+          const decisions = indexes.map(index => {
+            const item = state.reviews[index];
+            if (!item) throw new Error('审核队列已变化，请刷新');
+            const request = {
+              record_kind: item.record_kind,
+              record_id: item.record_id,
+              expected_revision: item.revision,
+              decision,
+              notes: `Local Playground human review: ${decision}`,
+            };
+            const enabled = elements.reviewList.querySelector(`[data-review-edit-enabled="${index}"]`)?.checked;
+            if (enabled) {
+              const editor = elements.reviewList.querySelector(`[data-review-editor="${index}"]`);
+              const edit = parseJsonEditor(editor, '审核编辑');
+              request[item.record_kind === 'ENTITY_MENTION' ? 'mention_edit' : 'assertion_edit'] = edit;
+            }
+            return request;
+          });
+          const payload = await apiRequest('/v1/knowledge/reviews:batch', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({decisions}),
+          });
+          for (const outcome of payload.outcomes || []) {
+            if (outcome.status === 'APPROVED') state.approvedRevisions.add(outcome.revision_id);
+          }
+          elements.publicationRevisions.value = [...state.approvedRevisions].join('\n');
+          showToast(`${payload.outcomes?.length || 0} 条审核决定已保存`);
+          await loadReviews();
+        } catch (error) {
+          showToast(error.message);
+        }
+      }
+
+      function activePublication() {
+        return state.publications.find(item => item.status === 'ACTIVE') || null;
+      }
+
+      function renderHistory() {
+        if (!state.publications.length) {
+          elements.historyList.innerHTML = '<div class="output-box">当前租户尚无知识 publication。</div>';
+          return;
+        }
+        const active = activePublication();
+        elements.historyList.innerHTML = state.publications.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><div><strong>generation ${escapeHtml(item.generation)} · ${escapeHtml(shortId(item.publication_id))}</strong><p>${escapeHtml(item.status)} · ${escapeHtml(item.published_revision_ids?.length || 0)} published revisions<br>T-Box ${escapeHtml(item.ontology_version_id || 'legacy / unavailable')}<br>${escapeHtml(item.created_at)}</p></div><span class="trust-badge ${item.status === 'ACTIVE' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${active && item.publication_id !== active.publication_id ? `<div class="workbench-actions"><button class="button" type="button" data-rollback-publication="${index}">回滚到此版本</button></div>` : ''}</article>`).join('');
+        elements.historyList.querySelectorAll('[data-rollback-publication]').forEach(button => {
+          button.addEventListener('click', () => rollbackPublication(Number(button.dataset.rollbackPublication)));
+        });
+      }
+
+      async function loadHistory() {
+        try {
+          const payload = await apiRequest('/v1/knowledge/publications?limit=100');
+          state.publications = Array.isArray(payload.items) ? payload.items : [];
+          renderHistory();
+        } catch (error) {
+          elements.historyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function publishKnowledge() {
+        const revisionIds = [...new Set(elements.publicationRevisions.value.split(/\s+/).map(value => value.trim()).filter(Boolean))];
+        if (!revisionIds.length) { output(elements.publicationOutput, '至少需要一个 APPROVED revision ID。'); return; }
+        try {
+          const payload = await apiRequest('/v1/knowledge/publications:publish', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({approved_revision_ids: revisionIds, expected_active_publication_id: activePublication()?.publication_id || null, remove_record_ids: [], replace_record_ids: []}),
+          });
+          output(elements.publicationOutput, payload);
+          state.approvedRevisions.clear();
+          elements.publicationRevisions.value = '';
+          showToast(`知识 publication ${shortId(payload.publication_id)} 已激活`);
+          await loadHistory();
+        } catch (error) {
+          output(elements.publicationOutput, error.message);
+        }
+      }
+
+      async function rollbackPublication(index) {
+        const target = state.publications[index];
+        const active = activePublication();
+        if (!target || !active) { showToast('没有可用的 active publication'); return; }
+        try {
+          const payload = await apiRequest(`/v1/knowledge/publications/${encodeURIComponent(target.publication_id)}:rollback`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({expected_active_publication_id: active.publication_id}),
+          });
+          showToast(`已回滚并激活 generation ${payload.generation}`);
+          await loadHistory();
+        } catch (error) {
+          showToast(error.message);
+        }
+      }
+
       async function init() {
         setupTabs();
         try {
           const bootstrap = await jsonRequest('/playground/bootstrap');
           state.bootstrap = bootstrap;
+          elements.ontologyEditor.value = JSON.stringify(bootstrap.defaults.industrial_tbox_template, null, 2);
+          elements.aboxEditor.value = JSON.stringify({
+            ontology_version_id: 'replace-with-published-tbox-id',
+            mentions: [{
+              source_key: 'expert-equipment-001',
+              expected_previous_revision: 0,
+              entity: {entity_type: 'Equipment', canonical_key: 'equipment-id:001', canonical_name: 'Equipment 001', aliases: []},
+              evidence: {document_id: 'replace-document-id', version_id: 'replace-version-id', chunk_id: 'replace-chunk-id', char_start: 0, char_end: 1, quoted_text: 'X'},
+              confidence: 1.0,
+            }],
+            assertions: [],
+            review_notes: 'Expert-controlled import from verified source evidence',
+          }, null, 2);
+          const capabilities = bootstrap.capabilities || {};
+          const labels = {
+            ontology_governance: 'T-Box governance', document_upload: 'document upload',
+            human_review: 'human review', knowledge_publication: 'immutable publication',
+            evidence_subgraph: 'evidence subgraph', answer_generation: 'answer generation',
+          };
+          $('capability-list').innerHTML = Object.entries(labels)
+            .filter(([key]) => capabilities[key])
+            .map(([key, label]) => `<span class="capability">${escapeHtml(label)}</span>`).join('');
+          const provider = capabilities.extraction_provider || {};
+          $('provider-note').textContent = provider.model
+            ? `抽取模型：${provider.model} · ${provider.protocol} · ${provider.purpose}。凭证只存在于服务端环境。`
+            : '当前运行没有配置自动抽取 provider。';
+          const constructionLimits = capabilities.construction_limits || {};
+          const limitLabels = {
+            max_chunks: 'Chunks', max_chunks_per_document: 'Chunks',
+            max_model_calls: '模型调用', max_extraction_calls: '模型调用',
+            deadline_seconds: '秒 deadline', max_document_bytes: 'bytes',
+            max_total_extraction_chars: '待抽取字符',
+            per_model_call_timeout_seconds: '秒/模型调用',
+            max_model_output_tokens: '输出 tokens/模型调用',
+          };
+          const visibleLimits = Object.entries(constructionLimits)
+            .filter(([key, value]) => limitLabels[key] && (typeof value === 'number' || typeof value === 'string'))
+            .map(([key, value]) => `${value} ${limitLabels[key]}`);
+          $('construction-cost-note').textContent = visibleLimits.length
+            ? `单次构建服务端硬边界：${visibleLimits.join(' · ')}。超过边界会在继续调用模型前拒绝；实际调用仍受 provider 延迟、配额与费用约束。`
+            : '构建受服务端文档大小、Chunk 数、模型调用数和总 deadline 限制；实际调用仍受 provider 延迟、配额与费用约束。';
           setConnection('ready', '内核已连接');
           const counts = bootstrap.dataset.counts;
           $('dataset-name').textContent = bootstrap.dataset.id;
@@ -753,6 +1369,7 @@
           $('stat-entities').textContent = number(counts.entities);
           $('stat-tenants').textContent = number(counts.tenants);
           elements.persona.innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
+          $('governance-persona-select').innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
           const classes = [...new Set(bootstrap.questions.map(item => item.question_class))];
           elements.classFilter.insertAdjacentHTML('beforeend', classes.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(classLabels[value] || value)}</option>`).join(''));
           selectQuestion(bootstrap.defaults.question_id, {closeDrawer:false});
@@ -770,7 +1387,19 @@
       elements.classFilter.addEventListener('change', renderQuestions);
       elements.resultFilter.addEventListener('change', renderQuestions);
       elements.query.addEventListener('input', updateMode);
-      elements.persona.addEventListener('change', () => { renderIdentity(); updateMode(); });
+      elements.persona.addEventListener('change', () => {
+        state.ontologies = [];
+        state.reviews = [];
+        state.publications = [];
+        state.approvedRevisions.clear();
+        elements.publicationRevisions.value = '';
+        renderIdentity(); updateMode();
+        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadReviews(), loadHistory()]);
+      });
+      $('governance-persona-select').addEventListener('change', event => {
+        elements.persona.value = event.currentTarget.value;
+        elements.persona.dispatchEvent(new Event('change'));
+      });
       elements.retrieve.addEventListener('click', () => run());
       elements.query.addEventListener('keydown', event => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') run();
@@ -779,6 +1408,30 @@
         const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
         document.documentElement.dataset.theme = next;
         try { localStorage.setItem('graphrag-playground-theme', next); } catch (_) {}
+      });
+      $('retrieval-nav').addEventListener('click', () => switchWorkspace('retrieval'));
+      $('governance-nav').addEventListener('click', () => switchWorkspace('governance'));
+      $('ontology-reset').addEventListener('click', () => {
+        elements.ontologyEditor.value = JSON.stringify(state.bootstrap.defaults.industrial_tbox_template, null, 2);
+      });
+      $('ontology-list-button').addEventListener('click', loadOntologies);
+      $('ontology-import-button').addEventListener('click', importOntology);
+      $('abox-import-button').addEventListener('click', importABox);
+      $('construct-button').addEventListener('click', constructKnowledge);
+      $('review-refresh-button').addEventListener('click', loadReviews);
+      $('review-approve-button').addEventListener('click', () => submitReviews('APPROVED', chosenReviews()));
+      $('review-reject-button').addEventListener('click', () => submitReviews('REJECTED', chosenReviews()));
+      $('review-quarantine-button').addEventListener('click', () => submitReviews('QUARANTINED', chosenReviews()));
+      $('publication-button').addEventListener('click', publishKnowledge);
+      $('history-refresh-button').addEventListener('click', loadHistory);
+      $('document-file').addEventListener('change', event => {
+        const file = event.currentTarget.files?.[0];
+        if (!file) return;
+        if (!$('document-title').value.trim()) $('document-title').value = file.name.replace(/\.[^.]+$/, '');
+        if (!$('document-uri').value.trim()) {
+          const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'document';
+          $('document-uri').value = `urn:local:controlled-upload:${safeName}`;
+        }
       });
       $('questions-button')?.addEventListener('click', event => {
         const open = document.body.classList.toggle('questions-open');

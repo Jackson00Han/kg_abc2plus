@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import jwt
 
+from graphrag_prod.api.knowledge_contracts import OntologyImportRequest
+from graphrag_prod.domain.ids import embedding_space_id
 from graphrag_prod.playground import (
     PLAYGROUND_AUDIENCE,
     PLAYGROUND_ISSUER,
     PLAYGROUND_RETRIEVAL_LIMITS,
+    PLAYGROUND_SCOPES,
     PLAYGROUND_TOKEN_LIFETIME_SECONDS,
     FixtureQueryEmbedder,
     PlaygroundCatalog,
@@ -22,7 +27,10 @@ from graphrag_prod.playground import (
     require_loopback_host,
 )
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
-from scripts.run_playground import _OpenAICompatibleEmbedder
+from scripts.run_playground import (
+    _OpenAICompatibleEmbedder,
+    _PlaygroundKnowledgeOperations,
+)
 
 
 _SIGNING_KEY = b"local-playground-unit-test-signing-key-32-bytes-minimum"
@@ -50,12 +58,47 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertEqual(len(payload["personas"]), 7)
         self.assertTrue(payload["capabilities"]["reviewed_questions"])
         self.assertFalse(payload["capabilities"]["answer_generation"])
+        self.assertFalse(payload["capabilities"]["ontology_governance"])
+        self.assertEqual(
+            payload["defaults"]["industrial_tbox_template"]["key"],
+            "industrial-assets",
+        )
+        OntologyImportRequest.model_validate(
+            payload["defaults"]["industrial_tbox_template"]
+        )
+        self.assertTrue(
+            all(
+                "llm-candidate" in item["canonical_key_namespaces"]
+                for item in payload["defaults"]["industrial_tbox_template"][
+                    "entity_types"
+                ]
+            )
+        )
         self.assertNotIn("answer_retrieval_limits", payload["defaults"])
         self.assertEqual(
             payload["defaults"]["retrieval_limits"],
             asdict(PLAYGROUND_RETRIEVAL_LIMITS),
         )
         self.assertNotIn("principal_id", payload["personas"][0])
+
+        governed = PlaygroundCatalog(
+            self.fixture,
+            _SIGNING_KEY,
+            capabilities={
+                "ontology_governance": True,
+                "document_upload": True,
+                "answer_generation": True,
+                "extraction_provider": {
+                    "protocol": "openai-compatible",
+                    "model": "qwen-plus",
+                    "purpose": "ontology-constrained extraction only",
+                },
+            },
+        ).bootstrap()
+        self.assertEqual(governed["mode"], "retrieval-and-governance")
+        self.assertTrue(governed["capabilities"]["document_upload"])
+        self.assertFalse(governed["capabilities"]["answer_generation"])
+        self.assertNotIn("credential", governed["capabilities"]["extraction_provider"])
 
     def test_session_token_is_short_lived_and_scoped_to_selected_persona(self) -> None:
         now = int(time.time())
@@ -72,13 +115,43 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertEqual(claims["sub"], persona.principal_id)
         self.assertEqual(claims["tenant_id"], persona.tenant_id)
         self.assertEqual(claims["groups"], list(persona.groups))
-        self.assertEqual(claims["scope"], "retrieval:read")
+        self.assertEqual(claims["scope"].split(), list(persona.scopes))
+        self.assertIn("retrieval:read", persona.scopes)
+        self.assertIn("ontology:read", persona.scopes)
         self.assertEqual(
             claims["exp"] - claims["iat"],
             PLAYGROUND_TOKEN_LIFETIME_SECONDS,
         )
         with self.assertRaises(KeyError):
             self.catalog.issue_session("persona-99", now=now)
+
+    def test_local_personas_preserve_governance_separation_of_duties(self) -> None:
+        by_groups = {frozenset(item.groups): item for item in self.catalog.personas}
+
+        self.assertEqual(
+            by_groups[frozenset({"alpha-public"})].scopes,
+            ("retrieval:read", "ontology:read"),
+        )
+        self.assertIn(
+            "knowledge:construct",
+            by_groups[frozenset({"alpha-finance"})].scopes,
+        )
+        self.assertNotIn(
+            "knowledge:review",
+            by_groups[frozenset({"alpha-finance"})].scopes,
+        )
+        self.assertIn(
+            "knowledge:review",
+            by_groups[frozenset({"alpha-legal"})].scopes,
+        )
+        self.assertEqual(
+            by_groups[frozenset({"alpha-finance", "alpha-legal"})].scopes,
+            PLAYGROUND_SCOPES,
+        )
+        self.assertEqual(
+            by_groups[frozenset({"beta-board"})].scopes,
+            PLAYGROUND_SCOPES,
+        )
 
     def test_embedder_uses_reviewed_vectors_and_orthogonal_custom_fallback(self) -> None:
         embedder = FixtureQueryEmbedder(self.fixture)
@@ -127,13 +200,159 @@ class PlaygroundRuntimeTests(unittest.TestCase):
 
         vectors = embedder.embed_documents([f"chunk {index}" for index in range(11)])
         query = embedder.embed("question", tenant_id="tenant-alpha")
+        uploaded = embedder(chunk=SimpleNamespace(text="uploaded document chunk"))
 
-        self.assertEqual([len(call["input"]) for call in calls], [10, 1, 1])
+        self.assertEqual([len(call["input"]) for call in calls], [10, 1, 1, 1])
         self.assertEqual(len(vectors), 11)
         self.assertEqual(len(query.vector), 64)
         self.assertEqual(query.embedding_space_id, embedder.embedding_space_id)
+        self.assertEqual(len(uploaded), 64)
         self.assertTrue(all(call["model"] == "text-embedding-v4" for call in calls))
         self.assertTrue(all(call["dimensions"] == 64 for call in calls))
+
+    def test_playground_source_bounds_extraction_provider_calls(self) -> None:
+        source = (Path(__file__).parents[2] / "scripts" / "run_playground.py").read_text()
+
+        self.assertIn("with_options(max_retries=0, timeout=30.0)", source)
+        self.assertIn('response_format_mode="none"', source)
+        self.assertIn("max_output_tokens=2_048", source)
+        self.assertIn("max_response_chars=16_384", source)
+        self.assertIn("timeout_seconds=30.0", source)
+        self.assertIn('"max_chunks": 4', source)
+        self.assertIn('"max_model_calls": 4', source)
+        self.assertIn('"deadline_seconds": 90.0', source)
+        self.assertIn("timeout_seconds=105.0", source)
+
+    def test_construction_refreshes_stale_tenant_embedding_generation(self) -> None:
+        driver = Mock()
+        driver.execute_query.return_value = (
+            [{"corpus_revision": 7}],
+            None,
+            None,
+        )
+        active = SimpleNamespace(
+            generation_id="generation-1",
+            generation_version=1,
+            corpus_revision=6,
+        )
+        target = SimpleNamespace(generation_id="generation-2")
+        manager = Mock()
+        manager.active_generation.return_value = active
+        manager.prepare.return_value = target
+        manager.coverage.return_value = SimpleNamespace(complete=True)
+        space_id = embedding_space_id(
+            "dashscope-openai-compatible",
+            "text-embedding-v4",
+            "api-v1",
+            2,
+            "provider-default",
+        )
+        embedder = SimpleNamespace(
+            dimensions=2,
+            embedding_space_id=space_id,
+            provider="dashscope-openai-compatible",
+            model="text-embedding-v4",
+            revision="api-v1",
+            normalization="provider-default",
+        )
+        construction = SimpleNamespace(run=lambda *_args, **_kwargs: None)
+        operations = _PlaygroundKnowledgeOperations(
+            driver=driver,
+            database="neo4j",
+            construction=construction,
+            embedder=embedder,
+        )
+
+        with patch(
+            "scripts.run_playground.Neo4jEmbeddingIndexManager",
+            return_value=manager,
+        ):
+            operations._refresh_embedding_generation("tenant-alpha")
+
+        manager.prepare.assert_called_once()
+        self.assertEqual(manager.prepare.call_args.kwargs["generation_version"], 2)
+        manager.activate.assert_called_once_with(
+            "generation-2",
+            expected_active_generation_id="generation-1",
+        )
+
+    def test_construction_replaces_generation_detached_by_ingestion(self) -> None:
+        driver = Mock()
+        driver.execute_query.side_effect = [
+            (
+                [
+                    {
+                        "generation_id": "generation-1",
+                        "generation_version": 1,
+                        # Even a same-revision generation must be replaced when
+                        # ingestion has detached its ACTIVE relationship.
+                        "corpus_revision": 7,
+                    }
+                ],
+                None,
+                None,
+            ),
+            ([{"corpus_revision": 7}], None, None),
+        ]
+        manager = Mock()
+        manager.active_generation.return_value = None
+        manager.prepare.return_value = SimpleNamespace(generation_id="generation-2")
+        manager.coverage.return_value = SimpleNamespace(complete=True)
+        space_id = embedding_space_id(
+            "dashscope-openai-compatible",
+            "text-embedding-v4",
+            "api-v1",
+            2,
+            "provider-default",
+        )
+        embedder = SimpleNamespace(
+            dimensions=2,
+            embedding_space_id=space_id,
+            provider="dashscope-openai-compatible",
+            model="text-embedding-v4",
+            revision="api-v1",
+            normalization="provider-default",
+        )
+        operations = _PlaygroundKnowledgeOperations(
+            driver=driver,
+            database="neo4j",
+            construction=SimpleNamespace(run=lambda *_args, **_kwargs: None),
+            embedder=embedder,
+        )
+
+        with patch(
+            "scripts.run_playground.Neo4jEmbeddingIndexManager",
+            return_value=manager,
+        ):
+            operations._refresh_embedding_generation("tenant-alpha")
+
+        self.assertEqual(manager.prepare.call_args.kwargs["generation_version"], 2)
+        manager.activate.assert_called_once_with(
+            "generation-2",
+            expected_active_generation_id=None,
+        )
+
+    def test_failed_extraction_still_repairs_advanced_corpus_generation(self) -> None:
+        construction = SimpleNamespace(run=lambda *_args, **_kwargs: None)
+        operations = _PlaygroundKnowledgeOperations(
+            driver=Mock(),
+            database="neo4j",
+            construction=construction,
+            embedder=SimpleNamespace(),
+        )
+        operations._refresh_embedding_generation = Mock()
+        principal = SimpleNamespace(tenant_id="tenant-alpha")
+
+        with patch(
+            "scripts.run_playground.Neo4jKnowledgeOperations.construct",
+            side_effect=RuntimeError("provider failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "provider failed"):
+                operations.construct(principal, object())
+
+        operations._refresh_embedding_generation.assert_called_once_with(
+            "tenant-alpha"
+        )
 
     def test_routes_serve_self_contained_ui_and_no_store_sessions(self) -> None:
         app = FastAPI()
@@ -158,6 +377,19 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("GraphRAG Local Playground", page.text)
         self.assertIn('id="query-input"', page.text)
         self.assertIn("/v1/retrieval", page.text)
+        self.assertIn("/v1/knowledge:construct", page.text)
+        self.assertIn("/v1/ontologies:import", page.text)
+        self.assertIn('id="tab-graph"', page.text)
+        self.assertIn('id="governance-workspace"', page.text)
+        self.assertIn("literal_semantics", page.text)
+        self.assertIn("raw_literal", page.text)
+        self.assertNotIn("edit.literal_value", page.text)
+        self.assertIn("canonical 语义由服务端", page.text)
+        self.assertIn('id="document-access-groups"', page.text)
+        self.assertIn("access_groups: accessGroups", page.text)
+        self.assertIn("至少选择一个新文档访问组", page.text)
+        self.assertIn('id="construction-cost-note"', page.text)
+        self.assertIn("item.ontology_version_id", page.text)
         self.assertNotIn("/v1/answers", page.text)
         self.assertNotIn("生成有据回答", page.text)
         self.assertIn("自定义文本使用阿里 Embedding", page.text)
