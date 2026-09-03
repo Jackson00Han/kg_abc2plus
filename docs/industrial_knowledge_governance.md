@@ -52,6 +52,24 @@ and Version, evidence Chunk, and exact character range. Dynamic industrial
 properties are represented as evidence-bearing assertions rather than an
 unverifiable property bag on a canonical Entity.
 
+## Document and extraction boundary
+
+The construction layer accepts bytes, not filesystem paths. Its built-in
+allowlist covers UTF-8 plain text, Markdown, CSV, and JSON with pre- and
+post-parse resource bounds. Format selection is by registered MIME type only.
+The normalized source is split into deterministic, gapless `ChunkSeed`
+records, preserving exact source offsets. Richer binary formats can be added
+only through explicit parser plugins with the same output bounds.
+
+The LLM extractor receives an injected OpenAI-compatible client and a
+`PUBLISHED` tenant T-Box; it never reads credentials itself. The prompt and
+strict response schema enumerate permitted types and directions. The server
+then independently verifies every type, relationship endpoint, exact mention,
+evidence substring, and offset. Model-supplied persistent IDs and unknown
+fields are rejected. Valid output is marked `LLM_EXTRACTED + SECONDARY +
+CANDIDATE`; low-confidence output is quarantined rather than silently
+published.
+
 ## Retrieval rule
 
 Normal retrieval may use only graph objects that are eligible under the
