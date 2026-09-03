@@ -168,7 +168,7 @@ class EvaluationMetricTests(unittest.TestCase):
         self.assertEqual(nearest_rank_percentile(list(range(1, 21)), 0.95), 19)
         self.assertEqual(nearest_rank_percentile([10, 20, 30, 40, 50], 0.95), 50)
         payload = load_json(
-            ROOT / "evaluation" / "observations" / "dev-mini-operational-v1.json"
+            ROOT / "evaluation" / "observations" / "dev-mini-operational-v2.json"
         )
         metrics = evaluate_operational_observations(payload)
         self.assertEqual(metrics.retrieval_p95_ms, 190)
@@ -183,7 +183,7 @@ class EvaluationMetricTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 nearest_rank_percentile(value, 0.95)
         payload = load_json(
-            ROOT / "evaluation" / "observations" / "dev-mini-operational-v1.json"
+            ROOT / "evaluation" / "observations" / "dev-mini-operational-v2.json"
         )
         for invalid in ("NaN", "Infinity", "-0.01", True):
             changed = deepcopy(payload)

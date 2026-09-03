@@ -81,6 +81,7 @@ class _Completions:
                     "confidence": 0.96,
                 }
             ],
+            "property_facts": [],
         }
         return {
             "choices": [

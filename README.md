@@ -52,6 +52,15 @@ The authenticated API boundary, bounded execution and retries, Neo4j resource
 lifecycle, error taxonomy, protected-content-safe logs, and aggregate metrics
 are documented in
 [`docs/api_security_reliability.md`](docs/api_security_reliability.md).
+The governed industrial property-graph loop—versioned T-Box, authoritative
+A-Box, document construction, human review, publication/rollback, and
+trust-aware evidence subgraphs—is documented in
+[`docs/industrial_knowledge_governance.md`](docs/industrial_knowledge_governance.md),
+with its authenticated routes and request boundaries in
+[`docs/industrial_knowledge_api.md`](docs/industrial_knowledge_api.md).
+Extraction precision, exact-evidence, typed temporal-property, entity-resolution,
+human-review, and drift gates are documented in
+[`docs/knowledge_extraction_quality_gates.md`](docs/knowledge_extraction_quality_gates.md).
 Automated gold/result separation, metrics, baselines, and the two-run workflow
 are documented in
 [`docs/automated_evaluation.md`](docs/automated_evaluation.md). Run the complete
@@ -112,9 +121,13 @@ It opens <http://127.0.0.1:8000/playground>, starts a disposable local Neo4j,
 and loads the deterministic 120-Chunk development corpus. It embeds the corpus
 and every query using the OpenAI-compatible embedding provider configured in
 `.env`, then exercises Vector + BM25 + RRF + graph expansion. The Playground
-returns Chunks, provenance, and a
-Retrieval Trace for downstream model orchestration; it does not generate final
-answers or call a chat LLM. Press Ctrl-C to remove the temporary database.
+returns Chunks, provenance, an authorized knowledge subgraph, and a Retrieval
+Trace for downstream model orchestration; it does not generate final answers.
+Its knowledge-construction workbench does use the configured OpenAI-compatible
+chat model to propose T-Box-constrained entities, relationships, and typed
+entity-property facts. Those proposals remain secondary candidates until the
+explicit human review and publication steps. Press Ctrl-C to remove the
+temporary database.
 
 See [`docs/local_playground.md`](docs/local_playground.md) for capabilities,
 limitations, ports, and focused checks.
@@ -122,8 +135,24 @@ limitations, ports, and focused checks.
 ## Prerequisites
 
 - **Python 3.12+**
-- **An OpenAI API key** with access to `gpt-5-mini` and `text-embedding-3-small`
-- **A Neo4j instance with APOC Core** -- either a local install or the free [Neo4j Aura](https://neo4j.com/cloud/aura-free/) tier
+- **uv** for the locked Python environment
+- **An OpenAI-compatible provider credential and HTTPS endpoint**, an embedding
+  model with a known output dimension, and a chat-completions model for
+  ontology-constrained extraction. Provider clients are injected at the
+  production boundaries; extraction can use JSON Schema, JSON-object, or plain
+  JSON response modes and is always validated server-side.
+- **A Neo4j instance with APOC Core** -- either a local install or the free
+  [Neo4j Aura](https://neo4j.com/cloud/aura-free/) tier. The one-command local
+  Playground instead requires Docker with at least 1.5 GiB available and
+  manages its own disposable Neo4j instance.
+
+The numbered tutorial scripts default to OpenAI `gpt-5-mini` and
+`text-embedding-3-small`. The bundled Playground profile is currently validated
+against Alibaba Cloud Model Studio's official OpenAI-compatible endpoint with
+Qwen plus `text-embedding-v4`; the launcher deliberately allowlists those
+official DashScope hosts. See
+[`docs/local_playground.md`](docs/local_playground.md) for the exact `.env`
+variables, supported dimensions, provider timeouts, and local cost bounds.
 
 ## Setting Up uv
 
@@ -139,9 +168,11 @@ brew install uv
 
 Once installed, `uv sync` reads `pyproject.toml`, creates a `.venv`, and installs all dependencies in one step. Run any project script with `uv run python <script>` -- it automatically activates the virtual environment.
 
-This project depends on just two packages:
+Key runtime packages include:
 
 - `neo4j-graphrag[openai]` -- the official Neo4j GraphRAG library with OpenAI integration
+- `neo4j`, `fastapi`, and `uvicorn` -- graph, API, and local serving boundaries
+- `httpx`, `pyjwt`, and `pint` -- provider transport, authentication, and typed-unit normalization
 - `python-dotenv` -- loads credentials from `.env`
 
 ## Setting Up Neo4j
@@ -175,7 +206,8 @@ These local limits match the default `dev-mini` profile; they cap Neo4j at
 
 ## Quick Start
 
-Once you have Python, uv, an OpenAI key, and a Neo4j instance ready:
+Once you have Python, uv, the provider settings required by the workflow you
+want to run, and a Neo4j instance ready:
 
 ```bash
 git clone <this-repo> && cd sample-graphrag
@@ -185,7 +217,7 @@ uv sync
 
 # 2. Configure credentials
 cp .env.example .env
-# Edit .env with your OPENAI_API_KEY, NEO4J_URI, NEO4J_PASSWORD
+# Edit .env with provider/model settings, NEO4J_URI, and NEO4J_PASSWORD
 
 # 3. Run the pipeline
 uv run python src/01_build_knowledge_graph.py

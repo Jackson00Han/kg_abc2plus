@@ -1,0 +1,182 @@
+{
+  "adjudication": {
+    "approved_case_ids": [
+      "positive-temporal-01",
+      "negative-no-facts-01",
+      "security-restricted-content-01"
+    ],
+    "protocol_version": "industrial-knowledge-review-v1",
+    "status": "approved"
+  },
+  "cases": [
+    {
+      "case_class": "positive",
+      "case_id": "positive-temporal-01",
+      "chunk_id": "chunk-pump-maintenance-v1-0001",
+      "chunk_text": "Pump P-101 feeds Line L-9. The same Pump P-101 operated at 1200 kPa from 2025-01-01T08:00:00+08:00 until 2025-06-01T08:00:00+08:00, observed at 2025-02-03T09:30:00+08:00. Pump P-102 is a separate standby unit.",
+      "document_id": "document-pump-maintenance-v1",
+      "entities": [
+        {
+          "canonical_name": "P-101",
+          "entity_type": "Pump",
+          "evidence": {
+            "chunk_id": "chunk-pump-maintenance-v1-0001",
+            "document_id": "document-pump-maintenance-v1",
+            "end": 10,
+            "quote": "Pump P-101",
+            "start": 0
+          },
+          "id": "mention-pump-p101-primary",
+          "mention_text": "Pump P-101"
+        },
+        {
+          "canonical_name": "L-9",
+          "entity_type": "Line",
+          "evidence": {
+            "chunk_id": "chunk-pump-maintenance-v1-0001",
+            "document_id": "document-pump-maintenance-v1",
+            "end": 25,
+            "quote": "Line L-9",
+            "start": 17
+          },
+          "id": "mention-line-l9",
+          "mention_text": "Line L-9"
+        },
+        {
+          "canonical_name": "P-101",
+          "entity_type": "Pump",
+          "evidence": {
+            "chunk_id": "chunk-pump-maintenance-v1-0001",
+            "document_id": "document-pump-maintenance-v1",
+            "end": 46,
+            "quote": "Pump P-101",
+            "start": 36
+          },
+          "id": "mention-pump-p101-operating",
+          "mention_text": "Pump P-101"
+        },
+        {
+          "canonical_name": "P-102",
+          "entity_type": "Pump",
+          "evidence": {
+            "chunk_id": "chunk-pump-maintenance-v1-0001",
+            "document_id": "document-pump-maintenance-v1",
+            "end": 181,
+            "quote": "Pump P-102",
+            "start": 171
+          },
+          "id": "mention-pump-p102-standby",
+          "mention_text": "Pump P-102"
+        }
+      ],
+      "property_facts": [
+        {
+          "canonical_unit": "bar",
+          "canonical_value": "12",
+          "datatype": "DECIMAL",
+          "evidence": {
+            "chunk_id": "chunk-pump-maintenance-v1-0001",
+            "document_id": "document-pump-maintenance-v1",
+            "end": 169,
+            "quote": "Pump P-101 operated at 1200 kPa from 2025-01-01T08:00:00+08:00 until 2025-06-01T08:00:00+08:00, observed at 2025-02-03T09:30:00+08:00",
+            "start": 36
+          },
+          "id": "property-p101-operating-pressure",
+          "observed_at": "2025-02-03T01:30:00Z",
+          "owner_mention_id": "mention-pump-p101-operating",
+          "property_type": "operating_pressure",
+          "raw_observed_at": "2025-02-03T09:30:00+08:00",
+          "raw_unit": "kPa",
+          "raw_valid_from": "2025-01-01T08:00:00+08:00",
+          "raw_valid_to": "2025-06-01T08:00:00+08:00",
+          "raw_value": "1200",
+          "typed_value": "12",
+          "valid_from": "2025-01-01T00:00:00Z",
+          "valid_to": "2025-06-01T00:00:00Z"
+        }
+      ],
+      "relationships": [
+        {
+          "evidence": {
+            "chunk_id": "chunk-pump-maintenance-v1-0001",
+            "document_id": "document-pump-maintenance-v1",
+            "end": 25,
+            "quote": "Pump P-101 feeds Line L-9",
+            "start": 0
+          },
+          "id": "relationship-p101-feeds-l9",
+          "relationship_type": "FEEDS",
+          "source_mention_id": "mention-pump-p101-primary",
+          "target_mention_id": "mention-line-l9"
+        }
+      ],
+      "resolution_pairs": [
+        {
+          "id": "resolution-p101-repeat",
+          "left_mention_id": "mention-pump-p101-primary",
+          "right_mention_id": "mention-pump-p101-operating",
+          "should_merge": true
+        },
+        {
+          "id": "resolution-p101-vs-p102",
+          "left_mention_id": "mention-pump-p101-primary",
+          "right_mention_id": "mention-pump-p102-standby",
+          "should_merge": false
+        }
+      ]
+    },
+    {
+      "case_class": "negative",
+      "case_id": "negative-no-facts-01",
+      "chunk_id": "chunk-maintenance-empty-v1-0001",
+      "chunk_text": "The maintenance note contains no governed equipment assertion.",
+      "document_id": "document-maintenance-empty-v1",
+      "entities": [],
+      "property_facts": [],
+      "relationships": [],
+      "resolution_pairs": []
+    },
+    {
+      "case_class": "security",
+      "case_id": "security-restricted-content-01",
+      "chunk_id": "chunk-tenant-gamma-restricted-v1-0001",
+      "chunk_text": "Tenant Gamma restricted compressor C-9 details are out of scope.",
+      "document_id": "document-tenant-gamma-restricted-v1",
+      "entities": [],
+      "property_facts": [],
+      "relationships": [],
+      "resolution_pairs": []
+    }
+  ],
+  "contains_predictions": false,
+  "dataset_id": "industrial-pump-extraction-gold",
+  "ontology": {
+    "entity_types": [
+      "Pump",
+      "Line"
+    ],
+    "property_types": [
+      {
+        "canonical_unit": "bar",
+        "datatype": "DECIMAL",
+        "owner_entity_types": [
+          "Pump"
+        ],
+        "type": "operating_pressure"
+      }
+    ],
+    "relationship_types": [
+      {
+        "source_entity_types": [
+          "Pump"
+        ],
+        "target_entity_types": [
+          "Line"
+        ],
+        "type": "FEEDS"
+      }
+    ]
+  },
+  "schema_version": "knowledge-extraction-gold-v1",
+  "version": "1.0.0"
+}

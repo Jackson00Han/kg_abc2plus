@@ -31,8 +31,9 @@ empty loopback-only database with the `dev-mini` limit of 1.5 GiB, one CPU, a
 credentials are removed from the test environment.
 
 Each repetition consumes the separately stored graph and operational
-observations, writes fresh retrieval, answer, conflict, suite, and report
-artifacts below its run directory, and binds all of them into the report.
+observations, writes fresh retrieval, answer, conflict, suite, extraction-
+quality, and unified report artifacts below its run directory, and binds all
+of them into the report.
 After the second repetition, the workflow compares the deterministic report
 projections. It then checks the evaluation gold and representative corpus
 rebuilds, acceptance contract, lock file, package build, bytecode compilation,
@@ -93,7 +94,7 @@ Actual observations are produced or loaded through separate schemas:
 - `capture_conflict_results.py` sends the supplemental source Chunks through
   `GroundedGenerationService` and writes `conflict-results.jsonl`;
 - operational counts, latency samples, token usage, and cost samples are read
-  from the explicitly non-qualifying `dev-mini-operational-v1` observation
+  from the explicitly non-qualifying `dev-mini-operational-v2` observation
   set.
 
 Graph, retrieval, and answer evaluators require exact ID-set equality between
@@ -167,6 +168,25 @@ is the fraction of exact `MERGE`, `KEEP_SEPARATE`, or `HUMAN_REVIEW` outcomes.
 The additional case-outcome accuracy verifies all positive and negative graph
 decisions so that perfect precision cannot be obtained by accepting too few
 items.
+
+### Knowledge extraction
+
+The committed `evaluation/knowledge-quality-v1/` assets keep adjudicated gold,
+reference predictions, gate policy, and locked baseline separate. The bounded
+positive case covers ontology-constrained entity and relationship types, exact
+Chunk spans, a decimal pressure conversion from `1200 kPa` to `12 bar`, UTC-
+normalized validity and observation times, and positive and negative entity-
+resolution pairs. Negative and restricted-content canary cases require empty
+output.
+
+Every Stage 8 repetition runs `evaluate_knowledge_quality.py` and then has the
+unified evaluator independently rebuild the expected report from the exact
+four assets. The reports must be identical and passing. Entity, relationship,
+property, per-type, and overall F1 are gated together with evidence/schema
+violations, authority contamination, review state, resolution errors, and
+restricted-content false positives. Asset SHA-256 values, extractor version,
+prediction digest, and report digest are part of the deterministic projection,
+so an identity-only extractor change cannot silently preserve the baseline.
 
 ### Answers, citations, conflicts, and refusals
 
@@ -246,7 +266,8 @@ to the listed canary Chunks.
 ## Report identity, gates, and reproducibility
 
 Every report records the acceptance contract, profile, gold manifest,
-regression policy, security manifest, and graph-migration digests. The
+regression policy, security manifest, graph-migration digests, and complete
+knowledge-quality asset/report identity. The
 operational observation set must provide exact versions for the corpus, gold,
 prompt, output schema, embedding model/revision/space, answer model/revision,
 index, configuration, Neo4j image, and recorded image digest. The report also
@@ -277,6 +298,9 @@ are stable but remain non-qualifying.
   open-ended LLM quality or provider behavior.
 - Graph observations are a split, deterministic projection of the Stage 4
   reviewed decisions, not a fresh production-scale extraction sample.
+- Knowledge-quality predictions are a fixed, separately versioned offline
+  reference artifact. They prove deterministic metric, evidence, trust, and
+  drift enforcement, not the quality of every live provider run.
 - Lifecycle, latency, throughput, token, and cost observations are committed
   non-qualifying fixtures rather than sustained live measurements.
 - The conflict sample covers a narrow numeric same-scope disagreement and a

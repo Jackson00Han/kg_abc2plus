@@ -26,6 +26,10 @@ from .gates import (
     invariant_failures,
     validate_policy,
 )
+from .knowledge_quality import (
+    KNOWLEDGE_REPORT_SCHEMA_VERSION,
+    build_knowledge_quality_report,
+)
 from .metrics import evaluate_graph_results, evaluate_operational_observations
 
 
@@ -89,6 +93,87 @@ def _case_digests(
     }
 
 
+def _load_knowledge_quality_evidence(
+    report_path: Path,
+    asset_paths: Mapping[str, Path],
+) -> tuple[dict[str, Any], dict[str, int | float | bool]]:
+    required_assets = {"gold", "predictions", "policy", "baseline"}
+    if set(asset_paths) != required_assets:
+        raise ValueError("knowledge-quality asset paths are incomplete")
+    assets = {
+        name: load_json(asset_paths[name]) for name in sorted(required_assets)
+    }
+    expected = build_knowledge_quality_report(
+        gold=assets["gold"],
+        predictions=assets["predictions"],
+        policy=assets["policy"],
+        baseline=assets["baseline"],
+    )
+    recorded = load_json(report_path)
+    if recorded != expected:
+        raise ValueError("knowledge-quality report does not match its exact assets")
+    if (
+        expected.get("schema_version") != KNOWLEDGE_REPORT_SCHEMA_VERSION
+        or expected.get("passed") is not True
+        or expected.get("failures") != []
+    ):
+        raise ValueError("knowledge-quality gate did not pass")
+
+    identity = expected["identity"]
+    baseline = assets["baseline"]
+    knowledge_identity = {
+        "asset_sha256": {
+            name: sha256_file(path) for name, path in sorted(asset_paths.items())
+        },
+        "baseline_version": baseline["version"],
+        "dataset_id": identity["dataset_id"],
+        "extractor_version": identity["extractor_version"],
+        "gold_digest": identity["gold_digest"],
+        "gold_version": identity["gold_version"],
+        "policy_digest": identity["policy_digest"],
+        "policy_version": identity["policy_version"],
+        "prediction_digest": identity["prediction_digest"],
+        "report_digest": expected["report_digest"],
+        "report_sha256": sha256_file(report_path),
+        "schema_version": expected["schema_version"],
+    }
+    knowledge_diagnostics: dict[str, int | float | bool] = {
+        "knowledge_authority_contamination_count": expected["violations"][
+            "authority_contamination_count"
+        ],
+        "knowledge_entity_f1": expected["extraction"]["by_family"]["entity"][
+            "f1"
+        ],
+        "knowledge_evidence_violation_count": expected["violations"][
+            "evidence_violation_count"
+        ],
+        "knowledge_high_risk_pending_count": expected["review"][
+            "high_risk_pending_count"
+        ],
+        "knowledge_overall_f1": expected["extraction"]["overall"]["f1"],
+        "knowledge_passed": True,
+        "knowledge_property_f1": expected["extraction"]["by_family"][
+            "property"
+        ]["f1"],
+        "knowledge_relationship_f1": expected["extraction"]["by_family"][
+            "relationship"
+        ]["f1"],
+        "knowledge_resolution_false_merge_count": expected["resolution"][
+            "false_merge_count"
+        ],
+        "knowledge_resolution_missed_merge_count": expected["resolution"][
+            "missed_merge_count"
+        ],
+        "knowledge_schema_violation_count": expected["violations"][
+            "schema_violation_count"
+        ],
+        "knowledge_security_false_positive_count": expected["coverage"][
+            "case_class_false_positive_counts"
+        ]["security"],
+    }
+    return knowledge_identity, knowledge_diagnostics
+
+
 def build_evaluation_report(
     *,
     gold_manifest: Path,
@@ -102,6 +187,8 @@ def build_evaluation_report(
     policy_path: Path,
     suite_result_paths: Mapping[str, Path],
     security_manifest_path: Path,
+    knowledge_quality_report_path: Path,
+    knowledge_quality_asset_paths: Mapping[str, Path],
     baseline_path: Path | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     gold = load_gold_dataset(gold_manifest)
@@ -123,6 +210,10 @@ def build_evaluation_report(
     profile = load_json(profile_path)
     policy = load_json(policy_path)
     security_manifest = load_json(security_manifest_path)
+    knowledge_identity, knowledge_diagnostics = _load_knowledge_quality_evidence(
+        knowledge_quality_report_path,
+        knowledge_quality_asset_paths,
+    )
 
     profile_id = profile.get("profile_id")
     if not isinstance(profile_id, str):
@@ -217,6 +308,7 @@ def build_evaluation_report(
         "retrieval_sample_count": operational_metrics.retrieval_sample_count,
         "security_suite_complete": required_security <= passed_security,
         "temporal_comparison_rate": answer_metrics.temporal_comparison_rate,
+        **knowledge_diagnostics,
     }
     failures.extend(invariant_failures(policy, diagnostics))
 
@@ -231,6 +323,7 @@ def build_evaluation_report(
             "version": gold.manifest["version"],
         },
         "graph_migrations": _migration_identity(),
+        "knowledge_quality": knowledge_identity,
         "profile": {
             "id": profile_id,
             "production_candidate_eligible": profile["production_candidate_eligible"],

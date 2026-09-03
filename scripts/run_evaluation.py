@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--baseline-candidate", type=Path)
+    parser.add_argument("--knowledge-quality-report", type=Path, required=True)
     parser.add_argument(
         "--gold-manifest",
         type=Path,
@@ -39,13 +40,18 @@ def main() -> int:
         answer_results_path=args.observations_dir / "answer-results.jsonl",
         conflict_results_path=args.observations_dir / "conflict-results.jsonl",
         operational_path=(
-            ROOT / "evaluation" / "observations" / "dev-mini-operational-v1.json"
+            ROOT / "evaluation" / "observations" / "dev-mini-operational-v2.json"
         ),
         contract_path=ROOT / "contracts" / "acceptance.v1.json",
         profile_path=ROOT / "contracts" / "profiles" / "dev-mini.v1.json",
         policy_path=ROOT / "evaluation" / "regression-policy.v1.json",
         suite_result_paths=suite_paths,
         security_manifest_path=ROOT / "evaluation" / "security-suite.v1.json",
+        knowledge_quality_report_path=args.knowledge_quality_report,
+        knowledge_quality_asset_paths={
+            name: ROOT / "evaluation" / "knowledge-quality-v1" / f"{name}.json"
+            for name in ("gold", "predictions", "policy", "baseline")
+        },
         baseline_path=args.baseline,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

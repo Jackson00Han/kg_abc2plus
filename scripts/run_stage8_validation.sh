@@ -85,17 +85,25 @@ while [ "$iteration" -le "$repeat" ]; do
     "$suites_dir/integration.json" "$observations_dir"
   uv run --locked python scripts/capture_conflict_results.py \
     --output "$observations_dir/conflict-results.jsonl"
+  uv run --locked python scripts/evaluate_knowledge_quality.py \
+    --gold evaluation/knowledge-quality-v1/gold.json \
+    --predictions evaluation/knowledge-quality-v1/predictions.json \
+    --policy evaluation/knowledge-quality-v1/policy.json \
+    --baseline evaluation/knowledge-quality-v1/baseline.json \
+    --output "$run_dir/knowledge-quality-report.json"
 
   if [ -n "$baseline_candidate" ]; then
     uv run --locked python scripts/run_evaluation.py \
       --observations-dir "$observations_dir" \
       --suite-results-dir "$suites_dir" \
+      --knowledge-quality-report "$run_dir/knowledge-quality-report.json" \
       --output "$run_dir/report.json" \
       --baseline-candidate "$baseline_candidate"
   else
     uv run --locked python scripts/run_evaluation.py \
       --observations-dir "$observations_dir" \
       --suite-results-dir "$suites_dir" \
+      --knowledge-quality-report "$run_dir/knowledge-quality-report.json" \
       --output "$run_dir/report.json" \
       --baseline "$baseline"
   fi

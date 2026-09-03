@@ -1,0 +1,50 @@
+{
+  "drift": {
+    "max_authority_contamination_rate_increase": 0.0,
+    "max_evidence_violation_rate_increase": 0.0,
+    "max_f1_drop": 0.0,
+    "max_per_type_f1_drop": 0.0,
+    "max_resolution_false_merge_rate_increase": 0.0,
+    "max_resolution_missed_merge_rate_increase": 0.0,
+    "max_review_quarantine_rate_increase": 0.0,
+    "max_review_reject_rate_increase": 0.0,
+    "max_schema_violation_rate_increase": 0.0
+  },
+  "high_risk_types": {
+    "entity": [
+      "Pump"
+    ],
+    "property": [
+      "operating_pressure"
+    ],
+    "relationship": [
+      "FEEDS"
+    ]
+  },
+  "limits": {
+    "max_artifacts_per_case": 32,
+    "max_cases": 16,
+    "max_resolution_pairs_per_case": 16,
+    "max_total_text_chars": 10000
+  },
+  "schema_version": "knowledge-quality-gate-policy-v1",
+  "thresholds": {
+    "max_authority_contamination_rate": 0.0,
+    "max_evidence_violation_rate": 0.0,
+    "max_resolution_false_merge_rate": 0.0,
+    "max_resolution_missed_merge_rate": 0.0,
+    "max_schema_violation_rate": 0.0,
+    "min_entity_f1": 1.0,
+    "min_low_risk_review_sample_rate": 1.0,
+    "min_overall_f1": 1.0,
+    "min_property_f1": 1.0,
+    "min_relationship_f1": 1.0,
+    "per_type_min_f1": {
+      "entity:Line": 1.0,
+      "entity:Pump": 1.0,
+      "property:operating_pressure": 1.0,
+      "relationship:FEEDS": 1.0
+    }
+  },
+  "version": "1.0.0"
+}

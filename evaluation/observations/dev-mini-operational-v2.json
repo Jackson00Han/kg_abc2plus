@@ -1,0 +1,51 @@
+{
+  "answer_load": {
+    "end_to_end_latency_ms": [800, 900, 1000, 1100, 1200],
+    "successful_requests": 5,
+    "unexpected_server_errors": 0,
+    "valid_requests": 5
+  },
+  "ingestion": {
+    "completed_jobs": 200,
+    "deletion_residue_count": 0,
+    "idempotency_mismatches": 0,
+    "recovered_scenarios": 4,
+    "recovery_scenarios": 4,
+    "valid_jobs": 200
+  },
+  "observation_set_id": "dev-mini-operational-v2",
+  "performance_qualification": false,
+  "profile_id": "dev-mini",
+  "retrieval_load": {
+    "duration_seconds": 30,
+    "latency_ms": [100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170, 175, 180, 185, 190, 200],
+    "successful_requests": 250,
+    "unexpected_server_errors": 0,
+    "valid_requests": 250
+  },
+  "schema_version": "operational-observations-v1",
+  "source": "deterministic Stage 7 observability and lifecycle fixture; not load evidence",
+  "usage": {
+    "answer_cost_usd": ["0.00010", "0.00011", "0.00012", "0.00013", "0.00014"],
+    "input_tokens": 500,
+    "model_calls": 5,
+    "output_tokens": 125
+  },
+  "versions": {
+    "answer_model": "deterministic-structured-answer",
+    "answer_model_revision": "stage8-v1",
+    "configuration_version": "dev-mini-v1.0.0",
+    "contract_version": "1.0.1",
+    "corpus_version": "1.0.1",
+    "embedding_model": "adjudicated-evidence-clusters",
+    "embedding_revision": "dev-corpus-v1.1",
+    "embedding_space_id": "19ef2d72-d978-5d0d-9f75-b7f33f9b6f4d",
+    "gold_version": "2.0.0",
+    "index_version": "graphrag_chunk_text_v2+embedding-generation-v1",
+    "neo4j_image": "neo4j:5.26.12-community",
+    "neo4j_image_digest": "sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37",
+    "output_schema_version": "grounded-answer-output-v1.0.0",
+    "profile_version": "1.0.0",
+    "prompt_version": "grounded-answer-v1.3.0"
+  }
+}

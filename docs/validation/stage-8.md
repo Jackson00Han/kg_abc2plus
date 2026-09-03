@@ -1,10 +1,10 @@
 # Stage 8 Validation Record
 
 - Original completion date: 2026-09-02
-- Current baseline maintenance date: 2026-09-03
+- Current baseline maintenance date: 2026-09-04
 - Acceptance contract: `contracts/acceptance.v1.json` version 1.0.1
 - Validation profile: `dev-mini` version 1.0.0
-- Reviewed regression baseline: `dev-mini.v1.json` version 1.1.0
+- Reviewed regression baseline: `dev-mini.v1.json` version 1.2.0
 - Unified gold: `evaluation/gold-v1/manifest.json` version 2.0.0
 - Representative corpus: `dev-corpus-v1` version 1.0.1
 - Answer gold: version 1.1.0
@@ -44,6 +44,10 @@ resolve or enforce the digest above at runtime.
 - Machine-readable suite results, a fixed eleven-case security manifest,
   exact negative-case coverage, per-case digests, complete version inventory,
   zero-tolerance invariants, and a reviewed deterministic baseline policy.
+- A separately adjudicated industrial extraction-quality dataset, independent
+  prediction artifact, zero-tolerance policy, and locked baseline covering
+  ontology-constrained entities, relationships, exact evidence, typed temporal
+  properties, entity resolution, review state, and restricted-content output.
 - One resource-bounded workflow that runs every suite twice against independent
   disposable Neo4j databases and compares the complete deterministic report
   projections.
@@ -71,14 +75,16 @@ Each repetition runs:
   one-CPU Neo4j container;
 - real retrieval and answer observation capture for all 49 representative
   questions, plus the two supplemental conflict results;
+- the committed extraction-quality gate, with its report independently rebuilt
+  from exact gold, prediction, policy, and locked-baseline assets;
 - unified report construction, all Stage 1 metric comparisons, hard
   invariants, and exact reviewed-baseline comparison.
 
 After both runs, the workflow compares case digests, contract metrics,
-diagnostics, artifact identities, semantic digest, and suite counts. It then
+diagnostics, artifact identities (including all extraction-quality assets and
+the extractor/report identities), semantic digest, and suite counts. It then
 checks deterministic gold/corpus rebuilds, the acceptance profile, lock file,
-package build, bytecode compilation, all shell syntax, and
-`git diff --check`.
+package build, bytecode compilation, all shell syntax, and `git diff --check`.
 
 The ordinary command cannot create or update a baseline. Baseline candidates
 are restricted to an explicit single-run maintenance path and require manual
@@ -137,7 +143,24 @@ disposable-Neo4j integration tests with no skips. The two integration suites
 took 385.298 and 373.932 seconds, and both reports reproduced semantic digest
 `af94664fb502498b884eada4b27af892d13d73b9fcf66790601957e672cb126d`.
 
-For both the historical completion and current maintenance capture,
+The post-Stage 9 industrial-knowledge maintenance run on 2026-09-04 then
+captured and manually reviewed baseline version 1.2.0. It adds the governed
+property-graph construction loop, typed temporal property facts, an executable
+extraction-quality gate, and the corrected
+`graphrag_chunk_text_v2+embedding-generation-v1` operational index identity.
+Two independent full replays each passed 499 unit tests, nine HTTP end-to-end
+tests, 22 adversarial security tests, two Stage 8 regression tests, and 101
+disposable-Neo4j integration tests with no skips. The integration suites took
+554.480 and 556.137 seconds. Both reports reproduced semantic digest
+`a923e89cefbdc5a14e5980035e34c0053d4eecaa46305e3a0e6feeb08c1610b4`;
+the embedded extraction-quality report reproduced digest
+`5f878437f1201524aee11762dd71582ca37345b77813d7efe5a04b7d9dba147c`.
+The previously established contract metrics and per-case digests did not
+change; the reviewed baseline changes are the new knowledge-quality identity
+and diagnostics, four new quality-asset unit test IDs, the v2 index identity,
+the current regression-policy digest, and migrations 006 through 010.
+
+Across the historical completion and later maintenance captures,
 gold/corpus rebuilds, acceptance-profile validation, lock verification,
 package build, bytecode compilation, shell syntax, and `git diff --check`
 passed.
@@ -152,6 +175,13 @@ server error, generation failure, or forbidden-answer exposure. Standard
 fractional evidence Recall@5 is 0.9738095238095239; complete-answer,
 same-scope-conflict, temporal-comparison, graph-case, and security-completeness
 diagnostics are all 1.0/true.
+
+The industrial extraction-quality reference reports entity, relationship,
+property, per-type, and overall F1 of 1.0, with zero evidence/schema
+violations, authority contamination, restricted-content false positives,
+high-risk pending reviews, false merges, or missed merges. These are bounded
+offline reference observations, not a claim about unrestricted customer
+documents or every future model version.
 
 The committed deterministic operational fixture reports retrieval p95 190 ms,
 answer p95 1200 ms, 8.333333333333334 retrieval requests/second, and estimated
@@ -171,6 +201,11 @@ and security cases remained mandatory, and the reviewed exact baseline matched.
 This decision advances the plan to Stage 9; it is not production-candidate
 qualification.
 <!-- STAGE8_FINAL_DECISION_END -->
+
+The 2026-09-04 maintenance validates the current industrial-knowledge changes
+under `dev-mini`; it does not retroactively extend the historical Stage 9
+production-reference qualification at commit `7142fa3`. A fresh Stage 9 run is
+required before describing the current head as a production candidate.
 
 Regardless of the final `dev-mini` result, the report always records
 `production_candidate_eligible: false`. The current corpus, embeddings,

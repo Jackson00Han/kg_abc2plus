@@ -39,9 +39,13 @@ class EvaluationRegressionTests(unittest.TestCase):
         self.assertEqual(answers.temporal_comparison_rate, 1.0)
 
     def test_stage8_operational_fixture_is_non_qualifying(self) -> None:
-        path = ROOT / "evaluation" / "observations" / "dev-mini-operational-v1.json"
+        path = ROOT / "evaluation" / "observations" / "dev-mini-operational-v2.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertFalse(payload["performance_qualification"])
+        self.assertEqual(
+            payload["versions"]["index_version"],
+            "graphrag_chunk_text_v2+embedding-generation-v1",
+        )
         metrics = evaluate_operational_observations(payload)
         self.assertEqual(metrics.ingestion_success_rate, 1.0)
         self.assertEqual(metrics.idempotency_mismatch_count, 0)

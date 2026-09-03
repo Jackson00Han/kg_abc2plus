@@ -20,7 +20,24 @@
   smoke metrics, and zero unauthorized exposure under the external
   `text-embedding-v4` profile.
 
-- [ ] Complete the industrial property-graph construction loop: versioned
+- [x] Complete the industrial property-graph construction loop: versioned
   T-Box, authoritative A-Box import, document upload, ontology-constrained LLM
   extraction, candidate review, publication/rollback, trust-aware subgraph
   retrieval, permissions, audit, and Playground management views.
+
+- [x] Add evidence-backed typed entity-property facts with server-normalized
+  datatypes, units, and explicit validity/observation times.
+
+- [x] Add versioned extraction quality and drift gates covering exact evidence,
+  entities, relationships, typed properties, entity resolution, trust
+  contamination, and human-review policy.
+
+## Follow-up limitations
+
+- [ ] Extend the current T-Box relationship-property definitions into
+  evidence-backed relationship-property extraction, authoritative import,
+  review, publication, and retrieval instances.
+
+- [ ] Use declared `identity_properties` in automatic entity disambiguation
+  and resolution. They are currently validated ontology metadata; stable
+  canonical keys and human review remain the implemented identity boundary.

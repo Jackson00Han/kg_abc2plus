@@ -1,0 +1,31 @@
+{
+  "dataset_id": "industrial-pump-extraction-gold",
+  "gold_digest": "a8aacb3ac89bace13ee1177cd557a842581dc9b7235c0c80fd31cd9739c7ff5f",
+  "gold_version": "1.0.0",
+  "locked": true,
+  "metrics": {
+    "authority_contamination_rate": 0.0,
+    "evidence_violation_rate": 0.0,
+    "family_f1": {
+      "entity": 1.0,
+      "property": 1.0,
+      "relationship": 1.0
+    },
+    "overall_f1": 1.0,
+    "per_type_f1": {
+      "entity:Line": 1.0,
+      "entity:Pump": 1.0,
+      "property:operating_pressure": 1.0,
+      "relationship:FEEDS": 1.0
+    },
+    "resolution_false_merge_rate": 0.0,
+    "resolution_missed_merge_rate": 0.0,
+    "review_quarantined_rate": 0.0,
+    "review_rejected_rate": 0.0,
+    "schema_violation_rate": 0.0
+  },
+  "policy_digest": "f3b294f909673ccb7ea4f64bcc68f2c109683740e78090a23a5d322a2f4ab754",
+  "policy_version": "1.0.0",
+  "schema_version": "knowledge-quality-baseline-v1",
+  "version": "1.0.0"
+}

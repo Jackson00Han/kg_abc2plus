@@ -172,17 +172,54 @@ Generating a candidate is not approval: a maintainer must inspect the gold,
 case results, policy, and metric changes before explicitly locking and
 versioning it. A missing, unlocked, malformed, or stale baseline fails closed.
 
+## Committed Stage 8 reference assets
+
+The repository includes one executable, provider-free reference gate under
+`evaluation/knowledge-quality-v1/`:
+
+- `gold.json`: independently adjudicated `1.0.0` gold with one positive, one
+  negative, and one restricted-content security case;
+- `predictions.json`: separately versioned reference extraction observations;
+- `policy.json`: bounded absolute thresholds, high-risk review requirements,
+  and zero-tolerance drift limits;
+- `baseline.json`: the explicitly reviewed and locked baseline bound to the
+  exact canonical gold and policy digests.
+
+The positive case covers repeated and distinct same-type entities, a typed
+relationship, exact evidence spans, a `1200 kPa` to `12 bar` decimal property,
+UTC-normalized validity/observation times, and both positive and negative
+entity-resolution pairs. The negative and security cases require empty output.
+All model-origin reference artifacts remain `secondary`, even though their
+review state is `approved`.
+
+These predictions are a deterministic offline reference artifact, not a
+provider call and not part of the gold object. Replacing them with observations
+from a new extractor requires a new `extractor_version` and a separately
+reviewed prediction artifact. Any metric, type-inventory, or configured drift
+change then requires the normal baseline-candidate review; a generated
+candidate is never locked automatically.
+
+Every iteration of `scripts/run_stage8_validation.sh` invokes this gate under
+shell `set -e` and writes
+`<stage8-output>/run-N/knowledge-quality-report.json`. Missing, malformed,
+unlocked, stale, or below-threshold assets therefore stop Stage 8. The unified
+Stage 8 report independently recomputes that report from all four assets and
+binds their file hashes, prediction/extractor identity, metrics, and report
+digest into its deterministic projection. The normal two-run comparison and
+semantic baseline therefore cover this gate as well as its standalone exit
+status.
+
 ## Offline command
 
-Run the gate without Neo4j or provider access:
+Run the committed gate without Neo4j or provider access:
 
 ```bash
-uv run python scripts/evaluate_knowledge_quality.py \
-  --gold /path/to/gold.json \
-  --predictions /path/to/predictions.json \
-  --policy /path/to/policy.json \
-  --baseline /path/to/locked-baseline.json \
-  --output /tmp/knowledge-quality-report.json
+uv run --locked python scripts/evaluate_knowledge_quality.py \
+  --gold evaluation/knowledge-quality-v1/gold.json \
+  --predictions evaluation/knowledge-quality-v1/predictions.json \
+  --policy evaluation/knowledge-quality-v1/policy.json \
+  --baseline evaluation/knowledge-quality-v1/baseline.json \
+  --output /tmp/sample-graphrag-knowledge-quality-report.json
 ```
 
 The command exits `0` only when the validated report passes every absolute and
