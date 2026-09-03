@@ -315,6 +315,12 @@ class Neo4jKnowledgeStore:
         batch.require_llm_candidates()
         return self._write_batch(batch, publish_entity_profiles=False)
 
+    def persist_llm_quarantined(self, batch: ABoxRecordBatch) -> KnowledgeWriteResult:
+        """Persist below-threshold LLM output in the quarantine layer only."""
+
+        batch.require_llm_quarantined()
+        return self._write_batch(batch, publish_entity_profiles=False)
+
     def _write_batch(
         self,
         batch: ABoxRecordBatch,
@@ -469,6 +475,10 @@ class Neo4jKnowledgeStore:
                 if assertion.object_entity is not None
             }
         )
+        model_derived = all(
+            record.trust.origin is KnowledgeOrigin.LLM_EXTRACTED
+            for record in (*batch.mentions, *batch.assertions)
+        )
         for entity in entities.values():
             contract = entity_contracts.get(entity.entity_type)
             if contract is None:
@@ -476,10 +486,13 @@ class Neo4jKnowledgeStore:
                     f"entity type {entity.entity_type!r} is not declared by the T-Box"
                 )
             namespace, separator, _ = entity.canonical_key.partition(":")
-            if (
-                not separator
-                or namespace.casefold() not in contract["namespaces"]
-            ):
+            normalized_namespace = namespace.casefold()
+            allowed_namespace = (
+                normalized_namespace == "llm-candidate"
+                if model_derived
+                else normalized_namespace in contract["namespaces"]
+            )
+            if not separator or not allowed_namespace:
                 raise KnowledgeSchemaError(
                     f"canonical key namespace for {entity.entity_type!r} is not allowed"
                 )

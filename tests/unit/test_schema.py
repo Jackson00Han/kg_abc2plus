@@ -46,6 +46,8 @@ class SchemaMigrationTests(unittest.TestCase):
                 "005_retrieval_partition_schema.cypher",
                 "006_property_graph_tbox_schema.cypher",
                 "007_governed_abox_schema.cypher",
+                "008_knowledge_review_publication_schema.cypher",
+                "009_knowledge_construction_schema.cypher",
             ],
         )
         statements = migration_statements()

@@ -20,6 +20,7 @@ from graphrag_prod.knowledge import (
     authoritative_import_trust,
     knowledge_record_id,
     llm_candidate_trust,
+    llm_quarantined_trust,
 )
 from tests.fixtures.knowledge import KNOWLEDGE_TIME as NOW, make_knowledge_batch
 
@@ -323,6 +324,22 @@ class GovernedKnowledgeModelTests(unittest.TestCase):
             ),
         )
 
+    def test_quarantined_llm_trust_is_explicitly_separate_from_candidate(self) -> None:
+        trust = llm_quarantined_trust(
+            ontology_version_id="tbox-v1",
+            extractor_version="extractor-v1",
+            prompt_version="prompt-v1",
+            extracted_at=NOW,
+        )
+        self.assertEqual(
+            (trust.origin, trust.authority, trust.status),
+            (
+                KnowledgeOrigin.LLM_EXTRACTED,
+                AuthorityLevel.SECONDARY,
+                GovernanceStatus.QUARANTINED,
+            ),
+        )
+
     def test_revisions_are_deterministic_append_only_and_immutable(self) -> None:
         record_id = knowledge_record_id("tenant-a", "ENTITY_MENTION", "source:1")
         first = RecordRevision.next(record_id, 0)
@@ -407,6 +424,31 @@ class Neo4jKnowledgeStoreUnitTests(unittest.TestCase):
         batch = _batch(authoritative=False)
         driver = _WriteDriver(batch)
         result = Neo4jKnowledgeStore(driver).persist_llm_candidates(batch)
+        self.assertEqual(result.mention_count, 2)
+        self.assertEqual(driver.tx.profile_writes, 0)
+        self.assertFalse(
+            any("MERGE (entity:Entity" in query for query, _ in driver.tx.queries)
+        )
+
+    def test_llm_quarantine_has_its_own_noncanonical_persistence_lane(self) -> None:
+        candidate = _batch(authoritative=False)
+        trust = llm_quarantined_trust(
+            ontology_version_id=candidate.ontology_version_id,
+            extractor_version="dashscope-extractor:v1",
+            prompt_version="company-tbox:v1",
+            extracted_at=NOW,
+        )
+        batch = dataclasses.replace(
+            candidate,
+            mentions=tuple(
+                dataclasses.replace(item, trust=trust) for item in candidate.mentions
+            ),
+            assertions=tuple(
+                dataclasses.replace(item, trust=trust) for item in candidate.assertions
+            ),
+        )
+        driver = _WriteDriver(batch)
+        result = Neo4jKnowledgeStore(driver).persist_llm_quarantined(batch)
         self.assertEqual(result.mention_count, 2)
         self.assertEqual(driver.tx.profile_writes, 0)
         self.assertFalse(

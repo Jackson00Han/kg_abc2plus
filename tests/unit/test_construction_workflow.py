@@ -1,0 +1,664 @@
+"""Closed-loop upload construction tests with all external systems injected."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import UTC, datetime
+from types import SimpleNamespace
+import unittest
+
+from graphrag_prod.construction import (
+    AuditedExtraction,
+    ConstructionConfig,
+    ConstructionConflict,
+    ConstructionChunkResult,
+    ConstructionMetadata,
+    Neo4jConstructionAuditStore,
+    Neo4jKnowledgeConstructionWorkflow,
+    ObservedDocumentState,
+)
+from graphrag_prod.construction.extraction import ExtractionFinding, ExtractionRejected
+from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import assertion_id, entity_id, mention_id
+from graphrag_prod.domain.models import Assertion, Chunk, Entity, EntityMention
+from graphrag_prod.ingestion.pipeline import EmbeddingProfile, ExtractionOutput
+from graphrag_prod.knowledge import AuthorityLevel, GovernanceStatus, KnowledgeOrigin
+from graphrag_prod.ontology import (
+    EntityTypeDefinition,
+    RelationshipTypeDefinition,
+    TBoxStatus,
+    TBoxVersion,
+)
+
+
+NOW = datetime(2026, 9, 4, 8, 30, tzinfo=UTC)
+SOURCE = b"Acme owns Pump-7."
+
+
+def _tbox(tenant_id: str = "tenant-industrial") -> TBoxVersion:
+    return TBoxVersion(
+        tenant_id=tenant_id,
+        key="industrial-assets",
+        version=1,
+        status=TBoxStatus.PUBLISHED,
+        entity_types=(
+            EntityTypeDefinition("Company", ("company-id",)),
+            EntityTypeDefinition("Asset", ("asset-id",)),
+        ),
+        relationship_types=(
+            RelationshipTypeDefinition("OWNS", ("Company",), ("Asset",)),
+        ),
+    )
+
+
+class _TBoxStore:
+    def __init__(self, tbox: TBoxVersion | None) -> None:
+        self.tbox = tbox
+        self.calls: list[tuple[str, str]] = []
+
+    def active(self, tenant_id: str, key: str) -> TBoxVersion | None:
+        self.calls.append((tenant_id, key))
+        return self.tbox
+
+
+class _AuditStore:
+    def __init__(self) -> None:
+        self.jobs: dict[str, object] = {}
+        self.artifacts: dict[str, dict[str, object]] = {}
+        self.outcomes: dict[tuple[str, str], object] = {}
+        self.failed: list[tuple[str, tuple[str, ...]]] = []
+        self.observed_principals: list[Principal] = []
+        self.completed_jobs: list[str] = []
+
+    def observe_document(
+        self,
+        principal: Principal,
+        *,
+        document_id_value: str,
+        version_id_value: str,
+        canonical_uri: str,
+        source_name: str,
+    ) -> ObservedDocumentState:
+        del document_id_value, version_id_value, canonical_uri, source_name
+        self.observed_principals.append(principal)
+        return ObservedDocumentState(
+            expected_active_snapshot_id=None,
+            source_generation=0,
+            version_number=1,
+            access_policy_id="server-derived-policy",
+            access_policy_version=1,
+            access_groups=principal.groups,
+        )
+
+    def ensure_job(self, state, *, expected_chunks: int):  # type: ignore[no-untyped-def]
+        self.expected_chunks = expected_chunks
+        existing = self.jobs.get(state.job_id)
+        if existing is None:
+            self.jobs[state.job_id] = state
+            return state
+        if existing.request_fingerprint != state.request_fingerprint:  # type: ignore[attr-defined]
+            raise ConstructionConflict("construction idempotency key conflicts")
+        return existing
+
+    def read_artifact(
+        self,
+        *,
+        tenant_id: str,
+        artifact_id: str,
+        input_hash: str,
+        profile_id: str,
+    ):
+        del tenant_id, input_hash, profile_id
+        return self.artifacts.get(artifact_id)
+
+    def persist_artifact(
+        self,
+        *,
+        tenant_id: str,
+        artifact_id: str,
+        input_hash: str,
+        profile_id: str,
+        payload: dict[str, object],
+        created_at: datetime,
+    ) -> None:
+        del tenant_id, input_hash, profile_id, created_at
+        existing = self.artifacts.setdefault(artifact_id, payload)
+        if existing != payload:
+            raise ConstructionConflict("artifact conflict")
+
+    def read_outcome(
+        self,
+        principal: Principal,
+        *,
+        job_id: str,
+        chunk_id: str,
+    ):
+        del principal
+        value = self.outcomes.get((job_id, chunk_id))
+        return None if value is None else replace(value, replayed=True)
+
+    def persist_outcome(
+        self,
+        principal: Principal,
+        *,
+        job_id: str,
+        result,
+        access_groups: frozenset[str],
+        artifact_input_hash: str,
+        artifact_profile_id: str,
+        completed_at: datetime,
+    ) -> None:
+        del (
+            principal,
+            access_groups,
+            artifact_input_hash,
+            artifact_profile_id,
+            completed_at,
+        )
+        existing = self.outcomes.setdefault((job_id, result.chunk_id), result)
+        if existing != result:
+            raise ConstructionConflict("outcome conflict")
+
+    def complete_job(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        completed_at: datetime,
+    ) -> None:
+        del tenant_id, completed_at
+        if sum(key[0] == job_id for key in self.outcomes) != self.expected_chunks:
+            raise ConstructionConflict("incomplete job")
+        self.completed_jobs.append(job_id)
+
+    def record_retryable_failure(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        chunk_id: str,
+        findings: tuple[ExtractionFinding, ...],
+        failed_at: datetime,
+    ) -> None:
+        del tenant_id, job_id, failed_at
+        self.failed.append((chunk_id, tuple(item.code for item in findings)))
+
+
+class _KnowledgeStore:
+    def __init__(self) -> None:
+        self.mentions: dict[str, object] = {}
+        self.assertions: dict[str, object] = {}
+        self.candidate_writes = 0
+        self.quarantine_writes = 0
+        self.last_batch = None
+
+    def get_entity_mention(  # type: ignore[no-untyped-def]
+        self, principal, record_id, *, statuses
+    ):
+        del principal, statuses
+        return self.mentions.get(record_id)
+
+    def get_assertion(self, principal, record_id, *, statuses):  # type: ignore[no-untyped-def]
+        del principal, statuses
+        return self.assertions.get(record_id)
+
+    def _persist(self, batch) -> None:  # type: ignore[no-untyped-def]
+        self.last_batch = batch
+        for item in batch.mentions:
+            if item.record_id in self.mentions:
+                raise AssertionError("duplicate mention write")
+            self.mentions[item.record_id] = item
+        for item in batch.assertions:
+            if item.record_id in self.assertions:
+                raise AssertionError("duplicate assertion write")
+            self.assertions[item.record_id] = item
+
+    def persist_llm_candidates(self, batch):  # type: ignore[no-untyped-def]
+        self.candidate_writes += 1
+        self._persist(batch)
+
+    def persist_llm_quarantined(self, batch):  # type: ignore[no-untyped-def]
+        self.quarantine_writes += 1
+        self._persist(batch)
+
+
+class _Pipeline:
+    def __init__(self) -> None:
+        self.requests = []
+        self.canonical_outputs: list[ExtractionOutput] = []
+
+    def run(  # type: ignore[no-untyped-def]
+        self, request, extraction_provider, embedding_provider
+    ):
+        self.requests.append(request)
+        _document, _version, chunks = request.domain_inputs()
+        for chunk in chunks:
+            self.canonical_outputs.append(
+                extraction_provider(
+                    artifact_id="canonical-artifact",
+                    input_hash=chunk.checksum,
+                    chunk=chunk,
+                    profile=request.profile,
+                )
+            )
+        del embedding_provider
+        return SimpleNamespace(
+            snapshot_id=request.snapshot_id,
+            active_snapshot_id=request.snapshot_id,
+        )
+
+
+class _ConflictingOutcomeResult:
+    def single(self) -> dict[str, bool]:
+        return {"compatible": False}
+
+
+class _ConflictingOutcomeTx:
+    def __init__(self) -> None:
+        self.query = ""
+        self.parameters: dict[str, object] = {}
+
+    def run(self, _query: str, **_parameters: object) -> _ConflictingOutcomeResult:
+        self.query = _query
+        self.parameters = _parameters
+        return _ConflictingOutcomeResult()
+
+
+class _RollbackAwareSession:
+    def __init__(self) -> None:
+        self.rolled_back = False
+        self.tx = _ConflictingOutcomeTx()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execute_write(self, work, *args):  # type: ignore[no-untyped-def]
+        try:
+            return work(self.tx, *args)
+        except Exception:
+            self.rolled_back = True
+            raise
+
+
+class _RollbackAwareDriver:
+    def __init__(self) -> None:
+        self.session_value = _RollbackAwareSession()
+
+    def session(self, *, database: str) -> _RollbackAwareSession:
+        if database != "neo4j":
+            raise AssertionError("unexpected database")
+        return self.session_value
+
+
+class _Extractor:
+    def __init__(
+        self,
+        tbox: TBoxVersion,
+        *,
+        status: GovernanceStatus = GovernanceStatus.CANDIDATE,
+        reject: tuple[ExtractionFinding, ...] | None = None,
+    ) -> None:
+        self.active_tbox = tbox
+        self.model = "qwen-plus"
+        self.prompt_version = "industrial-prompt:v1"
+        self.status = status
+        self.reject = reject
+        self.calls = 0
+
+    def extract_audited(  # type: ignore[no-untyped-def]
+        self, *, artifact_id, input_hash, chunk, profile
+    ):
+        del artifact_id, input_hash
+        self.calls += 1
+        if self.reject is not None:
+            raise ExtractionRejected(self.reject)
+        company_key = "llm-candidate:company"
+        asset_key = "llm-candidate:asset"
+        company_id = entity_id(chunk.tenant_id, "Company", company_key)
+        asset_id = entity_id(chunk.tenant_id, "Asset", asset_key)
+        company = Entity(
+            company_id,
+            chunk.tenant_id,
+            "Company",
+            company_key,
+            "Acme",
+        )
+        asset = Entity(
+            asset_id,
+            chunk.tenant_id,
+            "Asset",
+            asset_key,
+            "Pump-7",
+        )
+        company_mention = EntityMention(
+            mention_id(
+                chunk.chunk_id,
+                "Company",
+                chunk.char_start,
+                chunk.char_start + 4,
+                "Acme",
+                profile.extractor_signature,
+            ),
+            chunk.tenant_id,
+            chunk.chunk_id,
+            company_id,
+            "Company",
+            "Acme",
+            chunk.char_start,
+            chunk.char_start + 4,
+            profile.extractor_signature,
+            0.97,
+        )
+        asset_mention = EntityMention(
+            mention_id(
+                chunk.chunk_id,
+                "Asset",
+                chunk.char_start + 10,
+                chunk.char_start + 16,
+                "Pump-7",
+                profile.extractor_signature,
+            ),
+            chunk.tenant_id,
+            chunk.chunk_id,
+            asset_id,
+            "Asset",
+            "Pump-7",
+            chunk.char_start + 10,
+            chunk.char_start + 16,
+            profile.extractor_signature,
+            0.96,
+        )
+        assertion = Assertion(
+            assertion_id(
+                chunk.tenant_id,
+                company_id,
+                "OWNS",
+                "entity",
+                asset_id,
+                chunk.chunk_id,
+                chunk.char_start,
+                chunk.char_end,
+                profile.extractor_signature,
+                profile.schema_signature,
+            ),
+            chunk.tenant_id,
+            company_id,
+            "OWNS",
+            chunk.chunk_id,
+            chunk.char_start,
+            chunk.char_end,
+            profile.extractor_signature,
+            profile.schema_signature,
+            0.95,
+            False,
+            object_entity_id=asset_id,
+        )
+        findings = (
+            (
+                ExtractionFinding(
+                    "LOW_RELATIONSHIP_CONFIDENCE",
+                    "QUARANTINE",
+                    "$.relationships[0].confidence",
+                    "below threshold",
+                ),
+            )
+            if self.status is GovernanceStatus.QUARANTINED
+            else ()
+        )
+        return AuditedExtraction(
+            output=ExtractionOutput(
+                entities=(company, asset),
+                mentions=(company_mention, asset_mention),
+                assertions=(assertion,),
+            ),
+            origin=KnowledgeOrigin.LLM_EXTRACTED,
+            authority=AuthorityLevel.SECONDARY,
+            status=self.status,
+            ontology_version_id=self.active_tbox.tbox_id,
+            ontology_checksum=self.active_tbox.checksum,
+            extractor_version=profile.extractor_signature,
+            prompt_version=profile.prompt_signature,
+            model=self.model,
+            findings=findings,
+        )
+
+
+def _metadata(*, operation_key: str = "upload-1") -> ConstructionMetadata:
+    return ConstructionMetadata(
+        operation_key=operation_key,
+        canonical_uri="urn:industrial:asset-report-1",
+        title="Asset report",
+        source_name="controlled-upload",
+        mime_type="text/plain",
+        language="en",
+        tbox_key="industrial-assets",
+        published_at=NOW,
+    )
+
+
+def _workflow(
+    *,
+    extractor: _Extractor,
+    audit: _AuditStore | None = None,
+    knowledge: _KnowledgeStore | None = None,
+    pipeline: _Pipeline | None = None,
+    tbox_store: _TBoxStore | None = None,
+):
+    selected_audit = audit or _AuditStore()
+    selected_knowledge = knowledge or _KnowledgeStore()
+    selected_pipeline = pipeline or _Pipeline()
+    workflow = Neo4jKnowledgeConstructionWorkflow(
+        driver=object(),
+        pipeline=selected_pipeline,
+        embedding_provider=lambda **_kwargs: (0.1, 0.2),
+        embedding_profile=EmbeddingProfile(
+            "dashscope",
+            "text-embedding-v4",
+            "2026-08",
+            2,
+            "l2",
+        ),
+        extractor_factory=lambda _tbox_value: extractor,
+        config=ConstructionConfig(
+            extractor_signature="qwen-ontology:v1",
+            prompt_signature="industrial-prompt:v1",
+        ),
+        tbox_store=tbox_store or _TBoxStore(extractor.active_tbox),
+        knowledge_store=selected_knowledge,
+        audit_store=selected_audit,
+        clock=lambda: NOW,
+    )
+    return workflow, selected_audit, selected_knowledge, selected_pipeline
+
+
+class KnowledgeConstructionWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.principal = Principal(
+            "engineer:alice",
+            "tenant-industrial",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:construct"}),
+        )
+
+    def test_upload_publishes_only_empty_canonical_graph_then_candidate_abox(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+        result = workflow.run(self.principal, SOURCE, _metadata())
+
+        self.assertEqual(result.tenant_id, self.principal.tenant_id)
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertEqual(knowledge.quarantine_writes, 0)
+        self.assertEqual(result.chunks[0].status, "CANDIDATE")
+        self.assertTrue(
+            all(
+                not output.entities and not output.mentions and not output.assertions
+                for output in pipeline.canonical_outputs
+            )
+        )
+        request = pipeline.requests[0]
+        self.assertEqual(request.tenant_id, self.principal.tenant_id)
+        self.assertEqual(request.access_groups, self.principal.groups)
+        self.assertEqual(request.access_policy_id, "server-derived-policy")
+        self.assertEqual(knowledge.last_batch.mentions[0].evidence.quoted_text, "Acme")
+        self.assertEqual(
+            knowledge.last_batch.assertions[0].evidence.quoted_text,
+            SOURCE.decode(),
+        )
+        self.assertEqual(len(audit.completed_jobs), 1)
+
+    def test_outcome_identity_conflict_raises_inside_transaction_for_rollback(self) -> None:
+        driver = _RollbackAwareDriver()
+        store = Neo4jConstructionAuditStore(driver)
+        result = ConstructionChunkResult(
+            chunk_id="chunk-1",
+            artifact_id="artifact-1",
+            status="CANDIDATE",
+            finding_codes=(),
+            mention_record_ids=("mention-1",),
+            assertion_record_ids=(),
+        )
+        with self.assertRaisesRegex(ConstructionConflict, "outcome conflicts"):
+            store.persist_outcome(
+                self.principal,
+                job_id="job-1",
+                result=result,
+                access_groups=self.principal.groups,
+                artifact_input_hash="a" * 64,
+                artifact_profile_id="profile-1",
+                completed_at=NOW,
+            )
+        self.assertTrue(driver.session_value.rolled_back)
+        self.assertIn("MATCH (artifact:DerivationArtifact", driver.session_value.tx.query)
+        self.assertNotIn(
+            "OPTIONAL MATCH (artifact:DerivationArtifact",
+            driver.session_value.tx.query,
+        )
+        self.assertEqual(
+            driver.session_value.tx.parameters["artifact_input_hash"],
+            "a" * 64,
+        )
+
+    def test_construction_requires_dedicated_capability_before_any_work(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+        reader = Principal(
+            "reader:bob",
+            self.principal.tenant_id,
+            self.principal.groups,
+        )
+        with self.assertRaisesRegex(PermissionError, "capability"):
+            workflow.run(reader, SOURCE, _metadata())
+        self.assertEqual(audit.observed_principals, [])
+        self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(pipeline.requests, [])
+
+    def test_low_confidence_output_uses_quarantine_not_candidate_lane(self) -> None:
+        extractor = _Extractor(_tbox(), status=GovernanceStatus.QUARANTINED)
+        workflow, _audit, knowledge, _pipeline = _workflow(extractor=extractor)
+        result = workflow.run(self.principal, SOURCE, _metadata())
+
+        self.assertEqual(result.chunks[0].status, "QUARANTINED")
+        self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(knowledge.quarantine_writes, 1)
+        self.assertEqual(
+            knowledge.last_batch.mentions[0].trust.status,
+            GovernanceStatus.QUARANTINED,
+        )
+
+    def test_exact_replay_skips_model_and_abox_writes(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, _audit, knowledge, pipeline = _workflow(extractor=extractor)
+        first = workflow.run(self.principal, SOURCE, _metadata())
+        second = workflow.run(self.principal, SOURCE, _metadata())
+
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertEqual(len(pipeline.requests), 2)
+        self.assertFalse(first.chunks[0].replayed)
+        self.assertTrue(second.chunks[0].replayed)
+
+    def test_artifact_resume_repairs_missing_outcome_without_repeat_model_write(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, _pipeline = _workflow(extractor=extractor)
+        first = workflow.run(self.principal, SOURCE, _metadata())
+        audit.outcomes.pop((first.job_id, first.chunks[0].chunk_id))
+
+        resumed = workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertFalse(resumed.chunks[0].replayed)
+
+    def test_semantically_rejected_response_is_audited_without_abox(self) -> None:
+        finding = ExtractionFinding(
+            "ENTITY_TYPE_NOT_ALLOWED",
+            "REJECT",
+            "$.entities[0].type",
+            "outside T-Box",
+        )
+        extractor = _Extractor(_tbox(), reject=(finding,))
+        workflow, audit, knowledge, _pipeline = _workflow(extractor=extractor)
+
+        first = workflow.run(self.principal, SOURCE, _metadata())
+        second = workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(first.chunks[0].status, "REJECTED")
+        self.assertEqual(first.chunks[0].finding_codes, (finding.code,))
+        self.assertTrue(second.chunks[0].replayed)
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(len(audit.artifacts), 1)
+
+    def test_provider_failure_remains_retryable_and_is_not_cached_as_rejection(self) -> None:
+        finding = ExtractionFinding(
+            "MODEL_CALL_FAILED",
+            "REJECT",
+            "$",
+            "timeout",
+        )
+        extractor = _Extractor(_tbox(), reject=(finding,))
+        workflow, audit, knowledge, _pipeline = _workflow(extractor=extractor)
+
+        with self.assertRaises(ExtractionRejected):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(len(audit.failed), 1)
+        self.assertEqual(audit.artifacts, {})
+        self.assertEqual(audit.outcomes, {})
+        self.assertEqual(knowledge.candidate_writes, 0)
+
+    def test_same_operation_key_with_changed_payload_is_rejected(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, _audit, knowledge, _pipeline = _workflow(extractor=extractor)
+        workflow.run(self.principal, SOURCE, _metadata())
+
+        with self.assertRaisesRegex(ConstructionConflict, "idempotency"):
+            workflow.run(self.principal, b"Acme owns Pump-8.", _metadata())
+        self.assertEqual(knowledge.candidate_writes, 1)
+
+    def test_missing_or_cross_tenant_tbox_stops_before_ingestion(self) -> None:
+        extractor = _Extractor(_tbox())
+        missing_store = _TBoxStore(None)
+        pipeline = _Pipeline()
+        workflow, *_ = _workflow(
+            extractor=extractor,
+            pipeline=pipeline,
+            tbox_store=missing_store,
+        )
+        with self.assertRaisesRegex(ConstructionConflict, "active PUBLISHED"):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(pipeline.requests, [])
+        self.assertEqual(missing_store.calls, [(self.principal.tenant_id, "industrial-assets")])
+
+        wrong_tenant = _Extractor(_tbox("tenant-other"))
+        workflow, *_ = _workflow(
+            extractor=wrong_tenant,
+            tbox_store=_TBoxStore(_tbox()),
+        )
+        with self.assertRaisesRegex(ConstructionConflict, "active tenant T-Box"):
+            workflow.run(self.principal, SOURCE, _metadata(operation_key="upload-2"))
+
+
+if __name__ == "__main__":
+    unittest.main()

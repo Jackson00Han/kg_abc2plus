@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from graphrag_prod.domain.ids import entity_id
 from graphrag_prod.knowledge import (
     ABoxRecordBatch,
     AssertionRecord,
@@ -45,16 +46,32 @@ def make_knowledge_batch(
     )
     entities = tuple(
         EntityIdentity(
-            entity_id=entity.entity_id,
+            entity_id=(
+                entity.entity_id
+                if authoritative
+                else entity_id(
+                    entity.tenant_id,
+                    entity.entity_type,
+                    f"llm-candidate:{entity.entity_id}",
+                )
+            ),
             tenant_id=entity.tenant_id,
             entity_type=entity.entity_type,
-            canonical_key=entity.canonical_key,
+            canonical_key=(
+                entity.canonical_key
+                if authoritative
+                else f"llm-candidate:{entity.entity_id}"
+            ),
             canonical_name=entity.canonical_name,
             aliases=entity.aliases,
         )
         for entity in bundle.entities
     )
-    entity_by_id = {entity.entity_id: entity for entity in entities}
+    entity_by_source_id = dict(zip(
+        (entity.entity_id for entity in bundle.entities),
+        entities,
+        strict=True,
+    ))
     mentions = tuple(
         EntityMentionRecord(
             revision=RecordRevision.next(
@@ -66,7 +83,7 @@ def make_knowledge_batch(
                 0,
             ),
             tenant_id=tenant_id,
-            entity=entity_by_id[mention.entity_id],
+            entity=entity_by_source_id[mention.entity_id],
             evidence=EvidenceReference(
                 tenant_id=tenant_id,
                 document_id=bundle.document.document_id,
@@ -85,7 +102,11 @@ def make_knowledge_batch(
         )
         for mention in bundle.mentions
     )
-    mention_by_entity = {mention.entity.entity_id: mention for mention in mentions}
+    mention_by_source_entity = dict(zip(
+        (mention.entity_id for mention in bundle.mentions),
+        mentions,
+        strict=True,
+    ))
     assertion_source = bundle.assertion
     assert assertion_source is not None
     assertion = AssertionRecord(
@@ -98,7 +119,7 @@ def make_knowledge_batch(
             0,
         ),
         tenant_id=tenant_id,
-        subject=entity_by_id[assertion_source.subject_entity_id],
+        subject=entity_by_source_id[assertion_source.subject_entity_id],
         predicate=assertion_source.predicate,
         evidence=EvidenceReference(
             tenant_id=tenant_id,
@@ -114,11 +135,11 @@ def make_knowledge_batch(
             access_policy_version=bundle.chunk.access_policy_version,
             access_groups=bundle.chunk.access_groups,
         ),
-        subject_mention_revision_id=mention_by_entity[
+        subject_mention_revision_id=mention_by_source_entity[
             assertion_source.subject_entity_id
         ].revision_id,
-        object_entity=entity_by_id[assertion_source.object_entity_id or ""],
-        object_mention_revision_id=mention_by_entity[
+        object_entity=entity_by_source_id[assertion_source.object_entity_id or ""],
+        object_mention_revision_id=mention_by_source_entity[
             assertion_source.object_entity_id or ""
         ].revision_id,
         confidence=1.0 if authoritative else assertion_source.confidence,

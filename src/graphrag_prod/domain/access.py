@@ -18,6 +18,7 @@ class Principal:
     principal_id: str
     tenant_id: str
     groups: frozenset[str]
+    capabilities: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.principal_id.strip():
@@ -25,6 +26,19 @@ class Principal:
         if not self.tenant_id.strip():
             raise ValueError("tenant_id must not be empty")
         object.__setattr__(self, "groups", _normalized_set(self.groups, "groups"))
+        if not isinstance(self.capabilities, frozenset):
+            raise TypeError("capabilities must be a frozenset")
+        if any(not isinstance(capability, str) for capability in self.capabilities):
+            raise TypeError("capabilities must contain only strings")
+        object.__setattr__(
+            self,
+            "capabilities",
+            frozenset(
+                capability.strip()
+                for capability in self.capabilities
+                if capability.strip()
+            ),
+        )
 
 
 def can_access(

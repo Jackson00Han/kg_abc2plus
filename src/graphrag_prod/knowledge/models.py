@@ -444,6 +444,23 @@ class ABoxRecordBatch:
                     "LLM_EXTRACTED + SECONDARY + CANDIDATE records"
                 )
 
+    def require_llm_quarantined(self) -> None:
+        """Fail unless every record belongs to the explicit LLM quarantine lane."""
+
+        for record in (*self.mentions, *self.assertions):
+            trust = record.trust
+            if (
+                trust.origin is not KnowledgeOrigin.LLM_EXTRACTED
+                or trust.authority is not AuthorityLevel.SECONDARY
+                or trust.status is not GovernanceStatus.QUARANTINED
+                or trust.extractor_version is None
+                or trust.prompt_version is None
+            ):
+                raise ValueError(
+                    "LLM quarantine persistence requires identified "
+                    "LLM_EXTRACTED + SECONDARY + QUARANTINED records"
+                )
+
 
 def authoritative_import_trust(
     *,
@@ -479,6 +496,26 @@ def llm_candidate_trust(
         origin=KnowledgeOrigin.LLM_EXTRACTED,
         authority=AuthorityLevel.SECONDARY,
         status=GovernanceStatus.CANDIDATE,
+        ontology_version_id=ontology_version_id,
+        created_at=extracted_at,
+        extractor_version=extractor_version,
+        prompt_version=prompt_version,
+    )
+
+
+def llm_quarantined_trust(
+    *,
+    ontology_version_id: str,
+    extractor_version: str,
+    prompt_version: str,
+    extracted_at: datetime,
+) -> TrustMetadata:
+    """Build trust metadata for valid but below-threshold model output."""
+
+    return TrustMetadata(
+        origin=KnowledgeOrigin.LLM_EXTRACTED,
+        authority=AuthorityLevel.SECONDARY,
+        status=GovernanceStatus.QUARANTINED,
         ontology_version_id=ontology_version_id,
         created_at=extracted_at,
         extractor_version=extractor_version,

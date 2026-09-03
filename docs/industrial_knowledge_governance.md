@@ -70,6 +70,41 @@ fields are rejected. Valid output is marked `LLM_EXTRACTED + SECONDARY +
 CANDIDATE`; low-confidence output is quarantined rather than silently
 published.
 
+The upload workflow is resumable and idempotent. A stable operation key binds
+the request fingerprint, source lifecycle generation, active snapshot, T-Box,
+and per-Chunk outcomes. The ordinary ingestion pipeline receives a canonical
+empty graph extraction, so it can publish only the Document, immutable Version,
+Chunk, and Embedding. Separately cached ontology extraction artifacts are then
+converted into governed candidate revisions. Provider failures remain
+retryable; structural model failures are recorded as rejected outcomes.
+
+## Resolution, review, and publication
+
+Entity resolution is deliberately conservative. Exact canonical keys and a
+single unambiguous governed alias may produce an automatic link proposal.
+Canonical-name and similarity matches are review suggestions only, and
+homonyms or ambiguous aliases are conflicts. Every proposal records its rule
+and matcher versions plus the authorized evidence supporting the target; it
+never rewires graph records by itself.
+
+Review decisions create immutable record revisions through optimistic
+compare-and-swap. Reviewers may approve, reject, quarantine, or edit a bounded
+batch, and each decision records reviewer identity, time, and notes. Approval
+does not promote a secondary model record to authoritative status.
+
+Data visibility and action authority are independent. Access groups decide
+which evidence a principal may read, while explicit `knowledge:construct`,
+`knowledge:review`, and `knowledge:publish` capabilities authorize mutations.
+Holding a source access group alone never grants construction or approval
+authority.
+
+Publication is a separate atomic operation over approved revisions. It writes
+a content-addressed manifest, materializes only the validated records, and
+activates a monotonically versioned tenant publication. Rollback changes the
+active publication pointer while retaining all revisions, manifests, and
+activation history. Stale source snapshots, unauthorized evidence, and T-Box
+mismatches fail closed.
+
 ## Retrieval rule
 
 Normal retrieval may use only graph objects that are eligible under the
