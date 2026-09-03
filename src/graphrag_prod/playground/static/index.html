@@ -213,6 +213,18 @@
     .button:disabled { cursor: not-allowed; opacity: .47; }
     .mode-note { margin: 11px 0 0; color: var(--quiet); font-size: 10px; }
     .mode-note strong { color: var(--amber); }
+    .retrieval-settings { margin-top: 13px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+    .retrieval-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; cursor: pointer; color: var(--strong); font-size: 10px; font-weight: 720; list-style: none; }
+    .retrieval-settings > summary::-webkit-details-marker { display: none; }
+    .retrieval-settings > summary span { color: var(--quiet); font-family: var(--mono); font-size: 8px; font-weight: 500; }
+    .retrieval-settings-body { padding: 0 12px 12px; border-top: 1px solid var(--line); }
+    .retrieval-settings h3 { margin: 12px 0 8px; color: var(--muted); font-family: var(--mono); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+    .retrieval-settings-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .retrieval-settings-grid.version-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .retrieval-settings .field label { font-size: 8px; }
+    .retrieval-settings .field input, .retrieval-settings .field select { height: 34px; font-family: var(--mono); font-size: 9px; }
+    .retrieval-settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 11px; }
+    .retrieval-settings-toggles { display: flex; flex-wrap: wrap; gap: 14px; }
 
     .result-shell { margin-top: 18px; }
     .initial-state { padding: 38px 28px; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 55%, transparent); text-align: center; }
@@ -390,6 +402,8 @@
       .capability-list { justify-content: flex-start; }
       .graph-grid { grid-template-columns: 1fr; }
       .graph-card.wide { grid-column: auto; }
+      .retrieval-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .retrieval-settings-grid.version-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 560px) {
       .top-actions .api-link { display: none; }
@@ -402,6 +416,7 @@
       .result-tab { min-width: 100px; }
       .evidence-head { flex-direction: column; }
       .source-badges { align-self: flex-start; }
+      .retrieval-settings-grid { grid-template-columns: 1fr; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
@@ -463,6 +478,47 @@
               <button class="button primary" id="retrieve-button" type="button">检索相关上下文</button>
             </div>
           </div>
+          <details class="retrieval-settings" id="retrieval-settings">
+            <summary>高级检索参数 <span>所有输入仍受服务端硬上限和 ACL 约束</span></summary>
+            <div class="retrieval-settings-body">
+              <h3>版本过滤（留空表示当前全部 active 版本）</h3>
+              <div class="retrieval-settings-grid version-grid">
+                <div class="field"><label for="filter-document-ids">Document IDs（逗号或空格）</label><input class="retrieval-control" id="filter-document-ids" placeholder="document-id-1, document-id-2"></div>
+                <div class="field"><label for="filter-version-ids">Version IDs（逗号或空格）</label><input class="retrieval-control" id="filter-version-ids" placeholder="version-id-1, version-id-2"></div>
+                <div class="field"><label for="filter-published-before">发布截止时间（本地时间）</label><input class="retrieval-control" id="filter-published-before" type="datetime-local"></div>
+              </div>
+              <h3>召回、融合与上下文边界</h3>
+              <div class="retrieval-settings-grid">
+                <div class="field"><label for="limit-top_k">最终 Chunks</label><input class="retrieval-control" id="limit-top_k" data-retrieval-limit="top_k" type="number" min="1" max="20" step="1"></div>
+                <div class="field"><label for="limit-vector_recall_k">Vector recall K</label><input class="retrieval-control" id="limit-vector_recall_k" data-retrieval-limit="vector_recall_k" type="number" min="1" max="100" step="1"></div>
+                <div class="field"><label for="limit-bm25_recall_k">BM25 recall K</label><input class="retrieval-control" id="limit-bm25_recall_k" data-retrieval-limit="bm25_recall_k" type="number" min="1" max="100" step="1"></div>
+                <div class="field"><label for="limit-bm25_scan_k">BM25 scan K</label><input class="retrieval-control" id="limit-bm25_scan_k" data-retrieval-limit="bm25_scan_k" type="number" min="1" max="500" step="1"></div>
+                <div class="field"><label for="limit-seed_k">RRF seeds</label><input class="retrieval-control" id="limit-seed_k" data-retrieval-limit="seed_k" type="number" min="1" max="20" step="1"></div>
+                <div class="field"><label for="limit-candidate_limit">Candidate limit</label><input class="retrieval-control" id="limit-candidate_limit" data-retrieval-limit="candidate_limit" type="number" min="1" max="200" step="1"></div>
+                <div class="field"><label for="limit-anchor_k">Anchor K</label><input class="retrieval-control" id="limit-anchor_k" data-retrieval-limit="anchor_k" type="number" min="1" max="20" step="1"></div>
+                <div class="field"><label for="limit-adjacent_window">Adjacent window</label><input class="retrieval-control" id="limit-adjacent_window" data-retrieval-limit="adjacent_window" type="number" min="0" max="3" step="1"></div>
+                <div class="field"><label for="limit-max_context_chars">Context chars</label><input class="retrieval-control" id="limit-max_context_chars" data-retrieval-limit="max_context_chars" type="number" min="256" max="30000" step="1"></div>
+                <div class="field"><label for="limit-rrf_rank_constant">RRF rank constant</label><input class="retrieval-control" id="limit-rrf_rank_constant" data-retrieval-limit="rrf_rank_constant" type="number" min="1" max="1000" step="1"></div>
+                <div class="field"><label for="limit-minimum_vector_score">Minimum vector score</label><input class="retrieval-control" id="limit-minimum_vector_score" data-retrieval-limit="minimum_vector_score" type="number" min="0" max="1" step="0.01"></div>
+                <div class="field"><label for="limit-minimum_bm25_score">Minimum BM25 score</label><input class="retrieval-control" id="limit-minimum_bm25_score" data-retrieval-limit="minimum_bm25_score" type="number" min="0" max="1000000" step="0.01"></div>
+                <div class="field"><label for="limit-minimum_rrf_channels">Minimum RRF channels</label><select class="retrieval-control" id="limit-minimum_rrf_channels" data-retrieval-limit="minimum_rrf_channels"><option value="1">1 · 任一召回</option><option value="2">2 · 双路均命中</option></select></div>
+              </div>
+              <h3>有界图扩展与已发布图投影</h3>
+              <div class="retrieval-settings-grid">
+                <div class="field"><label for="limit-graph_entities_per_seed">Entities / seed</label><input class="retrieval-control" id="limit-graph_entities_per_seed" data-retrieval-limit="graph_entities_per_seed" type="number" min="1" max="50" step="1"></div>
+                <div class="field"><label for="limit-graph_edges_per_seed">Edges / seed</label><input class="retrieval-control" id="limit-graph_edges_per_seed" data-retrieval-limit="graph_edges_per_seed" type="number" min="1" max="200" step="1"></div>
+                <div class="field"><label for="limit-graph_candidates_per_seed">Candidates / seed</label><input class="retrieval-control" id="limit-graph_candidates_per_seed" data-retrieval-limit="graph_candidates_per_seed" type="number" min="1" max="50" step="1"></div>
+                <div class="field"><label for="graph-trust-policy">图投影信任策略</label><select class="retrieval-control graph-projection-control" id="graph-trust-policy"><option value="PUBLISHED_SECONDARY_INCLUSIVE">已发布权威 + 次权威</option><option value="AUTHORITATIVE_ONLY">仅权威实例</option></select></div>
+              </div>
+              <div class="retrieval-settings-actions">
+                <div class="retrieval-settings-toggles">
+                  <label class="checkbox-label"><input class="retrieval-control" id="include-graph" type="checkbox" checked> 在检索结果中返回已发布知识子图</label>
+                  <label class="checkbox-label"><input class="retrieval-control" id="limit-deduplicate_content" data-retrieval-limit="deduplicate_content" type="checkbox" checked> 去重相同 Chunk 内容</label>
+                </div>
+                <button class="button" id="retrieval-defaults-button" type="button">恢复检索默认值</button>
+              </div>
+            </div>
+          </details>
           <p class="mode-note" id="mode-note">预置问题运行 Vector + BM25 + RRF + RA；结果供后续大模型编排使用。</p>
         </section>
 
@@ -620,6 +676,9 @@
         retrieval: null,
         raw: null,
         busy: false,
+        identityEpoch: 0,
+        retrievalEpoch: 0,
+        retrievalController: null,
         view: 'retrieval',
         ontologies: [],
         reviews: [],
@@ -638,6 +697,8 @@
         summaryStatus: $('summary-status'), summaryChunks: $('summary-chunks'), summaryLatency: $('summary-latency'),
         summaryRevision: $('summary-revision'), evidenceList: $('evidence-list'),
         graphContent: $('graph-content'), traceContent: $('trace-content'), rawJson: $('raw-json'), toast: $('toast'),
+        includeGraph: $('include-graph'), graphTrustPolicy: $('graph-trust-policy'),
+        retrievalDefaults: $('retrieval-defaults-button'),
         ontologyEditor: $('ontology-editor'), ontologyList: $('ontology-list'),
         aboxEditor: $('abox-editor'), aboxOutput: $('abox-output'),
         constructionOutput: $('construction-output'), reviewList: $('review-list'),
@@ -651,7 +712,7 @@
       };
       const stageLabels = {
         vector_recall: 'Vector recall', bm25_recall: 'BM25 recall', seed_ranking: 'RRF seeds',
-        graph_expansion: 'Graph / RA expansion', candidate_vector_ranking: 'Candidate rerank', final_ranking: 'Final RRF ranking',
+        graph_expansion: 'Graph / RA expansion', candidate_vector_ranking: 'Candidate cosine ranking', final_ranking: 'Final RRF ranking',
       };
       const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
       const shortId = value => value ? `${String(value).slice(0, 8)}…${String(value).slice(-5)}` : '—';
@@ -760,12 +821,17 @@
         if (state.busy) return;
         const question = state.bootstrap?.questions.find(item => item.id === id);
         if (!question) return;
+        const identityChanged = elements.persona.value !== question.recommended_persona_id;
         state.selectedQuestion = question;
         elements.query.value = question.query;
         elements.persona.value = question.recommended_persona_id;
         $('governance-persona-select').value = question.recommended_persona_id;
-        renderIdentity();
-        updateMode();
+        if (identityChanged) handleIdentityChange();
+        else {
+          resetRetrievalResult();
+          renderIdentity();
+          updateMode();
+        }
         if (closeDrawer) {
           document.body.classList.remove('questions-open');
           $('questions-button')?.setAttribute('aria-expanded', 'false');
@@ -791,10 +857,11 @@
         return payload;
       }
 
-      async function sessionToken(personaId) {
+      async function sessionToken(personaId, {signal} = {}) {
         const payload = await jsonRequest('/playground/session', {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({persona_id: personaId}),
+          signal,
         });
         return payload.access_token;
       }
@@ -821,12 +888,74 @@
         element.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
       }
 
+      function retrievalControls() {
+        return [...document.querySelectorAll('.retrieval-control')];
+      }
+
+      function syncGraphControls() {
+        const graphEnabled = elements.includeGraph.checked;
+        document.querySelectorAll('.graph-projection-control').forEach(input => {
+          input.disabled = state.busy || !graphEnabled;
+        });
+      }
+
+      function resetRetrievalControls() {
+        const defaults = state.bootstrap?.defaults?.retrieval_limits || {};
+        document.querySelectorAll('[data-retrieval-limit]').forEach(input => {
+          const value = defaults[input.dataset.retrievalLimit];
+          if (input.type === 'checkbox') input.checked = Boolean(value);
+          else if (value != null) input.value = String(value);
+        });
+        $('filter-document-ids').value = '';
+        $('filter-version-ids').value = '';
+        $('filter-published-before').value = '';
+        elements.includeGraph.checked = true;
+        elements.graphTrustPolicy.value = 'PUBLISHED_SECONDARY_INCLUSIVE';
+        syncGraphControls();
+      }
+
+      function filterIds(element, label) {
+        const values = [...new Set(element.value.split(/[\s,]+/).map(value => value.trim()).filter(Boolean))];
+        if (values.length > 100) throw new Error(`${label}最多允许 100 个 ID`);
+        return values;
+      }
+
+      function versionFilter() {
+        const cutoffValue = $('filter-published-before').value;
+        const cutoff = cutoffValue ? new Date(cutoffValue) : null;
+        if (cutoff && Number.isNaN(cutoff.getTime())) throw new Error('发布截止时间无效');
+        const documentIds = filterIds($('filter-document-ids'), 'Document filter');
+        const versionIds = filterIds($('filter-version-ids'), 'Version filter');
+        if (documentIds.length + versionIds.length > 100) throw new Error('版本过滤合计最多允许 100 个 ID');
+        return {
+          document_ids: documentIds,
+          version_ids: versionIds,
+          published_at_or_before: cutoff ? cutoff.toISOString() : null,
+        };
+      }
+
+      function readRetrievalLimits() {
+        const limits = {};
+        document.querySelectorAll('[data-retrieval-limit]').forEach(input => {
+          if (input.type !== 'checkbox' && !input.value.trim()) throw new Error(`${input.dataset.retrievalLimit}不能为空`);
+          if (!input.checkValidity()) throw new Error(`${input.labels?.[0]?.textContent || input.dataset.retrievalLimit}超出允许范围`);
+          const value = Number(input.value);
+          if (input.type !== 'checkbox' && !Number.isFinite(value)) throw new Error(`${input.dataset.retrievalLimit}必须是数字`);
+          limits[input.dataset.retrievalLimit] = input.type === 'checkbox' ? input.checked : value;
+        });
+        if (limits.bm25_scan_k < limits.bm25_recall_k) throw new Error('BM25 scan K 不能小于 BM25 recall K');
+        if (limits.seed_k > limits.candidate_limit) throw new Error('RRF seeds 不能超过 Candidate limit');
+        if (limits.anchor_k > limits.top_k) throw new Error('Anchor K 不能超过最终 Chunks 数');
+        return limits;
+      }
+
       function requestPayload(queryText) {
         return {
           query_text: queryText,
-          limits: state.bootstrap.defaults.retrieval_limits,
-          include_graph: true,
-          graph_trust_policy: 'PUBLISHED_SECONDARY_INCLUSIVE',
+          version_filter: versionFilter(),
+          limits: readRetrievalLimits(),
+          include_graph: elements.includeGraph.checked,
+          graph_trust_policy: elements.graphTrustPolicy.value,
         };
       }
 
@@ -839,7 +968,8 @@
         elements.loading.classList.remove('hidden');
         elements.loadingTitle.textContent = '正在执行检索链';
         elements.query.disabled = true;
-        elements.persona.disabled = true;
+        retrievalControls().forEach(input => { input.disabled = true; });
+        elements.retrievalDefaults.disabled = true;
         updateMode();
       }
 
@@ -851,35 +981,83 @@
         elements.errorMessage.textContent = `${error.message}${requestId}`;
       }
 
-      function finishBusy() {
+      function finishBusy(expectedEpoch = state.retrievalEpoch) {
+        if (expectedEpoch !== state.retrievalEpoch) return;
         state.busy = false;
         elements.shell.setAttribute('aria-busy', 'false');
         elements.query.disabled = false;
-        elements.persona.disabled = false;
+        retrievalControls().forEach(input => { input.disabled = false; });
+        elements.retrievalDefaults.disabled = false;
+        syncGraphControls();
         updateMode();
+      }
+
+      function resetRetrievalResult() {
+        state.retrievalEpoch += 1;
+        state.retrievalController?.abort();
+        state.retrievalController = null;
+        state.retrieval = null;
+        state.raw = null;
+        state.busy = false;
+        elements.shell.setAttribute('aria-busy', 'false');
+        elements.loading.classList.add('hidden');
+        elements.error.classList.add('hidden');
+        elements.view.classList.add('hidden');
+        elements.initial.classList.remove('hidden');
+        elements.query.disabled = false;
+        retrievalControls().forEach(input => { input.disabled = false; });
+        elements.retrievalDefaults.disabled = false;
+        syncGraphControls();
+      }
+
+      function handleIdentityChange() {
+        state.identityEpoch += 1;
+        state.ontologies = [];
+        state.reviews = [];
+        state.publications = [];
+        state.approvedRevisions.clear();
+        elements.publicationRevisions.value = '';
+        resetRetrievalResult();
+        renderIdentity();
+        updateMode();
+        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadReviews(), loadHistory()]);
       }
 
       async function run() {
         const queryText = elements.query.value.trim();
         if (state.busy || !queryText) return;
+        let payload;
+        try {
+          payload = requestPayload(queryText);
+        } catch (error) {
+          showToast(error.message);
+          return;
+        }
         const personaId = elements.persona.value;
         const identity = state.bootstrap.personas.find(item => item.id === personaId);
+        const requestEpoch = ++state.retrievalEpoch;
+        const controller = new AbortController();
+        state.retrievalController = controller;
         showLoading();
         const started = performance.now();
         try {
-          const token = await sessionToken(personaId);
+          const token = await sessionToken(personaId, {signal: controller.signal});
           const headers = {'Authorization': `Bearer ${token}`, 'Content-Type':'application/json'};
-          state.retrieval = await jsonRequest('/v1/retrieval', {
-            method: 'POST', headers, body: JSON.stringify(requestPayload(queryText)),
+          const retrieval = await jsonRequest('/v1/retrieval', {
+            method: 'POST', headers, body: JSON.stringify(payload), signal: controller.signal,
           });
+          if (requestEpoch !== state.retrievalEpoch) return;
+          state.retrieval = retrieval;
           const latency = performance.now() - started;
-          state.raw = {query: queryText, identity, retrieval: state.retrieval};
+          state.raw = {query: queryText, identity, request: payload, retrieval: state.retrieval};
           renderResult(latency);
           setConnection('ready', '内核运行正常');
         } catch (error) {
+          if (requestEpoch !== state.retrievalEpoch || error.name === 'AbortError') return;
           showError(error);
         } finally {
-          finishBusy();
+          if (requestEpoch === state.retrievalEpoch) state.retrievalController = null;
+          finishBusy(requestEpoch);
         }
       }
 
@@ -1033,8 +1211,8 @@
         }
       }
 
-      function activeOntology() {
-        return state.ontologies.find(item => item.status === 'PUBLISHED') || null;
+      function activeOntology(key) {
+        return state.ontologies.find(item => item.key === key && item.status === 'PUBLISHED') || null;
       }
 
       function renderOntologies() {
@@ -1053,11 +1231,14 @@
       }
 
       async function loadOntologies() {
+        const identityEpoch = state.identityEpoch;
         try {
           const payload = await apiRequest('/v1/ontologies?limit=100');
+          if (identityEpoch !== state.identityEpoch) return;
           state.ontologies = Array.isArray(payload.items) ? payload.items : [];
           renderOntologies();
         } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
           elements.ontologyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
       }
@@ -1081,7 +1262,7 @@
         try {
           const payload = await apiRequest(`/v1/ontologies/${encodeURIComponent(item.tbox_id)}:publish`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({expected_active_tbox_id: activeOntology()?.tbox_id || null}),
+            body: JSON.stringify({expected_active_tbox_id: activeOntology(item.key)?.tbox_id || null}),
           });
           showToast(`T-Box 已发布：${shortId(payload.tbox_id)}`);
           await loadOntologies();
@@ -1206,11 +1387,14 @@
       }
 
       async function loadReviews() {
+        const identityEpoch = state.identityEpoch;
         try {
           const payload = await apiRequest('/v1/knowledge/review-queue?status=CANDIDATE&status=QUARANTINED&limit=100');
+          if (identityEpoch !== state.identityEpoch) return;
           state.reviews = Array.isArray(payload.items) ? payload.items : [];
           renderReviews();
         } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
           elements.reviewList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
       }
@@ -1271,11 +1455,14 @@
       }
 
       async function loadHistory() {
+        const identityEpoch = state.identityEpoch;
         try {
           const payload = await apiRequest('/v1/knowledge/publications?limit=100');
+          if (identityEpoch !== state.identityEpoch) return;
           state.publications = Array.isArray(payload.items) ? payload.items : [];
           renderHistory();
         } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
           elements.historyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
       }
@@ -1370,6 +1557,7 @@
           $('stat-tenants').textContent = number(counts.tenants);
           elements.persona.innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
           $('governance-persona-select').innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
+          resetRetrievalControls();
           const classes = [...new Set(bootstrap.questions.map(item => item.question_class))];
           elements.classFilter.insertAdjacentHTML('beforeend', classes.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(classLabels[value] || value)}</option>`).join(''));
           selectQuestion(bootstrap.defaults.question_id, {closeDrawer:false});
@@ -1386,21 +1574,24 @@
       elements.search.addEventListener('input', renderQuestions);
       elements.classFilter.addEventListener('change', renderQuestions);
       elements.resultFilter.addEventListener('change', renderQuestions);
-      elements.query.addEventListener('input', updateMode);
-      elements.persona.addEventListener('change', () => {
-        state.ontologies = [];
-        state.reviews = [];
-        state.publications = [];
-        state.approvedRevisions.clear();
-        elements.publicationRevisions.value = '';
-        renderIdentity(); updateMode();
-        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadReviews(), loadHistory()]);
+      elements.query.addEventListener('input', () => {
+        if (state.retrieval || state.raw) resetRetrievalResult();
+        updateMode();
       });
+      elements.persona.addEventListener('change', handleIdentityChange);
       $('governance-persona-select').addEventListener('change', event => {
         elements.persona.value = event.currentTarget.value;
         elements.persona.dispatchEvent(new Event('change'));
       });
       elements.retrieve.addEventListener('click', () => run());
+      retrievalControls().forEach(input => input.addEventListener('change', () => {
+        if (state.retrieval || state.raw) resetRetrievalResult();
+        if (input === elements.includeGraph) syncGraphControls();
+      }));
+      elements.retrievalDefaults.addEventListener('click', () => {
+        resetRetrievalControls();
+        if (state.retrieval || state.raw) resetRetrievalResult();
+      });
       elements.query.addEventListener('keydown', event => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') run();
       });

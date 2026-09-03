@@ -354,6 +354,46 @@ class PlaygroundRuntimeTests(unittest.TestCase):
             "tenant-alpha"
         )
 
+    def test_ui_exposes_bounded_retrieval_contract_and_discards_stale_results(
+        self,
+    ) -> None:
+        source = (
+            Path(__file__).parents[2]
+            / "src"
+            / "graphrag_prod"
+            / "playground"
+            / "static"
+            / "index.html"
+        ).read_text()
+
+        for field in asdict(PLAYGROUND_RETRIEVAL_LIMITS):
+            self.assertIn(f'data-retrieval-limit="{field}"', source)
+        for control_id in (
+            "filter-document-ids",
+            "filter-version-ids",
+            "filter-published-before",
+            "include-graph",
+            "graph-trust-policy",
+            "retrieval-defaults-button",
+        ):
+            self.assertIn(f'id="{control_id}"', source)
+        self.assertIn("version_filter: versionFilter()", source)
+        self.assertIn("limits: readRetrievalLimits()", source)
+        self.assertIn("include_graph: elements.includeGraph.checked", source)
+        self.assertIn("graph_trust_policy: elements.graphTrustPolicy.value", source)
+        self.assertIn("const requestEpoch = ++state.retrievalEpoch", source)
+        self.assertIn("const controller = new AbortController()", source)
+        self.assertIn("state.retrievalController?.abort()", source)
+        self.assertIn("if (requestEpoch !== state.retrievalEpoch) return", source)
+        self.assertIn(
+            "elements.persona.addEventListener('change', handleIdentityChange)",
+            source,
+        )
+        self.assertIn("if (identityEpoch !== state.identityEpoch) return", source)
+        self.assertIn("activeOntology(item.key)?.tbox_id", source)
+        self.assertIn("Candidate cosine ranking", source)
+        self.assertNotIn("Candidate rerank", source)
+
     def test_routes_serve_self_contained_ui_and_no_store_sessions(self) -> None:
         app = FastAPI()
         attach_playground_routes(app, self.catalog)

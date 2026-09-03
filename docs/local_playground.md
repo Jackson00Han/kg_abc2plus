@@ -89,7 +89,10 @@ The page shows:
 - the published, trust-aware one-hop knowledge subgraph connected to selected
   Chunks, including entities, relationship/literal assertions, exact evidence,
   authority, origin, status, and confidence;
-- Vector, BM25, RRF, graph expansion, reranking, and final-ranking traces;
+- Vector, BM25, RRF, bounded graph expansion, candidate cosine ranking, and
+  final-ranking traces;
+- an advanced retrieval panel for document/version cutoffs, every bounded
+  retrieval limit, graph inclusion, and authoritative-only graph projection;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a
