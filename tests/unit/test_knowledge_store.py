@@ -6,6 +6,7 @@ import dataclasses
 import unittest
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.knowledge import (
     ABoxRecordBatch,
     AssertionRecord,
@@ -28,6 +29,26 @@ from tests.fixtures.knowledge import KNOWLEDGE_TIME as NOW, make_knowledge_batch
 
 def _batch(*, authoritative: bool = True) -> ABoxRecordBatch:
     return make_knowledge_batch(authoritative=authoritative)
+
+
+def _typed_literal_batch(*, canonical_value: str = "Apple") -> ABoxRecordBatch:
+    batch = _batch(authoritative=True)
+    source = batch.assertions[0]
+    literal = TypedLiteralValue(
+        datatype="STRING",
+        typed_value="Apple",
+        raw_value="Apple",
+        canonical_value=canonical_value,
+    )
+    assertion = dataclasses.replace(
+        source,
+        predicate="DISPLAY_NAME",
+        object_entity=None,
+        object_mention_revision_id=None,
+        literal_value="Apple",
+        literal_semantics=literal,
+    )
+    return dataclasses.replace(batch, assertions=(assertion,))
 
 
 class _Result:
@@ -82,12 +103,20 @@ class _WriteTx:
                     {
                         "name": "Company",
                         "namespaces": ["ticker"],
-                        "literal_predicates": ["DISPLAY_NAME"],
+                        "literal_properties": [
+                            {
+                                "name": "DISPLAY_NAME",
+                                "datatype": "STRING",
+                                "required": False,
+                                "cardinality": "ZERO_OR_ONE",
+                                "unit": None,
+                            }
+                        ],
                     },
                     {
                         "name": "Product",
                         "namespaces": ["apple-product"],
-                        "literal_predicates": [],
+                        "literal_properties": [],
                     },
                 )
             )
@@ -272,6 +301,8 @@ def _assertion_properties(record: AssertionRecord) -> dict[str, object]:
         )
     else:
         properties["literal_value"] = record.literal_value
+        if record.literal_semantics is not None:
+            properties.update(record.literal_semantics.to_flat_properties())
     return properties
 
 
@@ -524,6 +555,79 @@ class Neo4jKnowledgeStoreUnitTests(unittest.TestCase):
             any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
         )
 
+    def test_typed_literal_is_server_normalized_and_written_as_flat_scalars(
+        self,
+    ) -> None:
+        batch = _typed_literal_batch()
+        driver = _WriteDriver(batch)
+        Neo4jKnowledgeStore(driver).import_authoritative(batch)
+
+        write = next(
+            parameters
+            for query, parameters in driver.tx.queries
+            if "CREATE (revision:GovernedAssertionRevision" in query
+        )
+        properties = write["properties"]
+        self.assertIsInstance(properties, dict)
+        assert isinstance(properties, dict)
+        self.assertEqual(properties["literal_datatype"], "STRING")
+        self.assertEqual(properties["literal_typed_value"], "Apple")
+        self.assertEqual(properties["literal_raw_value"], "Apple")
+        self.assertEqual(properties["literal_canonical_value"], "Apple")
+        self.assertTrue(
+            all(
+                not isinstance(value, (dict, list))
+                for key, value in properties.items()
+                if key.startswith("literal_")
+            )
+        )
+
+    def test_new_literal_write_cannot_bypass_typed_semantics(self) -> None:
+        typed = _typed_literal_batch()
+        legacy_literal = dataclasses.replace(
+            typed.assertions[0],
+            literal_semantics=None,
+        )
+        batch = dataclasses.replace(typed, assertions=(legacy_literal,))
+        driver = _WriteDriver(batch)
+
+        with self.assertRaisesRegex(KnowledgeSchemaError, "typed semantics"):
+            Neo4jKnowledgeStore(driver).import_authoritative(batch)
+
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
+        )
+
+    def test_forged_canonical_literal_and_single_value_conflict_fail_closed(
+        self,
+    ) -> None:
+        forged = _typed_literal_batch(canonical_value="Forged")
+        driver = _WriteDriver(forged)
+        with self.assertRaisesRegex(KnowledgeSchemaError, "server normalization"):
+            Neo4jKnowledgeStore(driver).import_authoritative(forged)
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
+        )
+
+        batch = _typed_literal_batch()
+        first = batch.assertions[0]
+        second_record_id = knowledge_record_id(
+            batch.tenant_id,
+            "ASSERTION",
+            "second-display-name",
+        )
+        second = dataclasses.replace(
+            first,
+            revision=RecordRevision.next(second_record_id, 0),
+        )
+        conflicting = dataclasses.replace(batch, assertions=(first, second))
+        driver = _WriteDriver(conflicting)
+        with self.assertRaisesRegex(KnowledgeSchemaError, "single-valued"):
+            Neo4jKnowledgeStore(driver).import_authoritative(conflicting)
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
+        )
+
     def test_reads_are_tenant_acl_and_status_scoped_with_published_default(self) -> None:
         mention = _batch(authoritative=True).mentions[0]
         driver = _ReadDriver(_mention_properties(mention))
@@ -563,6 +667,45 @@ class Neo4jKnowledgeStoreUnitTests(unittest.TestCase):
         self.assertEqual(parameters["record_id"], assertion.record_id)
         self.assertEqual(parameters["statuses"], ["CANDIDATE"])
         self.assertGreaterEqual(query.count("any(group IN $groups"), 3)
+
+    def test_assertion_read_round_trips_optional_typed_literal_semantics(self) -> None:
+        assertion = _typed_literal_batch().assertions[0]
+        driver = _ReadDriver(_assertion_properties(assertion))
+        principal = Principal(
+            "reviewer",
+            assertion.tenant_id,
+            frozenset({"finance-readers"}),
+        )
+
+        returned = Neo4jKnowledgeStore(driver).get_assertion(
+            principal,
+            assertion.record_id,
+        )
+
+        self.assertEqual(returned, assertion)
+        assert returned is not None
+        self.assertEqual(returned.literal_semantics, assertion.literal_semantics)
+
+    def test_legacy_untyped_literal_remains_readable(self) -> None:
+        assertion = dataclasses.replace(
+            _typed_literal_batch().assertions[0],
+            literal_semantics=None,
+        )
+        driver = _ReadDriver(_assertion_properties(assertion))
+        principal = Principal(
+            "reviewer",
+            assertion.tenant_id,
+            frozenset({"finance-readers"}),
+        )
+
+        returned = Neo4jKnowledgeStore(driver).get_assertion(
+            principal,
+            assertion.record_id,
+        )
+
+        self.assertEqual(returned, assertion)
+        assert returned is not None
+        self.assertIsNone(returned.literal_semantics)
 
 
 if __name__ == "__main__":

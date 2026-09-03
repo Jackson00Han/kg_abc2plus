@@ -12,12 +12,14 @@ import neo4j
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import knowledge_snapshot_id
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.knowledge import (
     GovernanceStatus,
     KnowledgeConflict,
     KnowledgeEvidenceError,
+    KnowledgeSchemaError,
     Neo4jKnowledgeStore,
 )
 from graphrag_prod.ontology import (
@@ -256,6 +258,84 @@ class Neo4jKnowledgeStoreIntegrationTests(unittest.TestCase):
         )
         with self.assertRaises(KnowledgeEvidenceError):
             self.store.import_authoritative(invalid)
+        records, _, _ = self.driver.execute_query(
+            "MATCH (head:KnowledgeRecordHead) RETURN count(head) AS count",
+            database_=self.database,
+        )
+        self.assertEqual(records[0]["count"], 0)
+
+    def test_typed_literal_round_trips_as_flat_auditable_properties(self) -> None:
+        batch = make_knowledge_batch(
+            tenant_id=self.tenant_id,
+            ontology_version_id=self.tbox_id,
+        )
+        source = batch.assertions[0]
+        literal = TypedLiteralValue(
+            datatype="STRING",
+            typed_value="Apple",
+            raw_value="Apple",
+            canonical_value="Apple",
+        )
+        assertion = dataclasses.replace(
+            source,
+            predicate="DISPLAY_NAME",
+            object_entity=None,
+            object_mention_revision_id=None,
+            literal_value="Apple",
+            literal_semantics=literal,
+        )
+        typed_batch = dataclasses.replace(batch, assertions=(assertion,))
+
+        self.store.import_authoritative(typed_batch)
+
+        returned = self.store.get_assertion(self.principal, assertion.record_id)
+        self.assertEqual(returned, assertion)
+        records, _, _ = self.driver.execute_query(
+            """
+            MATCH (revision:GovernedAssertionRevision {
+                tenant_id: $tenant_id,
+                revision_id: $revision_id
+            })
+            RETURN revision.literal_datatype AS datatype,
+                   revision.literal_typed_value AS typed_value,
+                   revision.literal_raw_value AS raw_value,
+                   revision.literal_canonical_value AS canonical_value
+            """,
+            tenant_id=self.tenant_id,
+            revision_id=assertion.revision_id,
+            database_=self.database,
+        )
+        self.assertEqual(
+            dict(records[0]),
+            {
+                "datatype": "STRING",
+                "typed_value": "Apple",
+                "raw_value": "Apple",
+                "canonical_value": "Apple",
+            },
+        )
+
+    def test_untyped_literal_cannot_use_legacy_decoder_to_bypass_new_write(
+        self,
+    ) -> None:
+        batch = make_knowledge_batch(
+            tenant_id=self.tenant_id,
+            ontology_version_id=self.tbox_id,
+        )
+        source = batch.assertions[0]
+        assertion = dataclasses.replace(
+            source,
+            predicate="DISPLAY_NAME",
+            object_entity=None,
+            object_mention_revision_id=None,
+            literal_value="Apple",
+            literal_semantics=None,
+        )
+        untyped_batch = dataclasses.replace(batch, assertions=(assertion,))
+
+        with self.assertRaisesRegex(KnowledgeSchemaError, "typed semantics"):
+            self.store.import_authoritative(untyped_batch)
+
         records, _, _ = self.driver.execute_query(
             "MATCH (head:KnowledgeRecordHead) RETURN count(head) AS count",
             database_=self.database,

@@ -35,6 +35,7 @@ from .models import (
     EntityMention,
     GraphPipelineProfile,
     KnowledgeSnapshot,
+    TypedLiteralValue,
 )
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "EntityMention",
     "GraphPipelineProfile",
     "KnowledgeSnapshot",
+    "TypedLiteralValue",
     "Principal",
     "assertion_id",
     "active_retrieval_scope",

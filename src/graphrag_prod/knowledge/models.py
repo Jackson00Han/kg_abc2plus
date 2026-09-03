@@ -15,6 +15,7 @@ import json
 from uuid import uuid5
 
 from graphrag_prod.domain.ids import ID_NAMESPACE, entity_id as make_entity_id
+from graphrag_prod.domain.models import TypedLiteralValue
 
 from .trust import (
     AuthorityLevel,
@@ -72,6 +73,28 @@ def _confidence(value: object) -> float:
     if not 0.0 <= result <= 1.0:
         raise ValueError("confidence must be between zero and one")
     return result
+
+
+def _contains_exact_token(evidence: str, token: str) -> bool:
+    start = 0
+    while True:
+        index = evidence.find(token, start)
+        if index < 0:
+            return False
+        end = index + len(token)
+        left_ok = (
+            not token[0].isalnum()
+            or index == 0
+            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
+        )
+        right_ok = (
+            not token[-1].isalnum()
+            or end == len(evidence)
+            or not (evidence[end].isalnum() or evidence[end] == "_")
+        )
+        if left_ok and right_ok:
+            return True
+        start = index + 1
 
 
 def _groups(values: object) -> frozenset[str]:
@@ -288,6 +311,7 @@ class AssertionRecord:
     object_entity: EntityIdentity | None = None
     object_mention_revision_id: str | None = None
     literal_value: str | None = None
+    literal_semantics: TypedLiteralValue | None = None
 
     def __post_init__(self) -> None:
         tenant_id = _required_text(self.tenant_id, "tenant_id")
@@ -310,6 +334,8 @@ class AssertionRecord:
             raise ValueError("assertion requires exactly one entity or literal object")
         if has_entity:
             assert self.object_entity is not None
+            if self.literal_semantics is not None:
+                raise ValueError("entity assertion must not carry literal semantics")
             if self.object_entity.tenant_id != tenant_id:
                 raise ValueError("assertion object must share the record tenant")
             object.__setattr__(
@@ -324,9 +350,28 @@ class AssertionRecord:
             raise ValueError("literal assertion must not reference an object mention")
         else:
             literal = _required_text(self.literal_value, "literal_value")
-            if literal not in self.evidence.quoted_text:
+            if not _contains_exact_token(self.evidence.quoted_text, literal):
                 raise ValueError("literal_value must occur in the exact evidence text")
             object.__setattr__(self, "literal_value", literal)
+            if self.literal_semantics is not None:
+                if not isinstance(self.literal_semantics, TypedLiteralValue):
+                    raise TypeError("literal_semantics must be TypedLiteralValue")
+                if self.literal_semantics.raw_value != literal:
+                    raise ValueError("literal_value must equal typed raw_value")
+                tokens = (
+                    self.literal_semantics.raw_unit,
+                    self.literal_semantics.raw_valid_from,
+                    self.literal_semantics.raw_valid_to,
+                    self.literal_semantics.raw_observed_at,
+                )
+                if any(
+                    token is not None
+                    and not _contains_exact_token(self.evidence.quoted_text, token)
+                    for token in tokens
+                ):
+                    raise ValueError(
+                        "typed literal source tokens must occur in exact evidence text"
+                    )
 
         object.__setattr__(self, "confidence", _confidence(self.confidence))
         created_at = _aware(self.created_at, "created_at")
@@ -344,6 +389,14 @@ class AssertionRecord:
     @property
     def object_kind(self) -> str:
         return "entity" if self.object_entity is not None else "literal"
+
+    @property
+    def object_reference(self) -> str:
+        if self.object_entity is not None:
+            return self.object_entity.entity_id
+        if self.literal_semantics is not None:
+            return self.literal_semantics.identity_reference
+        return self.literal_value or ""
 
 
 @dataclass(frozen=True, slots=True)

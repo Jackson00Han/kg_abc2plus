@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import copy
 import unittest
 
 from graphrag_prod.domain import (
     Assertion,
     Entity,
     EntityMention,
+    TypedLiteralValue,
     assertion_id,
     entity_id,
     mention_id,
@@ -143,6 +145,83 @@ class ArtifactCodecTests(unittest.TestCase):
                 for assertion in second_decoded[2]
             )
         )
+
+    def test_v2_round_trips_typed_literal_semantics_and_v1_remains_readable(
+        self,
+    ) -> None:
+        bundle = make_bundles()[0]
+        original = bundle.assertion
+        if original is None:
+            raise AssertionError("fixture bundle requires its metric assertion")
+        literal = TypedLiteralValue(
+            datatype="INTEGER",
+            typed_value=391,
+            raw_value="391",
+            canonical_value="391",
+        )
+        typed = replace(
+            original,
+            assertion_id=assertion_id(
+                original.tenant_id,
+                original.subject_entity_id,
+                original.predicate,
+                "literal",
+                literal.identity_reference,
+                original.evidence_chunk_id,
+                original.evidence_char_start,
+                original.evidence_char_end,
+                original.extractor_version,
+                original.schema_version,
+            ),
+            literal_semantics=literal,
+        )
+        typed_bundle = replace(bundle, assertion=typed)
+
+        payload = encode_extraction(typed_bundle)
+        self.assertEqual(payload["format_version"], 2)
+        decoded = decode_extraction(
+            payload,
+            tenant_id=bundle.chunk.tenant_id,
+            chunk=bundle.chunk,
+            profile=make_profile(),
+        )
+        self.assertEqual(decoded[2][0].literal_semantics, literal)
+        self.assertEqual(decoded[2][0].object_reference, literal.identity_reference)
+
+        legacy = encode_extraction(bundle)
+        legacy["format_version"] = 1
+        for item in legacy["assertions"]:
+            item.pop("literal_semantics")
+        legacy_decoded = decode_extraction(
+            legacy,
+            tenant_id=bundle.chunk.tenant_id,
+            chunk=bundle.chunk,
+            profile=make_profile(),
+        )
+        self.assertIsNone(legacy_decoded[2][0].literal_semantics)
+        self.assertEqual(legacy_decoded[2][0].literal_value, "391")
+
+        tampered = copy.deepcopy(payload)
+        tampered["assertions"][0]["literal_semantics"][
+            "canonical_value"
+        ] = "392"
+        with self.assertRaisesRegex(ValueError, "must match"):
+            decode_extraction(
+                tampered,
+                tenant_id=bundle.chunk.tenant_id,
+                chunk=bundle.chunk,
+                profile=make_profile(),
+            )
+
+        malformed = copy.deepcopy(legacy)
+        malformed["assertions"][0]["literal_value"] = None
+        with self.assertRaisesRegex(ValueError, "literal assertion"):
+            decode_extraction(
+                malformed,
+                tenant_id=bundle.chunk.tenant_id,
+                chunk=bundle.chunk,
+                profile=make_profile(),
+            )
 
 
 if __name__ == "__main__":

@@ -70,6 +70,53 @@ fields are rejected. Valid output is marked `LLM_EXTRACTED + SECONDARY +
 CANDIDATE`; low-confidence output is quarantined rather than silently
 published.
 
+### Typed property facts, units, and time
+
+Entity properties are extracted as evidence-bearing literal assertions, never
+as a free-form property bag. Each model proposal names an entity-local
+reference and a property declared on that entity's T-Box type, and supplies an
+exact raw literal, optional exact source unit, optional `valid_from`,
+`valid_to`, and `observed_at` tokens, one exact evidence range, and confidence.
+The evidence range must enclose the entity mention and every non-null source
+token. Document metadata is not accepted as an implicit temporal qualifier.
+
+The server parses the declared datatype and validates cardinality before a
+candidate can leave extraction. Numeric units are parsed by the pinned Pint
+unit registry and converted to the T-Box's canonical unit; incompatible,
+missing, and unexpected units fail closed. Decimal arithmetic is used during
+conversion, and dates and date-times require strict ISO 8601/RFC 3339 source
+text. Both source and canonical representations are retained:
+
+- `literal_datatype`, `literal_typed_value`, and `literal_canonical_value`;
+- `literal_raw_value`, `literal_raw_unit`, and `literal_canonical_unit`;
+- canonical UTC validity/observation instants plus their exact raw source
+  tokens.
+
+These fields form part of the Assertion's stable identity, review revision,
+portable extraction artifact, and publication materialization. Neo4j stores
+them as flat scalar Assertion properties; it does not store a nested object.
+Extraction artifact format v2 carries the structured mapping, while the reader
+continues to decode legacy v1 artifacts as untyped literals. Invalid datatype,
+unit, span, time range, cardinality, or fabricated qualifier findings are
+explicitly rejected; low-confidence property facts enter quarantine.
+
+Legacy compatibility is read/replay-only. Every newly persisted literal
+candidate, authoritative import, human-review edit, approved revision, and
+published revision must carry server-validated typed semantics. An old
+untyped `PUBLISHED` revision may remain in or be restored from its historical
+publication manifest, but it cannot be used to create a new untyped revision.
+This explicit gate prevents the legacy decoder from becoming a datatype or
+unit-validation bypass.
+
+At the service boundary, authoritative literal input should provide the exact
+`raw_literal`, optional raw unit and raw temporal tokens, plus the evidence
+range containing all supplied tokens. Clients do not provide trusted typed or
+canonical values. The server loads the active T-Box `PropertyDefinition`,
+normalizes those raw values, constructs `TypedLiteralValue`, and only then
+calls the knowledge store. Until an API exposes that raw-source contract,
+untyped authoritative literal imports intentionally fail closed; relationship
+assertions and entity mentions are unaffected.
+
 The upload workflow is resumable and idempotent. A stable operation key binds
 the request fingerprint, source lifecycle generation, active snapshot, T-Box,
 and per-Chunk outcomes. The ordinary ingestion pipeline receives a canonical

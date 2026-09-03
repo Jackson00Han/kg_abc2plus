@@ -426,6 +426,10 @@ def _build_payload(plan: IngestionPlan, now: datetime) -> _Payload:
                 "schema_version": assertion.schema_version,
                 "confidence": assertion.confidence,
             }
+            if assertion.literal_semantics is not None:
+                assertion_identity.update(
+                    assertion.literal_semantics.to_flat_properties()
+                )
             assertion_rows.append(
                 _node_row(
                     assertion.assertion_id,

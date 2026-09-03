@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Any
 
 from graphrag_prod.domain.ids import (
@@ -18,6 +19,7 @@ from graphrag_prod.domain.models import (
     Entity,
     EntityMention,
     GraphPipelineProfile,
+    TypedLiteralValue,
 )
 from graphrag_prod.graph.provenance import ProvenanceBundle
 
@@ -52,6 +54,11 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
                 else None
             ),
             "literal_value": assertion.literal_value,
+            "literal_semantics": (
+                None
+                if assertion.literal_semantics is None
+                else assertion.literal_semantics.to_mapping()
+            ),
             "relative_start": assertion.evidence_char_start - bundle.chunk.char_start,
             "relative_end": assertion.evidence_char_end - bundle.chunk.char_start,
             "confidence": assertion.confidence,
@@ -60,7 +67,7 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
         for assertion in bundle.all_assertions
     ]
     return {
-        "format_version": 1,
+        "format_version": 2,
         "entities": [
             {
                 "entity_type": entity.entity_type,
@@ -103,6 +110,12 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
                 item["object_type"] or "",
                 item["object_key"] or "",
                 item["literal_value"] or "",
+                json.dumps(
+                    item["literal_semantics"],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 item["confidence"],
                 item["accepted"],
             ),
@@ -118,7 +131,8 @@ def decode_extraction(
     profile: GraphPipelineProfile,
 ) -> tuple[tuple[Entity, ...], tuple[EntityMention, ...], tuple[Assertion, ...]]:
     """Rebind a cached relative artifact to a stable chunk in a new version."""
-    if payload.get("format_version") != 1:
+    format_version = payload.get("format_version")
+    if format_version not in {1, 2}:
         raise ValueError("unsupported extraction artifact format")
     entities: list[Entity] = []
     entities_by_key: dict[tuple[str, str], Entity] = {}
@@ -184,12 +198,31 @@ def decode_extraction(
             if object_entity is None:
                 raise ValueError("assertion object is absent from artifact entities")
         literal = item.get("literal_value")
+        if object_entity is not None and literal is not None:
+            raise ValueError("artifact assertion cannot contain entity and literal objects")
+        if object_entity is None and (
+            not isinstance(literal, str) or not literal.strip()
+        ):
+            raise ValueError("artifact literal assertion requires a non-empty string")
+        literal_semantics = (
+            TypedLiteralValue.from_mapping(item["literal_semantics"])
+            if format_version == 2 and item.get("literal_semantics") is not None
+            else None
+        )
+        if object_entity is not None and literal_semantics is not None:
+            raise ValueError("artifact entity assertion cannot carry literal semantics")
         start = chunk.char_start + int(item["relative_start"])
         end = chunk.char_start + int(item["relative_end"])
         predicate = str(item["predicate"])
         object_kind = "entity" if object_entity is not None else "literal"
         object_reference = (
-            object_entity.entity_id if object_entity is not None else str(literal or "")
+            object_entity.entity_id
+            if object_entity is not None
+            else (
+                literal_semantics.identity_reference
+                if literal_semantics is not None
+                else str(literal or "")
+            )
         )
         assertions.append(
             Assertion(
@@ -218,7 +251,10 @@ def decode_extraction(
                 object_entity_id=(
                     None if object_entity is None else object_entity.entity_id
                 ),
-                literal_value=None if object_entity is not None else str(literal),
+                literal_value=None if object_entity is not None else literal,
+                literal_semantics=(
+                    None if object_entity is not None else literal_semantics
+                ),
             )
         )
     return tuple(entities), tuple(mentions), tuple(assertions)

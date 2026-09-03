@@ -7,6 +7,12 @@ from datetime import datetime
 from typing import Any, Iterable, Protocol
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.ontology.models import (
+    Cardinality,
+    PropertyDataType,
+    PropertyDefinition,
+)
 
 from .models import (
     ABoxRecordBatch,
@@ -201,6 +207,10 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
     object_kind = properties["object_kind"]
     if object_kind not in {"entity", "literal"}:
         raise KnowledgeStoreError("stored assertion object_kind is invalid")
+    try:
+        literal_semantics = TypedLiteralValue.from_flat_properties(properties)
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeStoreError("stored typed literal semantics are invalid") from exc
     return AssertionRecord(
         revision=_stored_revision(properties),
         tenant_id=tenant_id,
@@ -222,7 +232,74 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
             else None
         ),
         literal_value=(properties.get("literal_value") if object_kind == "literal" else None),
+        literal_semantics=(
+            literal_semantics if object_kind == "literal" else None
+        ),
     )
+
+
+def _property_definition(properties: dict[str, Any]) -> PropertyDefinition:
+    """Rebuild the immutable T-Box property contract returned by Neo4j."""
+
+    try:
+        return PropertyDefinition(
+            name=properties["name"],
+            datatype=PropertyDataType(properties["datatype"]),
+            required=properties["required"],
+            cardinality=Cardinality(properties["cardinality"]),
+            unit=properties.get("unit"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise KnowledgeSchemaError(
+            "published T-Box contains an invalid property definition"
+        ) from exc
+
+
+def _validate_literal_semantics(
+    literal: TypedLiteralValue | None,
+    definition: PropertyDefinition,
+    *,
+    allow_persisted_legacy: bool = False,
+) -> None:
+    """Recompute supplied semantics so canonical values are never trusted.
+
+    ``None`` is only accepted at explicitly marked read/replay boundaries for
+    assertions persisted before typed literal semantics existed.  New writes
+    must never use that compatibility path.
+    """
+
+    if literal is None:
+        if allow_persisted_legacy:
+            return
+        raise KnowledgeSchemaError(
+            "new literal assertions require server-validated typed semantics"
+        )
+    # Import lazily to avoid a package initialization cycle: construction's
+    # workflow itself depends on this persistence module.
+    from graphrag_prod.construction.literals import (  # noqa: PLC0415
+        LiteralNormalizationError,
+        TBoxLiteralNormalizer,
+    )
+
+    try:
+        normalizer = TBoxLiteralNormalizer()
+        normalizer.validate_declared_unit(definition)
+        normalized = normalizer.normalize(
+            definition,
+            raw_value=literal.raw_value,
+            raw_unit=literal.raw_unit,
+            valid_from=literal.raw_valid_from,
+            valid_to=literal.raw_valid_to,
+            observed_at=literal.raw_observed_at,
+        )
+    except LiteralNormalizationError as exc:
+        raise KnowledgeSchemaError(
+            f"typed literal violates T-Box property semantics: {exc.code}"
+        ) from exc
+    if normalized != literal:
+        raise KnowledgeSchemaError(
+            "typed literal canonical or temporal values do not match server normalization"
+        )
 
 
 def _normalized_statuses(
@@ -418,7 +495,11 @@ class Neo4jKnowledgeStore:
                                (property:TBoxPropertyDefinition)
                 RETURN entity_type.name AS name,
                        entity_type.canonical_key_namespaces AS namespaces,
-                       collect(property.name) AS literal_predicates
+                       collect(
+                           CASE WHEN property IS NULL THEN NULL
+                           ELSE properties(property)
+                           END
+                       ) AS literal_properties
                 """,
                 tenant_id=batch.tenant_id,
                 tbox_id=batch.ontology_version_id,
@@ -427,7 +508,13 @@ class Neo4jKnowledgeStore:
         entity_contracts = {
             row["name"]: {
                 "namespaces": frozenset(row["namespaces"] or ()),
-                "literal_predicates": frozenset(row["literal_predicates"] or ()),
+                "literal_properties": {
+                    definition.name: definition
+                    for definition in (
+                        _property_definition(dict(item))
+                        for item in (row["literal_properties"] or ())
+                    )
+                },
             }
             for row in entity_rows
         }
@@ -497,15 +584,28 @@ class Neo4jKnowledgeStore:
                     f"canonical key namespace for {entity.entity_type!r} is not allowed"
                 )
 
+        literal_counts: dict[tuple[str, str], int] = {}
         for assertion in batch.assertions:
             if assertion.object_entity is None:
-                allowed = entity_contracts[assertion.subject.entity_type][
-                    "literal_predicates"
+                definitions = entity_contracts[assertion.subject.entity_type][
+                    "literal_properties"
                 ]
-                if assertion.predicate not in allowed:
+                definition = definitions.get(assertion.predicate)
+                if definition is None:
                     raise KnowledgeSchemaError(
                         f"literal predicate {assertion.predicate!r} is not declared "
                         f"on {assertion.subject.entity_type!r}"
+                    )
+                _validate_literal_semantics(
+                    assertion.literal_semantics,
+                    definition,
+                )
+                key = (assertion.subject.entity_id, assertion.predicate)
+                literal_counts[key] = literal_counts.get(key, 0) + 1
+                if definition.cardinality.single_valued and literal_counts[key] > 1:
+                    raise KnowledgeSchemaError(
+                        f"literal predicate {assertion.predicate!r} exceeds its "
+                        "single-valued T-Box cardinality in this batch"
                     )
                 continue
             endpoints = relationship_contracts.get(assertion.predicate)
@@ -729,6 +829,16 @@ class Neo4jKnowledgeStore:
         *,
         link_canonical_entities: bool,
     ) -> None:
+        # AssertionRecord deliberately remains able to decode legacy stored
+        # revisions.  The write boundary is stricter: every newly-created
+        # literal revision must carry the complete server-normalized contract.
+        if (
+            assertion.object_entity is None
+            and assertion.literal_semantics is None
+        ):
+            raise KnowledgeSchemaError(
+                "new literal assertion revisions require typed semantics"
+            )
         properties = {
             **_revision_properties(assertion),
             **_entity_properties(assertion.subject, "subject_"),
@@ -738,6 +848,8 @@ class Neo4jKnowledgeStore:
             "literal_value": assertion.literal_value,
             "object_mention_revision_id": assertion.object_mention_revision_id,
         }
+        if assertion.literal_semantics is not None:
+            properties.update(assertion.literal_semantics.to_flat_properties())
         if assertion.object_entity is not None:
             properties.update(_entity_properties(assertion.object_entity, "object_"))
         properties = _properties(**properties)

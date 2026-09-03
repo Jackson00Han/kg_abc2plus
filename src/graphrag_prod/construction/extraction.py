@@ -22,6 +22,7 @@ from graphrag_prod.domain.models import (
     Entity,
     EntityMention,
     GraphPipelineProfile,
+    TypedLiteralValue,
 )
 from graphrag_prod.graph.governance import normalize_display_name
 from graphrag_prod.ingestion.pipeline import ExtractionOutput
@@ -30,7 +31,9 @@ from graphrag_prod.knowledge.trust import (
     GovernanceStatus,
     KnowledgeOrigin,
 )
-from graphrag_prod.ontology.models import TBoxStatus, TBoxVersion
+from graphrag_prod.ontology.models import Cardinality, TBoxStatus, TBoxVersion
+
+from .literals import LiteralNormalizationError, TBoxLiteralNormalizer
 
 
 _LOCAL_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -44,17 +47,20 @@ class ExtractionLimits:
     max_entities: int = 100
     max_mentions_per_entity: int = 50
     max_relationships: int = 200
+    max_property_facts: int = 200
     max_response_chars: int = 1_000_000
     max_output_tokens: int = 16_384
     timeout_seconds: float = 60.0
     minimum_mention_confidence: float = 0.7
     minimum_relationship_confidence: float = 0.7
+    minimum_property_confidence: float = 0.7
 
     def __post_init__(self) -> None:
         for name in (
             "max_entities",
             "max_mentions_per_entity",
             "max_relationships",
+            "max_property_facts",
             "max_response_chars",
             "max_output_tokens",
         ):
@@ -71,6 +77,7 @@ class ExtractionLimits:
         for name in (
             "minimum_mention_confidence",
             "minimum_relationship_confidence",
+            "minimum_property_confidence",
         ):
             value = getattr(self, name)
             if (
@@ -164,6 +171,17 @@ class _RelationshipCandidate:
     confidence: float
 
 
+@dataclass(frozen=True, slots=True)
+class _PropertyFactCandidate:
+    entity_reference: str
+    property_name: str
+    literal: TypedLiteralValue
+    evidence_text: str
+    evidence_start: int
+    evidence_end: int
+    confidence: float
+
+
 def _strict_object(
     value: object,
     *,
@@ -224,6 +242,57 @@ def _required_string(
         )
         return None
     return value
+
+
+def _optional_exact_string(
+    value: object,
+    *,
+    path: str,
+    findings: list[ExtractionFinding],
+    max_length: int,
+) -> str | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > max_length
+    ):
+        findings.append(
+            ExtractionFinding(
+                "INVALID_STRING",
+                "REJECT",
+                path,
+                "must be null or a bounded exact source string without edge whitespace",
+            )
+        )
+        return None
+    return value
+
+
+def _contains_exact_token(evidence: str, token: str) -> bool:
+    """Require a verbatim token occurrence, not a substring inside another word."""
+
+    start = 0
+    while True:
+        index = evidence.find(token, start)
+        if index < 0:
+            return False
+        end = index + len(token)
+        left_ok = (
+            not token[0].isalnum()
+            or index == 0
+            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
+        )
+        right_ok = (
+            not token[-1].isalnum()
+            or end == len(evidence)
+            or not (evidence[end].isalnum() or evidence[end] == "_")
+        )
+        if left_ok and right_ok:
+            return True
+        start = index + 1
 
 
 def _offset(
@@ -351,6 +420,16 @@ class OpenAICompatibleOntologyExtractor:
         self.provisional_namespace = provisional_namespace
         self.use_json_schema_response = use_json_schema_response
         self.seed = seed
+        self._literal_normalizer = TBoxLiteralNormalizer()
+        for entity_type in self.active_tbox.entity_types:
+            for definition in entity_type.properties:
+                try:
+                    self._literal_normalizer.validate_declared_unit(definition)
+                except LiteralNormalizationError as exc:
+                    raise ValueError(
+                        f"active T-Box property {entity_type.name}.{definition.name} "
+                        f"has an invalid canonical unit: {exc.detail}"
+                    ) from exc
 
     def __call__(
         self,
@@ -445,11 +524,20 @@ class OpenAICompatibleOntologyExtractor:
                 )
             ) from exc
 
-        entities, relationships, findings = self._validate_payload(payload, chunk)
+        entities, relationships, property_facts, findings = self._validate_payload(
+            payload,
+            chunk,
+        )
         rejected = tuple(item for item in findings if item.action == "REJECT")
         if rejected:
             raise ExtractionRejected(tuple(findings))
-        output = self._to_domain_output(entities, relationships, chunk, profile)
+        output = self._to_domain_output(
+            entities,
+            relationships,
+            property_facts,
+            chunk,
+            profile,
+        )
         status = (
             GovernanceStatus.QUARANTINED
             if any(item.action == "QUARANTINE" for item in findings)
@@ -475,10 +563,24 @@ class OpenAICompatibleOntologyExtractor:
         relationship_types = [
             item.name for item in self.active_tbox.relationship_types
         ]
+        property_names = sorted(
+            {
+                definition.name
+                for item in self.active_tbox.entity_types
+                for definition in item.properties
+            }
+        )
+        property_name_schema: dict[str, Any] = {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+        }
+        if property_names:
+            property_name_schema["enum"] = property_names
         return {
             "type": "object",
             "additionalProperties": False,
-            "required": ["entities", "relationships"],
+            "required": ["entities", "relationships", "property_facts"],
             "properties": {
                 "entities": {
                     "type": "array",
@@ -548,6 +650,75 @@ class OpenAICompatibleOntologyExtractor:
                         },
                     },
                 },
+                "property_facts": {
+                    "type": "array",
+                    "maxItems": (
+                        self.limits.max_property_facts if property_names else 0
+                    ),
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": [
+                            "entity_ref",
+                            "property",
+                            "raw_literal",
+                            "unit",
+                            "valid_from",
+                            "valid_to",
+                            "observed_at",
+                            "evidence",
+                            "confidence",
+                        ],
+                        "properties": {
+                            "entity_ref": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128,
+                            },
+                            "property": property_name_schema,
+                            "raw_literal": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 4096,
+                            },
+                            "unit": {
+                                "type": ["string", "null"],
+                                "minLength": 1,
+                                "maxLength": 64,
+                            },
+                            "valid_from": {
+                                "type": ["string", "null"],
+                                "minLength": 1,
+                                "maxLength": 64,
+                            },
+                            "valid_to": {
+                                "type": ["string", "null"],
+                                "minLength": 1,
+                                "maxLength": 64,
+                            },
+                            "observed_at": {
+                                "type": ["string", "null"],
+                                "minLength": 1,
+                                "maxLength": 64,
+                            },
+                            "evidence": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["text", "start", "end"],
+                                "properties": {
+                                    "text": {"type": "string", "minLength": 1},
+                                    "start": {"type": "integer", "minimum": 0},
+                                    "end": {"type": "integer", "minimum": 1},
+                                },
+                            },
+                            "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
+                        },
+                    },
+                },
             },
         }
 
@@ -589,9 +760,16 @@ class OpenAICompatibleOntologyExtractor:
             "the declared entity and relationship types and directions. All start/end "
             "offsets are zero-based, half-open, and relative to chunk_text. Mention "
             "and evidence text must exactly equal chunk_text[start:end]. Relationship "
-            "evidence must contain mentions of both endpoints. Return JSON matching "
+            "evidence must contain mentions of both endpoints. Property facts are "
+            "entity attributes declared by that entity type; raw_literal contains only "
+            "the exact source value token, unit contains the exact source unit token, "
+            "and every non-null temporal qualifier must be exact RFC3339 text present "
+            "inside the fact evidence. Do not infer time from document metadata. A fact "
+            "evidence span must enclose its entity mention and every literal, unit, and "
+            "temporal token. Return JSON matching "
             "the response schema. Never return database IDs, canonical IDs, keys, "
-            "properties, commentary, or Markdown. Local ref values only connect items "
+            "undeclared property bags, commentary, or Markdown. Local ref values only "
+            "connect items "
             "inside this one response. An empty extraction is valid when unsupported.\n"
             + json.dumps(ontology, ensure_ascii=False, sort_keys=True)
         )
@@ -615,19 +793,21 @@ class OpenAICompatibleOntologyExtractor:
     ) -> tuple[
         tuple[_EntityCandidate, ...],
         tuple[_RelationshipCandidate, ...],
+        tuple[_PropertyFactCandidate, ...],
         list[ExtractionFinding],
     ]:
         findings: list[ExtractionFinding] = []
         root = _strict_object(
             payload,
-            required=frozenset({"entities", "relationships"}),
+            required=frozenset({"entities", "relationships", "property_facts"}),
             path="$",
             findings=findings,
         )
         if root is None:
-            return (), (), findings
+            return (), (), (), findings
         raw_entities = root["entities"]
         raw_relationships = root["relationships"]
+        raw_property_facts = root["property_facts"]
         if not isinstance(raw_entities, list):
             findings.append(
                 ExtractionFinding(
@@ -642,6 +822,16 @@ class OpenAICompatibleOntologyExtractor:
                 )
             )
             raw_relationships = []
+        if not isinstance(raw_property_facts, list):
+            findings.append(
+                ExtractionFinding(
+                    "INVALID_ARRAY",
+                    "REJECT",
+                    "$.property_facts",
+                    "must be an array",
+                )
+            )
+            raw_property_facts = []
         if len(raw_entities) > self.limits.max_entities:
             findings.append(
                 ExtractionFinding(
@@ -658,6 +848,15 @@ class OpenAICompatibleOntologyExtractor:
                     "REJECT",
                     "$.relationships",
                     "too many relationships",
+                )
+            )
+        if len(raw_property_facts) > self.limits.max_property_facts:
+            findings.append(
+                ExtractionFinding(
+                    "PROPERTY_FACT_LIMIT_EXCEEDED",
+                    "REJECT",
+                    "$.property_facts",
+                    "too many property facts",
                 )
             )
 
@@ -1002,12 +1201,295 @@ class OpenAICompatibleOntologyExtractor:
                         confidence,
                     )
                 )
-        return tuple(entities), tuple(relationships), findings
+        property_facts = self._validate_property_facts(
+            raw_property_facts[: self.limits.max_property_facts],
+            by_reference,
+            chunk,
+            findings,
+        )
+        return tuple(entities), tuple(relationships), property_facts, findings
+
+    def _validate_property_facts(
+        self,
+        raw_property_facts: list[object],
+        by_reference: dict[str, _EntityCandidate],
+        chunk: Chunk,
+        findings: list[ExtractionFinding],
+    ) -> tuple[_PropertyFactCandidate, ...]:
+        definitions = {
+            entity_type.name: {
+                definition.name: definition for definition in entity_type.properties
+            }
+            for entity_type in self.active_tbox.entity_types
+        }
+        facts: list[_PropertyFactCandidate] = []
+        seen: set[tuple[str, str, str, int, int]] = set()
+        counts: dict[tuple[str, str], int] = {}
+        definition_by_key: dict[tuple[str, str], Any] = {}
+        required = frozenset(
+            {
+                "entity_ref",
+                "property",
+                "raw_literal",
+                "unit",
+                "valid_from",
+                "valid_to",
+                "observed_at",
+                "evidence",
+                "confidence",
+            }
+        )
+        for index, raw_fact in enumerate(raw_property_facts):
+            path = f"$.property_facts[{index}]"
+            fact = _strict_object(
+                raw_fact,
+                required=required,
+                path=path,
+                findings=findings,
+            )
+            if fact is None:
+                continue
+            entity_reference = _required_string(
+                fact["entity_ref"],
+                path=f"{path}.entity_ref",
+                findings=findings,
+                max_length=128,
+            )
+            property_name = _required_string(
+                fact["property"],
+                path=f"{path}.property",
+                findings=findings,
+                max_length=128,
+            )
+            raw_literal = _optional_exact_string(
+                fact["raw_literal"],
+                path=f"{path}.raw_literal",
+                findings=findings,
+                max_length=4_096,
+            )
+            unit = _optional_exact_string(
+                fact["unit"],
+                path=f"{path}.unit",
+                findings=findings,
+                max_length=64,
+            )
+            valid_from = _optional_exact_string(
+                fact["valid_from"],
+                path=f"{path}.valid_from",
+                findings=findings,
+                max_length=64,
+            )
+            valid_to = _optional_exact_string(
+                fact["valid_to"],
+                path=f"{path}.valid_to",
+                findings=findings,
+                max_length=64,
+            )
+            observed_at = _optional_exact_string(
+                fact["observed_at"],
+                path=f"{path}.observed_at",
+                findings=findings,
+                max_length=64,
+            )
+            confidence = _confidence(
+                fact["confidence"],
+                path=f"{path}.confidence",
+                findings=findings,
+            )
+            evidence = _strict_object(
+                fact["evidence"],
+                required=frozenset({"text", "start", "end"}),
+                path=f"{path}.evidence",
+                findings=findings,
+            )
+            if evidence is None:
+                continue
+            evidence_text = _required_string(
+                evidence["text"],
+                path=f"{path}.evidence.text",
+                findings=findings,
+                max_length=len(chunk.text),
+            )
+            evidence_start = _offset(
+                evidence["start"],
+                path=f"{path}.evidence.start",
+                findings=findings,
+            )
+            evidence_end = _offset(
+                evidence["end"],
+                path=f"{path}.evidence.end",
+                findings=findings,
+            )
+            if None in {
+                entity_reference,
+                property_name,
+                raw_literal,
+                confidence,
+                evidence_text,
+                evidence_start,
+                evidence_end,
+            }:
+                continue
+            assert entity_reference is not None and property_name is not None
+            assert raw_literal is not None and confidence is not None
+            assert evidence_text is not None
+            assert evidence_start is not None and evidence_end is not None
+            entity = by_reference.get(entity_reference)
+            definition = (
+                None
+                if entity is None
+                else definitions.get(entity.entity_type, {}).get(property_name)
+            )
+            valid = True
+            if entity is None:
+                findings.append(
+                    ExtractionFinding(
+                        "UNKNOWN_ENTITY_REFERENCE",
+                        "REJECT",
+                        f"{path}.entity_ref",
+                        "property fact must reference a response entity",
+                    )
+                )
+                valid = False
+            elif definition is None:
+                findings.append(
+                    ExtractionFinding(
+                        "PROPERTY_NOT_ALLOWED",
+                        "REJECT",
+                        f"{path}.property",
+                        f"{property_name!r} is not declared on {entity.entity_type!r}",
+                    )
+                )
+                valid = False
+            if (
+                evidence_start >= evidence_end
+                or evidence_end > len(chunk.text)
+                or chunk.text[evidence_start:evidence_end] != evidence_text
+            ):
+                findings.append(
+                    ExtractionFinding(
+                        "EVIDENCE_SPAN_MISMATCH",
+                        "REJECT",
+                        f"{path}.evidence",
+                        "fact evidence text must exactly match its relative Chunk span",
+                    )
+                )
+                valid = False
+            if entity is not None and not any(
+                evidence_start <= mention.start and mention.end <= evidence_end
+                for mention in entity.mentions
+            ):
+                findings.append(
+                    ExtractionFinding(
+                        "ENDPOINT_OUTSIDE_EVIDENCE",
+                        "REJECT",
+                        f"{path}.entity_ref",
+                        "fact evidence must enclose an entity mention",
+                    )
+                )
+                valid = False
+            for token_name, token in (
+                ("raw_literal", raw_literal),
+                ("unit", unit),
+                ("valid_from", valid_from),
+                ("valid_to", valid_to),
+                ("observed_at", observed_at),
+            ):
+                if token is not None and not _contains_exact_token(evidence_text, token):
+                    findings.append(
+                        ExtractionFinding(
+                            "FACT_TOKEN_OUTSIDE_EVIDENCE",
+                            "REJECT",
+                            f"{path}.{token_name}",
+                            "fact tokens must occur verbatim inside exact evidence",
+                        )
+                    )
+                    valid = False
+            literal: TypedLiteralValue | None = None
+            if definition is not None:
+                try:
+                    literal = self._literal_normalizer.normalize(
+                        definition,
+                        raw_value=raw_literal,
+                        raw_unit=unit,
+                        valid_from=valid_from,
+                        valid_to=valid_to,
+                        observed_at=observed_at,
+                    )
+                except LiteralNormalizationError as exc:
+                    findings.append(
+                        ExtractionFinding(
+                            exc.code,
+                            "REJECT",
+                            path,
+                            exc.detail,
+                        )
+                    )
+                    valid = False
+            if confidence < self.limits.minimum_property_confidence:
+                findings.append(
+                    ExtractionFinding(
+                        "LOW_PROPERTY_CONFIDENCE",
+                        "QUARANTINE",
+                        f"{path}.confidence",
+                        "property confidence is below the review threshold",
+                    )
+                )
+            if literal is None:
+                valid = False
+            if not valid or literal is None:
+                continue
+            fact_key = (
+                entity_reference,
+                property_name,
+                literal.identity_reference,
+                evidence_start,
+                evidence_end,
+            )
+            if fact_key in seen:
+                findings.append(
+                    ExtractionFinding(
+                        "DUPLICATE_PROPERTY_FACT",
+                        "REJECT",
+                        path,
+                        "duplicate property fact and evidence span",
+                    )
+                )
+                continue
+            seen.add(fact_key)
+            cardinality_key = (entity_reference, property_name)
+            counts[cardinality_key] = counts.get(cardinality_key, 0) + 1
+            definition_by_key[cardinality_key] = definition
+            facts.append(
+                _PropertyFactCandidate(
+                    entity_reference,
+                    property_name,
+                    literal,
+                    evidence_text,
+                    evidence_start,
+                    evidence_end,
+                    confidence,
+                )
+            )
+
+        for key, count in counts.items():
+            definition = definition_by_key[key]
+            if definition.cardinality in {Cardinality.ZERO_OR_ONE, Cardinality.ONE} and count > 1:
+                findings.append(
+                    ExtractionFinding(
+                        "PROPERTY_CARDINALITY_CONFLICT",
+                        "REJECT",
+                        "$.property_facts",
+                        f"{key[0]}.{key[1]} exceeds its single-valued cardinality",
+                    )
+                )
+        return tuple(facts)
 
     def _to_domain_output(
         self,
         entities: tuple[_EntityCandidate, ...],
         relationships: tuple[_RelationshipCandidate, ...],
+        property_facts: tuple[_PropertyFactCandidate, ...],
         chunk: Chunk,
         profile: GraphPipelineProfile,
     ) -> ExtractionOutput:
@@ -1123,6 +1605,39 @@ class OpenAICompatibleOntologyExtractor:
                     # LLM results remain review candidates; publication code must
                     # never infer approval from a syntactically valid response.
                     accepted=False,
+                )
+            )
+        for candidate in property_facts:
+            subject_id = entity_ids[candidate.entity_reference]
+            evidence_start = chunk.char_start + candidate.evidence_start
+            evidence_end = chunk.char_start + candidate.evidence_end
+            identifier = assertion_id(
+                chunk.tenant_id,
+                subject_id,
+                candidate.property_name,
+                "literal",
+                candidate.literal.identity_reference,
+                chunk.chunk_id,
+                evidence_start,
+                evidence_end,
+                profile.extractor_signature,
+                profile.schema_signature,
+            )
+            assertions.append(
+                Assertion(
+                    assertion_id=identifier,
+                    tenant_id=chunk.tenant_id,
+                    subject_entity_id=subject_id,
+                    predicate=candidate.property_name,
+                    evidence_chunk_id=chunk.chunk_id,
+                    evidence_char_start=evidence_start,
+                    evidence_char_end=evidence_end,
+                    extractor_version=profile.extractor_signature,
+                    schema_version=profile.schema_signature,
+                    confidence=candidate.confidence,
+                    accepted=False,
+                    literal_value=candidate.literal.raw_value,
+                    literal_semantics=candidate.literal,
                 )
             )
         return ExtractionOutput(

@@ -17,7 +17,10 @@ from graphrag_prod.domain import content_checksum, pipeline_profile_id
 from graphrag_prod.domain.models import Chunk, GraphPipelineProfile
 from graphrag_prod.knowledge import AuthorityLevel, GovernanceStatus, KnowledgeOrigin
 from graphrag_prod.ontology.models import (
+    Cardinality,
     EntityTypeDefinition,
+    PropertyDataType,
+    PropertyDefinition,
     RelationshipTypeDefinition,
     TBoxStatus,
     TBoxVersion,
@@ -35,7 +38,25 @@ def _tbox(*, status: TBoxStatus = TBoxStatus.PUBLISHED) -> TBoxVersion:
         status=status,
         entity_types=(
             EntityTypeDefinition("Company", ("company-id",)),
-            EntityTypeDefinition("Asset", ("asset-id",)),
+            EntityTypeDefinition(
+                "Asset",
+                ("asset-id",),
+                properties=(
+                    PropertyDefinition(
+                        "pressure",
+                        PropertyDataType.DECIMAL,
+                        False,
+                        Cardinality.ZERO_OR_ONE,
+                        "kPa",
+                    ),
+                    PropertyDefinition(
+                        "serialNumber",
+                        PropertyDataType.STRING,
+                        False,
+                        Cardinality.ZERO_OR_ONE,
+                    ),
+                ),
+            ),
         ),
         relationship_types=(
             RelationshipTypeDefinition("OWNS", ("Company",), ("Asset",)),
@@ -75,6 +96,64 @@ def _chunk() -> Chunk:
     )
 
 
+PROPERTY_SOURCE = (
+    "Pump-7 pressure was 100 psi valid 2025-01-01T00:00:00Z to "
+    "2026-01-01T00:00:00Z observed 2025-02-01T00:00:00Z."
+)
+
+
+def _property_chunk() -> Chunk:
+    return Chunk(
+        chunk_id="chunk-industrial-property-1",
+        version_id="version-industrial-1",
+        document_id="document-industrial-1",
+        tenant_id="tenant-industrial",
+        access_policy_id="tenant-industrial:engineers",
+        access_policy_version=1,
+        access_groups=frozenset({"engineers"}),
+        ordinal=1,
+        text=PROPERTY_SOURCE,
+        checksum=content_checksum(PROPERTY_SOURCE),
+        char_start=200,
+        char_end=200 + len(PROPERTY_SOURCE),
+        page_number=1,
+        section="Telemetry",
+        splitter_version="bounded-boundary:v1",
+    )
+
+
+def _property_payload() -> dict[str, object]:
+    return {
+        "entities": [
+            {
+                "ref": "asset",
+                "type": "Asset",
+                "mentions": [
+                    {"text": "Pump-7", "start": 0, "end": 6, "confidence": 0.99}
+                ],
+            }
+        ],
+        "relationships": [],
+        "property_facts": [
+            {
+                "entity_ref": "asset",
+                "property": "pressure",
+                "raw_literal": "100",
+                "unit": "psi",
+                "valid_from": "2025-01-01T00:00:00Z",
+                "valid_to": "2026-01-01T00:00:00Z",
+                "observed_at": "2025-02-01T00:00:00Z",
+                "evidence": {
+                    "text": PROPERTY_SOURCE,
+                    "start": 0,
+                    "end": len(PROPERTY_SOURCE),
+                },
+                "confidence": 0.97,
+            }
+        ],
+    }
+
+
 def _valid_payload() -> dict[str, object]:
     return {
         "entities": [
@@ -107,6 +186,7 @@ def _valid_payload() -> dict[str, object]:
                 "confidence": 0.95,
             }
         ],
+        "property_facts": [],
     }
 
 
@@ -326,6 +406,106 @@ class ConstructionExtractionTests(unittest.TestCase):
                 profile=_profile(),
             )
         self.assertIn("UNKNOWN_FIELDS", {item.code for item in captured.exception.findings})
+
+    def test_property_fact_is_typed_unit_normalized_temporal_and_auditable(self) -> None:
+        extractor, completions = _extractor(_property_payload())
+
+        result = extractor.extract_audited(
+            artifact_id="artifact-property",
+            input_hash="input-property",
+            chunk=_property_chunk(),
+            profile=_profile(),
+        )
+
+        self.assertEqual(result.status, GovernanceStatus.CANDIDATE)
+        self.assertEqual(len(result.output.assertions), 1)
+        assertion = result.output.assertions[0]
+        self.assertEqual(assertion.predicate, "pressure")
+        self.assertEqual(assertion.literal_value, "100")
+        self.assertIsNotNone(assertion.literal_semantics)
+        literal = assertion.literal_semantics
+        assert literal is not None
+        self.assertEqual(literal.datatype, "DECIMAL")
+        self.assertEqual(literal.raw_unit, "psi")
+        self.assertEqual(literal.canonical_unit, "kPa")
+        self.assertTrue(literal.canonical_value.startswith("689.475729"))
+        self.assertEqual(literal.raw_valid_from, "2025-01-01T00:00:00Z")
+        self.assertEqual(literal.valid_from.isoformat(), "2025-01-01T00:00:00+00:00")
+        self.assertEqual(literal.identity_reference, assertion.object_reference)
+        self.assertEqual(
+            (assertion.evidence_char_start, assertion.evidence_char_end),
+            (200, 200 + len(PROPERTY_SOURCE)),
+        )
+
+        schema = completions.calls[0]["response_format"]["json_schema"]["schema"]  # type: ignore[index]
+        self.assertIn("property_facts", schema["required"])  # type: ignore[index]
+        property_schema = schema["properties"]["property_facts"]["items"]  # type: ignore[index]
+        self.assertIn("pressure", property_schema["properties"]["property"]["enum"])
+
+    def test_property_type_unit_and_temporal_fabrication_are_rejected(self) -> None:
+        cases = []
+        unknown = copy.deepcopy(_property_payload())
+        unknown["property_facts"][0]["property"] = "temperature"  # type: ignore[index]
+        cases.append((unknown, "PROPERTY_NOT_ALLOWED"))
+
+        incompatible = copy.deepcopy(_property_payload())
+        incompatible["property_facts"][0]["unit"] = "s"  # type: ignore[index]
+        cases.append((incompatible, "INCOMPATIBLE_UNIT"))
+
+        wrong_type = copy.deepcopy(_property_payload())
+        wrong_type["property_facts"][0]["raw_literal"] = "Pump-7"  # type: ignore[index]
+        cases.append((wrong_type, "INVALID_LITERAL_VALUE"))
+
+        fabricated_time = copy.deepcopy(_property_payload())
+        fabricated_time["property_facts"][0]["observed_at"] = "2030-01-01T00:00:00Z"  # type: ignore[index]
+        cases.append((fabricated_time, "FACT_TOKEN_OUTSIDE_EVIDENCE"))
+
+        invalid_range = copy.deepcopy(_property_payload())
+        invalid_range["property_facts"][0]["valid_from"] = "2026-01-01T00:00:00Z"  # type: ignore[index]
+        invalid_range["property_facts"][0]["valid_to"] = "2025-01-01T00:00:00Z"  # type: ignore[index]
+        cases.append((invalid_range, "INVALID_TEMPORAL_RANGE"))
+
+        for payload, code in cases:
+            with self.subTest(code=code):
+                extractor, _ = _extractor(payload)
+                with self.assertRaises(ExtractionRejected) as captured:
+                    extractor(
+                        artifact_id="artifact-property",
+                        input_hash="input-property",
+                        chunk=_property_chunk(),
+                        profile=_profile(),
+                    )
+                self.assertIn(code, {item.code for item in captured.exception.findings})
+
+    def test_single_value_cardinality_conflict_and_low_confidence_are_explicit(self) -> None:
+        conflict = copy.deepcopy(_property_payload())
+        second = copy.deepcopy(conflict["property_facts"][0])  # type: ignore[index]
+        second["raw_literal"] = "2025"
+        conflict["property_facts"].append(second)  # type: ignore[union-attr]
+        extractor, _ = _extractor(conflict)
+        with self.assertRaises(ExtractionRejected) as captured:
+            extractor(
+                artifact_id="artifact-property",
+                input_hash="input-property",
+                chunk=_property_chunk(),
+                profile=_profile(),
+            )
+        self.assertIn(
+            "PROPERTY_CARDINALITY_CONFLICT",
+            {item.code for item in captured.exception.findings},
+        )
+
+        low = copy.deepcopy(_property_payload())
+        low["property_facts"][0]["confidence"] = 0.2  # type: ignore[index]
+        extractor, _ = _extractor(low)
+        result = extractor.extract_audited(
+            artifact_id="artifact-property",
+            input_hash="input-property",
+            chunk=_property_chunk(),
+            profile=_profile(),
+        )
+        self.assertEqual(result.status, GovernanceStatus.QUARANTINED)
+        self.assertIn("LOW_PROPERTY_CONFIDENCE", {item.code for item in result.findings})
 
 
 if __name__ == "__main__":

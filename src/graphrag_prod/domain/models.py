@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from numbers import Real
 
 from .ids import (
@@ -35,6 +36,14 @@ def _aware(value: datetime, name: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
     return value
+
+
+def _optional_aware(value: datetime | None, name: str) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        raise TypeError(f"{name} must be a datetime or None")
+    return _aware(value, name)
 
 
 def _groups(values: frozenset[str]) -> frozenset[str]:
@@ -374,6 +383,288 @@ class ChunkEmbedding:
         return content_checksum(payload)
 
 
+_LITERAL_DATATYPES = frozenset(
+    {
+        "STRING",
+        "INTEGER",
+        "FLOAT",
+        "DECIMAL",
+        "BOOLEAN",
+        "DATE",
+        "DATETIME",
+        "DURATION",
+        "URI",
+        "JSON",
+    }
+)
+_NUMERIC_LITERAL_DATATYPES = frozenset({"INTEGER", "FLOAT", "DECIMAL"})
+_RFC3339_LITERAL = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TypedLiteralValue:
+    """Immutable typed and canonical semantics for one source literal token.
+
+    Neo4j adapters flatten these fields onto Assertion nodes.  The canonical
+    value is always a deterministic string so precise decimals and temporal
+    values never depend on a driver's lossy scalar coercion.
+    """
+
+    datatype: str
+    typed_value: str | int | float | bool
+    raw_value: str
+    canonical_value: str
+    raw_unit: str | None = None
+    canonical_unit: str | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    observed_at: datetime | None = None
+    raw_valid_from: str | None = None
+    raw_valid_to: str | None = None
+    raw_observed_at: str | None = None
+
+    def __post_init__(self) -> None:
+        datatype = _text(self.datatype, "literal datatype").upper()
+        if datatype not in _LITERAL_DATATYPES:
+            raise ValueError("literal datatype is unsupported")
+        object.__setattr__(self, "datatype", datatype)
+        if not isinstance(self.raw_value, str):
+            raise TypeError("raw_value must be a string")
+        if not isinstance(self.canonical_value, str):
+            raise TypeError("canonical_value must be a string")
+        object.__setattr__(self, "raw_value", _exact_text(self.raw_value, "raw_value"))
+        object.__setattr__(
+            self,
+            "canonical_value",
+            _exact_text(self.canonical_value, "canonical_value"),
+        )
+
+        typed = self.typed_value
+        if datatype == "BOOLEAN":
+            valid_typed = isinstance(typed, bool)
+        elif datatype == "INTEGER":
+            valid_typed = isinstance(typed, int) and not isinstance(typed, bool)
+        elif datatype == "FLOAT":
+            valid_typed = (
+                isinstance(typed, float)
+                and math.isfinite(typed)
+            )
+        else:
+            valid_typed = isinstance(typed, str) and bool(typed)
+        if not valid_typed:
+            raise TypeError(f"typed_value is incompatible with {datatype}")
+        if datatype == "INTEGER" and self.canonical_value != str(typed):
+            raise ValueError("INTEGER canonical_value must match typed_value")
+        if datatype == "FLOAT":
+            try:
+                canonical_float = float(self.canonical_value)
+            except ValueError as exc:
+                raise ValueError("FLOAT canonical_value must be numeric") from exc
+            if not math.isfinite(canonical_float) or canonical_float != typed:
+                raise ValueError("FLOAT canonical_value must match typed_value")
+        if datatype == "DECIMAL" and self.canonical_value != typed:
+            raise ValueError("DECIMAL canonical_value must match typed_value")
+        if datatype == "BOOLEAN" and self.canonical_value != str(typed).lower():
+            raise ValueError("BOOLEAN canonical_value must match typed_value")
+        if datatype in {"DATE", "DATETIME", "DURATION", "URI", "JSON"} and (
+            self.canonical_value != typed
+        ):
+            raise ValueError(f"{datatype} canonical_value must match typed_value")
+
+        raw_unit = self.raw_unit
+        canonical_unit = self.canonical_unit
+        if (raw_unit is None) != (canonical_unit is None):
+            raise ValueError("raw_unit and canonical_unit must either both exist or both be absent")
+        if raw_unit is not None:
+            if datatype not in _NUMERIC_LITERAL_DATATYPES:
+                raise ValueError("units are allowed only for numeric typed literals")
+            if not isinstance(raw_unit, str) or not isinstance(canonical_unit, str):
+                raise TypeError("literal units must be strings")
+            if raw_unit != raw_unit.strip() or canonical_unit != canonical_unit.strip():
+                raise ValueError("literal units must not contain edge whitespace")
+            object.__setattr__(self, "raw_unit", _exact_text(raw_unit, "raw_unit"))
+            object.__setattr__(
+                self,
+                "canonical_unit",
+                _text(canonical_unit or "", "canonical_unit"),
+            )
+
+        valid_from = _optional_aware(self.valid_from, "valid_from")
+        valid_to = _optional_aware(self.valid_to, "valid_to")
+        observed_at = _optional_aware(self.observed_at, "observed_at")
+        if valid_from is not None and valid_to is not None and valid_from >= valid_to:
+            raise ValueError("valid_from must be earlier than valid_to")
+        for name, value in (
+            ("valid_from", valid_from),
+            ("valid_to", valid_to),
+            ("observed_at", observed_at),
+        ):
+            if value is not None:
+                object.__setattr__(self, name, value.astimezone(UTC))
+        for raw_name, parsed in (
+            ("raw_valid_from", valid_from),
+            ("raw_valid_to", valid_to),
+            ("raw_observed_at", observed_at),
+        ):
+            raw = getattr(self, raw_name)
+            if (raw is None) != (parsed is None):
+                raise ValueError(f"{raw_name} must accompany its parsed temporal value")
+            if raw is not None:
+                if not isinstance(raw, str):
+                    raise TypeError(f"{raw_name} must be a string or None")
+                object.__setattr__(self, raw_name, _exact_text(raw, raw_name))
+                if _RFC3339_LITERAL.fullmatch(raw) is None:
+                    raise ValueError(f"{raw_name} must be exact RFC3339 text")
+                raw_parsed = self._parse_instant(raw, raw_name)
+                if raw_parsed is None or raw_parsed.astimezone(UTC) != parsed:
+                    raise ValueError(
+                        f"{raw_name} does not match its parsed temporal value"
+                    )
+
+    @property
+    def identity_reference(self) -> str:
+        """Canonical JSON included in stable Assertion identity inputs."""
+
+        return json.dumps(
+            self.to_mapping(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def to_mapping(self) -> dict[str, object]:
+        return {
+            "datatype": self.datatype,
+            "typed_value": self.typed_value,
+            "raw_value": self.raw_value,
+            "raw_unit": self.raw_unit,
+            "canonical_value": self.canonical_value,
+            "canonical_unit": self.canonical_unit,
+            "valid_from": self._instant_text(self.valid_from),
+            "valid_to": self._instant_text(self.valid_to),
+            "observed_at": self._instant_text(self.observed_at),
+            "raw_valid_from": self.raw_valid_from,
+            "raw_valid_to": self.raw_valid_to,
+            "raw_observed_at": self.raw_observed_at,
+        }
+
+    def to_flat_properties(self, prefix: str = "literal_") -> dict[str, object]:
+        """Return Neo4j-safe scalar properties; absent optionals are omitted."""
+
+        return {
+            f"{prefix}{key}": value
+            for key, value in self.to_mapping().items()
+            if value is not None
+        }
+
+    @classmethod
+    def from_mapping(cls, value: object) -> TypedLiteralValue:
+        if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+            raise TypeError("typed literal mapping must be an object")
+        required = {
+            "datatype",
+            "typed_value",
+            "raw_value",
+            "raw_unit",
+            "canonical_value",
+            "canonical_unit",
+            "valid_from",
+            "valid_to",
+            "observed_at",
+            "raw_valid_from",
+            "raw_valid_to",
+            "raw_observed_at",
+        }
+        if set(value) != required:
+            raise ValueError("typed literal mapping fields do not match the contract")
+        return cls(
+            datatype=value["datatype"],  # type: ignore[arg-type]
+            typed_value=value["typed_value"],  # type: ignore[arg-type]
+            raw_value=value["raw_value"],  # type: ignore[arg-type]
+            raw_unit=value["raw_unit"],  # type: ignore[arg-type]
+            canonical_value=value["canonical_value"],  # type: ignore[arg-type]
+            canonical_unit=value["canonical_unit"],  # type: ignore[arg-type]
+            valid_from=cls._parse_instant(value["valid_from"], "valid_from"),
+            valid_to=cls._parse_instant(value["valid_to"], "valid_to"),
+            observed_at=cls._parse_instant(value["observed_at"], "observed_at"),
+            raw_valid_from=value["raw_valid_from"],  # type: ignore[arg-type]
+            raw_valid_to=value["raw_valid_to"],  # type: ignore[arg-type]
+            raw_observed_at=value["raw_observed_at"],  # type: ignore[arg-type]
+        )
+
+    @classmethod
+    def from_flat_properties(
+        cls,
+        properties: object,
+        prefix: str = "literal_",
+    ) -> TypedLiteralValue | None:
+        """Reconstruct a typed literal from flat Neo4j scalar properties.
+
+        Legacy records have no typed-literal properties and return ``None``.
+        A partially present group is corruption and is rejected rather than
+        silently degrading a typed fact into an untyped legacy literal.
+        """
+
+        if not isinstance(properties, dict) or any(
+            not isinstance(key, str) for key in properties
+        ):
+            raise TypeError("flat typed literal properties must be an object")
+        fields = (
+            "datatype",
+            "typed_value",
+            "raw_value",
+            "raw_unit",
+            "canonical_value",
+            "canonical_unit",
+            "valid_from",
+            "valid_to",
+            "observed_at",
+            "raw_valid_from",
+            "raw_valid_to",
+            "raw_observed_at",
+        )
+        present = {
+            field for field in fields if f"{prefix}{field}" in properties
+        }
+        if not present:
+            return None
+        required = {"datatype", "typed_value", "raw_value", "canonical_value"}
+        missing = required - present
+        if missing:
+            raise ValueError(
+                "flat typed literal is missing required fields: "
+                + ", ".join(sorted(missing))
+            )
+        value = {
+            field: properties.get(f"{prefix}{field}")
+            for field in fields
+        }
+        return cls.from_mapping(value)
+
+    @staticmethod
+    def _instant_text(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _parse_instant(value: object, name: str) -> datetime | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError(f"typed literal {name} must be a string or None")
+        try:
+            parsed = datetime.fromisoformat(
+                value[:-1] + "+00:00" if value.endswith("Z") else value
+            )
+        except ValueError as exc:
+            raise ValueError(f"typed literal {name} is invalid") from exc
+        return _aware(parsed, name)
+
+
 @dataclass(frozen=True, slots=True)
 class Assertion:
     assertion_id: str
@@ -389,6 +680,7 @@ class Assertion:
     accepted: bool
     object_entity_id: str | None = None
     literal_value: str | None = None
+    literal_semantics: TypedLiteralValue | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -408,6 +700,8 @@ class Assertion:
         if has_entity == has_literal:
             raise ValueError("assertion requires exactly one entity or literal object")
         if self.object_entity_id is not None:
+            if self.literal_semantics is not None:
+                raise ValueError("entity assertion must not carry literal semantics")
             object.__setattr__(
                 self,
                 "object_entity_id",
@@ -419,5 +713,18 @@ class Assertion:
                 "literal_value",
                 _text(self.literal_value, "literal_value"),
             )
+            if self.literal_semantics is not None:
+                if not isinstance(self.literal_semantics, TypedLiteralValue):
+                    raise TypeError("literal_semantics must be TypedLiteralValue")
+                if self.literal_semantics.raw_value != self.literal_value:
+                    raise ValueError("literal_value must equal typed raw_value")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between zero and one")
+
+    @property
+    def object_reference(self) -> str:
+        if self.object_entity_id is not None:
+            return self.object_entity_id
+        if self.literal_semantics is not None:
+            return self.literal_semantics.identity_reference
+        return self.literal_value or ""

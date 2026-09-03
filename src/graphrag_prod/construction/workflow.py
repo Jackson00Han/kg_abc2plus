@@ -1280,6 +1280,7 @@ def _to_abox_batch(
                     None if object_mention is None else object_mention.revision_id
                 ),
                 literal_value=source.literal_value,
+                literal_semantics=source.literal_semantics,
             )
         )
     return ABoxRecordBatch(
@@ -1321,6 +1322,7 @@ def _same_assertion_lineage(
         and stored.evidence == expected.evidence
         and stored.object_entity == expected.object_entity
         and stored.literal_value == expected.literal_value
+        and stored.literal_semantics == expected.literal_semantics
         and stored.trust.origin == expected.trust.origin
         and stored.trust.authority == expected.trust.authority
         and stored.trust.ontology_version_id == expected.trust.ontology_version_id

@@ -13,6 +13,7 @@ import neo4j
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import assertion_id, mention_id
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.knowledge.review import (
@@ -38,6 +39,9 @@ from graphrag_prod.knowledge.trust import AuthorityLevel, GovernanceStatus
 from graphrag_prod.ontology import (
     EntityTypeDefinition,
     Neo4jTBoxStore,
+    Cardinality,
+    PropertyDataType,
+    PropertyDefinition,
     RelationshipTypeDefinition,
     TBoxStatus,
     TBoxVersion,
@@ -108,7 +112,18 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             version=1,
             status=TBoxStatus.DRAFT,
             entity_types=(
-                EntityTypeDefinition("Company", ("ticker",)),
+                EntityTypeDefinition(
+                    "Company",
+                    ("ticker",),
+                    properties=(
+                        PropertyDefinition(
+                            "DISPLAY_NAME",
+                            PropertyDataType.STRING,
+                            False,
+                            Cardinality.ZERO_OR_ONE,
+                        ),
+                    ),
+                ),
                 EntityTypeDefinition("Product", ("apple-product",)),
             ),
             relationship_types=(
@@ -413,6 +428,106 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
         self.assertEqual(
             [item.record.record_id for item in queue],
             [self.batch.mentions[1].record_id],
+        )
+
+    def test_typed_literal_review_revalidates_and_publication_preserves_semantics(
+        self,
+    ) -> None:
+        candidate_mention = self.batch.mentions[0]
+        authoritative_mention = self.authoritative_batch.mentions[0]
+        mention_outcome = self.review.approve(
+            self.principal,
+            record_kind=ReviewRecordKind.ENTITY_MENTION,
+            record_id=candidate_mention.record_id,
+            expected_revision=1,
+            reviewed_at=REVIEWED_AT,
+            notes="Company identity verified.",
+            edit=MentionEdit(
+                authoritative_mention.entity,
+                candidate_mention.confidence,
+            ),
+        )
+        candidate = self.batch.assertions[0]
+        forged = TypedLiteralValue(
+            datatype="STRING",
+            typed_value="Apple",
+            raw_value="Apple",
+            canonical_value="forged-canonical-value",
+        )
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            self.review.approve(
+                self.principal,
+                record_kind=ReviewRecordKind.ASSERTION,
+                record_id=candidate.record_id,
+                expected_revision=1,
+                reviewed_at=REVIEWED_AT,
+                notes="Must reject a client-supplied canonical value.",
+                edit=AssertionEdit(
+                    authoritative_mention.entity,
+                    "DISPLAY_NAME",
+                    candidate.subject_mention_revision_id,
+                    candidate.confidence,
+                    literal_value="Apple",
+                    literal_semantics=forged,
+                ),
+            )
+
+        literal = dataclasses.replace(forged, canonical_value="Apple")
+        assertion_outcome = self.review.approve(
+            self.principal,
+            record_kind=ReviewRecordKind.ASSERTION,
+            record_id=candidate.record_id,
+            expected_revision=1,
+            reviewed_at=REVIEWED_AT,
+            notes="Typed source literal verified.",
+            edit=AssertionEdit(
+                authoritative_mention.entity,
+                "DISPLAY_NAME",
+                candidate.subject_mention_revision_id,
+                candidate.confidence,
+                literal_value="Apple",
+                literal_semantics=literal,
+            ),
+        )
+        approved = self.store.get_assertion(
+            self.principal,
+            candidate.record_id,
+            statuses=(GovernanceStatus.APPROVED,),
+        )
+        assert approved is not None
+        self.assertEqual(approved.literal_semantics, literal)
+
+        view = self.publication.publish(
+            self.principal,
+            (mention_outcome.revision_id, assertion_outcome.revision_id),
+            expected_active_publication_id=None,
+            published_at=PUBLISHED_AT,
+        )
+        rows, _, _ = self.driver.execute_query(
+            """
+            MATCH (:KnowledgePublication {publication_id: $publication_id})
+                  -[:PUBLISHES_KNOWLEDGE_REVISION]->
+                  (revision:GovernedAssertionRevision)
+            MATCH (:KnowledgeSnapshot)-[:INCLUDES_ASSERTION {
+                governed_publication_id: $publication_id
+            }]->(assertion:Assertion)
+            WHERE assertion.governed_revision_id = revision.revision_id
+            RETURN revision.literal_datatype AS revision_datatype,
+                   revision.literal_canonical_value AS revision_value,
+                   assertion.literal_datatype AS assertion_datatype,
+                   assertion.literal_canonical_value AS assertion_value
+            """,
+            publication_id=view.publication_id,
+            database_=self.database,
+        )
+        self.assertEqual(
+            dict(rows[0]),
+            {
+                "revision_datatype": "STRING",
+                "revision_value": "Apple",
+                "assertion_datatype": "STRING",
+                "assertion_value": "Apple",
+            },
         )
 
     def test_review_rejects_stale_exact_evidence(self) -> None:

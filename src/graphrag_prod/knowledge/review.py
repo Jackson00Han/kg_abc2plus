@@ -24,6 +24,7 @@ from graphrag_prod.domain.ids import (
     assertion_id as canonical_assertion_id,
     mention_id as canonical_mention_id,
 )
+from graphrag_prod.domain.models import TypedLiteralValue
 
 from .models import (
     AssertionRecord,
@@ -35,8 +36,10 @@ from .store import (
     KnowledgeConflict,
     KnowledgeStoreError,
     Neo4jKnowledgeStore,
+    _property_definition,
     _stored_assertion,
     _stored_mention,
+    _validate_literal_semantics,
 )
 from .trust import GovernanceStatus
 
@@ -157,6 +160,7 @@ class AssertionEdit:
     object_entity: EntityIdentity | None = None
     object_mention_revision_id: str | None = None
     literal_value: str | None = None
+    literal_semantics: TypedLiteralValue | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.subject, EntityIdentity):
@@ -184,6 +188,8 @@ class AssertionEdit:
         if has_entity:
             if not isinstance(self.object_entity, EntityIdentity):
                 raise TypeError("assertion edit object must be EntityIdentity")
+            if self.literal_semantics is not None:
+                raise ValueError("entity assertion edit must not carry literal semantics")
             object.__setattr__(
                 self,
                 "object_mention_revision_id",
@@ -202,6 +208,14 @@ class AssertionEdit:
                 "literal_value",
                 _required_text(self.literal_value, "literal_value"),
             )
+            if self.literal_semantics is None:
+                raise ValueError(
+                    "literal assertion edits require typed semantics"
+                )
+            if not isinstance(self.literal_semantics, TypedLiteralValue):
+                raise TypeError("literal_semantics must be TypedLiteralValue")
+            if self.literal_semantics.raw_value != self.literal_value:
+                raise ValueError("literal edit must preserve its typed raw_value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -770,6 +784,7 @@ class Neo4jKnowledgeReviewService:
                     request.edit.object_mention_revision_id
                 ),
                 "literal_value": request.edit.literal_value,
+                "literal_semantics": request.edit.literal_semantics,
             }
         updated = dataclasses.replace(
             current,
@@ -893,12 +908,12 @@ class Neo4jKnowledgeReviewService:
                           tenant_id: $tenant_id,
                           tbox_id: $tbox_id,
                           status: 'PUBLISHED'
-                      })-[:DECLARES_ENTITY_TYPE]->(type:TBoxEntityType {
+                })-[:DECLARES_ENTITY_TYPE]->(type:TBoxEntityType {
                           name: $subject_type
                       })-[:DECLARES_PROPERTY]->(property:TBoxPropertyDefinition {
                           name: $predicate
                       })
-                RETURN property.name AS name
+                RETURN properties(property) AS property
                 """,
                 tenant_id=record.tenant_id,
                 tbox_id=record.trust.ontology_version_id,
@@ -931,6 +946,17 @@ class Neo4jKnowledgeReviewService:
             raise KnowledgeReviewUnavailable(
                 "edited record is outside the active T-Box"
             )
+        if record.object_entity is None:
+            try:
+                definition = _property_definition(dict(row["property"]))
+                _validate_literal_semantics(
+                    record.literal_semantics,
+                    definition,
+                )
+            except (KeyError, TypeError, ValueError, KnowledgeStoreError) as exc:
+                raise KnowledgeReviewUnavailable(
+                    "edited literal violates the active T-Box"
+                ) from exc
 
 
 class Neo4jKnowledgePublicationService:
@@ -1365,10 +1391,15 @@ class Neo4jKnowledgePublicationService:
                 raise KnowledgePublicationConflict(
                     "existing publication is not active; use rollback"
                 )
-            cls._load_manifest_records_tx(
+            records = cls._load_manifest_records_tx(
                 tx,
                 principal,
                 tuple(existing.get("published_revision_ids", ())),
+            )
+            cls._validate_property_cardinality_tx(
+                tx,
+                principal.tenant_id,
+                records,
             )
             return
         if current_id != expected_active_id:
@@ -1490,6 +1521,13 @@ class Neo4jKnowledgePublicationService:
             if assertion.trust.status is GovernanceStatus.PUBLISHED:
                 published = assertion
             else:
+                if (
+                    assertion.object_entity is None
+                    and assertion.literal_semantics is None
+                ):
+                    raise KnowledgePublicationConflict(
+                        "legacy untyped literal revisions cannot be newly published"
+                    )
                 required = {assertion.subject_mention_revision_id}
                 if assertion.object_mention_revision_id is not None:
                     required.add(assertion.object_mention_revision_id)
@@ -1561,6 +1599,12 @@ class Neo4jKnowledgePublicationService:
                     "active publication contains an assertion without its "
                     "endpoint mentions"
                 )
+
+        cls._validate_property_cardinality_tx(
+            tx,
+            principal.tenant_id,
+            tuple(published_records),
+        )
 
         published_records.sort(key=lambda record: record.revision_id)
         published_ids = tuple(
@@ -1684,10 +1728,15 @@ class Neo4jKnowledgePublicationService:
             )
             # Even an idempotent rollback must not become an ACL or stale-
             # evidence bypass merely because the target is already active.
-            cls._load_manifest_records_tx(
+            records = cls._load_manifest_records_tx(
                 tx,
                 principal,
                 tuple(properties.get("published_revision_ids", ())),
+            )
+            cls._validate_property_cardinality_tx(
+                tx,
+                principal.tenant_id,
+                records,
             )
             return
         if current_id != expected_active_id:
@@ -1703,6 +1752,11 @@ class Neo4jKnowledgePublicationService:
             tx,
             principal,
             tuple(properties.get("published_revision_ids", ())),
+        )
+        cls._validate_property_cardinality_tx(
+            tx,
+            principal.tenant_id,
+            records,
         )
         cls._deactivate_materialization_tx(
             tx,
@@ -1725,6 +1779,113 @@ class Neo4jKnowledgePublicationService:
             now,
             action="ROLLBACK",
         )
+
+    @staticmethod
+    def _validate_property_cardinality_tx(
+        tx: Any,
+        tenant_id: str,
+        records: tuple[EntityMentionRecord | AssertionRecord, ...],
+    ) -> None:
+        """Validate the complete prospective manifest against active T-Box facts."""
+
+        ontology_ids = {record.trust.ontology_version_id for record in records}
+        if len(ontology_ids) != 1:
+            raise KnowledgePublicationConflict(
+                "one publication must use exactly one active T-Box version"
+            )
+        ontology_id = next(iter(ontology_ids))
+        rows = tuple(
+            tx.run(
+                """
+                MATCH (:TBoxCatalog {tenant_id: $tenant_id})
+                      -[:ACTIVE_TBOX_VERSION]->(tbox:TBoxVersion {
+                          tenant_id: $tenant_id,
+                          tbox_id: $tbox_id,
+                          status: 'PUBLISHED'
+                      })-[:DECLARES_ENTITY_TYPE]->(type:TBoxEntityType)
+                OPTIONAL MATCH (type)-[:DECLARES_PROPERTY]->
+                               (property:TBoxPropertyDefinition)
+                RETURN type.name AS entity_type,
+                       collect(
+                           CASE WHEN property IS NULL THEN NULL
+                           ELSE properties(property)
+                           END
+                       ) AS property_definitions
+                """,
+                tenant_id=tenant_id,
+                tbox_id=ontology_id,
+            )
+        )
+        try:
+            definitions = {
+                row["entity_type"]: {
+                    definition.name: definition
+                    for definition in (
+                        _property_definition(dict(item))
+                        for item in (row["property_definitions"] or ())
+                    )
+                }
+                for row in rows
+            }
+        except (KeyError, TypeError, ValueError, KnowledgeStoreError) as exc:
+            raise KnowledgePublicationConflict(
+                "active T-Box property contract is invalid"
+            ) from exc
+        if not definitions:
+            raise KnowledgePublicationConflict(
+                "active T-Box has no entity definitions"
+            )
+
+        entities: dict[str, EntityIdentity] = {}
+        literal_counts: dict[tuple[str, str], int] = {}
+        for record in records:
+            if isinstance(record, EntityMentionRecord):
+                entities[record.entity.entity_id] = record.entity
+                continue
+            entities[record.subject.entity_id] = record.subject
+            if record.object_entity is not None:
+                entities[record.object_entity.entity_id] = record.object_entity
+                continue
+            property_definition = definitions.get(
+                record.subject.entity_type,
+                {},
+            ).get(record.predicate)
+            if property_definition is None:
+                raise KnowledgePublicationConflict(
+                    "literal assertion is outside the active T-Box"
+                )
+            try:
+                _validate_literal_semantics(
+                    record.literal_semantics,
+                    property_definition,
+                    allow_persisted_legacy=(
+                        record.trust.status is GovernanceStatus.PUBLISHED
+                    ),
+                )
+            except KnowledgeStoreError as exc:
+                raise KnowledgePublicationConflict(
+                    "literal assertion violates the active T-Box"
+                ) from exc
+            key = (record.subject.entity_id, record.predicate)
+            literal_counts[key] = literal_counts.get(key, 0) + 1
+
+        for entity in entities.values():
+            entity_definitions = definitions.get(entity.entity_type)
+            if entity_definitions is None:
+                raise KnowledgePublicationConflict(
+                    "publication entity type is outside the active T-Box"
+                )
+            for name, definition in entity_definitions.items():
+                count = literal_counts.get((entity.entity_id, name), 0)
+                if definition.cardinality.required and count == 0:
+                    raise KnowledgePublicationConflict(
+                        f"required property {entity.entity_type}.{name} is absent"
+                    )
+                if definition.cardinality.single_valued and count > 1:
+                    raise KnowledgePublicationConflict(
+                        f"property {entity.entity_type}.{name} exceeds its "
+                        "single-valued cardinality"
+                    )
 
     @staticmethod
     def _lock_publication_state_tx(
@@ -2215,11 +2376,7 @@ class Neo4jKnowledgePublicationService:
             assertion.subject.entity_id,
             assertion.predicate,
             assertion.object_kind,
-            (
-                assertion.object_entity.entity_id
-                if assertion.object_entity is not None
-                else assertion.literal_value or ""
-            ),
+            assertion.object_reference,
             assertion.evidence.chunk_id,
             assertion.evidence.char_start,
             assertion.evidence.char_end,
@@ -2251,6 +2408,8 @@ class Neo4jKnowledgePublicationService:
             "governed_publication_id": publication_id,
             "authority_level": assertion.trust.authority.value,
         }
+        if assertion.literal_semantics is not None:
+            properties.update(assertion.literal_semantics.to_flat_properties())
         row = tx.run(
             """
             MATCH (revision:GovernedAssertionRevision {

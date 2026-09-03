@@ -9,6 +9,7 @@ from .extraction import (
     ExtractionResponseError,
     OpenAICompatibleOntologyExtractor,
 )
+from .literals import LiteralNormalizationError, TBoxLiteralNormalizer
 from .parser import (
     BoundedDocumentParser,
     ChunkingConfig,
@@ -63,6 +64,7 @@ __all__ = [
     "ExtractionResponseError",
     "JsonDocumentParser",
     "KnowledgeConstructionResult",
+    "LiteralNormalizationError",
     "Neo4jConstructionAuditStore",
     "Neo4jKnowledgeConstructionWorkflow",
     "ObservedDocumentState",
@@ -70,6 +72,7 @@ __all__ = [
     "ParsedDocument",
     "ParserLimits",
     "Utf8TextParser",
+    "TBoxLiteralNormalizer",
     "default_mime_types",
     "split_gapless",
 ]
