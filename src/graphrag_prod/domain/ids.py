@@ -276,3 +276,15 @@ def embedding_index_generation_id(
         _required(embedding_space_identifier, "embedding_space_id"),
         generation_version,
     )
+
+
+def tbox_version_id(tenant_id: str, key: str, version: int) -> str:
+    """Identify one tenant-owned, versioned property-graph T-Box."""
+    if isinstance(version, bool) or not isinstance(version, int) or version <= 0:
+        raise ValueError("T-Box version must be a positive integer")
+    return _stable_id(
+        "tbox-version",
+        _required(tenant_id, "tenant_id"),
+        _required(key, "T-Box key"),
+        version,
+    )

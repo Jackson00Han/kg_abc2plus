@@ -22,6 +22,7 @@ from .ids import (
     knowledge_snapshot_id,
     mention_id,
     pipeline_profile_id,
+    tbox_version_id,
     version_id,
 )
 from .models import (
@@ -64,6 +65,7 @@ __all__ = [
     "knowledge_snapshot_id",
     "mention_id",
     "pipeline_profile_id",
+    "tbox_version_id",
     "retrieval_scope_token",
     "version_id",
 ]

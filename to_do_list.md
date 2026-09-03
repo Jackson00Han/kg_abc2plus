@@ -19,3 +19,8 @@
   behavior. Completed with 49/49 authenticated HTTP paths, Gold-aware provider
   smoke metrics, and zero unauthorized exposure under the external
   `text-embedding-v4` profile.
+
+- [ ] Complete the industrial property-graph construction loop: versioned
+  T-Box, authoritative A-Box import, document upload, ontology-constrained LLM
+  extraction, candidate review, publication/rollback, trust-aware subgraph
+  retrieval, permissions, audit, and Playground management views.
