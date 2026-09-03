@@ -12,12 +12,12 @@
 - Database image: `neo4j:5.26.12-community`
 - Required database image digest:
   `sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37`
-- Validated implementation commit: **PENDING AUTHORITATIVE RUN**
+- Validated implementation commit: `7142fa331f74ecd868a5ba20d343c787e2f9d367`
 
-This record must be completed only from the authoritative Stage 9 workflow.
-Until the final evidence section and decision are populated from that run,
-Stage 9 is not complete and this project must not be described as a validated
-production candidate.
+This record was completed only from the authoritative Stage 9 workflow. The
+report binds the implementation commit above; this later documentation-only
+closeout does not extend qualification to subsequent code, configuration, or
+data changes.
 
 ## Delivered
 
@@ -132,8 +132,7 @@ deployment boundary, see `docs/production_candidate_validation.md`.
 
 ## Evidence inventory
 
-The authoritative output directory is expected to contain machine-readable
-evidence for:
+The authoritative output directory contains machine-readable evidence for:
 
 - Stage 8 reports and exact suite inventories;
 - the rebuilt `load-v1` manifest and ingestion/idempotency observations,
@@ -243,68 +242,107 @@ not permission for live production deployment.
 ## Final measured evidence
 
 <!-- STAGE9_FINAL_RESULTS_BEGIN -->
-**PENDING AUTHORITATIVE RUN.** No Stage 9 measurement or pass claim has been
-recorded in this draft. Replace every item below only from the successfully
-completed authoritative output bundle; do not copy declared configuration
-values into an observed field.
+The authoritative `production-reference` run completed successfully from
+implementation commit `7142fa331f74ecd868a5ba20d343c787e2f9d367`.
+The generated report has no failures, `passed: true`, and
+`production_candidate_eligible: true`.
 
-- Identity and reproducibility: implementation commit **PENDING**; report
-  semantic digest **PENDING**; Stage 8 two-run reproduction **PENDING**; Stage 9
-  observation/evidence/report byte reproduction **PENDING**.
-- Runtime envelope: observed Neo4j image ID/repository digest **PENDING**;
-  observed memory/swap/CPU and heap/page-cache/transaction-timeout settings
-  **PENDING**; initial database counts **PENDING**; host CPU/memory/platform and
-  API resource-limit disclosure **PENDING**.
-- Suite inventory: functional **PENDING** tests / **PENDING** skips; quality
-  **PENDING** / **PENDING**; security **PENDING** / **PENDING**; recovery
-  **PENDING** / **PENDING**; performance **PENDING** / **PENDING**. Also record
-  every failure/error count; all must be zero for completion.
-- Corpus and ingestion: observed Documents/Versions/active and historical
-  Chunks **PENDING**; submitted Chunks **PENDING**; bulk graph-write duration
-  **PENDING**; graph-write throughput **PENDING**; success rate **PENDING**;
-  replay count **PENDING**; idempotency mismatches **PENDING**; interrupted-job
-  recovery **PENDING**. Do not describe this interval as time-to-query-ready:
-  embedding-generation activation and index refresh finish later.
-- Graph and answer quality: entity precision **PENDING**; relationship
-  precision **PENDING**; entity-resolution accuracy **PENDING**; Recall@5
-  **PENDING**; MRR **PENDING**; nDCG@5 **PENDING**; supported-claim rate
-  **PENDING**; citation precision/coverage **PENDING**; numerical fidelity
-  **PENDING**; refusal F1 **PENDING**; unauthorized exposures **PENDING**.
-- HTTP load: retrieval samples **PENDING**; answer samples **PENDING**;
-  measured duration **PENDING**; observed client count and provider peak
-  concurrency **PENDING**; backend retrieval-stage p95 **PENDING**; diagnostic
-  HTTP retrieval p50/p95/p99 **PENDING**; answer
-  p50/p95/p99 **PENDING**; retrieval throughput **PENDING**; server-error rate
-  **PENDING**; semantic failures **PENDING**.
-- Dependency and lifecycle scenarios: Neo4j, embedding, and answer-provider
-  success/timeout/unavailable/failure results **PENDING**; deletion removed and
-  residue counts **PENDING**; cross-tenant preservation **PENDING**; dump size
-  and SHA-256 **PENDING**; restored schema/index and canonical-graph equality
-  **PENDING**.
-- Usage and final checks: measured embedding/answer model calls **PENDING**;
-  input/output tokens **PENDING**; deterministic reference cost **PENDING**;
-  package, compilation, shell, whitespace, secret, and unintended-artifact
-  checks **PENDING**; final `passed` and `production_candidate_eligible`
-  **PENDING**.
+- Identity and reproducibility: the Stage 9 semantic digest is
+  `71d67bee2c155656cb663f602e92fe30aa2e5f58a35d8848847a7bdc24b4d575`.
+  The canonical `report.json` file SHA-256 is
+  `92b2865fca874ccca2350c53fb0397a5cb7ea11bcad8c19d3e7ad52663ea9722`,
+  and the canonical `observations.json` file SHA-256 is
+  `f722a617423100b87a0a853021696b46fd8698f3003211333af0e6ec5d9a832d`.
+  Both Stage 8 runs passed and produced byte-identical reports with semantic
+  digest `af94664fb502498b884eada4b27af892d13d73b9fcf66790601957e672cb126d`
+  and file SHA-256
+  `206c0007bd606c9649508af0389e1037d891597d1d0e9b92311d23f8b34468cb`.
+  Each Stage 8 run executed 327 unit, 75 integration, five API end-to-end, 15
+  security, and two regression tests with no failures or skips. The independent
+  Stage 9 build reproduced `report.json` and `observations.json` byte for byte,
+  and its complete normalized evidence tree matched the primary tree.
+- Runtime envelope: the observed image, image ID, and repository digest were
+  `neo4j:5.26.12-community` and
+  `sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37`.
+  Both source and restored containers had 8,000,000,000 `NanoCpus`, 3,221,225,472
+  bytes of memory and equal swap limit, a 512 MiB initial/1,024 MiB maximum
+  heap, and 512 MiB page cache. The server default transaction timeout was 300
+  seconds, initial load used 60 seconds, and retrieval/readiness used five
+  seconds. The database began with zero nodes and zero relationships; readiness
+  passed. The host exposed eight logical CPUs, 8,589,934,592 bytes of memory,
+  and `macOS-15.7.9-x86_64-i386-64bit`; the API process limit was explicitly
+  `host-default-unbounded`.
+- Suite inventory: functional 407/407, quality 4/4, security 15/15, recovery
+  5/5, and performance 10/10 passed. Every suite recorded zero failures, zero
+  errors, and zero skipped tests.
+- Corpus and ingestion: the database contained 240 Documents, 480 Versions,
+  12,000 active Chunks, and 12,000 historical Chunks; the measured tenant had
+  10,000 active Chunks. All 24,000 submitted Chunks and 480 Versions completed,
+  with a 1.0 success rate and zero failed Versions. The atomic bulk graph-write
+  interval was 346.987016644001 seconds, or 69.16685307745486 Chunks/second.
+  Replaying all 240 active Versions produced zero idempotency mismatches. The
+  `BEFORE_PUBLISH` interruption left zero partial Job or Task nodes; retry
+  produced one successful recovered job with all 50 expected tasks represented
+  by its aggregate counters. This interval excludes later embedding-generation
+  activation and index refresh and is not time-to-query-ready.
+- Graph, retrieval, and answer quality: entity precision, relationship
+  precision, and entity-resolution accuracy were all 1.0. Across 49 adjudicated
+  cases, Recall@5 was 0.9714285714285714, MRR 0.9857142857142858, and nDCG@5
+  0.9796001260591746. Supported-claim rate, citation precision, citation
+  coverage, numerical fidelity, and refusal F1 were all 1.0; all 14 expected
+  refusals passed, and unauthorized/forbidden exposure counts were zero.
+- HTTP and provider load: eight clients completed 3,265 measured retrieval
+  requests during 300.4210446150005 seconds, while 30 measured answers brought
+  the bound backend retrieval-stage sample count to 3,295. Peak active requests
+  and deterministic-provider concurrency were both eight, with zero semantic
+  failures. The gating nearest-rank backend retrieval-stage p95 was
+  935.1435330027016 ms. Diagnostic HTTP retrieval p50/p95/p99 values were
+  701.5782390087843/959.9147139936686/1,322.000333994627 ms; answer
+  p50/p95/p99 values were
+  117.7265449911356/176.21599599719048/288.98366199433804 ms. Sustained
+  retrieval throughput was 10.868080177885693 requests/second, and server-error
+  rate was 0.0. Embedding-provider and LLM p95 latency were 8.047316 ms and
+  24.864833 ms respectively.
+- Dependency and lifecycle scenarios: all 17 scenario records had no assertion
+  failures. Neo4j produced the expected retrieved success, 504 timeout, 503
+  unavailable, and bounded 500 failure outcomes; embedding produced 200
+  success, 504 timeout, and 503 unavailable/failure outcomes; answer generation
+  produced an answered success, 504 timeout, 503 unavailable, and a safe
+  `invalid_model_output` refusal for malformed output. Idempotency, interrupted
+  ingestion, deletion, access isolation, and backup/restore all passed.
+  Deletion removed exactly one Document, two Versions, two Snapshots, 100
+  Chunks, 100 embeddings, one Entity, and 100 mentions, left zero residue, and
+  preserved every non-target tenant. The 32,855,922-byte database dump had
+  SHA-256 `79c77033f7f41228ace0884da24491fdd0d62783dbd3fc38e5d5e07c6828607e`;
+  restored schema/index verification passed, container envelopes matched, and
+  source/restored canonical states were equal at 74,532 business nodes and
+  148,612 business relationships with digest
+  `a9c88c8aa9838468dc3aa2c7a13f512685097378347b972f9fd904d410421a3f`.
+- Usage and final checks: the measured window made 3,295 embedding and 30 answer
+  model calls. The 3,325 total calls included 42,420 input and 1,440 output
+  tokens; 30 metered answers cost a deterministic reference total of USD
+  0.0036, or USD 0.00012 each. Package build, bytecode compilation, shell
+  syntax, `git diff --check`, credential scanning, unintended-artifact scanning,
+  final clean-tree verification, owned Docker-resource cleanup, and final
+  report/evidence reproduction gates all passed before publication.
 <!-- STAGE9_FINAL_RESULTS_END -->
 
 ## Decision and limitations
 
 <!-- STAGE9_FINAL_DECISION_BEGIN -->
-**PENDING AUTHORITATIVE RUN.** The final decision must state either:
+Stage 9 is complete. All 20 inherited acceptance gates, every required suite
+and scenario, evidence binding, access-isolation and lifecycle check,
+backup/restore comparison, clean-environment check, and both reproducibility
+workflows passed. The authoritative report therefore records `passed: true`
+and `production_candidate_eligible: true` for commit
+`7142fa331f74ecd868a5ba20d343c787e2f9d367` under configuration 1.0.5.
 
-- Stage 9 is complete because every inherited acceptance gate, required suite,
-  scenario, evidence binding, recovery check, and reproducibility check passed;
-  or
-- Stage 9 remains incomplete/ineligible, enumerating every failed or unexecuted
-  criterion without claiming production-candidate validation.
-
-The decision must also repeat that qualification is limited to the committed
-reference envelope and is not a live deployment approval.
+This result validates only the committed, deterministic reference envelope as
+a production candidate. It is not a live production deployment approval; the
+limitations and deployment prerequisites below remain mandatory.
 <!-- STAGE9_FINAL_DECISION_END -->
 
-Regardless of the measured outcome, the final report must preserve these known
-scope limitations:
+The passing report preserves these known scope limitations:
 
 - `load-v1` is deterministic synthetic load/isolation data, not customer data
   or factual provider-quality gold;
@@ -326,3 +364,6 @@ managed secrets and identity, customer-corpus evaluation, production hardware
 and topology capacity testing, monitored storage-class backup/restore,
 cluster/region recovery, distributed controls, alerting/on-call ownership, and
 applicable retention, privacy, and compliance review.
+
+The prioritized end-to-end assessment and follow-up work are recorded in
+[`process-improvements.md`](process-improvements.md).

@@ -88,6 +88,17 @@ Neo4j is resource-capped, while the API and load-generator processes use the
 recorded host-default-unbounded limits. A passing result therefore validates
 only that envelope, not a live deployment or an external model provider.
 
+Stage 9 completed for implementation commit
+`7142fa331f74ecd868a5ba20d343c787e2f9d367`. The authoritative report returned
+`passed: true` and `production_candidate_eligible: true` with semantic digest
+`71d67bee2c155656cb663f602e92fe30aa2e5f58a35d8848847a7bdc24b4d575` under
+the fixed `production-reference` envelope. See the measured evidence and
+decision in [`docs/validation/stage-9.md`](docs/validation/stage-9.md), and the
+remaining improvements and deployment prerequisites in
+[`docs/validation/process-improvements.md`](docs/validation/process-improvements.md).
+This is production-candidate validation of the recorded reference envelope,
+not approval or evidence of a live production deployment.
+
 ## Prerequisites
 
 - **Python 3.12+**

@@ -1,6 +1,7 @@
 # Stage 8 Validation Record
 
-- Date: 2026-09-02
+- Original completion date: 2026-09-02
+- Current baseline maintenance date: 2026-09-03
 - Acceptance contract: `contracts/acceptance.v1.json` version 1.0.1
 - Validation profile: `dev-mini` version 1.0.0
 - Reviewed regression baseline: `dev-mini.v1.json` version 1.1.0
@@ -128,8 +129,13 @@ optimized retrieval, and concurrent corpus/ACL cutover safety. Baseline version
 1.1.0 reproduces
 semantic digest
 `af94664fb502498b884eada4b27af892d13d73b9fcf66790601957e672cb126d`.
-The Stage 9 authoritative workflow must replay this current baseline twice
-from its clean implementation commit before it can qualify the candidate.
+The Stage 9 authoritative workflow subsequently replayed this current baseline
+twice from clean implementation commit
+`7142fa331f74ecd868a5ba20d343c787e2f9d367`. Each replay passed 327 unit,
+five HTTP end-to-end, fifteen security, two regression, and 75
+disposable-Neo4j integration tests with no skips. The two integration suites
+took 385.298 and 373.932 seconds, and both reports reproduced semantic digest
+`af94664fb502498b884eada4b27af892d13d73b9fcf66790601957e672cb126d`.
 
 For both the historical completion and current maintenance capture,
 gold/corpus rebuilds, acceptance-profile validation, lock verification,
