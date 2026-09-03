@@ -1,0 +1,1322 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="sample-graphrag 项目架构、执行逻辑、能力边界与验证结果技术报告">
+  <title>GraphRAG 生产候选参考实现｜技术架构报告</title>
+  <script>
+    document.documentElement.classList.add('js');
+    try {
+      const savedTheme = localStorage.getItem('graphrag-report-theme');
+      const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.dataset.theme = savedTheme || systemTheme;
+    } catch (_) {}
+  </script>
+  <style>
+    :root {
+      --canvas: #f2f0e9;
+      --paper: #fbfaf6;
+      --paper-raised: #ffffff;
+      --ink: #15222d;
+      --ink-strong: #0b2133;
+      --muted: #62717c;
+      --quiet: #89959e;
+      --line: #d8ddd9;
+      --line-strong: #b9c4c3;
+      --navy: #0e2b40;
+      --navy-soft: #e8eef1;
+      --teal: #087d83;
+      --teal-bright: #11a3a2;
+      --teal-soft: #dff1ef;
+      --green: #267a50;
+      --green-soft: #e2f1e8;
+      --amber: #a85d04;
+      --amber-soft: #f8ebd5;
+      --red: #a03e3e;
+      --red-soft: #f7e5e3;
+      --purple: #6750a4;
+      --purple-soft: #eee9f8;
+      --shadow: 0 18px 55px rgba(20, 39, 50, .09);
+      --shadow-small: 0 8px 24px rgba(20, 39, 50, .07);
+      --radius: 18px;
+      --radius-small: 11px;
+      --rail: 276px;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    :root[data-theme="dark"] {
+      --canvas: #09121a;
+      --paper: #101b24;
+      --paper-raised: #14232d;
+      --ink: #dce8ea;
+      --ink-strong: #f3fbfc;
+      --muted: #9babb2;
+      --quiet: #71828b;
+      --line: #293943;
+      --line-strong: #40545d;
+      --navy: #d8edf4;
+      --navy-soft: #1b303c;
+      --teal: #54c5c3;
+      --teal-bright: #73d5d0;
+      --teal-soft: #16383b;
+      --green: #72cc9b;
+      --green-soft: #183629;
+      --amber: #efb761;
+      --amber-soft: #3d2d19;
+      --red: #ef9691;
+      --red-soft: #402625;
+      --purple: #b7a5ee;
+      --purple-soft: #2c2741;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+      --shadow-small: 0 8px 24px rgba(0, 0, 0, .2);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(16, 52, 67, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(16, 52, 67, .035) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 32px 32px;
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.7;
+      text-rendering: optimizeLegibility;
+    }
+
+    a { color: var(--teal); text-underline-offset: 3px; }
+    a:hover { color: var(--teal-bright); }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    code, pre, .mono { font-family: var(--mono); }
+    code {
+      padding: .12em .34em;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--navy-soft);
+      color: var(--ink-strong);
+      font-size: .88em;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      margin: 0;
+      padding: 18px 20px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-small);
+      color: #d7ecf1;
+      background: #0d202c;
+      font-size: 13px;
+      line-height: 1.65;
+      tab-size: 2;
+    }
+    pre code { padding: 0; border: 0; background: transparent; color: inherit; }
+    h1, h2, h3, h4 { color: var(--ink-strong); line-height: 1.2; letter-spacing: -.025em; }
+    h1 { margin: 12px 0 18px; font-size: clamp(2.6rem, 6vw, 5.4rem); max-width: 980px; }
+    h2 { margin: 0; font-size: clamp(1.8rem, 3vw, 2.7rem); }
+    h3 { margin: 0; font-size: 1.25rem; }
+    h4 { margin: 0; font-size: 1rem; }
+    p { margin: 0 0 1em; }
+    figure { margin: 0; }
+    ul, ol { padding-left: 1.25em; }
+    li + li { margin-top: .45em; }
+    ::selection { color: #fff; background: var(--teal); }
+
+    .skip-link {
+      position: fixed;
+      z-index: 1000;
+      left: 16px;
+      top: -100px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: #fff;
+      background: #0d202c;
+    }
+    .skip-link:focus { top: 12px; }
+
+    .progress {
+      position: fixed;
+      z-index: 900;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--teal-bright), #e7a847);
+    }
+
+    .mobile-bar { display: none; }
+    .rail {
+      position: fixed;
+      z-index: 100;
+      inset: 0 auto 0 0;
+      display: flex;
+      width: var(--rail);
+      flex-direction: column;
+      border-right: 1px solid rgba(255, 255, 255, .12);
+      color: #d9e7eb;
+      background: #0c2638;
+      overflow-y: auto;
+    }
+    .rail-brand { padding: 30px 28px 22px; border-bottom: 1px solid rgba(255,255,255,.1); }
+    .rail-kicker {
+      display: block;
+      margin-bottom: 8px;
+      color: #71d0cc;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .rail-title { display: block; color: #fff; font-weight: 720; line-height: 1.35; }
+    .rail-version { display: block; margin-top: 8px; color: #8fa8b2; font-family: var(--mono); font-size: 11px; }
+    .rail nav { padding: 18px 14px; }
+    .rail nav a {
+      display: flex;
+      gap: 11px;
+      align-items: center;
+      padding: 8px 13px;
+      border-radius: 8px;
+      color: #adc1c9;
+      text-decoration: none;
+      font-size: 13px;
+      transition: background .18s ease, color .18s ease;
+    }
+    .rail nav a:hover, .rail nav a.active { color: #fff; background: rgba(92, 204, 199, .14); }
+    .nav-no { width: 19px; color: #65c9c5; font-family: var(--mono); font-size: 10px; }
+    .rail-bottom { margin-top: auto; padding: 20px 28px 28px; }
+    .rail-status {
+      padding: 14px;
+      border: 1px solid rgba(105, 210, 161, .25);
+      border-radius: 10px;
+      background: rgba(53, 151, 100, .11);
+      color: #c4e9d4;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .rail-status strong { display: block; margin-bottom: 3px; color: #7cdaa6; }
+    .rail-actions { display: flex; gap: 8px; margin-top: 14px; }
+    .icon-button {
+      display: inline-flex;
+      min-height: 38px;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      color: #d6e5e9;
+      background: rgba(255,255,255,.06);
+      cursor: pointer;
+    }
+    .icon-button:hover { background: rgba(255,255,255,.12); }
+
+    main { margin-left: var(--rail); }
+    .hero, .section-inner { width: min(1180px, calc(100% - 64px)); margin: 0 auto; }
+    .hero { padding: 84px 0 68px; }
+    .hero-topline { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--teal);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 30px; height: 2px; background: currentColor; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 11px;
+      border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .status-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 15%, transparent); }
+    .hero-summary { max-width: 850px; color: var(--muted); font-size: clamp(1.1rem, 2vw, 1.34rem); line-height: 1.75; }
+    .hero-summary strong { color: var(--ink-strong); }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 32px; }
+    .meta-tag { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: color-mix(in srgb, var(--paper) 88%, transparent); font-family: var(--mono); font-size: 11px; }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: 8px minmax(0, 1fr) auto;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow-small);
+    }
+    .verdict-bar { background: var(--green); }
+    .verdict-copy { padding: 22px 24px; }
+    .verdict-copy strong { display: block; margin-bottom: 5px; color: var(--ink-strong); font-size: 1.1rem; }
+    .verdict-copy p { margin: 0; color: var(--muted); }
+    .verdict-code { align-self: center; padding: 0 24px; color: var(--green); font-family: var(--mono); font-size: 12px; font-weight: 700; }
+
+    .metric-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+    .metric-tile { min-height: 116px; padding: 17px; border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--paper); }
+    .metric-tile .value { display: block; margin-bottom: 4px; color: var(--ink-strong); font-family: var(--mono); font-size: clamp(1.25rem, 2.6vw, 1.9rem); font-weight: 760; letter-spacing: -.045em; }
+    .metric-tile .label { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .metric-tile .pass { display: block; margin-top: 8px; color: var(--green); font-family: var(--mono); font-size: 10px; text-transform: uppercase; }
+
+    .evidence-chain { margin-top: 36px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--paper) 88%, transparent); }
+    .chain-label { margin-bottom: 13px; color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .chain { display: flex; align-items: center; gap: 8px; }
+    .chain-node { flex: 1; min-width: 0; padding: 12px 8px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink-strong); background: var(--paper-raised); text-align: center; font-size: 12px; font-weight: 700; }
+    .chain-node small { display: block; margin-top: 3px; color: var(--quiet); font-family: var(--mono); font-size: 9px; font-weight: 500; }
+    .chain-arrow { color: var(--teal); font-family: var(--mono); font-size: 15px; }
+
+    section { padding: 82px 0; border-top: 1px solid var(--line); }
+    section:nth-of-type(even) { background: color-mix(in srgb, var(--paper) 56%, transparent); }
+    .section-head { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 26px; margin-bottom: 38px; }
+    .section-no { padding-top: 8px; color: var(--teal); font-family: var(--mono); font-size: 13px; }
+    .section-intro { max-width: 820px; margin-top: 12px; color: var(--muted); font-size: 1.05rem; }
+    .section-body { margin-left: 126px; }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .card { padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: 0 1px 0 rgba(255,255,255,.3) inset; }
+    .card h3 { margin-bottom: 11px; }
+    .card p:last-child { margin-bottom: 0; }
+    .card-label { display: block; margin-bottom: 10px; color: var(--teal); font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+    .card ul { margin: 12px 0 0; color: var(--muted); font-size: 14px; }
+    .callout { padding: 20px 22px; border-left: 4px solid var(--teal); border-radius: 0 var(--radius-small) var(--radius-small) 0; background: var(--teal-soft); }
+    .callout.warning { border-color: var(--amber); background: var(--amber-soft); }
+    .callout strong { color: var(--ink-strong); }
+    .callout p:last-child { margin-bottom: 0; }
+
+    .architecture {
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .arch-title { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+    .arch-title span { color: var(--muted); font-family: var(--mono); font-size: 10px; }
+    .arch-route { display: grid; grid-template-columns: minmax(120px, .75fr) 32px minmax(180px, 1fr) 32px minmax(250px, 1.65fr) 32px minmax(180px, 1fr); align-items: stretch; }
+    .arch-arrow { display: flex; align-items: center; justify-content: center; color: var(--teal); font-family: var(--mono); font-weight: 800; }
+    .arch-node { display: flex; min-height: 112px; flex-direction: column; justify-content: center; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-raised); }
+    .arch-node.core { border-color: color-mix(in srgb, var(--teal) 45%, var(--line)); background: var(--teal-soft); }
+    .arch-node.store { background: var(--navy-soft); }
+    .arch-node b { color: var(--ink-strong); font-size: 14px; }
+    .arch-node small { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .core-lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .core-lane { padding: 8px; border: 1px solid color-mix(in srgb, var(--teal) 25%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--paper) 72%, transparent); color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .crosscut { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+    .crosscut span { padding: 9px 8px; border-radius: 7px; color: #d8e7eb; background: #17384a; text-align: center; font-family: var(--mono); font-size: 9px; letter-spacing: .02em; }
+
+    .package-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; margin-top: 22px; }
+    .package { position: relative; min-height: 142px; padding: 17px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--paper); }
+    .package::after { content: attr(data-index); position: absolute; right: 10px; bottom: -15px; color: color-mix(in srgb, var(--teal) 9%, transparent); font-family: var(--mono); font-size: 64px; font-weight: 800; }
+    .package code { display: inline-block; margin-bottom: 9px; color: var(--teal); }
+    .package p { position: relative; z-index: 1; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .model-map { display: grid; grid-template-columns: 1fr 44px 1.15fr 44px 1fr; align-items: center; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: #0d202c; color: #d5e5e9; }
+    .model-col { display: grid; gap: 9px; }
+    .model-arrow { color: #63cfca; text-align: center; font-family: var(--mono); font-size: 20px; }
+    .graph-node { padding: 12px 14px; border: 1px solid #355366; border-radius: 9px; background: #142c3a; }
+    .graph-node strong { display: block; color: #f0f8fa; font-size: 13px; }
+    .graph-node small { display: block; margin-top: 3px; color: #8facb8; font-family: var(--mono); font-size: 9px; }
+    .graph-node.highlight { border-color: #4caeaa; background: #14373b; }
+    .model-caption { margin-top: 13px; color: var(--muted); font-size: 13px; }
+    .relation-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 7px; margin-top: 14px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius-small); background: var(--paper); font-family: var(--mono); font-size: 11px; }
+    .relation-strip .r-node { padding: 5px 9px; border-radius: 999px; color: var(--ink-strong); background: var(--navy-soft); }
+    .relation-strip .r-edge { color: var(--teal); }
+
+    .decision-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+    .decision { padding: 17px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+    .decision .tag { display: inline-block; margin-bottom: 10px; padding: 3px 7px; border-radius: 5px; color: var(--teal); background: var(--teal-soft); font-family: var(--mono); font-size: 9px; text-transform: uppercase; }
+    .decision b { display: block; margin-bottom: 5px; color: var(--ink-strong); }
+    .decision p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    .tabs { border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow-small); }
+    .tab-list { display: flex; gap: 5px; padding: 8px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+    .tab-button { flex: 1; min-width: 145px; padding: 11px 13px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; font-weight: 680; }
+    .tab-button[aria-selected="true"] { color: var(--ink-strong); background: var(--teal-soft); box-shadow: 0 0 0 1px color-mix(in srgb, var(--teal) 18%, transparent) inset; }
+    .tab-panel { padding: 26px; }
+    .js .tab-panel[hidden] { display: none; }
+    .flow-summary { display: flex; align-items: start; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+    .flow-summary p { max-width: 720px; margin: 6px 0 0; color: var(--muted); }
+    .flow-badge { padding: 7px 10px; border-radius: 7px; color: var(--teal); background: var(--teal-soft); font-family: var(--mono); font-size: 10px; white-space: nowrap; }
+    .pipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; margin: 0; padding: 0; list-style: none; counter-reset: stage; }
+    .pipeline li { position: relative; min-height: 145px; margin: 0; padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper-raised); counter-increment: stage; }
+    .pipeline li::before { content: counter(stage, decimal-leading-zero); display: block; margin-bottom: 17px; color: var(--teal); font-family: var(--mono); font-size: 10px; font-weight: 800; }
+    .pipeline li::after { content: "→"; position: absolute; z-index: 2; top: 50%; right: -9px; color: var(--teal); font-family: var(--mono); }
+    .pipeline li:nth-child(5n)::after, .pipeline li:last-child::after { display: none; }
+    .pipeline b { display: block; margin-bottom: 5px; color: var(--ink-strong); font-size: 13px; }
+    .pipeline span { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .flow-notes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; }
+    .flow-note { padding: 13px; border-radius: 9px; background: var(--navy-soft); color: var(--muted); font-size: 11px; }
+    .flow-note strong { display: block; margin-bottom: 3px; color: var(--ink-strong); }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-small); }
+    table { width: 100%; border-collapse: collapse; background: var(--paper); font-size: 13px; }
+    th, td { padding: 13px 15px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); background: var(--navy-soft); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    td code { white-space: nowrap; }
+    .method { color: var(--purple); font-family: var(--mono); font-size: 11px; font-weight: 700; }
+    .access { color: var(--green); font-size: 11px; font-weight: 700; }
+
+    .control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; margin-top: 20px; }
+    .control-card { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--paper); }
+    .control-icon { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; margin-bottom: 13px; border-radius: 8px; color: var(--teal); background: var(--teal-soft); font-family: var(--mono); font-weight: 800; }
+    .control-card h3 { margin-bottom: 7px; font-size: 1rem; }
+    .control-card p { margin: 0; color: var(--muted); font-size: 12px; }
+
+    .validation-hero { display: grid; grid-template-columns: .85fr 1.4fr; gap: 18px; }
+    .score-card { display: flex; min-height: 260px; flex-direction: column; justify-content: space-between; padding: 26px; border-radius: var(--radius); color: #eaf7f1; background: #124c38; }
+    .score-card .score { font-family: var(--mono); font-size: clamp(4rem, 9vw, 7rem); font-weight: 800; letter-spacing: -.08em; line-height: .9; }
+    .score-card .score small { margin-left: 6px; font-size: 1rem; letter-spacing: 0; }
+    .score-card p { margin: 12px 0 0; color: #bfe2cf; }
+    .score-meta { display: flex; justify-content: space-between; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.18); font-family: var(--mono); font-size: 10px; }
+    .run-card { padding: 25px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+    .run-card h3 { margin-bottom: 18px; }
+    .run-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .run-fact { padding: 14px; border-radius: 9px; background: var(--navy-soft); }
+    .run-fact strong { display: block; color: var(--ink-strong); font-family: var(--mono); font-size: 1.14rem; }
+    .run-fact span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .run-note { margin-top: 16px; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; margin-top: 18px; }
+    .metric-row { padding: 15px 17px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .metric-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .metric-head b { color: var(--ink-strong); font-size: 12px; }
+    .metric-number { color: var(--green); font-family: var(--mono); font-size: 13px; font-weight: 800; }
+    .metric-target { display: block; margin-top: 3px; color: var(--quiet); font-family: var(--mono); font-size: 9px; }
+    .meter { height: 5px; margin-top: 11px; overflow: hidden; border-radius: 99px; background: var(--line); }
+    .meter span { display: block; width: var(--fill); height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--teal), var(--green)); }
+    .metric-row.latency .meter span { background: linear-gradient(90deg, var(--green), var(--amber)); }
+
+    .suite-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; margin-top: 18px; }
+    .suite { padding: 14px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); text-align: center; }
+    .suite strong { display: block; color: var(--ink-strong); font-family: var(--mono); font-size: 1.35rem; }
+    .suite span { color: var(--muted); font-size: 10px; }
+
+    .tradeoff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .trade-card { padding: 25px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+    .trade-card.good { border-top: 4px solid var(--green); }
+    .trade-card.limit { border-top: 4px solid var(--amber); }
+    .trade-card h3 { margin-bottom: 14px; }
+    .trade-card ul { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .readiness { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .readiness-card { padding: 22px; border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--paper); }
+    .readiness-card.yes { border-top: 4px solid var(--green); }
+    .readiness-card.conditional { border-top: 4px solid var(--amber); }
+    .readiness-card.no { border-top: 4px solid var(--red); }
+    .readiness-status { display: inline-block; margin-bottom: 12px; font-family: var(--mono); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .yes .readiness-status { color: var(--green); }
+    .conditional .readiness-status { color: var(--amber); }
+    .no .readiness-status { color: var(--red); }
+    .readiness-card p { color: var(--muted); font-size: 13px; }
+    .readiness-card ul { margin-bottom: 0; color: var(--muted); font-size: 12px; }
+
+    .priority-list { margin-top: 18px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--paper); }
+    .priority-item { display: grid; grid-template-columns: 62px 1fr auto; gap: 16px; padding: 17px 20px; border-bottom: 1px solid var(--line); align-items: start; }
+    .priority-item:last-child { border-bottom: 0; }
+    .priority { padding: 4px 7px; border-radius: 6px; color: var(--red); background: var(--red-soft); text-align: center; font-family: var(--mono); font-size: 10px; font-weight: 800; }
+    .priority-body b { display: block; color: var(--ink-strong); font-size: 13px; }
+    .priority-body span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .priority-owner { color: var(--quiet); font-family: var(--mono); font-size: 9px; }
+
+    .stage-line { display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; margin-bottom: 18px; }
+    .stage-chip { padding: 10px 4px; border: 1px solid color-mix(in srgb, var(--green) 30%, var(--line)); border-radius: 8px; color: var(--green); background: var(--green-soft); text-align: center; font-family: var(--mono); font-size: 9px; }
+    .stage-chip b { display: block; font-size: 12px; }
+
+    .code-route { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 18px 0; }
+    .code-stop { position: relative; padding: 14px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); text-align: center; }
+    .code-stop::after { content: "→"; position: absolute; top: 50%; right: -8px; z-index: 2; color: var(--teal); font-family: var(--mono); }
+    .code-stop:last-child::after { display: none; }
+    .code-stop code { font-size: 10px; }
+    .code-stop span { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; }
+
+    .command { position: relative; margin-top: 12px; }
+    .copy-button { position: absolute; z-index: 2; top: 9px; right: 9px; padding: 5px 8px; border: 1px solid #385364; border-radius: 6px; color: #bcd1d8; background: #17303e; cursor: pointer; font-family: var(--mono); font-size: 9px; }
+    .copy-button:hover { color: #fff; background: #24485a; }
+
+    .glossary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .term { padding: 17px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+    .term dt { color: var(--ink-strong); font-family: var(--mono); font-size: 11px; font-weight: 800; }
+    .term dd { margin: 6px 0 0; color: var(--muted); font-size: 11px; }
+
+    footer { padding: 48px 0 66px; border-top: 1px solid var(--line); }
+    .footer-inner { display: flex; width: min(1180px, calc(100% - 64px)); margin: 0 auto; align-items: end; justify-content: space-between; gap: 30px; }
+    .footer-inner strong { display: block; color: var(--ink-strong); }
+    .footer-inner p { max-width: 650px; margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .footer-hash { color: var(--quiet); font-family: var(--mono); font-size: 9px; text-align: right; overflow-wrap: anywhere; }
+
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    @media (max-width: 1180px) {
+      .metric-strip { grid-template-columns: repeat(3, 1fr); }
+      .package-grid { grid-template-columns: repeat(2, 1fr); }
+      .arch-route { grid-template-columns: 1fr 24px 1fr 24px 1.45fr; }
+      .arch-route .arch-arrow:nth-last-of-type(1), .arch-route .arch-node:last-child { display: none; }
+      .pipeline { grid-template-columns: repeat(3, 1fr); }
+      .pipeline li:nth-child(5n)::after { display: block; }
+      .pipeline li:nth-child(3n)::after { display: none; }
+      .code-route { grid-template-columns: repeat(3, 1fr); }
+      .code-stop:nth-child(3)::after { display: none; }
+    }
+
+    @media (max-width: 900px) {
+      html { scroll-padding-top: 72px; }
+      .mobile-bar {
+        position: sticky;
+        z-index: 500;
+        top: 0;
+        display: flex;
+        height: 58px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 18px;
+        color: #e1eef1;
+        background: rgba(10, 35, 50, .96);
+        backdrop-filter: blur(12px);
+      }
+      .mobile-brand { font-size: 13px; font-weight: 760; }
+      .menu-button { padding: 7px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; color: #fff; background: transparent; cursor: pointer; }
+      .rail { width: min(320px, 88vw); transform: translateX(-105%); transition: transform .22s ease; box-shadow: 20px 0 50px rgba(0,0,0,.25); }
+      body.nav-open .rail { transform: translateX(0); }
+      main { margin-left: 0; }
+      .hero { padding-top: 58px; }
+      .hero, .section-inner, .footer-inner { width: min(100% - 36px, 760px); }
+      .section-head { grid-template-columns: 56px 1fr; gap: 12px; }
+      .section-body { margin-left: 0; }
+      .section-head + .section-body { margin-top: 0; }
+      .arch-route { grid-template-columns: 1fr; gap: 7px; }
+      .arch-route .arch-arrow { min-height: 22px; transform: rotate(90deg); }
+      .arch-route .arch-arrow:nth-last-of-type(1), .arch-route .arch-node:last-child { display: flex; }
+      .model-map { grid-template-columns: 1fr; gap: 9px; }
+      .model-arrow { transform: rotate(90deg); }
+      .control-grid, .grid-3, .readiness, .glossary { grid-template-columns: repeat(2, 1fr); }
+      .validation-hero { grid-template-columns: 1fr; }
+      .suite-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @media (max-width: 640px) {
+      body { font-size: 15px; }
+      h1 { font-size: clamp(2.35rem, 14vw, 3.7rem); }
+      section { padding: 62px 0; }
+      .hero { padding-bottom: 52px; }
+      .hero-topline { align-items: start; flex-direction: column; }
+      .metric-strip, .grid-2, .package-grid, .decision-grid, .tradeoff-grid, .control-grid, .metrics, .readiness, .glossary { grid-template-columns: 1fr; }
+      .chain { align-items: stretch; flex-direction: column; }
+      .chain-arrow { transform: rotate(90deg); text-align: center; }
+      .verdict { grid-template-columns: 6px 1fr; }
+      .verdict-code { grid-column: 2; padding: 0 24px 18px; }
+      .pipeline { grid-template-columns: 1fr; }
+      .pipeline li { min-height: 0; }
+      .pipeline li::after, .pipeline li:nth-child(3n)::after, .pipeline li:nth-child(5n)::after { display: block; top: auto; right: 50%; bottom: -14px; transform: rotate(90deg); }
+      .pipeline li:last-child::after { display: none; }
+      .flow-notes, .run-facts { grid-template-columns: 1fr; }
+      .flow-summary { flex-direction: column; }
+      .suite-grid { grid-template-columns: repeat(2, 1fr); }
+      .priority-item { grid-template-columns: 55px 1fr; }
+      .priority-owner { grid-column: 2; }
+      .stage-line { grid-template-columns: repeat(3, 1fr); }
+      .code-route { grid-template-columns: 1fr; }
+      .code-stop::after, .code-stop:nth-child(3)::after { display: block; top: auto; right: 50%; bottom: -14px; transform: rotate(90deg); }
+      .code-stop:last-child::after { display: none; }
+      .footer-inner { align-items: start; flex-direction: column; }
+      .footer-hash { text-align: left; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+
+    @media print {
+      :root, :root[data-theme="dark"] {
+        --canvas: #fff; --paper: #fff; --paper-raised: #fff; --ink: #16222b; --ink-strong: #0b2133; --muted: #53626b; --quiet: #707b82; --line: #ccd4d5; --navy-soft: #edf1f2; --teal-soft: #e6f2f1; --green-soft: #e8f3ec; --amber-soft: #f8eddc; --red-soft: #f7e8e6;
+      }
+      @page { size: A4; margin: 15mm; }
+      body { background: #fff; font-size: 10pt; }
+      .rail, .mobile-bar, .progress, .copy-button { display: none !important; }
+      main { margin: 0; }
+      .hero, .section-inner, .footer-inner { width: 100%; }
+      .hero { padding: 20px 0 28px; }
+      section { padding: 30px 0; break-before: auto; }
+      .section-body { margin-left: 0; }
+      .card, .architecture, .tabs, .trade-card, .readiness-card, .validation-hero { box-shadow: none; break-inside: avoid; }
+      .js .tab-panel[hidden] { display: block; }
+      .tab-list { display: none; }
+      a { color: inherit; text-decoration: none; }
+      .metric-strip { grid-template-columns: repeat(5, 1fr); }
+      .pipeline { grid-template-columns: repeat(5, 1fr); }
+      .package-grid { grid-template-columns: repeat(4, 1fr); }
+      .arch-route { grid-template-columns: minmax(90px,.7fr) 20px 1fr 20px 1.5fr 20px 1fr; }
+      .arch-route .arch-arrow:nth-last-of-type(1), .arch-route .arch-node:last-child { display: flex; }
+      .tab-panel { border-bottom: 1px solid var(--line); }
+      .tab-panel:last-child { border-bottom: 0; }
+      footer { padding: 25px 0; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到正文</a>
+  <div class="progress" id="progress" aria-hidden="true"></div>
+
+  <header class="mobile-bar">
+    <span class="mobile-brand">GraphRAG 技术报告</span>
+    <button class="menu-button" id="menu-button" type="button" aria-expanded="false" aria-controls="report-nav">目录</button>
+  </header>
+
+  <aside class="rail" id="report-nav" aria-label="报告目录">
+    <div class="rail-brand">
+      <span class="rail-kicker">Technical dossier</span>
+      <span class="rail-title">Evidence-first<br>GraphRAG</span>
+      <span class="rail-version">REPORT / 2026-09-03</span>
+    </div>
+    <nav>
+      <a href="#overview"><span class="nav-no">01</span>项目定位</a>
+      <a href="#architecture"><span class="nav-no">02</span>系统架构</a>
+      <a href="#data-model"><span class="nav-no">03</span>数据与图模型</a>
+      <a href="#execution"><span class="nav-no">04</span>执行逻辑</a>
+      <a href="#capabilities"><span class="nav-no">05</span>功能与 API</a>
+      <a href="#security"><span class="nav-no">06</span>安全与可靠性</a>
+      <a href="#validation"><span class="nav-no">07</span>验证结果</a>
+      <a href="#tradeoffs"><span class="nav-no">08</span>优点与局限</a>
+      <a href="#readiness"><span class="nav-no">09</span>使用与上线边界</a>
+      <a href="#code-tour"><span class="nav-no">10</span>代码阅读与运行</a>
+    </nav>
+    <div class="rail-bottom">
+      <div class="rail-status">
+        <strong>✓ Stage 1–9 全部完成</strong>
+        参考包络内通过；不是 live production approval。
+      </div>
+      <div class="rail-actions">
+        <button class="icon-button" id="theme-button" type="button" aria-label="切换明暗主题">◐ 主题</button>
+        <button class="icon-button" type="button" onclick="window.print()" aria-label="打印或导出 PDF">⇩ 打印</button>
+      </div>
+    </div>
+  </aside>
+
+  <main id="main-content">
+    <header class="hero" id="top">
+      <div class="hero-topline">
+        <span class="eyebrow">Architecture · Runtime · Validation</span>
+        <span class="status-pill">Validated candidate</span>
+      </div>
+      <h1>GraphRAG<br>生产候选参考实现</h1>
+      <p class="hero-summary">
+        一个以<strong>证据链、权限边界和可重复验证</strong>为核心的 GraphRAG 工程实现。
+        它把教学脚本演进为分层生产包：可靠摄取、受治理知识图谱、有界混合检索、可核验引用回答，以及从质量回归到负载与恢复的完整门禁。
+      </p>
+      <div class="meta-row" aria-label="技术标签">
+        <span class="meta-tag">Python ≥ 3.12</span>
+        <span class="meta-tag">FastAPI</span>
+        <span class="meta-tag">Neo4j 5.26.12 Community</span>
+        <span class="meta-tag">Vector + BM25 + RRF + RA</span>
+        <span class="meta-tag">Multi-tenant / ACL</span>
+        <span class="meta-tag">Stage 1–9</span>
+      </div>
+
+      <div class="verdict">
+        <div class="verdict-bar" aria-hidden="true"></div>
+        <div class="verdict-copy">
+          <strong>结论：可直接用于本地运行、架构参考、集成验证和二次开发。</strong>
+          <p>固定 <code>production-reference</code> 包络已完整通过，但真实 provider、客户语料、集群与生产运维仍需上线前验证。</p>
+        </div>
+        <div class="verdict-code">PASS · 20/20 GATES</div>
+      </div>
+
+      <div class="metric-strip" aria-label="核心验证指标">
+        <div class="metric-tile"><span class="value">24,000</span><span class="label">验证语料 Chunks<br>12k 活动 + 12k 历史</span><span class="pass">reference load</span></div>
+        <div class="metric-tile"><span class="value">0.971</span><span class="label">Recall@5<br>目标 ≥ 0.90</span><span class="pass">passed</span></div>
+        <div class="metric-tile"><span class="value">935 ms</span><span class="label">服务端检索 p95<br>目标 ≤ 1,000 ms</span><span class="pass">passed</span></div>
+        <div class="metric-tile"><span class="value">10.87</span><span class="label">持续检索 RPS<br>8 clients / 5 min</span><span class="pass">passed</span></div>
+        <div class="metric-tile"><span class="value">0</span><span class="label">未授权暴露<br>服务端错误同为 0</span><span class="pass">fail-closed</span></div>
+      </div>
+
+      <div class="evidence-chain">
+        <div class="chain-label">The invariant · 系统必须始终保持的证据链</div>
+        <div class="chain" role="img" aria-label="可信来源经过版本化文档、可追踪文本块、受治理知识图谱、有界检索、引用回答，最终进入可度量验证">
+          <div class="chain-node">可信来源<small>trusted source</small></div><span class="chain-arrow">→</span>
+          <div class="chain-node">版本文档<small>immutable version</small></div><span class="chain-arrow">→</span>
+          <div class="chain-node">精确文本块<small>traceable chunk</small></div><span class="chain-arrow">→</span>
+          <div class="chain-node">治理图谱<small>navigation graph</small></div><span class="chain-arrow">→</span>
+          <div class="chain-node">有界检索<small>authorized recall</small></div><span class="chain-arrow">→</span>
+          <div class="chain-node">引用回答<small>cited answer</small></div><span class="chain-arrow">→</span>
+          <div class="chain-node">量化验证<small>measured gates</small></div>
+        </div>
+      </div>
+    </header>
+
+    <section id="overview" aria-labelledby="overview-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">01 / 10</div>
+          <div>
+            <h2 id="overview-title">项目定位：GraphRAG 不是“图数据库 + LLM”</h2>
+            <p class="section-intro">这个项目解决的不是一次问答演示，而是如何让每个事实都可回到原文、每次检索都不越权、每次发布都不暴露半成品，并用机器报告证明这些条件持续成立。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="grid-2">
+            <article class="card">
+              <span class="card-label">What it is</span>
+              <h3>证据优先的参考实现</h3>
+              <ul>
+                <li>多租户、组级 ACL 的文档摄取与查询。</li>
+                <li>文档版本、Chunk 坐标、校验和与派生事实全链路 provenance。</li>
+                <li>Vector / BM25 双路召回，标准 RRF 融合，RA 图扩展。</li>
+                <li>服务端校验 Claim、Quote、数字与 Citation 的 grounded generation。</li>
+                <li>Gold、基线、故障、恢复、性能与成本统一回归门禁。</li>
+              </ul>
+            </article>
+            <article class="card">
+              <span class="card-label">What it is not</span>
+              <h3>不是无条件上线的托管产品</h3>
+              <ul>
+                <li>没有生产 Dockerfile、Helm/Kubernetes 或完整部署拓扑。</li>
+                <li>Stage 9 默认使用确定性本地 embedding 与 recorded-answer provider。</li>
+                <li>没有替客户完成数据治理、外部身份、TLS、合规与 on-call。</li>
+                <li>五分钟单容器参考负载不等于集群容量或长期稳定性证明。</li>
+                <li>生产包是可装配的库与验证边界，不是已经配置好的 SaaS。</li>
+              </ul>
+            </article>
+          </div>
+          <div class="callout" style="margin-top:18px">
+            <p><strong>两条并行路径。</strong> <code>src/01…06</code> 保留为教学路径，展示从基础向量检索到图增强问答；真正的工程实现位于 <code>src/graphrag_prod</code>，后者以领域边界、事务语义、安全和验证为设计中心。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture" aria-labelledby="architecture-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">02 / 10</div>
+          <div>
+            <h2 id="architecture-title">系统架构：入口有界，事实落在 Chunk</h2>
+            <p class="section-intro">FastAPI 负责身份与请求边界，应用后端编排摄取和查询，Neo4j 保存版本化事实与导航结构；日志、指标和评估作为贯穿所有路径的控制面。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <figure class="architecture" aria-labelledby="arch-caption">
+            <div class="arch-title">
+              <h3>运行时组件图</h3>
+              <span>request path / dependency boundary</span>
+            </div>
+            <div class="arch-route" role="img" aria-label="客户端经 FastAPI 安全入口和有界执行器进入 GraphRAG 后端，后端访问 Neo4j 与受控模型提供方">
+              <div class="arch-node">
+                <b>Client</b>
+                <small>HTTPS · Bearer JWT<br>request / trace ID</small>
+              </div>
+              <div class="arch-arrow" aria-hidden="true">→</div>
+              <div class="arch-node">
+                <b>FastAPI boundary</b>
+                <small>schema · auth · scope · rate limit · body bound</small>
+              </div>
+              <div class="arch-arrow" aria-hidden="true">→</div>
+              <div class="arch-node core">
+                <b>GraphRAGApplicationBackend</b>
+                <div class="core-lanes">
+                  <div class="core-lane"><b>Document lane</b><br>planner → pipeline → governance → publish</div>
+                  <div class="core-lane"><b>Query lane</b><br>embed → retrieval → generation → validate</div>
+                </div>
+              </div>
+              <div class="arch-arrow" aria-hidden="true">→</div>
+              <div class="arch-node store">
+                <b>Neo4j + Providers</b>
+                <small>versioned graph · fulltext · vectors<br>embedding / answer boundary</small>
+              </div>
+            </div>
+            <div class="crosscut" aria-label="横切能力">
+              <span>BOUNDED RUNNER</span><span>ACL IN EVERY QUERY</span><span>REDACTED OBSERVABILITY</span><span>REGRESSION GATES</span>
+            </div>
+            <figcaption id="arch-caption" class="model-caption">身份、租户、访问组、query vector 和 embedding space 均由服务端产生或绑定，不能由客户端越权注入。图谱用于找到证据，回答事实仍以源 Chunk 为准。</figcaption>
+          </figure>
+
+          <div class="package-grid" aria-label="生产包边界">
+            <article class="package" data-index="1"><code>domain/</code><p>稳定 ID、不可变领域记录、来源 provenance、租户与访问模型。</p></article>
+            <article class="package" data-index="2"><code>ingestion/</code><p>文档生命周期、可恢复任务、原子快照、artifact 缓存、向量代际。</p></article>
+            <article class="package" data-index="3"><code>graph/</code><p>Schema、证据持久化、策略治理、实体解析、质量审计与复核。</p></article>
+            <article class="package" data-index="4"><code>retrieval/</code><p>授权召回、RRF、RA 扩展、相关性门控、去重、邻接与预算。</p></article>
+            <article class="package" data-index="5"><code>generation/</code><p>版本化 Prompt、非可信模型计划、引用绑定、拒答与数值保真。</p></article>
+            <article class="package" data-index="6"><code>api/</code><p>FastAPI 合约、JWT、授权、限流、超时、并发上界与依赖装配。</p></article>
+            <article class="package" data-index="7"><code>observability/</code><p>白名单结构化日志、递归脱敏、低基数指标、成本和阶段延迟。</p></article>
+            <article class="package" data-index="8"><code>evaluation/</code><p>Gold 数据、指标重算、Baseline、回归门禁与生产候选报告。</p></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="data-model" aria-labelledby="data-model-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">03 / 10</div>
+          <div>
+            <h2 id="data-model-title">数据与图模型：来源层、派生层、发布层分离</h2>
+            <p class="section-intro">所有持久业务 ID 都是确定性 UUIDv5；Chunk 用标准化原文中的绝对半开区间和 SHA-256 定位。Neo4j 的内部 <code>elementId</code> 不承担业务身份。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <figure>
+            <div class="model-map" role="img" aria-label="Document 通过 DocumentVersion 连接精确 Chunk，Chunk 为 EntityMention 和 Assertion 提供证据，KnowledgeSnapshot 原子发布这些派生记录">
+              <div class="model-col">
+                <div class="graph-node"><strong>Document</strong><small>tenant · source URI · ACL</small></div>
+                <div class="graph-node"><strong>DocumentVersion</strong><small>checksum · published/ingested at</small></div>
+                <div class="graph-node highlight"><strong>Chunk</strong><small>[char_start, char_end) · sha256</small></div>
+              </div>
+              <div class="model-arrow" aria-hidden="true">→</div>
+              <div class="model-col">
+                <div class="graph-node"><strong>EntityMention</strong><small>surface · exact evidence range</small></div>
+                <div class="graph-node highlight"><strong>Assertion</strong><small>subject · predicate · object · confidence</small></div>
+                <div class="graph-node"><strong>Entity</strong><small>type · canonical key · aliases</small></div>
+              </div>
+              <div class="model-arrow" aria-hidden="true">→</div>
+              <div class="model-col">
+                <div class="graph-node"><strong>KnowledgeSnapshot</strong><small>sealed manifest · pipeline profile</small></div>
+                <div class="graph-node"><strong>GovernancePolicy</strong><small>allowed schema · thresholds</small></div>
+                <div class="graph-node"><strong>EmbeddingGeneration</strong><small>space · coverage · corpus revision</small></div>
+              </div>
+            </div>
+            <figcaption class="model-caption">活动读路径只看 <code>ACTIVE_VERSION</code> 与 <code>ACTIVE_SNAPSHOT</code>；新版本在完整构建和验证后一次切换，避免读到半张图。</figcaption>
+          </figure>
+
+          <div class="relation-strip" aria-label="实体化关系证据模型">
+            <span class="r-node">Entity A</span><span class="r-edge">← SUBJECT —</span><span class="r-node">Assertion</span><span class="r-edge">— OBJECT →</span><span class="r-node">Entity B / literal</span><span class="r-edge">· EVIDENCED_BY →</span><span class="r-node">Chunk</span>
+          </div>
+
+          <div class="decision-grid">
+            <article class="decision"><span class="tag">Identity</span><b>稳定且可重建</b><p>Document、Version、Chunk、Entity、Mention、Assertion、Embedding 都由明确输入生成稳定 ID。</p></article>
+            <article class="decision"><span class="tag">Provenance</span><b>事实有原文坐标</b><p>派生关系保留 extractor 版本、置信度、evidence Chunk 与精确范围，可反向审计。</p></article>
+            <article class="decision"><span class="tag">Publication</span><b>快照原子可见</b><p>构建中的图不可见；manifest 校验通过后再切换活动快照和文档版本。</p></article>
+          </div>
+
+          <div class="callout warning" style="margin-top:18px">
+            <p><strong>关键语义：</strong>Entity 和 Assertion 是派生导航数据，不自动成为回答事实。即使图上存在一条关系，生成器仍必须拿到授权的源 Chunk，并用其中的原文支持 Claim。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="execution" aria-labelledby="execution-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">04 / 10</div>
+          <div>
+            <h2 id="execution-title">执行逻辑：写入、检索、回答是三条独立信任链</h2>
+            <p class="section-intro">切换下方视图可查看完整路径。每条链都在数据一致性、授权或模型输出边界处 fail closed，而不是在最后一步补救。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="tabs" data-tabs>
+            <div class="tab-list" role="tablist" aria-label="执行链选择">
+              <button class="tab-button" id="tab-ingest" type="button" role="tab" aria-selected="true" aria-controls="panel-ingest">A · 增量摄取</button>
+              <button class="tab-button" id="tab-retrieve" type="button" role="tab" aria-selected="false" aria-controls="panel-retrieve" tabindex="-1">B · 有界检索</button>
+              <button class="tab-button" id="tab-answer" type="button" role="tab" aria-selected="false" aria-controls="panel-answer" tabindex="-1">C · 引用回答</button>
+            </div>
+
+            <div class="tab-panel" id="panel-ingest" role="tabpanel" aria-labelledby="tab-ingest">
+              <div class="flow-summary">
+                <div><h3>增量摄取与原子发布</h3><p>Provider 工作在短事务之外，结果以稳定 artifact ID 缓存；只有经过治理并封存的 Snapshot 才能成为活动读模型。</p></div>
+                <span class="flow-badge">create · update · noop · delete · recover</span>
+              </div>
+              <ol class="pipeline">
+                <li><b>规范化输入</b><span>Source、URI、ACL、operation key；计算 checksum 与稳定 IDs。</span></li>
+                <li><b>持久化作业</b><span>Job / Task、attempt、lease 与随机 fencing token。</span></li>
+                <li><b>派生 Artifact</b><span>拆分、抽取、embedding；命中缓存或幂等计算。</span></li>
+                <li><b>图治理</b><span>类型、谓词、端点、证据、置信度与实体解析。</span></li>
+                <li><b>构建 Snapshot</b><span>完整 manifest；新图仍对查询不可见。</span></li>
+                <li><b>Stage + Verify</b><span>计数、ID、证据和 pipeline signature 全量核验。</span></li>
+                <li><b>原子切换</b><span>ACTIVE_SNAPSHOT 与 ACTIVE_VERSION 同事务发布。</span></li>
+                <li><b>推进 Revision</b><span>corpus revision +1；旧 embedding generation 变 stale。</span></li>
+                <li><b>激活向量代际</b><span>materialize → prepare → 100% coverage → activate。</span></li>
+                <li><b>进入可查询态</b><span>新读请求捕获一致的 revision 与 generation。</span></li>
+              </ol>
+              <div class="flow-notes">
+                <div class="flow-note"><strong>幂等</strong>同一内容与配置重放得到相同最终图；可返回 CREATED、UPDATED、REPROCESSED、UNCHANGED。</div>
+                <div class="flow-note"><strong>防迟到写</strong>过期 lease 的 worker 因 fencing token 无法提交；删除 generation 阻止“删后复活”。</div>
+                <div class="flow-note"><strong>删除语义</strong>原子清理来源与派生数据，保留 Job 与 Tombstone 审计，并保护共享 Entity。</div>
+              </div>
+            </div>
+
+            <div class="tab-panel" id="panel-retrieve" role="tabpanel" aria-labelledby="tab-retrieve" hidden>
+              <div class="flow-summary">
+                <div><h3>权限内混合检索</h3><p>系统先圈定授权集合再排序。Vector、BM25、图扩展、邻接补全与最终 hydrate 都携带同一 tenant / ACL / version / policy guard。</p></div>
+                <span class="flow-badge">RRF k=60 · RA candidates · bounded context</span>
+              </div>
+              <ol class="pipeline">
+                <li><b>服务端 Query Embedding</b><span>客户端不能传 vector 或 embedding-space identity。</span></li>
+                <li><b>捕获语料身份</b><span>tenant corpus revision + active embedding generation。</span></li>
+                <li><b>双路授权召回</b><span>授权集合内 exact cosine；分区 BM25 后再次 ACL 校验。</span></li>
+                <li><b>标准 RRF</b><span>按 <code>Σ 1/(60+rank)</code> 融合，不引入私有评分公式。</span></li>
+                <li><b>选择 Seeds</b><span>稳定排序与固定候选上界。</span></li>
+                <li><b>图候选扩展</b><span>仅经 accepted Entity；RA = <code>Σ 1/degree</code>。</span></li>
+                <li><b>重排与门控</b><span>精确 cosine + 二次 RRF；确定性 relevance gate。</span></li>
+                <li><b>去重与邻接</b><span>同版本内容去重，补相邻 Chunk，不越过 ACL。</span></li>
+                <li><b>上下文预算</b><span>限制 Chunk 数、字符数、扩展深度与候选量。</span></li>
+                <li><b>重授权输出</b><span>hydrate 精确来源并重读语料身份；变化则丢弃重试一次。</span></li>
+              </ol>
+              <div class="flow-notes">
+                <div class="flow-note"><strong>安全优先</strong>不是“全库 ANN 后过滤”；高分无权结果不会占据授权候选窗口或泄露存在性。</div>
+                <div class="flow-note"><strong>一致性</strong>Neo4j read-committed 下检测 revision/generation 改变；第二次变化直接 fail closed。</div>
+                <div class="flow-note"><strong>可解释</strong>RetrievalTrace 记录有界排名、门控和版本，但只包含调用者已授权的稳定 ID。</div>
+              </div>
+            </div>
+
+            <div class="tab-panel" id="panel-answer" role="tabpanel" aria-labelledby="tab-answer" hidden>
+              <div class="flow-summary">
+                <div><h3>Grounded Answer Generation</h3><p>模型只提交结构化回答计划；Citation、provenance 和最终文本由服务器验证并生成，模型不能伪造来源。</p></div>
+                <span class="flow-badge">answered · conflict · insufficient_context</span>
+              </div>
+              <ol class="pipeline">
+                <li><b>接收授权 Chunks</b><span>生成模块不再自行查询 Neo4j，也不做新的权限决策。</span></li>
+                <li><b>完整性校验</b><span>文本、绝对范围、checksum、文档版本与 provenance。</span></li>
+                <li><b>分配来源标签</b><span>按检索顺序生成 S1 / S2；标签仅在本次请求有效。</span></li>
+                <li><b>版本化 Prompt</b><span>只放源文本与 provenance，不放图事实或检索分数。</span></li>
+                <li><b>模型返回计划</b><span>严格 schema：status、claims、source labels、quotes。</span></li>
+                <li><b>Quote 定位</b><span>每段 quote 必须在对应 Chunk 中唯一出现。</span></li>
+                <li><b>Claim 支持校验</b><span>限定词、否定、条件、模态与局部绑定都必须一致。</span></li>
+                <li><b>字面量保真</b><span>数字、日期、币种与单位保持原样；冲突需多个来源。</span></li>
+                <li><b>服务端 Citation</b><span>把可信 S 标签映射到真实文档、版本、Chunk 与坐标。</span></li>
+                <li><b>渲染或拒答</b><span>非法输出安全拒答；provider 异常保留真实错误语义。</span></li>
+              </ol>
+              <div class="flow-notes">
+                <div class="flow-note"><strong>默认拒答</strong>空上下文直接 insufficient_context；无引用的实质性 Claim 不允许进入答案。</div>
+                <div class="flow-note"><strong>有限推理</strong>仅允许可本地重算的财年数值增减比较，并显式标记 <code>Inference:</code>。</div>
+                <div class="flow-note"><strong>硬上限</strong>10 Chunks、20k 上下文字符、20 Claims、每 Claim 5 Citations，问题 2k 字符。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="capabilities" aria-labelledby="capabilities-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">05 / 10</div>
+          <div>
+            <h2 id="capabilities-title">功能与 API：覆盖完整文档和问答生命周期</h2>
+            <p class="section-intro">HTTP 层提供严格合约，业务状态由后端决定。所有应用端点都要求 Bearer 身份；健康探针与观测接口采用不同暴露边界。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Method</th><th>Endpoint</th><th>Purpose</th><th>关键保证</th></tr></thead>
+              <tbody>
+                <tr><td><span class="method">POST</span></td><td><code>/v1/documents:ingest</code></td><td>创建、更新、重处理或幂等重放文档</td><td><span class="access">写入 ACL ⊆ 调用者 groups</span>；operation key；终态结果</td></tr>
+                <tr><td><span class="method">DELETE</span></td><td><code>/v1/documents/{document_id}</code></td><td>删除来源及所有目标派生物</td><td>tenant 绑定、tombstone generation、审计 Job 保留</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/v1/jobs/{job_id}</code></td><td>读取摄取/删除作业状态</td><td>provider-free 只读，可做有界 API 重试</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/v1/retrieval</code></td><td>返回授权 Chunk、稳定 Citation 与 Trace</td><td>query 内 ACL、上下文预算、corpus identity guard</td></tr>
+                <tr><td><span class="method">POST</span></td><td><code>/v1/answers</code></td><td>执行检索并生成引用回答</td><td>模型输出非可信；服务器校验并拥有最终 Citation</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/health/live</code></td><td>进程存活</td><td>轻量，不把依赖波动误判为进程死亡</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/health/ready</code></td><td>依赖就绪</td><td>执行有界 Neo4j 探针；不可用时 fail closed</td></tr>
+                <tr><td><span class="method">GET</span></td><td><code>/v1/metrics</code></td><td>聚合运行指标</td><td>system tenant + observer scope；无高基数敏感标签</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="grid-3" style="margin-top:18px">
+            <article class="card"><span class="card-label">Document lifecycle</span><h3>可恢复的增删改</h3><p>内容校验和、稳定 ID、artifact 缓存、任务租约、快照发布和完整删除形成统一状态机。</p></article>
+            <article class="card"><span class="card-label">Knowledge quality</span><h3>可治理的派生图</h3><p>允许模式、保守实体解析、隔离、异常 Hub、孤儿、重复与 unsupported claim 都可审计。</p></article>
+            <article class="card"><span class="card-label">Question answering</span><h3>可解释的检索与回答</h3><p>返回 stable citation、精确 Chunk location 和结构化 trace，并对证据不足与冲突显式建模。</p></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="security" aria-labelledby="security-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">06 / 10</div>
+          <div>
+            <h2 id="security-title">安全、可靠性与可观测性：控制必须发生在边界内</h2>
+            <p class="section-intro">系统避免“查完再过滤”“超时就释放容量”“模型说有引用就相信”等常见失效模式。每项保护都有明确实现位置与自动化负例。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="control-grid">
+            <article class="control-card"><div class="control-icon">ID</div><h3>固定算法 JWT</h3><p>HS256 签名、issuer、audience、exp、iat、subject、tenant、groups、scope、生命周期和大小全部校验。</p></article>
+            <article class="control-card"><div class="control-icon">ACL</div><h3>查询内授权</h3><p>Vector、BM25、图扩展、邻接与 hydrate 均在数据库查询内绑定 tenant、group、policy 和活动版本。</p></article>
+            <article class="control-card"><div class="control-icon">≤</div><h3>有界执行</h3><p>固定 worker + queue、每操作 deadline、过载快速失败；超时线程真正结束前不归还 capacity permit。</p></article>
+            <article class="control-card"><div class="control-icon">↻</div><h3>谨慎重试</h3><p>API 仅重试 provider-free 无副作用读取；写、检索和回答不在入口层盲目重放 provider 或事务。</p></article>
+            <article class="control-card"><div class="control-icon">LOG</div><h3>默认不记内容</h3><p>结构化日志使用字段白名单，递归脱敏 JWT、secret、URI userinfo 与控制字符；不记录问题和原文。</p></article>
+            <article class="control-card"><div class="control-icon">MET</div><h3>低基数指标</h3><p>记录 route、stage、error、延迟、token 与估算成本；不以 tenant、principal、document、query 作标签。</p></article>
+            <article class="control-card"><div class="control-icon">CAS</div><h3>发布一致性</h3><p>TenantCorpusState 与文档锁、预期 Snapshot CAS、manifest 校验、revision/generation 守卫。</p></article>
+            <article class="control-card"><div class="control-icon">DEL</div><h3>删除不可复活</h3><p>Tombstone generation 与 fencing token 阻断迟到 worker；目标记录原子删除，其他租户指纹保持不变。</p></article>
+            <article class="control-card"><div class="control-icon">ERR</div><h3>可预测失败</h3><p>稳定错误分类、脱敏响应、request/trace ID、<code>no-store</code> 与 <code>nosniff</code>，依赖异常不伪装。</p></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="validation" aria-labelledby="validation-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">07 / 10</div>
+          <div>
+            <h2 id="validation-title">验证结果：参考包络内，20 项验收指标全部通过</h2>
+            <p class="section-intro">Stage 8 建立可重复质量回归；Stage 9 在干净环境中加入大语料、并发、故障、删除和真实 Neo4j dump/load，最终报告由原始证据独立重建。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="validation-hero">
+            <div class="score-card">
+              <div>
+                <span class="card-label" style="color:#8fe0b5">qualification result</span>
+                <div class="score">20<small>/ 20</small></div>
+                <p>Stage 1 acceptance metrics passed<br>failures: []</p>
+              </div>
+              <div class="score-meta"><span>passed: true</span><span>eligible: true</span></div>
+            </div>
+            <div class="run-card">
+              <h3>Stage 9 production-reference 包络</h3>
+              <div class="run-facts">
+                <div class="run-fact"><strong>240</strong><span>Documents</span></div>
+                <div class="run-fact"><strong>480</strong><span>Versions</span></div>
+                <div class="run-fact"><strong>24,000</strong><span>Total Chunks</span></div>
+                <div class="run-fact"><strong>8</strong><span>Concurrent clients</span></div>
+                <div class="run-fact"><strong>300.421 s</strong><span>Sustained window</span></div>
+                <div class="run-fact"><strong>3,265</strong><span>Retrieval requests</span></div>
+              </div>
+              <p class="run-note">主租户 10,000 个活动 Chunks：7,500 可见、2,500 同租户无权；另有 2,000 跨租户活动 Chunks。30 个回答样本；确定性 provider 总估算成本 $0.0036。</p>
+            </div>
+          </div>
+
+          <div class="metrics" aria-label="质量和性能指标">
+            <div class="metric-row" style="--fill:97.14%"><div class="metric-head"><b>Retrieval · Recall@5</b><span class="metric-number">0.9714</span></div><span class="metric-target">TARGET ≥ 0.90</span><div class="meter"><span></span></div></div>
+            <div class="metric-row" style="--fill:98.57%"><div class="metric-head"><b>Retrieval · MRR</b><span class="metric-number">0.9857</span></div><span class="metric-target">TARGET ≥ 0.80</span><div class="meter"><span></span></div></div>
+            <div class="metric-row" style="--fill:97.96%"><div class="metric-head"><b>Retrieval · nDCG@5</b><span class="metric-number">0.9796</span></div><span class="metric-target">TARGET ≥ 0.85</span><div class="meter"><span></span></div></div>
+            <div class="metric-row" style="--fill:100%"><div class="metric-head"><b>Answer · claims / citations / numeric / refusal</b><span class="metric-number">1.0000</span></div><span class="metric-target">TARGET 0.90–1.00 BY METRIC</span><div class="meter"><span></span></div></div>
+            <div class="metric-row latency" style="--fill:93.51%"><div class="metric-head"><b>Performance · retrieval-stage p95</b><span class="metric-number">935.14 ms</span></div><span class="metric-target">LIMIT ≤ 1,000 ms · LOWER IS BETTER</span><div class="meter"><span></span></div></div>
+            <div class="metric-row" style="--fill:100%"><div class="metric-head"><b>Performance · sustained throughput</b><span class="metric-number">10.868 RPS</span></div><span class="metric-target">TARGET ≥ 8 RPS</span><div class="meter"><span></span></div></div>
+            <div class="metric-row latency" style="--fill:1.18%"><div class="metric-head"><b>Answer · HTTP p95</b><span class="metric-number">176.22 ms</span></div><span class="metric-target">LIMIT ≤ 15,000 ms · DETERMINISTIC PROVIDER</span><div class="meter"><span></span></div></div>
+            <div class="metric-row" style="--fill:100%"><div class="metric-head"><b>Security / reliability · exposure &amp; errors</b><span class="metric-number">0 / 0</span></div><span class="metric-target">UNAUTHORIZED EXPOSURE = 0 · SERVER ERROR RATE = 0</span><div class="meter"><span></span></div></div>
+          </div>
+
+          <div class="suite-grid" aria-label="Stage 9 最终测试套件">
+            <div class="suite"><strong>407</strong><span>functional</span></div>
+            <div class="suite"><strong>4</strong><span>quality</span></div>
+            <div class="suite"><strong>15</strong><span>security</span></div>
+            <div class="suite"><strong>5</strong><span>recovery</span></div>
+            <div class="suite"><strong>10</strong><span>performance</span></div>
+          </div>
+          <p style="margin:10px 0 0;color:var(--muted);font-size:12px">最终共 441 个 suite 项，失败、错误、跳过均为 0；另有 17 个依赖故障与生命周期场景全部通过。</p>
+
+          <div class="grid-2" style="margin-top:18px">
+            <article class="card">
+              <span class="card-label">Stage 8 · deterministic regression</span>
+              <h3>两次完整重放一致</h3>
+              <p>49 个 Gold 问题覆盖 7 类问题；图实体/关系/解析指标均为 1.0。每轮 327 unit、75 Neo4j integration、5 HTTP E2E、15 security、2 regression，两轮 semantic projection 一致。</p>
+            </article>
+            <article class="card">
+              <span class="card-label">Stage 9 · recovery evidence</span>
+              <h3>恢复后的图身份完全相同</h3>
+              <p>真实 <code>neo4j-admin dump/load</code>；来源与恢复库均为 74,532 个业务节点、148,612 条关系，canonical digest 精确一致。</p>
+            </article>
+          </div>
+
+          <div class="callout warning" style="margin-top:18px">
+            <p><strong>读数边界。</strong>935.14 ms 是 warmed server-side retrieval-stage p95，也是验收门禁；HTTP retrieval p95 959.92 ms、p99 1322.00 ms 为诊断值。69.17 chunks/s 只度量 bounded bulk graph-write，不包含 embedding/index 激活与 time-to-query-ready。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tradeoffs" aria-labelledby="tradeoffs-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">08 / 10</div>
+          <div>
+            <h2 id="tradeoffs-title">优点与局限：它把正确性放在便利性之前</h2>
+            <p class="section-intro">这套设计适合作为严谨系统的基线，但它也主动选择了保守实体解析、精确授权向量计算和严格模型输出校验，因此换来了复杂度与扩展成本。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="tradeoff-grid">
+            <article class="trade-card good">
+              <h3>优势</h3>
+              <ul>
+                <li><strong>证据完整：</strong>回答可回溯到不可变文档版本和精确 Chunk 坐标。</li>
+                <li><strong>读写隔离：</strong>原子 Snapshot 发布，不暴露半完成抽取结果。</li>
+                <li><strong>权限前置：</strong>ACL 进入每条 recall / expansion 查询，不靠末端过滤。</li>
+                <li><strong>标准算法：</strong>RRF 与 RA 透明、可复算，没有未经评估的私有权重。</li>
+                <li><strong>图证据分工：</strong>图负责导航，Chunk 承担事实，降低抽取幻觉传播。</li>
+                <li><strong>模型受约束：</strong>输出 schema、quote、claim、字面量、citation 全部二次验证。</li>
+                <li><strong>失败有界：</strong>幂等、lease fencing、tombstone、并发与重试语义明确。</li>
+                <li><strong>验证可审计：</strong>数据、模型、prompt、索引、镜像、配置和报告均版本绑定。</li>
+              </ul>
+            </article>
+            <article class="trade-card limit">
+              <h3>局限与技术债</h3>
+              <ul>
+                <li><strong>Provider 真实性：</strong>确定性 reference 未覆盖真实 LLM/embedding 的质量、配额、费用和隐私。</li>
+                <li><strong>语料代表性：</strong>合成英文公司文档不能代表 OCR、表格、多语言与客户长尾分布。</li>
+                <li><strong>规模外推：</strong>单 Neo4j Community、五分钟负载，不代表集群和数天 soak。</li>
+                <li><strong>向量性能：</strong>授权集合内 exact cosine 安全但在更大规模可能成为瓶颈。</li>
+                <li><strong>摄取拓扑：</strong>HTTP 摄取同步终态；缺少外部 durable queue、对象存储和 worker 编排。</li>
+                <li><strong>语义校验：</strong>保守词法/局部规则不是通用 entailment proof，可能误拒或漏掉复杂支持。</li>
+                <li><strong>实体解析：</strong>当前是审计友好的 pairwise 决策，没有候选生成系统与审核 UI。</li>
+                <li><strong>部署工程：</strong>共享限流、非对称身份、密钥轮换、TLS、告警和 IaC 仍由目标环境补齐。</li>
+              </ul>
+            </article>
+          </div>
+          <div class="decision-grid">
+            <article class="decision"><span class="tag">Trade-off 01</span><b>Exact cosine vs ANN</b><p>当前优先保证授权候选不会被全库 ANN 窗口挤出。若改 ANN，必须证明过滤在候选窗口之前生效。</p></article>
+            <article class="decision"><span class="tag">Trade-off 02</span><b>Conservative ER vs recall</b><p>只有相同权威 ID 自动合并；名称重合进入人工复核。减少误合并，但增加治理工作量。</p></article>
+            <article class="decision"><span class="tag">Trade-off 03</span><b>Strict grounding vs answer rate</b><p>无法唯一定位 Quote 或保持限定词/数值时宁可拒答；可信度提高，回答覆盖率可能下降。</p></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="readiness" aria-labelledby="readiness-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">09 / 10</div>
+          <div>
+            <h2 id="readiness-title">可以直接用吗？按使用场景回答</h2>
+            <p class="section-intro">“验证通过”描述的是固定代码与环境包络，不是一次覆盖所有客户数据和生产基础设施的通行证。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="readiness">
+            <article class="readiness-card yes">
+              <span class="readiness-status">可以直接使用</span>
+              <h3>学习、评审、二次开发</h3>
+              <p>仓库已具备完整实现与验证文档，可作为：</p>
+              <ul><li>GraphRAG 架构参考</li><li>本地教学与算法实验</li><li>安全/溯源设计评审基线</li><li>企业内部二开起点</li></ul>
+            </article>
+            <article class="readiness-card conditional">
+              <span class="readiness-status">满足条件后使用</span>
+              <h3>真实数据试点与集成</h3>
+              <p>先完成目标环境适配：</p>
+              <ul><li>替换并验证真实 providers</li><li>建立客户语料 Gold</li><li>接入正式身份、secret、TLS</li><li>复跑质量、安全与容量门禁</li></ul>
+            </article>
+            <article class="readiness-card no">
+              <span class="readiness-status">不能直接宣称</span>
+              <h3>已经可无条件生产上线</h3>
+              <p>当前证据不覆盖：</p>
+              <ul><li>目标 Neo4j 集群与跨区容灾</li><li>多副本共享限流和即时撤权</li><li>长期 soak、峰值与容量余量</li><li>RPO/RTO、监控、隐私与合规</li></ul>
+            </article>
+          </div>
+
+          <div class="priority-list" aria-label="上线前 P0 清单">
+            <div class="priority-item"><span class="priority">P0-01</span><div class="priority-body"><b>客户语料与真实 Provider 资格</b><span>实际语言、格式、访问分布和问题集；独立验证质量、延迟、配额、价格、隐私及事故行为。</span></div><span class="priority-owner">DATA / ML</span></div>
+            <div class="priority-item"><span class="priority">P0-02</span><div class="priority-body"><b>生产身份、密钥、TLS 与分布式访问控制</b><span>托管身份和 secret manager、轮换/吊销、mTLS、跨副本撤权与共享限流。</span></div><span class="priority-owner">SECURITY</span></div>
+            <div class="priority-item"><span class="priority">P0-03</span><div class="priority-body"><b>目标集群容量与长期稳定性</b><span>最终硬件、网络、存储、Neo4j 拓扑；长时 soak、冷启动、峰值、升级和资源余量。</span></div><span class="priority-owner">PLATFORM</span></div>
+            <div class="priority-item"><span class="priority">P0-04</span><div class="priority-body"><b>备份、故障转移与 RPO/RTO</b><span>加密归档、跨域恢复、损坏检测、恢复后 ACL/删除/引用复验与真实演练。</span></div><span class="priority-owner">SRE</span></div>
+            <div class="priority-item"><span class="priority">P0-05</span><div class="priority-body"><b>监控、响应、隐私与合规</b><span>SLO/SLI、告警、on-call、审计保留、数据驻留、删除责任与适用法规评审。</span></div><span class="priority-owner">OPS / LEGAL</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="code-tour" aria-labelledby="code-tour-title">
+      <div class="section-inner">
+        <div class="section-head">
+          <div class="section-no">10 / 10</div>
+          <div>
+            <h2 id="code-tour-title">代码阅读与运行：先走主链，再看门禁</h2>
+            <p class="section-intro">如果第一次接触项目，按下面顺序阅读可以最快建立完整心智模型；编号脚本适合理解概念，生产包适合理解真实工程约束。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="stage-line" aria-label="阶段完成状态">
+            <div class="stage-chip"><b>1</b>contract</div><div class="stage-chip"><b>2</b>model</div><div class="stage-chip"><b>3</b>ingest</div><div class="stage-chip"><b>4</b>govern</div><div class="stage-chip"><b>5</b>retrieve</div><div class="stage-chip"><b>6</b>answer</div><div class="stage-chip"><b>7</b>API</div><div class="stage-chip"><b>8</b>evaluate</div><div class="stage-chip"><b>9</b>qualify</div>
+          </div>
+
+          <div class="code-route" aria-label="推荐代码阅读顺序">
+            <div class="code-stop"><a href="../src/graphrag_prod/domain/models.py"><code>domain/models.py</code></a><span>先理解业务身份</span></div>
+            <div class="code-stop"><a href="../src/graphrag_prod/ingestion/service.py"><code>ingestion/service.py</code></a><span>看写入状态机</span></div>
+            <div class="code-stop"><a href="../src/graphrag_prod/retrieval/engine.py"><code>retrieval/engine.py</code></a><span>看授权检索链</span></div>
+            <div class="code-stop"><a href="../src/graphrag_prod/generation/service.py"><code>generation/service.py</code></a><span>看模型信任边界</span></div>
+            <div class="code-stop"><a href="../src/graphrag_prod/api/app.py"><code>api/app.py</code></a><span>看 HTTP 控制面</span></div>
+            <div class="code-stop"><a href="../src/graphrag_prod/evaluation/production.py"><code>evaluation/production.py</code></a><span>看资格门禁</span></div>
+          </div>
+
+          <div class="grid-2">
+            <article class="card">
+              <span class="card-label">Fast local gate · deterministic</span>
+              <h3>Stage 8：两次可重复回归</h3>
+              <div class="command">
+                <button class="copy-button" type="button" data-copy="stage8-command">复制</button>
+                <pre id="stage8-command"><code>./scripts/run_stage8_validation.sh \
+  --repeat 2 \
+  --baseline evaluation/baselines/dev-mini.v1.json \
+  --output-dir /tmp/sample-graphrag-stage8</code></pre>
+              </div>
+            </article>
+            <article class="card">
+              <span class="card-label">Full qualification · Docker · 5+ min</span>
+              <h3>Stage 9：生产参考包络</h3>
+              <div class="command">
+                <button class="copy-button" type="button" data-copy="stage9-command">复制</button>
+                <pre id="stage9-command"><code>./scripts/run_stage9_validation.sh \
+  --output-dir /tmp/sample-graphrag-stage9</code></pre>
+              </div>
+            </article>
+          </div>
+
+          <div class="table-wrap" style="margin-top:18px">
+            <table>
+              <thead><tr><th>继续深入</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><a href="provenance_model.md">provenance_model.md</a></td><td>稳定 ID、来源版本、Chunk 坐标、Neo4j schema 与访问模型。</td></tr>
+                <tr><td><a href="incremental_ingestion.md">incremental_ingestion.md</a></td><td>Job/Task、Artifact、Snapshot、删除、恢复与 embedding generation。</td></tr>
+                <tr><td><a href="production_retrieval.md">production_retrieval.md</a></td><td>Vector/BM25、RRF、RA、gating、预算、一致性与 ACL。</td></tr>
+                <tr><td><a href="grounded_answer_generation.md">grounded_answer_generation.md</a></td><td>Prompt、AnswerModel 合约、引用绑定、拒答、冲突与数值保真。</td></tr>
+                <tr><td><a href="api_security_reliability.md">api_security_reliability.md</a></td><td>认证授权、并发、超时、重试、日志、指标和依赖生命周期。</td></tr>
+                <tr><td><a href="validation/stage-9.md">validation/stage-9.md</a></td><td>权威 Stage 9 测量结果、证据摘要与资格结论。</td></tr>
+                <tr><td><a href="validation/process-improvements.md">process-improvements.md</a></td><td>P0/P1/P2 改进项与真实上线前置条件。</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout" style="margin-top:18px">
+            <p><strong>建议上手顺序：</strong>先打开本报告建立全局模型 → 跑 Stage 8 确认开发环境 → 用 <code>dev-corpus-v1</code> 做集成改动 → 修改 Gold/Baseline 时做 case-level review → 只有需要重新签发候选资格时才跑 Stage 9。</p>
+          </div>
+
+          <h3 style="margin:32px 0 14px">最小术语表</h3>
+          <dl class="glossary">
+            <div class="term"><dt>Snapshot</dt><dd>某文档版本在固定 pipeline 与治理策略下的完整派生图输出；验证后原子发布。</dd></div>
+            <div class="term"><dt>Corpus revision</dt><dd>租户活动语料状态的单调版本；用于发现查询期间的发布或撤权变化。</dd></div>
+            <div class="term"><dt>Embedding generation</dt><dd>同一向量空间的一组完整活动 Chunk embeddings；覆盖率 100% 后才能激活。</dd></div>
+            <div class="term"><dt>RRF</dt><dd>Reciprocal Rank Fusion；只依赖各通道排名，默认常数 k=60。</dd></div>
+            <div class="term"><dt>RA</dt><dd>Resource Allocation；共享低度数 Entity 对候选贡献更大，仅用于图候选扩展。</dd></div>
+            <div class="term"><dt>Fail closed</dt><dd>输入、授权、状态或证据无法确认时拒绝继续，而不是猜测、降级放行或输出部分结果。</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="footer-inner">
+        <div>
+          <strong>sample-graphrag · Technical Architecture Report</strong>
+          <p>报告基于已完成的 Stage 1–9 实现与验证证据。实现资格绑定提交 <code>7142fa331f74ecd868a5ba20d343c787e2f9d367</code>；文档收口提交 <code>d1042ae</code>。</p>
+        </div>
+        <div class="footer-hash">semantic digest<br>71d67bee2c155656cb663f602e92fe30aa2e5f58a35d8848847a7bdc24b4d575</div>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const body = document.body;
+      const progress = document.getElementById('progress');
+      const menuButton = document.getElementById('menu-button');
+      const themeButton = document.getElementById('theme-button');
+      const navLinks = [...document.querySelectorAll('.rail nav a')];
+      const sections = [...document.querySelectorAll('main section[id]')];
+
+      const updateProgress = () => {
+        const max = root.scrollHeight - window.innerHeight;
+        progress.style.width = `${max > 0 ? Math.min(100, (window.scrollY / max) * 100) : 0}%`;
+      };
+      updateProgress();
+      window.addEventListener('scroll', updateProgress, { passive: true });
+      window.addEventListener('resize', updateProgress);
+
+      menuButton?.addEventListener('click', () => {
+        const open = body.classList.toggle('nav-open');
+        menuButton.setAttribute('aria-expanded', String(open));
+      });
+      navLinks.forEach(link => link.addEventListener('click', () => {
+        body.classList.remove('nav-open');
+        menuButton?.setAttribute('aria-expanded', 'false');
+      }));
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          body.classList.remove('nav-open');
+          menuButton?.setAttribute('aria-expanded', 'false');
+        }
+      });
+
+      themeButton?.addEventListener('click', () => {
+        const current = root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        const next = current === 'dark' ? 'light' : 'dark';
+        root.dataset.theme = next;
+        try { localStorage.setItem('graphrag-report-theme', next); } catch (_) {}
+      });
+
+      if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver(entries => {
+          const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (!visible) return;
+          navLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${visible.target.id}`));
+        }, { rootMargin: '-18% 0px -68% 0px', threshold: [0, .15, .4] });
+        sections.forEach(section => observer.observe(section));
+      }
+
+      document.querySelectorAll('[data-tabs]').forEach(widget => {
+        const tabs = [...widget.querySelectorAll('[role="tab"]')];
+        const panels = [...widget.querySelectorAll('[role="tabpanel"]')];
+        const activate = tab => {
+          tabs.forEach(item => {
+            const active = item === tab;
+            item.setAttribute('aria-selected', String(active));
+            item.tabIndex = active ? 0 : -1;
+          });
+          panels.forEach(panel => { panel.hidden = panel.id !== tab.getAttribute('aria-controls'); });
+        };
+        tabs.forEach((tab, index) => {
+          tab.addEventListener('click', () => activate(tab));
+          tab.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            let next = index;
+            if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+            if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+            if (event.key === 'Home') next = 0;
+            if (event.key === 'End') next = tabs.length - 1;
+            tabs[next].focus();
+            activate(tabs[next]);
+          });
+        });
+      });
+
+      document.querySelectorAll('[data-copy]').forEach(button => {
+        button.addEventListener('click', async () => {
+          const target = document.getElementById(button.dataset.copy);
+          if (!target) return;
+          try {
+            const value = target.innerText;
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(value);
+            } else {
+              const fallback = document.createElement('textarea');
+              fallback.value = value;
+              fallback.setAttribute('readonly', '');
+              fallback.style.position = 'fixed';
+              fallback.style.opacity = '0';
+              document.body.appendChild(fallback);
+              fallback.select();
+              const copied = document.execCommand('copy');
+              fallback.remove();
+              if (!copied) throw new Error('copy unavailable');
+            }
+            const previous = button.textContent;
+            button.textContent = '已复制';
+            setTimeout(() => { button.textContent = previous; }, 1200);
+          } catch (_) {
+            button.textContent = '请手动复制';
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
