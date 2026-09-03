@@ -99,6 +99,26 @@ remaining improvements and deployment prerequisites in
 This is production-candidate validation of the recorded reference envelope,
 not approval or evidence of a live production deployment.
 
+## Local Playground
+
+To try the completed knowledge-base retrieval and authorization pipeline in a
+browser, run:
+
+```bash
+./scripts/run_playground.sh
+```
+
+It opens <http://127.0.0.1:8000/playground>, starts a disposable local Neo4j,
+and loads the deterministic 120-Chunk development corpus. It embeds the corpus
+and every query using the OpenAI-compatible embedding provider configured in
+`.env`, then exercises Vector + BM25 + RRF + graph expansion. The Playground
+returns Chunks, provenance, and a
+Retrieval Trace for downstream model orchestration; it does not generate final
+answers or call a chat LLM. Press Ctrl-C to remove the temporary database.
+
+See [`docs/local_playground.md`](docs/local_playground.md) for capabilities,
+limitations, ports, and focused checks.
+
 ## Prerequisites
 
 - **Python 3.12+**
