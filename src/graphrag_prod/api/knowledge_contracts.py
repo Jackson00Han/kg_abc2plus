@@ -15,9 +15,13 @@ from pydantic import AwareDatetime, Field, StringConstraints, field_validator, m
 
 from .contracts import (
     Identifier,
+    LiteralSourceText,
+    LiteralTemporalText,
+    LiteralUnitText,
     MAX_DOCUMENT_BYTES,
     ShortText,
     StrictAPIModel,
+    TypedLiteralSemanticsResponse,
     _canonical_source_uri,
     _json_array,
     _json_aware_datetime,
@@ -279,6 +283,16 @@ class AuthoritativeMentionInput(StrictAPIModel):
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)] = 1.0
 
 
+class RawLiteralInput(StrictAPIModel):
+    """Untrusted source tokens; canonical semantics are always server-owned."""
+
+    raw_literal: LiteralSourceText
+    raw_unit: LiteralUnitText | None = None
+    raw_valid_from: LiteralTemporalText | None = None
+    raw_valid_to: LiteralTemporalText | None = None
+    raw_observed_at: LiteralTemporalText | None = None
+
+
 class AuthoritativeAssertionInput(StrictAPIModel):
     source_key: Identifier
     expected_previous_revision: Annotated[
@@ -289,11 +303,11 @@ class AuthoritativeAssertionInput(StrictAPIModel):
     evidence: EvidenceInput
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)] = 1.0
     object_mention_source_key: Identifier | None = None
-    literal_value: LongText | None = None
+    literal: RawLiteralInput | None = None
 
     @model_validator(mode="after")
     def exactly_one_object(self) -> Self:
-        if (self.object_mention_source_key is None) == (self.literal_value is None):
+        if (self.object_mention_source_key is None) == (self.literal is None):
             raise ValueError("assertion requires exactly one entity or literal object")
         return self
 
@@ -514,7 +528,8 @@ class ReviewRecordResponse(StrictAPIModel):
     subject_mention_revision_id: Identifier | None = None
     object_entity: EntityIdentityResponse | None = None
     object_mention_revision_id: Identifier | None = None
-    literal_value: LongText | None = None
+    literal_value: LiteralSourceText | None = None
+    literal_semantics: TypedLiteralSemanticsResponse | None = None
 
     @model_validator(mode="after")
     def shape_matches_kind(self) -> Self:
@@ -528,6 +543,7 @@ class ReviewRecordResponse(StrictAPIModel):
                     self.object_entity,
                     self.object_mention_revision_id,
                     self.literal_value,
+                    self.literal_semantics,
                 )
             ):
                 raise ValueError("entity mention review shape is invalid")
@@ -548,6 +564,13 @@ class ReviewRecordResponse(StrictAPIModel):
             and self.object_mention_revision_id is None
         ):
             raise ValueError("assertion review mention linkage is invalid")
+        if self.object_entity is not None and self.literal_semantics is not None:
+            raise ValueError("entity assertion must not carry literal semantics")
+        if (
+            self.literal_semantics is not None
+            and self.literal_semantics.raw_value != self.literal_value
+        ):
+            raise ValueError("literal semantics must match literal_value")
         return self
 
 
@@ -589,11 +612,11 @@ class AssertionEditInput(StrictAPIModel):
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
     object_entity: KnowledgeEntityInput | None = None
     object_mention_revision_id: Identifier | None = None
-    literal_value: LongText | None = None
+    literal: RawLiteralInput | None = None
 
     @model_validator(mode="after")
     def valid_object(self) -> Self:
-        if (self.object_entity is None) == (self.literal_value is None):
+        if (self.object_entity is None) == (self.literal is None):
             raise ValueError("assertion edit requires exactly one object shape")
         if self.object_entity is None and self.object_mention_revision_id is not None:
             raise ValueError("literal assertion edit cannot reference an object mention")
@@ -768,6 +791,7 @@ __all__ = [
     "PublicationHistoryResponse",
     "PublicationRequest",
     "PublicationResponse",
+    "RawLiteralInput",
     "ReviewBatchRequest",
     "ReviewBatchResponse",
     "ReviewQueueRequest",

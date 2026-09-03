@@ -37,17 +37,57 @@ from graphrag_prod.api.runtime import (
     required_scope,
 )
 from graphrag_prod.construction import DocumentParseError
-from graphrag_prod.domain import Principal
-from graphrag_prod.knowledge import KnowledgeWriteResult
+from graphrag_prod.domain import Principal, TypedLiteralValue
+from graphrag_prod.domain.ids import entity_id as make_entity_id
+from graphrag_prod.knowledge import (
+    AssertionRecord,
+    EntityIdentity,
+    EvidenceReference,
+    KnowledgeWriteResult,
+    RecordRevision,
+    knowledge_record_id,
+    llm_candidate_trust,
+)
 from graphrag_prod.knowledge.review import (
     KnowledgePublicationView,
     ReviewBatchResult,
     ReviewOutcome,
+    ReviewQueueItem,
+    ReviewRecordKind,
 )
-from graphrag_prod.ontology import EntityTypeDefinition, TBoxStatus, TBoxVersion
+from graphrag_prod.ontology import (
+    Cardinality,
+    EntityTypeDefinition,
+    PropertyDataType,
+    PropertyDefinition,
+    TBoxStatus,
+    TBoxVersion,
+)
 
 
 NOW = datetime(2026, 9, 4, 10, 0, tzinfo=UTC)
+ACTIVE_TBOX = TBoxVersion(
+    tenant_id="tenant-alpha",
+    key="industrial-assets",
+    version=1,
+    status=TBoxStatus.PUBLISHED,
+    entity_types=(
+        EntityTypeDefinition(
+            "Asset",
+            ("asset-id",),
+            properties=(
+                PropertyDefinition(
+                    "PRESSURE",
+                    PropertyDataType.DECIMAL,
+                    False,
+                    Cardinality.ZERO_OR_MORE,
+                    unit="kPa",
+                ),
+            ),
+        ),
+    ),
+    relationship_types=(),
+)
 
 
 def _construct_payload(**changes: object) -> dict[str, object]:
@@ -67,7 +107,7 @@ def _construct_payload(**changes: object) -> dict[str, object]:
 
 def _authoritative_payload(**changes: object) -> dict[str, object]:
     value: dict[str, object] = {
-        "ontology_version_id": "tbox-1",
+        "ontology_version_id": ACTIVE_TBOX.tbox_id,
         "mentions": [
             {
                 "source_key": "expert-pump-7",
@@ -90,6 +130,62 @@ def _authoritative_payload(**changes: object) -> dict[str, object]:
     }
     value.update(changes)
     return value
+
+
+def _candidate_literal() -> AssertionRecord:
+    quote = (
+        "Pump-7 pressure was 100 psi and corrected to 90 psi at "
+        "2025-01-02T03:04:05Z"
+    )
+    subject = EntityIdentity(
+        entity_id=make_entity_id("tenant-alpha", "Asset", "asset-id:P-7"),
+        tenant_id="tenant-alpha",
+        entity_type="Asset",
+        canonical_key="asset-id:P-7",
+        canonical_name="Pump-7",
+    )
+    semantics = TypedLiteralValue(
+        datatype="DECIMAL",
+        typed_value="689.4757293168361336722673443",
+        raw_value="100",
+        raw_unit="psi",
+        canonical_value="689.4757293168361336722673443",
+        canonical_unit="kPa",
+        observed_at=datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC),
+        raw_observed_at="2025-01-02T03:04:05Z",
+    )
+    return AssertionRecord(
+        revision=RecordRevision.next(
+            knowledge_record_id("tenant-alpha", "ASSERTION", "candidate-pressure"),
+            0,
+        ),
+        tenant_id="tenant-alpha",
+        subject=subject,
+        predicate="PRESSURE",
+        evidence=EvidenceReference(
+            tenant_id="tenant-alpha",
+            document_id="document-1",
+            version_id="version-1",
+            chunk_id="chunk-1",
+            char_start=10,
+            char_end=10 + len(quote),
+            quoted_text=quote,
+            access_policy_id="policy-engineering",
+            access_policy_version=3,
+            access_groups=frozenset({"engineers"}),
+        ),
+        subject_mention_revision_id="subject-mention-r1",
+        literal_value="100",
+        literal_semantics=semantics,
+        confidence=0.91,
+        trust=llm_candidate_trust(
+            ontology_version_id=ACTIVE_TBOX.tbox_id,
+            extractor_version="extractor-v1",
+            prompt_version="prompt-v1",
+            extracted_at=NOW,
+        ),
+        created_at=NOW,
+    )
 
 
 class KnowledgeContractTests(unittest.TestCase):
@@ -146,6 +242,59 @@ class KnowledgeContractTests(unittest.TestCase):
                 with self.subTest(model=model.__name__, forbidden=forbidden):
                     with self.assertRaises(ValidationError):
                         model.model_validate({**payload, forbidden: "forged"})
+
+    def test_literal_writes_accept_raw_source_tokens_only(self) -> None:
+        quote = "Pump-7 pressure was 100 psi at 2025-01-02T03:04:05Z"
+        assertion = {
+            "source_key": "expert-pressure-1",
+            "subject_mention_source_key": "expert-pump-7",
+            "predicate": "PRESSURE",
+            "evidence": {
+                "document_id": "document-1",
+                "version_id": "version-1",
+                "chunk_id": "chunk-1",
+                "char_start": 10,
+                "char_end": 10 + len(quote),
+                "quoted_text": quote,
+            },
+            "literal": {
+                "raw_literal": "100",
+                "raw_unit": "psi",
+                "raw_observed_at": "2025-01-02T03:04:05Z",
+            },
+        }
+        request = AuthoritativeImportRequest.model_validate(
+            _authoritative_payload(assertions=[assertion])
+        )
+        self.assertEqual(request.assertions[0].literal.raw_literal, "100")
+
+        invalid_assertions = (
+            {**assertion, "literal_value": "100", "literal": None},
+            {
+                **assertion,
+                "literal": {
+                    **assertion["literal"],
+                    "canonical_value": "689.4757293168",
+                },
+            },
+            {
+                **assertion,
+                "object_mention_source_key": "expert-pump-7",
+            },
+            {
+                **assertion,
+                "literal": {
+                    **assertion["literal"],
+                    "ontology_version_id": ACTIVE_TBOX.tbox_id,
+                },
+            },
+        )
+        for invalid in invalid_assertions:
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    AuthoritativeImportRequest.model_validate(
+                        _authoritative_payload(assertions=[invalid])
+                    )
 
     def test_operation_scopes_are_independent_and_writes_never_retry(self) -> None:
         expected = {
@@ -353,30 +502,46 @@ class _FailingConstruction:
 
 
 class _KnowledgeStore:
-    def __init__(self) -> None:
+    def __init__(self, current_assertion: AssertionRecord | None = None) -> None:
         self.batch = None
+        self.current_assertion = current_assertion
+        self.get_call = None
 
     def import_authoritative(self, batch: object) -> KnowledgeWriteResult:
         self.batch = batch
         return KnowledgeWriteResult(
             tenant_id="tenant-alpha",
-            ontology_version_id="tbox-1",
-            mention_count=1,
-            assertion_count=0,
-            revision_ids=(batch.mentions[0].revision_id,),  # type: ignore[attr-defined]
+            ontology_version_id=batch.ontology_version_id,  # type: ignore[attr-defined]
+            mention_count=len(batch.mentions),  # type: ignore[attr-defined]
+            assertion_count=len(batch.assertions),  # type: ignore[attr-defined]
+            revision_ids=tuple(  # type: ignore[attr-defined]
+                record.revision_id
+                for record in (*batch.mentions, *batch.assertions)
+            ),
         )
+
+    def get_assertion(
+        self,
+        principal: Principal,
+        record_id: str,
+        *,
+        statuses: tuple[object, ...],
+    ) -> AssertionRecord | None:
+        self.get_call = (principal, record_id, statuses)
+        value = self.current_assertion
+        if (
+            value is None
+            or value.tenant_id != principal.tenant_id
+            or value.record_id != record_id
+        ):
+            return None
+        return value
 
 
 class _TBoxes:
-    def __init__(self) -> None:
-        self.value = TBoxVersion(
-            tenant_id="tenant-alpha",
-            key="industrial-assets",
-            version=1,
-            status=TBoxStatus.DRAFT,
-            entity_types=(EntityTypeDefinition("Asset", ("asset-id",)),),
-            relationship_types=(),
-        )
+    def __init__(self, *, active: bool = True) -> None:
+        self.value = ACTIVE_TBOX
+        self.is_active = active
         self.imported = None
         self.publish_call = None
 
@@ -394,6 +559,15 @@ class _TBoxes:
             raise KeyError("absent")
         return self.value
 
+    def active(self, tenant_id: str, key: str) -> TBoxVersion | None:
+        if (
+            self.is_active
+            and tenant_id == self.value.tenant_id
+            and key == self.value.key
+        ):
+            return self.value
+        return None
+
     def publish(
         self,
         tenant_id: str,
@@ -406,13 +580,14 @@ class _TBoxes:
 
 
 class _Reviews:
-    def __init__(self) -> None:
+    def __init__(self, queue: tuple[object, ...] = ()) -> None:
         self.queue_call = None
         self.batch_call = None
+        self.queue = queue
 
     def review_queue(self, principal: Principal, **kwargs: object) -> tuple[object, ...]:
         self.queue_call = (principal, kwargs)
-        return ()
+        return self.queue
 
     def review_batch(
         self, principal: Principal, requests: tuple[object, ...]
@@ -483,7 +658,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
         return Neo4jKnowledgeOperations(
             driver=driver,
             construction=construction or _Construction(),
-            tboxes=tboxes or SimpleNamespace(),
+            tboxes=tboxes or _TBoxes(),
             knowledge=store,
             reviews=reviews or SimpleNamespace(),
             publications=publications or SimpleNamespace(),
@@ -511,6 +686,190 @@ class KnowledgeAdapterTests(unittest.TestCase):
         self.assertEqual(mention.trust.reviewed_by, "expert-1")
         self.assertEqual(driver.calls[0][1]["tenant_id"], "tenant-alpha")
         self.assertEqual(driver.calls[0][1]["groups"], ["engineers"])
+
+    def test_authoritative_literal_is_normalized_from_active_tbox(self) -> None:
+        driver = _Driver()
+        store = _KnowledgeStore()
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:import"}),
+        )
+        quote = "Pump-7 pressure was 100 psi at 2025-01-02T03:04:05Z"
+        assertion = {
+            "source_key": "expert-pressure-1",
+            "subject_mention_source_key": "expert-pump-7",
+            "predicate": "PRESSURE",
+            "evidence": {
+                "document_id": "document-1",
+                "version_id": "version-1",
+                "chunk_id": "chunk-1",
+                "char_start": 10,
+                "char_end": 10 + len(quote),
+                "quoted_text": quote,
+            },
+            "literal": {
+                "raw_literal": "100",
+                "raw_unit": "psi",
+                "raw_observed_at": "2025-01-02T03:04:05Z",
+            },
+        }
+        result = self._adapter(driver, store).authoritative_import(
+            principal,
+            AuthoritativeImportRequest.model_validate(
+                _authoritative_payload(assertions=[assertion])
+            ),
+        )
+        self.assertEqual(result.payload.assertion_count, 1)
+        literal = store.batch.assertions[0]  # type: ignore[union-attr]
+        self.assertEqual(literal.literal_value, "100")
+        self.assertIsInstance(literal.literal_semantics, TypedLiteralValue)
+        assert literal.literal_semantics is not None
+        self.assertEqual(literal.literal_semantics.raw_unit, "psi")
+        self.assertEqual(literal.literal_semantics.canonical_unit, "kPa")
+        self.assertEqual(
+            literal.literal_semantics.canonical_value,
+            "689.4757293168361336722673443",
+        )
+        self.assertEqual(
+            literal.literal_semantics.raw_observed_at,
+            "2025-01-02T03:04:05Z",
+        )
+
+    def test_review_queue_and_edit_preserve_server_owned_literal_semantics(self) -> None:
+        current = _candidate_literal()
+        reviews = _Reviews(
+            (ReviewQueueItem(ReviewRecordKind.ASSERTION, current),)
+        )
+        store = _KnowledgeStore(current)
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:review"}),
+        )
+        adapter = self._adapter(
+            _Driver(),
+            store,
+            reviews=reviews,
+        )
+        queued = adapter.review_queue(principal, ReviewQueueRequest(limit=5))
+        queued_semantics = queued.payload.items[0].literal_semantics
+        self.assertIsNotNone(queued_semantics)
+        assert queued_semantics is not None
+        self.assertEqual(queued_semantics.raw_unit, "psi")
+        self.assertEqual(queued_semantics.canonical_unit, "kPa")
+
+        request = ReviewBatchRequest.model_validate(
+            {
+                "decisions": [
+                    {
+                        "record_kind": "ASSERTION",
+                        "record_id": current.record_id,
+                        "expected_revision": 1,
+                        "decision": "APPROVED",
+                        "notes": "Expert corrected the source-backed value",
+                        "assertion_edit": {
+                            "subject": {
+                                "entity_type": "Asset",
+                                "canonical_key": "asset-id:P-7",
+                                "canonical_name": "Pump-7",
+                            },
+                            "predicate": "PRESSURE",
+                            "subject_mention_revision_id": (
+                                current.subject_mention_revision_id
+                            ),
+                            "confidence": 0.99,
+                            "literal": {
+                                "raw_literal": "90",
+                                "raw_unit": "psi",
+                                "raw_observed_at": "2025-01-02T03:04:05Z",
+                            },
+                        },
+                    }
+                ]
+            }
+        )
+        adapter.review_batch(principal, request)
+        assert reviews.batch_call is not None
+        edit = reviews.batch_call[1][0].edit
+        self.assertEqual(edit.literal_value, "90")
+        self.assertIsNotNone(edit.literal_semantics)
+        self.assertEqual(edit.literal_semantics.raw_unit, "psi")
+        self.assertEqual(edit.literal_semantics.canonical_unit, "kPa")
+        self.assertEqual(
+            edit.literal_semantics.canonical_value,
+            "620.5281563851525203050406099",
+        )
+        self.assertEqual(store.get_call[1], current.record_id)
+
+    def test_review_literal_edit_rejects_bad_version_unit_and_time(self) -> None:
+        current = _candidate_literal()
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:review"}),
+        )
+
+        def request(**literal_changes: object) -> ReviewBatchRequest:
+            literal = {
+                "raw_literal": "90",
+                "raw_unit": "psi",
+                **literal_changes,
+            }
+            return ReviewBatchRequest.model_validate(
+                {
+                    "decisions": [
+                        {
+                            "record_kind": "ASSERTION",
+                            "record_id": current.record_id,
+                            "expected_revision": 1,
+                            "decision": "APPROVED",
+                            "notes": "Validate raw edit",
+                            "assertion_edit": {
+                                "subject": {
+                                    "entity_type": "Asset",
+                                    "canonical_key": "asset-id:P-7",
+                                    "canonical_name": "Pump-7",
+                                },
+                                "predicate": "PRESSURE",
+                                "subject_mention_revision_id": (
+                                    current.subject_mention_revision_id
+                                ),
+                                "confidence": 0.99,
+                                "literal": literal,
+                            },
+                        }
+                    ]
+                }
+            )
+
+        for literal_changes in (
+            {"raw_unit": "second"},
+            {
+                "raw_valid_from": "2026-01-02T00:00:00Z",
+                "raw_valid_to": "2025-01-02T00:00:00Z",
+            },
+        ):
+            with self.subTest(literal_changes=literal_changes):
+                adapter = self._adapter(
+                    _Driver(),
+                    _KnowledgeStore(current),
+                    reviews=_Reviews(),
+                )
+                with self.assertRaises(RequestValidationError):
+                    adapter.review_batch(principal, request(**literal_changes))
+
+        inactive = self._adapter(
+            _Driver(),
+            _KnowledgeStore(current),
+            reviews=_Reviews(),
+            tboxes=_TBoxes(active=False),
+        )
+        with self.assertRaises(ConflictError):
+            inactive.review_batch(principal, request())
 
     def test_missing_and_cross_tenant_evidence_have_one_public_error(self) -> None:
         store = _KnowledgeStore()

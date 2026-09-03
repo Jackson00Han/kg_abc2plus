@@ -7,6 +7,7 @@ import unittest
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum, entity_id
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.retrieval.subgraph import (
     EvidenceSubgraphLimits,
     HARD_MAX_ASSERTIONS,
@@ -372,6 +373,46 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
         for _query, parameters in session.calls:
             self.assertEqual(parameters["authority_levels"], ["AUTHORITATIVE"])
 
+    def test_typed_literal_semantics_are_projected_without_rescoring(self) -> None:
+        semantics = TypedLiteralValue(
+            datatype="DECIMAL",
+            typed_value="1200",
+            raw_value="12",
+            raw_unit="bar",
+            canonical_value="1200",
+            canonical_unit="kPa",
+        )
+        rows = list(_assertion_rows())
+        literal_row = dict(rows[1])
+        literal_assertion = dict(literal_row["assertion"])  # type: ignore[arg-type]
+        literal_assertion["literal_value"] = "12"
+        literal_assertion.update(semantics.to_flat_properties())
+        literal_row["assertion"] = literal_assertion
+        rows[1] = literal_row
+
+        result = Neo4jEvidenceSubgraphProjector(
+            _Driver(_Session(assertion_rows=tuple(rows)))
+        ).project(_principal(), (CHUNK_ID,))
+
+        self.assertEqual(result.literal_assertions[0].literal_semantics, semantics)
+        literal_path = next(
+            item for item in result.paths if item.literal_value is not None
+        )
+        self.assertEqual(literal_path.literal_semantics, semantics)
+
+    def test_partial_typed_literal_storage_fails_closed(self) -> None:
+        rows = list(_assertion_rows())
+        literal_row = dict(rows[1])
+        literal_assertion = dict(literal_row["assertion"])  # type: ignore[arg-type]
+        literal_assertion["literal_datatype"] = "DECIMAL"
+        literal_row["assertion"] = literal_assertion
+        rows[1] = literal_row
+
+        with self.assertRaises(SubgraphProjectionError):
+            Neo4jEvidenceSubgraphProjector(
+                _Driver(_Session(assertion_rows=tuple(rows)))
+            ).project(_principal(), (CHUNK_ID,))
+
     def test_acl_denial_returns_no_ids_or_existence_signal(self) -> None:
         result = Neo4jEvidenceSubgraphProjector(_Driver(_Session())).project(
             _principal(groups=frozenset({"unrelated"})),
@@ -462,6 +503,14 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
         )
         self.assertIn("DECLARES_RELATIONSHIP_TYPE", assertion_query)
         self.assertIn("DECLARES_PROPERTY", assertion_query)
+        self.assertIn(
+            "WHERE object_type.name = object.entity_type",
+            assertion_query,
+        )
+        self.assertNotIn(
+            "object IS NOT NULL AND object_type.name",
+            assertion_query,
+        )
 
 
 if __name__ == "__main__":

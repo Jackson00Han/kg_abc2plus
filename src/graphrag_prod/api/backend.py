@@ -541,6 +541,25 @@ def _graph_evidence_payload(value: Any) -> dict[str, object]:
     }
 
 
+def _typed_literal_payload(value: Any) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "datatype": value.datatype,
+        "typed_value": value.typed_value,
+        "raw_value": value.raw_value,
+        "raw_unit": value.raw_unit,
+        "canonical_value": value.canonical_value,
+        "canonical_unit": value.canonical_unit,
+        "valid_from": value.valid_from,
+        "valid_to": value.valid_to,
+        "observed_at": value.observed_at,
+        "raw_valid_from": value.raw_valid_from,
+        "raw_valid_to": value.raw_valid_to,
+        "raw_observed_at": value.raw_observed_at,
+    }
+
+
 def _graph_assertion_payload(value: Any) -> dict[str, object]:
     return {
         "record_id": value.record_id,
@@ -552,6 +571,7 @@ def _graph_assertion_payload(value: Any) -> dict[str, object]:
         "object_entity_id": value.object_entity_id,
         "object_mention_revision_id": value.object_mention_revision_id,
         "literal_value": value.literal_value,
+        "literal_semantics": _typed_literal_payload(value.literal_semantics),
         "evidence": _graph_evidence_payload(value.evidence),
     }
 
@@ -587,6 +607,9 @@ def _subgraph_payload(value: EvidenceSubgraph) -> dict[str, object]:
                 "predicate": item.predicate,
                 "object_entity_id": item.object_entity_id,
                 "literal_value": item.literal_value,
+                "literal_semantics": _typed_literal_payload(
+                    item.literal_semantics
+                ),
                 "evidence": _graph_evidence_payload(item.evidence),
             }
             for item in value.paths

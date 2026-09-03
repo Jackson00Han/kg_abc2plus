@@ -40,6 +40,13 @@ This projection is a separate response field with its own limits, exact Chunk
 citations, and latency stage. It does not alter ranking and is never passed to
 answer generation as factual evidence.
 
+Projected literal assertions and matching one-hop paths preserve the complete
+server-normalized typed literal semantics (raw/canonical value and unit plus
+temporal validity/observation qualifiers). Every non-null raw token remains
+bound to the assertion's exact evidence span. A legacy published assertion can
+have `literal_semantics: null`; a partially stored or internally inconsistent
+typed group fails projection rather than silently degrading to legacy data.
+
 Vector recall deliberately does not take a global approximate-index top-N
 window. Its Cypher first matches the request tenant, active Snapshot and
 Version, compatible active embedding generation, Document and Chunk ACLs,

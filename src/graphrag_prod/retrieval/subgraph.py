@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.knowledge.models import EntityIdentity
 from graphrag_prod.knowledge.trust import (
     AuthorityLevel,
@@ -58,6 +59,28 @@ def _required_text(value: object, name: str) -> str:
     if not normalized:
         raise ValueError(f"{name} must not be empty")
     return normalized
+
+
+def _contains_exact_token(evidence: str, token: str) -> bool:
+    start = 0
+    while True:
+        index = evidence.find(token, start)
+        if index < 0:
+            return False
+        end = index + len(token)
+        left_ok = (
+            not token[0].isalnum()
+            or index == 0
+            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
+        )
+        right_ok = (
+            not token[-1].isalnum()
+            or end == len(evidence)
+            or not (evidence[end].isalnum() or evidence[end] == "_")
+        )
+        if left_ok and right_ok:
+            return True
+        start = index + 1
 
 
 def _positive_integer(value: object, name: str, maximum: int) -> int:
@@ -324,6 +347,7 @@ class SubgraphAssertion:
     object_mention_revision_id: str | None
     literal_value: str | None
     evidence: SubgraphEvidence
+    literal_semantics: TypedLiteralValue | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -355,8 +379,10 @@ class SubgraphAssertion:
                     "object_mention_revision_id",
                 ),
             )
-            if self.literal_value is not None:
-                raise ValueError("entity assertion must not carry literal_value")
+            if self.literal_value is not None or self.literal_semantics is not None:
+                raise ValueError(
+                    "entity assertion must not carry literal value semantics"
+                )
         else:
             if (
                 self.object_entity_id is not None
@@ -368,8 +394,32 @@ class SubgraphAssertion:
                 "literal_value",
                 _required_text(self.literal_value, "literal_value"),
             )
-            if self.literal_value not in self.evidence.quoted_text:
+            if not _contains_exact_token(
+                self.evidence.quoted_text,
+                self.literal_value,
+            ):
                 raise ValueError("literal value must occur in assertion evidence")
+            if self.literal_semantics is not None:
+                if not isinstance(self.literal_semantics, TypedLiteralValue):
+                    raise TypeError("literal_semantics must be TypedLiteralValue")
+                if self.literal_semantics.raw_value != self.literal_value:
+                    raise ValueError(
+                        "literal semantics raw_value must equal literal_value"
+                    )
+                source_tokens = (
+                    self.literal_semantics.raw_unit,
+                    self.literal_semantics.raw_valid_from,
+                    self.literal_semantics.raw_valid_to,
+                    self.literal_semantics.raw_observed_at,
+                )
+                if any(
+                    token is not None
+                    and not _contains_exact_token(self.evidence.quoted_text, token)
+                    for token in source_tokens
+                ):
+                    raise ValueError(
+                        "typed literal source tokens must occur in exact evidence"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,6 +430,7 @@ class SubgraphPath:
     object_entity_id: str | None
     literal_value: str | None
     evidence: SubgraphEvidence
+    literal_semantics: TypedLiteralValue | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -400,12 +451,35 @@ class SubgraphPath:
                 "object_entity_id",
                 _required_text(self.object_entity_id, "object_entity_id"),
             )
+            if self.literal_semantics is not None:
+                raise ValueError("entity path must not carry literal semantics")
         else:
             object.__setattr__(
                 self,
                 "literal_value",
                 _required_text(self.literal_value, "literal_value"),
             )
+            if self.literal_semantics is not None:
+                if not isinstance(self.literal_semantics, TypedLiteralValue):
+                    raise TypeError("literal_semantics must be TypedLiteralValue")
+                if self.literal_semantics.raw_value != self.literal_value:
+                    raise ValueError(
+                        "path literal semantics raw_value must equal literal_value"
+                    )
+                source_tokens = (
+                    self.literal_semantics.raw_unit,
+                    self.literal_semantics.raw_valid_from,
+                    self.literal_semantics.raw_valid_to,
+                    self.literal_semantics.raw_observed_at,
+                )
+                if any(
+                    token is not None
+                    and not _contains_exact_token(self.evidence.quoted_text, token)
+                    for token in source_tokens
+                ):
+                    raise ValueError(
+                        "path typed literal source tokens must occur in exact evidence"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -585,7 +659,7 @@ MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(subject_type:TBoxEntityType)
 OPTIONAL MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(object_type:TBoxEntityType)
-WHERE object IS NOT NULL AND object_type.name = object.entity_type
+WHERE object_type.name = object.entity_type
 WITH publication, tbox, seed_entity, seed_chunk_id, assertion, chunk,
      subject, object, subject_mention, object_mention, document, snapshot,
      version, subject_type, object_type
@@ -1050,6 +1124,15 @@ class Neo4jEvidenceSubgraphProjector:
             elif object_kind != "literal":
                 raise SubgraphProjectionError("stored assertion object_kind is invalid")
 
+            try:
+                literal_semantics = TypedLiteralValue.from_flat_properties(
+                    assertion_map
+                )
+            except (TypeError, ValueError) as error:
+                raise SubgraphProjectionError(
+                    "stored typed literal semantics are invalid"
+                ) from error
+
             if seed_entity_id not in {
                 subject.entity_id,
                 None if object_entity is None else object_entity.entity_id,
@@ -1076,28 +1159,39 @@ class Neo4jEvidenceSubgraphProjector:
                 or not reserve(evidence_items)
             ):
                 continue
-            assertion = SubgraphAssertion(
-                record_id=assertion_evidence.provenance.record_id,
-                revision_id=assertion_evidence.provenance.revision_id,
-                predicate=_required_text(assertion_map.get("predicate"), "predicate"),
-                subject_entity_id=subject.entity_id,
-                subject_mention_revision_id=subject_evidence.provenance.revision_id,
-                object_kind=object_kind,
-                object_entity_id=(
-                    None if object_entity is None else object_entity.entity_id
-                ),
-                object_mention_revision_id=(
-                    None
-                    if object_evidence is None
-                    else object_evidence.provenance.revision_id
-                ),
-                literal_value=(
-                    assertion_map.get("literal_value")
-                    if object_kind == "literal"
-                    else None
-                ),
-                evidence=assertion_evidence,
-            )
+            try:
+                assertion = SubgraphAssertion(
+                    record_id=assertion_evidence.provenance.record_id,
+                    revision_id=assertion_evidence.provenance.revision_id,
+                    predicate=_required_text(
+                        assertion_map.get("predicate"),
+                        "predicate",
+                    ),
+                    subject_entity_id=subject.entity_id,
+                    subject_mention_revision_id=(
+                        subject_evidence.provenance.revision_id
+                    ),
+                    object_kind=object_kind,
+                    object_entity_id=(
+                        None if object_entity is None else object_entity.entity_id
+                    ),
+                    object_mention_revision_id=(
+                        None
+                        if object_evidence is None
+                        else object_evidence.provenance.revision_id
+                    ),
+                    literal_value=(
+                        assertion_map.get("literal_value")
+                        if object_kind == "literal"
+                        else None
+                    ),
+                    evidence=assertion_evidence,
+                    literal_semantics=literal_semantics,
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise SubgraphProjectionError(
+                    "stored assertion state is invalid"
+                ) from error
             cls._validate_assertion_bindings(
                 assertion,
                 assertion_map,
@@ -1145,6 +1239,7 @@ class Neo4jEvidenceSubgraphProjector:
                 object_entity_id=item.object_entity_id,
                 literal_value=item.literal_value,
                 evidence=item.evidence,
+                literal_semantics=item.literal_semantics,
             )
             for item in ordered_assertions[: limits.max_paths]
         )

@@ -25,6 +25,7 @@ from pydantic import (
 
 from graphrag_prod.generation.models import GenerationLimits, REFUSAL_ANSWER
 from graphrag_prod.domain.ids import canonicalize_uri
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.retrieval.models import RetrievalLimits, VersionFilter
 
 
@@ -85,6 +86,84 @@ class StrictAPIModel(BaseModel):
         hide_input_in_errors=True,
         str_strip_whitespace=True,
     )
+
+
+LiteralSourceText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=False,
+        min_length=1,
+        max_length=4_096,
+    ),
+]
+LiteralUnitText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=False,
+        min_length=1,
+        max_length=64,
+    ),
+]
+LiteralTemporalText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=False,
+        min_length=1,
+        max_length=64,
+    ),
+]
+
+
+class TypedLiteralSemanticsResponse(StrictAPIModel):
+    """Strict public projection of server-normalized literal semantics."""
+
+    datatype: Literal[
+        "STRING",
+        "INTEGER",
+        "FLOAT",
+        "DECIMAL",
+        "BOOLEAN",
+        "DATE",
+        "DATETIME",
+        "DURATION",
+        "URI",
+        "JSON",
+    ]
+    typed_value: str | int | float | bool
+    raw_value: LiteralSourceText
+    raw_unit: LiteralUnitText | None = None
+    canonical_value: LiteralSourceText
+    canonical_unit: LiteralUnitText | None = None
+    valid_from: AwareDatetime | None = None
+    valid_to: AwareDatetime | None = None
+    observed_at: AwareDatetime | None = None
+    raw_valid_from: LiteralTemporalText | None = None
+    raw_valid_to: LiteralTemporalText | None = None
+    raw_observed_at: LiteralTemporalText | None = None
+
+    @model_validator(mode="after")
+    def validate_domain_semantics(self) -> Self:
+        try:
+            TypedLiteralValue(
+                datatype=self.datatype,
+                typed_value=self.typed_value,
+                raw_value=self.raw_value,
+                raw_unit=self.raw_unit,
+                canonical_value=self.canonical_value,
+                canonical_unit=self.canonical_unit,
+                valid_from=self.valid_from,
+                valid_to=self.valid_to,
+                observed_at=self.observed_at,
+                raw_valid_from=self.raw_valid_from,
+                raw_valid_to=self.raw_valid_to,
+                raw_observed_at=self.raw_observed_at,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("typed literal semantics are inconsistent") from error
+        return self
 
 
 def _unique(values: tuple[str, ...], name: str) -> tuple[str, ...]:
@@ -646,6 +725,7 @@ class GraphAssertionResponse(StrictAPIModel):
     object_entity_id: Identifier | None = None
     object_mention_revision_id: Identifier | None = None
     literal_value: GraphExactText | None = None
+    literal_semantics: TypedLiteralSemanticsResponse | None = None
     evidence: GraphEvidenceResponse
 
     @model_validator(mode="after")
@@ -660,6 +740,7 @@ class GraphAssertionResponse(StrictAPIModel):
                 self.object_entity_id is None
                 or self.object_mention_revision_id is None
                 or self.literal_value is not None
+                or self.literal_semantics is not None
             ):
                 raise ValueError("relationship assertion object is invalid")
         elif (
@@ -668,6 +749,11 @@ class GraphAssertionResponse(StrictAPIModel):
             or self.literal_value is None
         ):
             raise ValueError("literal assertion object is invalid")
+        if (
+            self.literal_semantics is not None
+            and self.literal_semantics.raw_value != self.literal_value
+        ):
+            raise ValueError("literal semantics must match the raw literal value")
         return self
 
 
@@ -677,12 +763,20 @@ class GraphPathResponse(StrictAPIModel):
     predicate: GraphTypeName
     object_entity_id: Identifier | None = None
     literal_value: GraphExactText | None = None
+    literal_semantics: TypedLiteralSemanticsResponse | None = None
     evidence: GraphEvidenceResponse
 
     @model_validator(mode="after")
     def validate_one_hop_object(self) -> Self:
         if (self.object_entity_id is None) == (self.literal_value is None):
             raise ValueError("graph path requires exactly one object")
+        if self.object_entity_id is not None and self.literal_semantics is not None:
+            raise ValueError("relationship path must not carry literal semantics")
+        if (
+            self.literal_semantics is not None
+            and self.literal_semantics.raw_value != self.literal_value
+        ):
+            raise ValueError("path literal semantics must match its raw value")
         if self.assertion_revision_id != self.evidence.provenance.revision_id:
             raise ValueError("graph path must match its assertion evidence")
         return self
@@ -751,6 +845,7 @@ class EvidenceSubgraphResponse(StrictAPIModel):
                 or path.predicate != assertion.predicate
                 or path.object_entity_id != assertion.object_entity_id
                 or path.literal_value != assertion.literal_value
+                or path.literal_semantics != assertion.literal_semantics
                 or path.evidence != assertion.evidence
             ):
                 raise ValueError("graph path must match one returned assertion")
@@ -1125,5 +1220,6 @@ __all__ = [
     "RouteMetricsResponse",
     "TraceDecisionResponse",
     "TraceHitResponse",
+    "TypedLiteralSemanticsResponse",
     "VersionFilterRequest",
 ]

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import neo4j
 
+from graphrag_prod.construction import TBoxLiteralNormalizer
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import (
     chunk_id,
@@ -67,6 +68,16 @@ PUBLISHED_AT = REVIEWED_AT + timedelta(hours=1)
 SPLITTER = "subgraph-integration:v1"
 PUBLIC_GROUP = "plant-public"
 RESTRICTED_GROUP = "plant-restricted"
+
+
+def _pressure_property() -> PropertyDefinition:
+    return PropertyDefinition(
+        "PRESSURE",
+        PropertyDataType.DECIMAL,
+        False,
+        Cardinality.ZERO_OR_ONE,
+        unit="kPa",
+    )
 
 
 def _source_bundles(
@@ -174,14 +185,7 @@ def _tbox(tenant_id: str) -> TBoxVersion:
             EntityTypeDefinition(
                 "Asset",
                 ("asset-id",),
-                properties=(
-                    PropertyDefinition(
-                        "PRESSURE",
-                        PropertyDataType.STRING,
-                        False,
-                        Cardinality.ZERO_OR_ONE,
-                    ),
-                ),
+                properties=(_pressure_property(),),
             ),
         ),
         relationship_types=(
@@ -549,6 +553,14 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
             confidence=0.91,
         )
         pressure_end = cls.alpha_restricted_chunk.char_end
+        pressure_semantics = TBoxLiteralNormalizer().normalize(
+            _pressure_property(),
+            raw_value="12",
+            raw_unit="bar",
+            valid_from=None,
+            valid_to=None,
+            observed_at=None,
+        )
         candidate_pressure = AssertionRecord(
             revision=RecordRevision.next(
                 knowledge_record_id(cls.alpha, "ASSERTION", "alpha:llm:pressure"),
@@ -563,7 +575,8 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
                 pressure_end,
             ),
             subject_mention_revision_id=candidate_mention.revision_id,
-            literal_value="12 bar",
+            literal_value="12",
+            literal_semantics=pressure_semantics,
             confidence=0.88,
             trust=candidate_trust,
             created_at=CREATED_AT,
@@ -599,7 +612,8 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
                         "PRESSURE",
                         candidate_mention.revision_id,
                         candidate_pressure.confidence,
-                        literal_value="12 bar",
+                        literal_value="12",
+                        literal_semantics=pressure_semantics,
                     ),
                 ),
             ),
@@ -648,6 +662,17 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(len(result.relationship_assertions), 1)
         self.assertEqual(len(result.literal_assertions), 1)
+        literal = result.literal_assertions[0]
+        self.assertIsNotNone(literal.literal_semantics)
+        assert literal.literal_semantics is not None
+        self.assertEqual(literal.literal_semantics.raw_value, "12")
+        self.assertEqual(literal.literal_semantics.raw_unit, "bar")
+        self.assertEqual(literal.literal_semantics.canonical_value, "1200")
+        self.assertEqual(literal.literal_semantics.canonical_unit, "kPa")
+        literal_path = next(
+            path for path in result.paths if path.literal_value is not None
+        )
+        self.assertEqual(literal_path.literal_semantics, literal.literal_semantics)
         self.assertEqual(len(result.paths), 2)
         self.assertEqual(
             set(result.matched_chunk_ids),

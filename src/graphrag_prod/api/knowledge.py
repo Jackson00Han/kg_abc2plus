@@ -9,12 +9,14 @@ from graphrag_prod.construction import (
     ConstructionMetadata,
     DocumentParseError,
     ExtractionRejected,
+    LiteralNormalizationError,
+    TBoxLiteralNormalizer,
 )
 from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
     ConstructionConflict,
 )
-from graphrag_prod.domain import Principal
+from graphrag_prod.domain import Principal, TypedLiteralValue
 from graphrag_prod.domain.ids import entity_id as make_entity_id
 from graphrag_prod.ingestion import IngestionConflict
 from graphrag_prod.knowledge import (
@@ -43,7 +45,12 @@ from graphrag_prod.knowledge.review import (
 )
 from graphrag_prod.knowledge.store import KnowledgeConflict, KnowledgeStoreError
 from graphrag_prod.knowledge.trust import GovernanceStatus
-from graphrag_prod.ontology import Neo4jTBoxStore, TBoxStatus, TBoxVersion
+from graphrag_prod.ontology import (
+    Neo4jTBoxStore,
+    PropertyDefinition,
+    TBoxStatus,
+    TBoxVersion,
+)
 from graphrag_prod.ontology.store import TBoxConflict
 
 from .knowledge_contracts import (
@@ -62,6 +69,7 @@ from .knowledge_contracts import (
     PublicationHistoryResponse,
     PublicationRequest,
     PublicationResponse,
+    RawLiteralInput,
     ReviewBatchRequest,
     ReviewBatchResponse,
     ReviewQueueRequest,
@@ -189,6 +197,38 @@ def _trust_payload(value: Any) -> dict[str, object]:
     }
 
 
+def _literal_semantics_payload(value: TypedLiteralValue) -> dict[str, object]:
+    return {
+        "datatype": value.datatype,
+        "typed_value": value.typed_value,
+        "raw_value": value.raw_value,
+        "raw_unit": value.raw_unit,
+        "canonical_value": value.canonical_value,
+        "canonical_unit": value.canonical_unit,
+        "valid_from": value.valid_from,
+        "valid_to": value.valid_to,
+        "observed_at": value.observed_at,
+        "raw_valid_from": value.raw_valid_from,
+        "raw_valid_to": value.raw_valid_to,
+        "raw_observed_at": value.raw_observed_at,
+    }
+
+
+def _declared_entity_property(
+    tbox: TBoxVersion,
+    entity_type: str,
+    predicate: str,
+) -> PropertyDefinition:
+    for definition in tbox.entity_types:
+        if definition.name != entity_type:
+            continue
+        for property_definition in definition.properties:
+            if property_definition.name == predicate:
+                return property_definition
+        break
+    raise RequestValidationError()
+
+
 def _review_record_payload(item: Any) -> dict[str, object]:
     record = item.record
     common: dict[str, object] = {
@@ -214,6 +254,11 @@ def _review_record_payload(item: Any) -> dict[str, object]:
             ),
             object_mention_revision_id=record.object_mention_revision_id,
             literal_value=record.literal_value,
+            literal_semantics=(
+                None
+                if record.literal_semantics is None
+                else _literal_semantics_payload(record.literal_semantics)
+            ),
         )
     else:
         raise DependencyUnavailableError()
@@ -264,6 +309,7 @@ class Neo4jKnowledgeOperations:
         self.publications = publications or Neo4jKnowledgePublicationService(
             driver, database
         )
+        self.literal_normalizer = TBoxLiteralNormalizer()
         self.clock = clock or (lambda: datetime.now(UTC))
 
     def _now(self) -> datetime:
@@ -282,6 +328,84 @@ class Neo4jKnowledgeOperations:
             raise DependencyTimeoutError() from error
         except Exception as error:
             raise DependencyUnavailableError() from error
+
+    def _active_tbox(self, principal: Principal, tbox_id: str) -> TBoxVersion:
+        """Resolve one exact, tenant-owned, published active T-Box version."""
+
+        try:
+            requested = self.tboxes.get(principal.tenant_id, tbox_id)
+            active = self.tboxes.active(principal.tenant_id, requested.key)
+        except ApiRuntimeError:
+            raise
+        except KeyError as error:
+            raise ResourceNotFoundError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except TBoxConflict as error:
+            raise ConflictError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if (
+            requested.tbox_id != tbox_id
+            or requested.tenant_id != principal.tenant_id
+            or requested.status is not TBoxStatus.PUBLISHED
+            or active is None
+            or active.tbox_id != requested.tbox_id
+            or active.tenant_id != principal.tenant_id
+            or active.status is not TBoxStatus.PUBLISHED
+        ):
+            raise ConflictError()
+        return requested
+
+    def _normalize_literal(
+        self,
+        tbox: TBoxVersion,
+        *,
+        entity_type: str,
+        predicate: str,
+        source: RawLiteralInput,
+    ) -> TypedLiteralValue:
+        definition = _declared_entity_property(tbox, entity_type, predicate)
+        try:
+            return self.literal_normalizer.normalize(
+                definition,
+                raw_value=source.raw_literal,
+                raw_unit=source.raw_unit,
+                valid_from=source.raw_valid_from,
+                valid_to=source.raw_valid_to,
+                observed_at=source.raw_observed_at,
+            )
+        except LiteralNormalizationError as error:
+            raise RequestValidationError() from error
+
+    def _current_review_assertion(
+        self,
+        principal: Principal,
+        record_id: str,
+        expected_revision: int,
+    ) -> AssertionRecord:
+        try:
+            record = self.knowledge.get_assertion(
+                principal,
+                record_id,
+                statuses=(
+                    GovernanceStatus.CANDIDATE,
+                    GovernanceStatus.QUARANTINED,
+                ),
+            )
+        except ApiRuntimeError:
+            raise
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except KnowledgeStoreError as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if record is None:
+            raise ResourceNotFoundError()
+        if record.revision.revision != expected_revision:
+            raise ConflictError()
+        return record
 
     def ontology_list(
         self, principal: Principal, request: OntologyListRequest
@@ -437,6 +561,7 @@ class Neo4jKnowledgeOperations:
     ) -> BackendResult:
         _require_capability(principal, "knowledge:import")
         now = self._now()
+        tbox = self._active_tbox(principal, request.ontology_version_id)
         try:
             trust = authoritative_import_trust(
                 ontology_version_id=request.ontology_version_id,
@@ -475,6 +600,17 @@ class Neo4jKnowledgeOperations:
                 record_id = knowledge_record_id(
                     principal.tenant_id, "ASSERTION", item.source_key
                 )
+                literal_semantics = (
+                    None
+                    if item.literal is None
+                    else self._normalize_literal(
+                        tbox,
+                        entity_type=subject_mention.entity.entity_type,
+                        predicate=item.predicate,
+                        source=item.literal,
+                    )
+                )
+                evidence = self._evidence(principal, item.evidence)
                 assertions.append(
                     AssertionRecord(
                         revision=RecordRevision.next(
@@ -483,7 +619,7 @@ class Neo4jKnowledgeOperations:
                         tenant_id=principal.tenant_id,
                         subject=subject_mention.entity,
                         predicate=item.predicate,
-                        evidence=self._evidence(principal, item.evidence),
+                        evidence=evidence,
                         subject_mention_revision_id=subject_mention.revision_id,
                         confidence=item.confidence,
                         trust=trust,
@@ -496,7 +632,12 @@ class Neo4jKnowledgeOperations:
                             if object_mention is None
                             else object_mention.revision_id
                         ),
-                        literal_value=item.literal_value,
+                        literal_value=(
+                            None
+                            if item.literal is None
+                            else item.literal.raw_literal
+                        ),
+                        literal_semantics=literal_semantics,
                     )
                 )
             batch = ABoxRecordBatch(
@@ -652,6 +793,23 @@ class Neo4jKnowledgeOperations:
                     )
                 elif item.assertion_edit is not None:
                     source = item.assertion_edit
+                    literal_semantics = None
+                    if source.literal is not None:
+                        current = self._current_review_assertion(
+                            principal,
+                            item.record_id,
+                            item.expected_revision,
+                        )
+                        tbox = self._active_tbox(
+                            principal,
+                            current.trust.ontology_version_id,
+                        )
+                        literal_semantics = self._normalize_literal(
+                            tbox,
+                            entity_type=source.subject.entity_type,
+                            predicate=source.predicate,
+                            source=source.literal,
+                        )
                     edit = AssertionEdit(
                         subject=_entity(principal, source.subject),
                         predicate=source.predicate,
@@ -667,7 +825,12 @@ class Neo4jKnowledgeOperations:
                         object_mention_revision_id=(
                             source.object_mention_revision_id
                         ),
-                        literal_value=source.literal_value,
+                        literal_value=(
+                            None
+                            if source.literal is None
+                            else source.literal.raw_literal
+                        ),
+                        literal_semantics=literal_semantics,
                     )
                 work.append(
                     ReviewRequest(

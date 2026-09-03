@@ -14,6 +14,9 @@ assembly must inject those trusted resources into `create_app`.
 | `GET` | `/v1/jobs/{job_id}` | Read a tenant-scoped durable job projection | `200` |
 | `POST` | `/v1/retrieval` | Return traceable Chunks and optional governed graph context | `200` |
 | `POST` | `/v1/answers` | Retrieve and generate a grounded cited answer | `200` |
+| `POST` | `/v1/knowledge/authoritative:import` | Import expert A-Box records against the active published T-Box | `200` |
+| `GET` | `/v1/knowledge/review-queue` | Read bounded candidate/quarantine revisions | `200` |
+| `POST` | `/v1/knowledge/reviews:batch` | Apply compare-and-swap expert review decisions and raw-source edits | `200` |
 | `GET` | `/health/live` | Check only the local process boundary | `200` |
 | `GET` | `/health/ready` | Check bounded dependency readiness | `200` or `503` |
 | `GET` | `/v1/metrics` | Read aggregate operational metrics | `200` |
@@ -89,6 +92,14 @@ assertion references must be internally consistent, and the response-level
 Chunk/publication manifests must exactly match their evidence. Graph context
 remains navigation metadata: `/v1/answers` continues to send only retrieved
 Chunks to grounded generation.
+
+Literal assertions and their one-hop paths also expose optional
+`literal_semantics`: declared datatype, parsed value, exact raw value/unit,
+canonical value/unit, UTC validity/observation instants, and their exact raw
+temporal tokens. The field is `null` only for readable historical legacy
+records that predate typed literals. New authoritative imports and review edits
+accept raw source tokens only; unknown/canonical client fields are rejected and
+the server recomputes semantics from the assertion's active published T-Box.
 
 ## Bounded execution and retry rules
 

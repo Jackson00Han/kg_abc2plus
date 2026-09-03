@@ -33,7 +33,7 @@ from graphrag_prod.api.runtime import (
     UsageMetadata,
     required_scope,
 )
-from graphrag_prod.domain import Principal
+from graphrag_prod.domain import Principal, TypedLiteralValue
 from graphrag_prod.domain.ids import entity_id as make_entity_id
 from graphrag_prod.generation import (
     AnswerCitation,
@@ -207,6 +207,12 @@ def _evidence_subgraph(
     metric_mention = evidence("mention-revenue", "mention-revenue-r1")
     relationship_evidence = evidence("assertion-reports", "assertion-reports-r1")
     literal_evidence = evidence("assertion-revenue", "assertion-revenue-r1")
+    literal_semantics = TypedLiteralValue(
+        datatype="STRING",
+        typed_value="USD 42 million",
+        raw_value="USD 42 million",
+        canonical_value="USD 42 million",
+    )
     relationship = SubgraphAssertion(
         record_id="assertion-reports",
         revision_id="assertion-reports-r1",
@@ -230,6 +236,7 @@ def _evidence_subgraph(
         object_mention_revision_id=None,
         literal_value="USD 42 million",
         evidence=literal_evidence,
+        literal_semantics=literal_semantics,
     )
     return EvidenceSubgraph(
         trust_policy=trust_policy,
@@ -255,6 +262,7 @@ def _evidence_subgraph(
                 object_entity_id=None,
                 literal_value=literal.literal_value,
                 evidence=literal_evidence,
+                literal_semantics=literal_semantics,
             ),
         ),
         matched_chunk_ids=("chunk-001",),
@@ -581,6 +589,13 @@ class QueryOperationsTests(unittest.TestCase):
         self.assertEqual(len(graph.entities), 2)
         self.assertEqual(len(graph.relationship_assertions), 1)
         self.assertEqual(len(graph.literal_assertions), 1)
+        semantics = graph.literal_assertions[0].literal_semantics
+        self.assertIsNotNone(semantics)
+        assert semantics is not None
+        self.assertEqual(semantics.datatype, "STRING")
+        self.assertEqual(semantics.raw_value, "USD 42 million")
+        self.assertEqual(semantics.canonical_value, "USD 42 million")
+        self.assertEqual(graph.paths[1].literal_semantics, semantics)
         self.assertEqual(len(graph.paths), 2)
         self.assertEqual(graph.matched_chunk_ids, ("chunk-001",))
         graph_json = graph.model_dump_json()

@@ -108,14 +108,22 @@ publication manifest, but it cannot be used to create a new untyped revision.
 This explicit gate prevents the legacy decoder from becoming a datatype or
 unit-validation bypass.
 
-At the service boundary, authoritative literal input should provide the exact
-`raw_literal`, optional raw unit and raw temporal tokens, plus the evidence
-range containing all supplied tokens. Clients do not provide trusted typed or
-canonical values. The server loads the active T-Box `PropertyDefinition`,
-normalizes those raw values, constructs `TypedLiteralValue`, and only then
-calls the knowledge store. Until an API exposes that raw-source contract,
-untyped authoritative literal imports intentionally fail closed; relationship
-assertions and entity mentions are unaffected.
+At the service boundary, `/v1/knowledge/authoritative:import` accepts a literal
+assertion only through a nested `literal` object containing `raw_literal` and
+optional `raw_unit`, `raw_valid_from`, `raw_valid_to`, and `raw_observed_at`
+source tokens. The assertion evidence range must contain every supplied token.
+Clients cannot provide `typed_value`, canonical fields, or parsed timestamps,
+and an entity object and literal object are mutually exclusive. The server
+loads the exact requested T-Box, verifies that it is the tenant's currently
+active `PUBLISHED` version, resolves its `PropertyDefinition`, normalizes the
+raw values into `TypedLiteralValue`, and only then calls the knowledge store.
+
+The review queue returns the complete immutable `literal_semantics` projection
+so an expert can compare source and canonical representations. A review edit
+uses the same raw-only `literal` contract. The server reloads the original
+assertion's active T-Box and recomputes semantics; a client cannot change the
+ontology version or submit canonical values. Invalid units, datatypes, temporal
+ranges, and inactive ontology versions fail before review persistence.
 
 The upload workflow is resumable and idempotent. A stable operation key binds
 the request fingerprint, source lifecycle generation, active snapshot, T-Box,

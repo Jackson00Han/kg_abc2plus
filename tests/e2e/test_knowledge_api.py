@@ -206,6 +206,91 @@ class _Knowledge:
 
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
+    def test_literal_import_and_review_http_contracts_are_raw_only(self) -> None:
+        knowledge = _Knowledge()
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=GraphRAGApplicationBackend(
+                documents=_Documents(),
+                queries=_Queries(),
+                readiness=_Readiness(),
+                knowledge=knowledge,
+            ),
+        )
+        quote = "Pump-7 pressure was 100 psi at 2025-01-02T03:04:05Z"
+        mention = {
+            "source_key": "expert-pump-7",
+            "entity": {
+                "entity_type": "Asset",
+                "canonical_key": "asset-id:P-7",
+                "canonical_name": "Pump-7",
+            },
+            "evidence": {
+                "document_id": "document-1",
+                "version_id": "version-1",
+                "chunk_id": "chunk-1",
+                "char_start": 10,
+                "char_end": 16,
+                "quoted_text": "Pump-7",
+            },
+        }
+        assertion = {
+            "source_key": "expert-pressure-1",
+            "subject_mention_source_key": "expert-pump-7",
+            "predicate": "PRESSURE",
+            "evidence": {
+                "document_id": "document-1",
+                "version_id": "version-1",
+                "chunk_id": "chunk-1",
+                "char_start": 10,
+                "char_end": 10 + len(quote),
+                "quoted_text": quote,
+            },
+            "literal": {
+                "raw_literal": "100",
+                "raw_unit": "psi",
+                "raw_observed_at": "2025-01-02T03:04:05Z",
+            },
+        }
+        auth = _headers()
+        with TestClient(app) as client:
+            accepted = client.post(
+                "/v1/knowledge/authoritative:import",
+                headers=auth,
+                json={
+                    "ontology_version_id": "tbox-1",
+                    "mentions": [mention],
+                    "assertions": [assertion],
+                },
+            )
+            rejected = client.post(
+                "/v1/knowledge/authoritative:import",
+                headers=auth,
+                json={
+                    "ontology_version_id": "tbox-1",
+                    "mentions": [mention],
+                    "assertions": [
+                        {
+                            **assertion,
+                            "literal": {
+                                **assertion["literal"],
+                                "canonical_value": "689.4757293168",
+                            },
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(rejected.status_code, 422)
+        self.assertEqual(len(knowledge.calls), 1)
+        parsed = knowledge.calls[0][2]
+        self.assertEqual(parsed.assertions[0].literal.raw_literal, "100")
+        self.assertEqual(parsed.assertions[0].literal.raw_unit, "psi")
+        self.assertFalse(hasattr(parsed.assertions[0].literal, "canonical_value"))
+
     def test_all_governance_routes_share_auth_runner_and_typed_backend(self) -> None:
         knowledge = _Knowledge()
         backend = GraphRAGApplicationBackend(
