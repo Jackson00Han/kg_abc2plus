@@ -32,6 +32,7 @@ from graphrag_prod.ingestion import (
     Neo4jIncrementalPipeline,
 )
 from graphrag_prod.retrieval import (
+    EvidenceSubgraph,
     Neo4jRetrievalEngine,
     RetrievalBackendError,
     RetrievalBackendTimeout,
@@ -39,6 +40,7 @@ from graphrag_prod.retrieval import (
     RetrievalRequest as DomainRetrievalRequest,
     RetrievalResult,
     RetrievalUnavailable,
+    SubgraphTrustPolicy,
 )
 
 from .contracts import (
@@ -169,6 +171,18 @@ class MeteredGenerationService(Protocol):
     """Optional deployment boundary for exact per-call LLM accounting."""
 
     def generate_with_usage(self, request: GenerationRequest) -> GeneratedAnswer: ...
+
+
+class EvidenceSubgraphProjector(Protocol):
+    """Project governed graph context for an authorized Chunk selection."""
+
+    def project(
+        self,
+        principal: Principal,
+        selected_chunk_ids: tuple[str, ...],
+        *,
+        trust_policy: SubgraphTrustPolicy,
+    ) -> EvidenceSubgraph: ...
 
 
 class DocumentOperations(Protocol):
@@ -481,6 +495,107 @@ def _merge_provider_usage(*values: ProviderUsage) -> ProviderUsage:
     )
 
 
+def _graph_citation_payload(value: Any) -> dict[str, object]:
+    return {
+        "chunk_id": value.chunk_id,
+        "chunk_checksum": value.chunk_checksum,
+        "chunk_text": value.chunk_text,
+        "document_id": value.document_id,
+        "document_title": value.document_title,
+        "canonical_uri": value.canonical_uri,
+        "source_name": value.source_name,
+        "version_id": value.version_id,
+        "version_checksum": value.version_checksum,
+        "version_number": value.version_number,
+        "ordinal": value.ordinal,
+        "char_start": value.char_start,
+        "char_end": value.char_end,
+        "page_number": value.page_number,
+        "section": value.section,
+        "published_at": value.published_at,
+    }
+
+
+def _graph_provenance_payload(value: Any) -> dict[str, object]:
+    return {
+        "publication_id": value.publication_id,
+        "record_id": value.record_id,
+        "revision_id": value.revision_id,
+        "ontology_version_id": value.ontology_version_id,
+        "origin": value.origin.value,
+        "authority": value.authority.value,
+        "status": value.status.value,
+        "confidence": value.confidence,
+        "extractor_version": value.extractor_version,
+        "prompt_version": value.prompt_version,
+    }
+
+
+def _graph_evidence_payload(value: Any) -> dict[str, object]:
+    return {
+        "citation": _graph_citation_payload(value.citation),
+        "char_start": value.char_start,
+        "char_end": value.char_end,
+        "quoted_text": value.quoted_text,
+        "provenance": _graph_provenance_payload(value.provenance),
+    }
+
+
+def _graph_assertion_payload(value: Any) -> dict[str, object]:
+    return {
+        "record_id": value.record_id,
+        "revision_id": value.revision_id,
+        "predicate": value.predicate,
+        "subject_entity_id": value.subject_entity_id,
+        "subject_mention_revision_id": value.subject_mention_revision_id,
+        "object_kind": value.object_kind,
+        "object_entity_id": value.object_entity_id,
+        "object_mention_revision_id": value.object_mention_revision_id,
+        "literal_value": value.literal_value,
+        "evidence": _graph_evidence_payload(value.evidence),
+    }
+
+
+def _subgraph_payload(value: EvidenceSubgraph) -> dict[str, object]:
+    return {
+        "trust_policy": value.trust_policy.value,
+        "entities": tuple(
+            {
+                "entity_id": item.entity.entity_id,
+                "entity_type": item.entity.entity_type,
+                "canonical_key": item.entity.canonical_key,
+                "canonical_name": item.entity.canonical_name,
+                "aliases": item.entity.aliases,
+                "evidence": tuple(
+                    _graph_evidence_payload(evidence)
+                    for evidence in item.evidence
+                ),
+            }
+            for item in value.entities
+        ),
+        "relationship_assertions": tuple(
+            _graph_assertion_payload(item)
+            for item in value.relationship_assertions
+        ),
+        "literal_assertions": tuple(
+            _graph_assertion_payload(item) for item in value.literal_assertions
+        ),
+        "paths": tuple(
+            {
+                "subject_entity_id": item.subject_entity_id,
+                "assertion_revision_id": item.assertion_revision_id,
+                "predicate": item.predicate,
+                "object_entity_id": item.object_entity_id,
+                "literal_value": item.literal_value,
+                "evidence": _graph_evidence_payload(item.evidence),
+            }
+            for item in value.paths
+        ),
+        "matched_chunk_ids": value.matched_chunk_ids,
+        "publication_ids": value.publication_ids,
+    }
+
+
 class GraphRAGQueryOperations:
     """Real retrieval/generation adapter with server-side query embedding."""
 
@@ -490,6 +605,7 @@ class GraphRAGQueryOperations:
         query_embedder: QueryEmbedder,
         generation_service: GroundedGenerationService,
         *,
+        subgraph_projector: EvidenceSubgraphProjector | None = None,
         monotonic: Any = time.monotonic,
     ) -> None:
         if not callable(getattr(retrieval_engine, "retrieve", None)):
@@ -498,11 +614,16 @@ class GraphRAGQueryOperations:
             raise TypeError("query_embedder must provide embed()")
         if not callable(getattr(generation_service, "generate", None)):
             raise TypeError("generation_service must provide generate()")
+        if subgraph_projector is not None and not callable(
+            getattr(subgraph_projector, "project", None)
+        ):
+            raise TypeError("subgraph_projector must provide project()")
         if not callable(monotonic):
             raise TypeError("monotonic must be callable")
         self._retrieval_engine = retrieval_engine
         self._query_embedder = query_embedder
         self._generation_service = generation_service
+        self._subgraph_projector = subgraph_projector
         self._monotonic = monotonic
 
     def _generate(self, request: GenerationRequest) -> GeneratedAnswer:
@@ -610,6 +731,73 @@ class GraphRAGQueryOperations:
             "version_ids": tuple(sorted(result.trace.version_filter.version_ids)),
             "published_at_or_before": result.trace.version_filter.published_at_or_before,
         }
+        payload["graph"] = None
+        if request.include_graph and self._subgraph_projector is not None:
+            try:
+                policy = SubgraphTrustPolicy(request.graph_trust_policy)
+            except (TypeError, ValueError) as error:
+                raise DependencyUnavailableError() from error
+            graph_started = float(self._monotonic())
+            try:
+                if result.trace.selected_chunk_ids:
+                    graph = self._subgraph_projector.project(
+                        principal,
+                        result.trace.selected_chunk_ids,
+                        trust_policy=policy,
+                    )
+                else:
+                    graph = EvidenceSubgraph(
+                        trust_policy=policy,
+                        entities=(),
+                        relationship_assertions=(),
+                        literal_assertions=(),
+                        paths=(),
+                        matched_chunk_ids=(),
+                        publication_ids=(),
+                    )
+            except (ApiRuntimeError, KeyboardInterrupt, SystemExit):
+                raise
+            except TimeoutError as error:
+                raise DependencyTimeoutError() from error
+            except Exception as error:
+                raise DependencyUnavailableError() from error
+            if not isinstance(graph, EvidenceSubgraph) or graph.trust_policy is not policy:
+                raise DependencyUnavailableError()
+            evidence = tuple(
+                item
+                for entity in graph.entities
+                for item in entity.evidence
+            ) + tuple(
+                item.evidence
+                for item in (
+                    *graph.relationship_assertions,
+                    *graph.literal_assertions,
+                    *graph.paths,
+                )
+            )
+            if any(
+                entity.entity.tenant_id != principal.tenant_id
+                for entity in graph.entities
+            ) or any(
+                item.citation.tenant_id != principal.tenant_id
+                for item in evidence
+            ):
+                raise DependencyUnavailableError()
+            try:
+                payload["graph"] = _subgraph_payload(graph)
+            except (AttributeError, KeyError, TypeError, ValueError) as error:
+                raise DependencyUnavailableError() from error
+            graph_ms = _elapsed_ms(graph_started, self._monotonic)
+            usage = UsageMetadata(
+                total_ms=usage.total_ms,
+                retrieval_ms=usage.retrieval_ms + graph_ms,
+                generation_ms=usage.generation_ms,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                model_calls=usage.model_calls,
+                estimated_cost_usd=usage.estimated_cost_usd,
+                stages=usage.stages + (("graph_projection", graph_ms),),
+            )
         return _response(BackendResult(payload, usage), RetrievalResponse)
 
     def answer(self, principal: Principal, request: AnswerRequest) -> BackendResult:
@@ -857,6 +1045,14 @@ class GraphRAGApplicationBackend:
             )
             if result.payload.trace.tenant_id != principal.tenant_id:
                 raise DependencyUnavailableError()
+            if not request.include_graph and result.payload.graph is not None:
+                raise DependencyUnavailableError()
+            if (
+                result.payload.graph is not None
+                and result.payload.graph.trust_policy
+                != request.graph_trust_policy
+            ):
+                raise DependencyUnavailableError()
             return result
         if envelope.operation is OperationKind.ANSWER:
             request = _validated(AnswerRequest, envelope.payload)
@@ -869,6 +1065,7 @@ class GraphRAGApplicationBackend:
 
 __all__ = [
     "DocumentOperations",
+    "EvidenceSubgraphProjector",
     "GeneratedAnswer",
     "GraphRAGApplicationBackend",
     "GraphRAGQueryOperations",

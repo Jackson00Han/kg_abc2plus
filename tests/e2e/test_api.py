@@ -284,6 +284,7 @@ class APIEndToEndTests(unittest.TestCase):
         self.assertEqual(job.json()["job_id"], "job-1")
         self.assertEqual(retrieval.status_code, 200)
         self.assertEqual(retrieval.json()["trace"]["tenant_id"], "tenant-alpha")
+        self.assertIsNone(retrieval.json()["graph"])
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(answer.json()["status"], "insufficient_context")
         self.assertEqual(

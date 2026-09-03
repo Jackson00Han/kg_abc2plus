@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
 import json
 import unittest
 
@@ -13,6 +14,7 @@ from graphrag_prod.api.contracts import (
     DeleteResponse,
     ErrorResponse,
     GenerationLimitsRequest,
+    GraphEvidenceResponse,
     HealthResponse,
     IngestionRequest,
     IngestionResponse,
@@ -115,6 +117,77 @@ class APIRequestContractTests(unittest.TestCase):
                         model.model_validate(
                             {"query_text": "What were net sales?", forbidden: "forged"}
                         )
+
+    def test_retrieval_graph_controls_are_strict_and_bounded(self) -> None:
+        request = RetrievalRequest(query_text="What connects the assets?")
+        self.assertTrue(request.include_graph)
+        self.assertEqual(
+            request.graph_trust_policy,
+            "PUBLISHED_SECONDARY_INCLUSIVE",
+        )
+        authoritative = RetrievalRequest.model_validate(
+            {
+                "query_text": "What connects the assets?",
+                "include_graph": False,
+                "graph_trust_policy": "AUTHORITATIVE_ONLY",
+            }
+        )
+        self.assertFalse(authoritative.include_graph)
+        for payload in (
+            {"query_text": "q", "include_graph": 1},
+            {"query_text": "q", "graph_trust_policy": "ALL"},
+            {"query_text": "q", "graph": {"tenant_id": "tenant-victim"}},
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    RetrievalRequest.model_validate(payload)
+
+    def test_graph_evidence_is_exact_and_has_no_tenant_field(self) -> None:
+        text = "Exact graph evidence."
+        payload = {
+            "citation": {
+                "chunk_id": "chunk-1",
+                "chunk_checksum": hashlib.sha256(text.encode()).hexdigest(),
+                "chunk_text": text,
+                "document_id": "document-1",
+                "document_title": "Source document",
+                "canonical_uri": "https://example.test/source",
+                "source_name": "source",
+                "version_id": "version-1",
+                "version_checksum": "b" * 64,
+                "version_number": 1,
+                "ordinal": 0,
+                "char_start": 10,
+                "char_end": 10 + len(text),
+                "page_number": None,
+                "section": None,
+                "published_at": datetime(2024, 1, 1, tzinfo=UTC),
+            },
+            "char_start": 10,
+            "char_end": 10 + len(text),
+            "quoted_text": text,
+            "provenance": {
+                "publication_id": "publication-1",
+                "record_id": "record-1",
+                "revision_id": "revision-1",
+                "ontology_version_id": "ontology-1",
+                "origin": "EXPERT_IMPORT",
+                "authority": "AUTHORITATIVE",
+                "status": "PUBLISHED",
+                "confidence": 1.0,
+                "extractor_version": None,
+                "prompt_version": None,
+            },
+        }
+        evidence = GraphEvidenceResponse.model_validate(payload)
+        self.assertNotIn("tenant_id", evidence.model_dump())
+        payload["quoted_text"] = "Fabricated evidence."
+        with self.assertRaises(ValidationError):
+            GraphEvidenceResponse.model_validate(payload)
+        payload["quoted_text"] = text
+        payload["tenant_id"] = "tenant-victim"
+        with self.assertRaises(ValidationError):
+            GraphEvidenceResponse.model_validate(payload)
 
     def test_query_text_and_all_numeric_limits_are_bounded_and_strict(self) -> None:
         self.assertEqual(RetrievalRequest(query_text="  What changed?  ").query_text, "What changed?")

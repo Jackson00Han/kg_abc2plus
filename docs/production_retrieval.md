@@ -32,6 +32,14 @@ RRF uses `sum(1 / (k + rank))`, with the documented default `k=60`. RA uses
 stable Chunk IDs. No Neo4j internal `elementId`, custom relevance formula, or
 graph fact is returned as answer evidence.
 
+At the HTTP application boundary, an optional governed subgraph projector can
+use the final trace's selected Chunk IDs as seeds. It returns only active,
+published, evidence-bound Entity mentions and one-hop assertions under either
+the inclusive published-secondary policy or the authoritative-only policy.
+This projection is a separate response field with its own limits, exact Chunk
+citations, and latency stage. It does not alter ranking and is never passed to
+answer generation as factual evidence.
+
 Vector recall deliberately does not take a global approximate-index top-N
 window. Its Cypher first matches the request tenant, active Snapshot and
 Version, compatible active embedding generation, Document and Chunk ACLs,

@@ -32,6 +32,12 @@ MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 MAX_QUERY_CHARS = 2_000
 MAX_GROUPS = 64
 MAX_FILTER_IDS = 100
+MAX_GRAPH_ENTITIES = 100
+MAX_GRAPH_ASSERTIONS = 100
+MAX_GRAPH_PATHS = 100
+MAX_GRAPH_EVIDENCE_PER_ENTITY = 20
+MAX_GRAPH_CHUNK_CHARS = 50_000
+MAX_GRAPH_TOTAL_EVIDENCE_CHARS = 500_000
 
 Identifier = Annotated[
     str,
@@ -330,6 +336,11 @@ class RetrievalRequest(StrictAPIModel):
     ]
     version_filter: VersionFilterRequest = Field(default_factory=VersionFilterRequest)
     limits: RetrievalLimitsRequest = Field(default_factory=RetrievalLimitsRequest)
+    include_graph: bool = True
+    graph_trust_policy: Literal[
+        "PUBLISHED_SECONDARY_INCLUSIVE",
+        "AUTHORITATIVE_ONLY",
+    ] = "PUBLISHED_SECONDARY_INCLUSIVE"
 
     @field_validator("query_text")
     @classmethod
@@ -506,9 +517,285 @@ class RetrievalTraceResponse(StrictAPIModel):
     version_filter: VersionFilterRequest
 
 
+GraphName = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=512,
+    ),
+]
+GraphTypeName = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+    ),
+]
+GraphExactText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=False,
+        min_length=1,
+        max_length=MAX_GRAPH_CHUNK_CHARS,
+    ),
+]
+
+
+class GraphCitationResponse(CitationResponse):
+    """Exact authorized Chunk carried by a governed graph record."""
+
+    chunk_text: GraphExactText
+    document_title: Annotated[
+        str,
+        StringConstraints(strict=True, min_length=1, max_length=512),
+    ]
+
+    @model_validator(mode="after")
+    def validate_exact_chunk(self) -> Self:
+        if self.char_end - self.char_start != len(self.chunk_text):
+            raise ValueError("graph citation text must match its exact Chunk range")
+        checksum = hashlib.sha256(self.chunk_text.encode("utf-8")).hexdigest()
+        if checksum != self.chunk_checksum:
+            raise ValueError("graph citation text must match its Chunk checksum")
+        return self
+
+
+class GraphProvenanceResponse(StrictAPIModel):
+    publication_id: Identifier
+    record_id: Identifier
+    revision_id: Identifier
+    ontology_version_id: Identifier
+    origin: Literal[
+        "EXPERT_IMPORT",
+        "EXPERT_CREATED",
+        "LLM_EXTRACTED",
+        "RULE_DERIVED",
+        "FIXTURE",
+    ]
+    authority: Literal["AUTHORITATIVE", "SECONDARY"]
+    status: Literal["PUBLISHED"]
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
+    extractor_version: GraphName | None = None
+    prompt_version: GraphName | None = None
+
+    @model_validator(mode="after")
+    def validate_origin_authority(self) -> Self:
+        expert = self.origin in {"EXPERT_IMPORT", "EXPERT_CREATED"}
+        if expert != (self.authority == "AUTHORITATIVE"):
+            raise ValueError("graph origin and authority are inconsistent")
+        return self
+
+
+class GraphEvidenceResponse(StrictAPIModel):
+    citation: GraphCitationResponse
+    char_start: Annotated[int, Field(strict=True, ge=0)]
+    char_end: Annotated[int, Field(strict=True, ge=1)]
+    quoted_text: GraphExactText
+    provenance: GraphProvenanceResponse
+
+    @model_validator(mode="after")
+    def validate_exact_evidence(self) -> Self:
+        if not (
+            self.citation.char_start
+            <= self.char_start
+            < self.char_end
+            <= self.citation.char_end
+        ):
+            raise ValueError("graph evidence range is outside its cited Chunk")
+        start = self.char_start - self.citation.char_start
+        end = self.char_end - self.citation.char_start
+        if self.citation.chunk_text[start:end] != self.quoted_text:
+            raise ValueError("graph evidence quote must match its exact Chunk span")
+        return self
+
+
+class GraphEntityResponse(StrictAPIModel):
+    entity_id: Identifier
+    entity_type: GraphTypeName
+    canonical_key: GraphName
+    canonical_name: GraphName
+    aliases: Annotated[tuple[GraphName, ...], Field(max_length=100)]
+    evidence: Annotated[
+        tuple[GraphEvidenceResponse, ...],
+        Field(min_length=1, max_length=MAX_GRAPH_EVIDENCE_PER_ENTITY),
+    ]
+
+    @model_validator(mode="after")
+    def validate_unique_evidence(self) -> Self:
+        if len(self.aliases) != len(set(self.aliases)):
+            raise ValueError("graph Entity aliases must be unique")
+        revisions = tuple(item.provenance.revision_id for item in self.evidence)
+        if len(revisions) != len(set(revisions)):
+            raise ValueError("graph Entity evidence revisions must be unique")
+        return self
+
+
+class GraphAssertionResponse(StrictAPIModel):
+    record_id: Identifier
+    revision_id: Identifier
+    predicate: GraphTypeName
+    subject_entity_id: Identifier
+    subject_mention_revision_id: Identifier
+    object_kind: Literal["entity", "literal"]
+    object_entity_id: Identifier | None = None
+    object_mention_revision_id: Identifier | None = None
+    literal_value: GraphExactText | None = None
+    evidence: GraphEvidenceResponse
+
+    @model_validator(mode="after")
+    def validate_object_and_identity(self) -> Self:
+        if (
+            self.record_id != self.evidence.provenance.record_id
+            or self.revision_id != self.evidence.provenance.revision_id
+        ):
+            raise ValueError("graph assertion identity must match its provenance")
+        if self.object_kind == "entity":
+            if (
+                self.object_entity_id is None
+                or self.object_mention_revision_id is None
+                or self.literal_value is not None
+            ):
+                raise ValueError("relationship assertion object is invalid")
+        elif (
+            self.object_entity_id is not None
+            or self.object_mention_revision_id is not None
+            or self.literal_value is None
+        ):
+            raise ValueError("literal assertion object is invalid")
+        return self
+
+
+class GraphPathResponse(StrictAPIModel):
+    subject_entity_id: Identifier
+    assertion_revision_id: Identifier
+    predicate: GraphTypeName
+    object_entity_id: Identifier | None = None
+    literal_value: GraphExactText | None = None
+    evidence: GraphEvidenceResponse
+
+    @model_validator(mode="after")
+    def validate_one_hop_object(self) -> Self:
+        if (self.object_entity_id is None) == (self.literal_value is None):
+            raise ValueError("graph path requires exactly one object")
+        if self.assertion_revision_id != self.evidence.provenance.revision_id:
+            raise ValueError("graph path must match its assertion evidence")
+        return self
+
+
+class EvidenceSubgraphResponse(StrictAPIModel):
+    trust_policy: Literal[
+        "PUBLISHED_SECONDARY_INCLUSIVE",
+        "AUTHORITATIVE_ONLY",
+    ]
+    entities: Annotated[
+        tuple[GraphEntityResponse, ...], Field(max_length=MAX_GRAPH_ENTITIES)
+    ]
+    relationship_assertions: Annotated[
+        tuple[GraphAssertionResponse, ...], Field(max_length=MAX_GRAPH_ASSERTIONS)
+    ]
+    literal_assertions: Annotated[
+        tuple[GraphAssertionResponse, ...], Field(max_length=MAX_GRAPH_ASSERTIONS)
+    ]
+    paths: Annotated[
+        tuple[GraphPathResponse, ...], Field(max_length=MAX_GRAPH_PATHS)
+    ]
+    matched_chunk_ids: Annotated[
+        tuple[Identifier, ...], Field(max_length=MAX_GRAPH_ASSERTIONS * 2)
+    ]
+    publication_ids: Annotated[tuple[Identifier, ...], Field(max_length=1)]
+
+    @model_validator(mode="after")
+    def validate_bounded_graph(self) -> Self:
+        entity_ids = tuple(item.entity_id for item in self.entities)
+        assertion_items = (*self.relationship_assertions, *self.literal_assertions)
+        assertion_ids = tuple(item.revision_id for item in assertion_items)
+        for name, values in (
+            ("entities", entity_ids),
+            ("assertions", assertion_ids),
+            ("paths", tuple(item.assertion_revision_id for item in self.paths)),
+            ("matched_chunk_ids", self.matched_chunk_ids),
+            ("publication_ids", self.publication_ids),
+        ):
+            if len(values) != len(set(values)):
+                raise ValueError(f"graph {name} must be unique")
+        known_entities = set(entity_ids)
+        relationship_ids = {
+            item.revision_id for item in self.relationship_assertions
+        }
+        literal_ids = {item.revision_id for item in self.literal_assertions}
+        if any(
+            item.object_kind != "entity"
+            or item.subject_entity_id not in known_entities
+            or item.object_entity_id not in known_entities
+            for item in self.relationship_assertions
+        ):
+            raise ValueError("relationship assertions must reference graph Entities")
+        if any(
+            item.object_kind != "literal"
+            or item.subject_entity_id not in known_entities
+            for item in self.literal_assertions
+        ):
+            raise ValueError("literal assertions must reference graph Entities")
+        by_revision = {item.revision_id: item for item in assertion_items}
+        for path in self.paths:
+            assertion = by_revision.get(path.assertion_revision_id)
+            if (
+                assertion is None
+                or path.subject_entity_id != assertion.subject_entity_id
+                or path.predicate != assertion.predicate
+                or path.object_entity_id != assertion.object_entity_id
+                or path.literal_value != assertion.literal_value
+                or path.evidence != assertion.evidence
+            ):
+                raise ValueError("graph path must match one returned assertion")
+        if relationship_ids.intersection(literal_ids):
+            raise ValueError("graph assertion kinds must be disjoint")
+        evidences = [
+            evidence
+            for entity in self.entities
+            for evidence in entity.evidence
+        ] + [item.evidence for item in assertion_items]
+        citations: dict[str, GraphCitationResponse] = {}
+        unique_evidence: dict[tuple[str, str], GraphEvidenceResponse] = {}
+        for evidence in evidences:
+            chunk_id = evidence.citation.chunk_id
+            previous = citations.setdefault(chunk_id, evidence.citation)
+            if previous != evidence.citation:
+                raise ValueError("graph citations conflict for one Chunk")
+            unique_evidence.setdefault(
+                (evidence.provenance.revision_id, chunk_id), evidence
+            )
+        if set(self.matched_chunk_ids) != set(citations):
+            raise ValueError("matched_chunk_ids must identify graph evidence Chunks")
+        publications = {
+            evidence.provenance.publication_id
+            for evidence in unique_evidence.values()
+        }
+        if set(self.publication_ids) != publications:
+            raise ValueError("publication_ids must identify graph provenance")
+        if self.trust_policy == "AUTHORITATIVE_ONLY" and any(
+            evidence.provenance.authority != "AUTHORITATIVE"
+            for evidence in unique_evidence.values()
+        ):
+            raise ValueError("authoritative graph policy excluded secondary evidence")
+        total_chars = sum(len(item.chunk_text) for item in citations.values()) + sum(
+            len(item.quoted_text) for item in unique_evidence.values()
+        )
+        if total_chars > MAX_GRAPH_TOTAL_EVIDENCE_CHARS:
+            raise ValueError("graph evidence exceeds the response character budget")
+        return self
+
+
 class RetrievalResponse(StrictAPIModel):
     chunks: Annotated[tuple[RetrievedChunkResponse, ...], Field(max_length=20)]
     trace: RetrievalTraceResponse
+    graph: EvidenceSubgraphResponse | None = None
 
     @model_validator(mode="after")
     def validate_trace_selection(self) -> Self:
@@ -804,7 +1091,14 @@ __all__ = [
     "DeleteResponse",
     "ErrorResponse",
     "ErrorsMetricsResponse",
+    "EvidenceSubgraphResponse",
     "GenerationLimitsRequest",
+    "GraphAssertionResponse",
+    "GraphCitationResponse",
+    "GraphEntityResponse",
+    "GraphEvidenceResponse",
+    "GraphPathResponse",
+    "GraphProvenanceResponse",
     "HealthResponse",
     "IngestDocumentRequest",
     "IngestionRequest",

@@ -25,6 +25,7 @@ from graphrag_prod.api.contracts import (
 from graphrag_prod.api.runtime import (
     AuthorizationError,
     BackendResult,
+    DependencyTimeoutError,
     DependencyUnavailableError,
     OperationEnvelope,
     OperationKind,
@@ -33,6 +34,7 @@ from graphrag_prod.api.runtime import (
     required_scope,
 )
 from graphrag_prod.domain import Principal
+from graphrag_prod.domain.ids import entity_id as make_entity_id
 from graphrag_prod.generation import (
     AnswerCitation,
     AnswerResult,
@@ -42,11 +44,25 @@ from graphrag_prod.generation import (
 )
 from graphrag_prod.retrieval import (
     Citation,
+    EvidenceSubgraph,
     RetrievalLimits,
     RetrievalResult,
     RetrievalTrace,
     RetrievedChunk,
+    SubgraphAssertion,
+    SubgraphCitation,
+    SubgraphEntityNode,
+    SubgraphEvidence,
+    SubgraphPath,
+    SubgraphProvenance,
+    SubgraphTrustPolicy,
     VersionFilter,
+)
+from graphrag_prod.knowledge import EntityIdentity
+from graphrag_prod.knowledge.trust import (
+    AuthorityLevel,
+    GovernanceStatus,
+    KnowledgeOrigin,
 )
 from graphrag_prod.retrieval.models import RetrievalRequest as DomainRetrievalRequest
 
@@ -109,6 +125,141 @@ def _retrieval_result(
         version_filter=VersionFilter(),
     )
     return RetrievalResult(chunks=selected, trace=trace)
+
+
+def _evidence_subgraph(
+    *,
+    tenant_id: str = "tenant-alpha",
+    trust_policy: SubgraphTrustPolicy = (
+        SubgraphTrustPolicy.PUBLISHED_SECONDARY_INCLUSIVE
+    ),
+) -> EvidenceSubgraph:
+    text = "Acme reported revenue of USD 42 million in 2025."
+    citation = SubgraphCitation(
+        tenant_id=tenant_id,
+        chunk_id="chunk-001",
+        chunk_checksum=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        chunk_text=text,
+        document_id="document-001",
+        document_title="Acme annual filing",
+        canonical_uri="https://example.test/filing",
+        source_name="Acme filing",
+        version_id="version-001",
+        version_checksum="b" * 64,
+        version_number=1,
+        ordinal=0,
+        char_start=0,
+        char_end=len(text),
+        page_number=1,
+        section="Results",
+        published_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    authority = (
+        AuthorityLevel.AUTHORITATIVE
+        if trust_policy is SubgraphTrustPolicy.AUTHORITATIVE_ONLY
+        else AuthorityLevel.SECONDARY
+    )
+    origin = (
+        KnowledgeOrigin.EXPERT_IMPORT
+        if authority is AuthorityLevel.AUTHORITATIVE
+        else KnowledgeOrigin.LLM_EXTRACTED
+    )
+
+    def evidence(record_id: str, revision_id: str) -> SubgraphEvidence:
+        return SubgraphEvidence(
+            citation=citation,
+            char_start=0,
+            char_end=len(text),
+            quoted_text=text,
+            provenance=SubgraphProvenance(
+                publication_id="publication-001",
+                record_id=record_id,
+                revision_id=revision_id,
+                ontology_version_id="ontology-001",
+                origin=origin,
+                authority=authority,
+                status=GovernanceStatus.PUBLISHED,
+                confidence=0.97,
+                extractor_version=(
+                    None if authority is AuthorityLevel.AUTHORITATIVE else "extractor-v1"
+                ),
+                prompt_version=(
+                    None if authority is AuthorityLevel.AUTHORITATIVE else "prompt-v1"
+                ),
+            ),
+        )
+
+    company = EntityIdentity(
+        entity_id=make_entity_id(tenant_id, "Company", "acme"),
+        tenant_id=tenant_id,
+        entity_type="Company",
+        canonical_key="acme",
+        canonical_name="Acme",
+    )
+    metric = EntityIdentity(
+        entity_id=make_entity_id(tenant_id, "Metric", "revenue"),
+        tenant_id=tenant_id,
+        entity_type="Metric",
+        canonical_key="revenue",
+        canonical_name="Revenue",
+    )
+    company_mention = evidence("mention-acme", "mention-acme-r1")
+    metric_mention = evidence("mention-revenue", "mention-revenue-r1")
+    relationship_evidence = evidence("assertion-reports", "assertion-reports-r1")
+    literal_evidence = evidence("assertion-revenue", "assertion-revenue-r1")
+    relationship = SubgraphAssertion(
+        record_id="assertion-reports",
+        revision_id="assertion-reports-r1",
+        predicate="REPORTS",
+        subject_entity_id=company.entity_id,
+        subject_mention_revision_id="mention-acme-r1",
+        object_kind="entity",
+        object_entity_id=metric.entity_id,
+        object_mention_revision_id="mention-revenue-r1",
+        literal_value=None,
+        evidence=relationship_evidence,
+    )
+    literal = SubgraphAssertion(
+        record_id="assertion-revenue",
+        revision_id="assertion-revenue-r1",
+        predicate="REVENUE",
+        subject_entity_id=company.entity_id,
+        subject_mention_revision_id="mention-acme-r1",
+        object_kind="literal",
+        object_entity_id=None,
+        object_mention_revision_id=None,
+        literal_value="USD 42 million",
+        evidence=literal_evidence,
+    )
+    return EvidenceSubgraph(
+        trust_policy=trust_policy,
+        entities=(
+            SubgraphEntityNode(company, (company_mention,)),
+            SubgraphEntityNode(metric, (metric_mention,)),
+        ),
+        relationship_assertions=(relationship,),
+        literal_assertions=(literal,),
+        paths=(
+            SubgraphPath(
+                subject_entity_id=company.entity_id,
+                assertion_revision_id=relationship.revision_id,
+                predicate=relationship.predicate,
+                object_entity_id=metric.entity_id,
+                literal_value=None,
+                evidence=relationship_evidence,
+            ),
+            SubgraphPath(
+                subject_entity_id=company.entity_id,
+                assertion_revision_id=literal.revision_id,
+                predicate=literal.predicate,
+                object_entity_id=None,
+                literal_value=literal.literal_value,
+                evidence=literal_evidence,
+            ),
+        ),
+        matched_chunk_ids=("chunk-001",),
+        publication_ids=("publication-001",),
+    )
 
 
 def _answered_result() -> AnswerResult:
@@ -200,6 +351,27 @@ class RecordingRetrievalEngine:
     def retrieve(self, request: DomainRetrievalRequest) -> object:
         self.requests.append(request)
         return self.result
+
+
+class RecordingSubgraphProjector:
+    def __init__(self, result: object | None = None) -> None:
+        self.result = result
+        self.calls: list[tuple[Principal, tuple[str, ...], SubgraphTrustPolicy]] = []
+        self.error: BaseException | None = None
+
+    def project(
+        self,
+        principal: Principal,
+        selected_chunk_ids: tuple[str, ...],
+        *,
+        trust_policy: SubgraphTrustPolicy,
+    ) -> object:
+        self.calls.append((principal, selected_chunk_ids, trust_policy))
+        if self.error is not None:
+            raise self.error
+        if self.result is not None:
+            return self.result
+        return _evidence_subgraph(trust_policy=trust_policy)
 
 
 class RecordingGenerationService:
@@ -301,6 +473,7 @@ class QueryOperationsTests(unittest.TestCase):
         embedding_result: object | None = None,
         answer_result: object | None = None,
         clock: SequenceClock | None = None,
+        subgraph_projector: object | None = None,
         answer_usage: ProviderUsage = ProviderUsage(
             input_tokens=20,
             output_tokens=8,
@@ -339,6 +512,7 @@ class QueryOperationsTests(unittest.TestCase):
             engine,  # type: ignore[arg-type]
             embedder,  # type: ignore[arg-type]
             generation,  # type: ignore[arg-type]
+            subgraph_projector=subgraph_projector,  # type: ignore[arg-type]
             monotonic=clock or SequenceClock(1, 1, 2, 2, 3, 3),
         )
         return operations, embedder, engine, generation
@@ -375,6 +549,153 @@ class QueryOperationsTests(unittest.TestCase):
             ("query_embedding", "retrieval"),
         )
         self.assertAlmostEqual(result.usage.stages[0][1], 4.0)
+        self.assertIsNone(result.payload.graph)
+
+    def test_retrieve_projects_governed_graph_from_exact_selected_chunks(self) -> None:
+        projector = RecordingSubgraphProjector()
+        operations, _, _, _ = self._operations(
+            subgraph_projector=projector,
+            clock=SequenceClock(1.0, 1.004, 2.0, 2.012, 3.0, 3.006),
+        )
+        principal = Principal(
+            "principal-001", "tenant-alpha", frozenset({"finance"})
+        )
+        result = operations.retrieve(
+            principal,
+            APIRetrievalRequest(query_text="What connects Acme and revenue?"),
+        )
+
+        self.assertEqual(
+            projector.calls,
+            [
+                (
+                    principal,
+                    ("chunk-001",),
+                    SubgraphTrustPolicy.PUBLISHED_SECONDARY_INCLUSIVE,
+                )
+            ],
+        )
+        graph = result.payload.graph
+        self.assertIsNotNone(graph)
+        assert graph is not None
+        self.assertEqual(len(graph.entities), 2)
+        self.assertEqual(len(graph.relationship_assertions), 1)
+        self.assertEqual(len(graph.literal_assertions), 1)
+        self.assertEqual(len(graph.paths), 2)
+        self.assertEqual(graph.matched_chunk_ids, ("chunk-001",))
+        graph_json = graph.model_dump_json()
+        self.assertNotIn("tenant-alpha", graph_json)
+        self.assertNotIn("tenant_id", graph_json)
+        self.assertEqual(result.usage.input_tokens, 5)
+        self.assertEqual(result.usage.model_calls, 1)
+        self.assertAlmostEqual(result.usage.retrieval_ms, 18.0)
+        self.assertEqual(
+            tuple(name for name, _ in result.usage.stages),
+            ("query_embedding", "retrieval", "graph_projection"),
+        )
+        self.assertAlmostEqual(result.usage.stages[-1][1], 6.0)
+
+    def test_graph_projection_can_be_disabled_or_authoritative_only(self) -> None:
+        disabled_projector = RecordingSubgraphProjector()
+        operations, *_ = self._operations(
+            subgraph_projector=disabled_projector,
+        )
+        principal = Principal(
+            "principal-001", "tenant-alpha", frozenset({"finance"})
+        )
+        disabled = operations.retrieve(
+            principal,
+            APIRetrievalRequest(query_text="Revenue?", include_graph=False),
+        )
+        self.assertIsNone(disabled.payload.graph)
+        self.assertEqual(disabled_projector.calls, [])
+        self.assertEqual(
+            tuple(name for name, _ in disabled.usage.stages),
+            ("query_embedding", "retrieval"),
+        )
+
+        authoritative_projector = RecordingSubgraphProjector()
+        operations, *_ = self._operations(
+            subgraph_projector=authoritative_projector,
+        )
+        authoritative = operations.retrieve(
+            principal,
+            APIRetrievalRequest(
+                query_text="Revenue?",
+                graph_trust_policy="AUTHORITATIVE_ONLY",
+            ),
+        )
+        self.assertEqual(
+            authoritative_projector.calls[0][2],
+            SubgraphTrustPolicy.AUTHORITATIVE_ONLY,
+        )
+        self.assertEqual(
+            authoritative.payload.graph.trust_policy,
+            "AUTHORITATIVE_ONLY",
+        )
+
+    def test_configured_projection_distinguishes_empty_graph_from_unavailable(self) -> None:
+        projector = RecordingSubgraphProjector()
+        operations, *_ = self._operations(
+            retrieval_result=_retrieval_result(chunks=()),
+            subgraph_projector=projector,
+        )
+        principal = Principal(
+            "principal-001", "tenant-alpha", frozenset({"finance"})
+        )
+        result = operations.retrieve(
+            principal,
+            APIRetrievalRequest(query_text="Unknown relationship?"),
+        )
+        self.assertIsNotNone(result.payload.graph)
+        self.assertEqual(result.payload.graph.entities, ())
+        self.assertEqual(result.payload.graph.paths, ())
+        self.assertEqual(projector.calls, [])
+        self.assertEqual(result.usage.stages[-1][0], "graph_projection")
+
+    def test_graph_projector_failures_and_cross_tenant_output_fail_closed(self) -> None:
+        principal = Principal(
+            "principal-001", "tenant-alpha", frozenset({"finance"})
+        )
+        request = APIRetrievalRequest(query_text="Revenue?")
+        for error, expected in (
+            (TimeoutError("provider details"), DependencyTimeoutError),
+            (RuntimeError("driver details"), DependencyUnavailableError),
+        ):
+            with self.subTest(error=type(error).__name__):
+                projector = RecordingSubgraphProjector()
+                projector.error = error
+                operations, *_ = self._operations(
+                    subgraph_projector=projector,
+                )
+                with self.assertRaises(expected):
+                    operations.retrieve(principal, request)
+        for invalid in (
+            {"entities": []},
+            _evidence_subgraph(tenant_id="tenant-victim"),
+        ):
+            with self.subTest(output=type(invalid).__name__):
+                operations, *_ = self._operations(
+                    subgraph_projector=RecordingSubgraphProjector(invalid),
+                )
+                with self.assertRaises(DependencyUnavailableError):
+                    operations.retrieve(principal, request)
+
+    def test_answer_never_projects_graph_as_factual_evidence(self) -> None:
+        projector = RecordingSubgraphProjector()
+        operations, _, _, generation = self._operations(
+            subgraph_projector=projector,
+        )
+        principal = Principal(
+            "principal-001", "tenant-alpha", frozenset({"finance"})
+        )
+        result = operations.answer(
+            principal,
+            APIAnswerRequest(query_text="What was revenue?"),
+        )
+        self.assertEqual(result.payload.status, "answered")
+        self.assertEqual(projector.calls, [])
+        self.assertEqual(generation.requests[0].chunks, (_chunk(),))
 
     def test_retrieve_accepts_bounded_resource_allocation_explanations(self) -> None:
         baseline = _retrieval_result()
@@ -756,6 +1077,32 @@ class ApplicationBackendTests(unittest.TestCase):
                         self.backend.execute(
                             _envelope(operation, {"query_text": "Revenue?"})
                         )
+
+    def test_backend_enforces_requested_graph_mode_and_trust_policy(self) -> None:
+        query_operations = GraphRAGQueryOperations(
+            RecordingRetrievalEngine(_retrieval_result()),  # type: ignore[arg-type]
+            RecordingEmbedder(QueryEmbedding((0.5, -0.25), "space-v1")),
+            RecordingGenerationService(_answered_result()),  # type: ignore[arg-type]
+            subgraph_projector=RecordingSubgraphProjector(),
+            monotonic=SequenceClock(1, 1, 2, 2, 3, 3),
+        )
+        projected = query_operations.retrieve(
+            Principal("principal-001", "tenant-alpha", frozenset({"finance"})),
+            APIRetrievalRequest(query_text="Revenue?"),
+        )
+        self.queries.retrieval_result = projected
+        for payload in (
+            {"query_text": "Revenue?", "include_graph": False},
+            {
+                "query_text": "Revenue?",
+                "graph_trust_policy": "AUTHORITATIVE_ONLY",
+            },
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(DependencyUnavailableError):
+                    self.backend.execute(
+                        _envelope(OperationKind.RETRIEVAL, payload)
+                    )
 
 
 if __name__ == "__main__":

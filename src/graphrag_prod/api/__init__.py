@@ -3,6 +3,7 @@
 from .app import APISettings, create_app
 from .auth import AuthenticatedIdentity, JWTAuthConfig, JWTAuthenticator
 from .backend import (
+    EvidenceSubgraphProjector,
     GraphRAGApplicationBackend,
     GraphRAGQueryOperations,
     IncrementalIngestionPlanner,
@@ -28,6 +29,7 @@ __all__ = [
     "AuthenticatedIdentity",
     "BackendResult",
     "BoundedOperationRunner",
+    "EvidenceSubgraphProjector",
     "GraphRAGApplicationBackend",
     "GraphRAGQueryOperations",
     "IncrementalIngestionPlanner",

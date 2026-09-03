@@ -12,7 +12,7 @@ assembly must inject those trusted resources into `create_app`.
 | `POST` | `/v1/documents:ingest` | Synchronously ingest one authoritative UTF-8 source version | `200` |
 | `DELETE` | `/v1/documents/{document_id}` | Synchronously delete one tenant-scoped document lifecycle | `200` |
 | `GET` | `/v1/jobs/{job_id}` | Read a tenant-scoped durable job projection | `200` |
-| `POST` | `/v1/retrieval` | Run bounded retrieval and return traceable Chunks | `200` |
+| `POST` | `/v1/retrieval` | Return traceable Chunks and optional governed graph context | `200` |
 | `POST` | `/v1/answers` | Retrieve and generate a grounded cited answer | `200` |
 | `GET` | `/health/live` | Check only the local process boundary | `200` |
 | `GET` | `/health/ready` | Check bounded dependency readiness | `200` or `503` |
@@ -37,6 +37,16 @@ claims.  Retrieval and answer requests cannot contain `tenant_id`,
 server-owned embedder.  It rejects a retrieval result whose trace tenant,
 space, limits, version filter, or selected Chunk IDs differs from that trusted
 request.
+
+Retrieval enables governed graph projection by default with
+`include_graph=true`. `graph_trust_policy` is either
+`PUBLISHED_SECONDARY_INCLUSIVE` (the default) or `AUTHORITATIVE_ONLY`; it is a
+trust filter, never an ACL override. The optional projector receives only the
+authenticated `Principal` and the retrieval trace's exact selected Chunk IDs.
+When no projector is configured, or the caller explicitly disables it, the
+response contains `graph: null` to distinguish unavailable/disabled projection
+from a successfully projected empty graph. Projector timeouts and malformed or
+cross-tenant results fail closed without exposing dependency details.
 
 Ingestion contains an ACL because it creates a new resource.  The requested
 groups must be a non-empty subset of the authenticated principal's groups.
@@ -70,6 +80,15 @@ responses preserve the Stage 6 standard refusal and require every material
 claim, server-owned citation, inline marker, inference label, and conflict
 index to be internally consistent.  Invalid backend output becomes a generic
 dependency error instead of leaking a validation traceback.
+
+The graph response is independently bounded and omits tenant and ACL fields.
+Every Entity mention, relationship assertion, literal assertion, and one-hop
+path carries an exact Chunk citation, exact quoted span, publication and
+ontology IDs, origin, authority, `PUBLISHED` status, and confidence. Entity and
+assertion references must be internally consistent, and the response-level
+Chunk/publication manifests must exactly match their evidence. Graph context
+remains navigation metadata: `/v1/answers` continues to send only retrieved
+Chunks to grounded generation.
 
 ## Bounded execution and retry rules
 
@@ -159,7 +178,8 @@ control-character injection.
 
 - request/error counts and latency buckets by method and route template;
 - error counts by stable code;
-- operational-stage latency, including embedding, retrieval, and generation;
+- operational-stage latency, including embedding, retrieval, optional graph
+  projection, and generation;
 - model-call, input/output-token, and estimated-cost totals.
 
 Unknown paths collapse to one route label and excess labels collapse to an

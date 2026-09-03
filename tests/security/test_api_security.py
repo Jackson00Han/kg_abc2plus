@@ -209,6 +209,14 @@ class APISecurityTests(unittest.TestCase):
             {"query_text": "What were sales?", "tenant_id": "tenant-victim"},
             {"query_text": "What were sales?", "access_groups": ["executives"]},
             {"query_text": "What were sales?", "query_vector": [1.0, 0.0]},
+            {
+                "query_text": "What were sales?",
+                "graph": {"tenant_id": "tenant-victim"},
+            },
+            {
+                "query_text": "What were sales?",
+                "selected_chunk_ids": ["victim-private-chunk"],
+            },
         )
         for body in attacks:
             with self.subTest(field=tuple(body)[-1]):
