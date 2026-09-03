@@ -71,10 +71,30 @@ class OperationKind(str, Enum):
     ANSWER = "answer"
     HEALTH = "health"
     READINESS = "readiness"
+    ONTOLOGY_LIST = "ontology_list"
+    ONTOLOGY_IMPORT = "ontology_import"
+    ONTOLOGY_PUBLISH = "ontology_publish"
+    KNOWLEDGE_IMPORT = "knowledge_import"
+    KNOWLEDGE_CONSTRUCT = "knowledge_construct"
+    KNOWLEDGE_REVIEW_QUEUE = "knowledge_review_queue"
+    KNOWLEDGE_REVIEW_BATCH = "knowledge_review_batch"
+    KNOWLEDGE_PUBLISH = "knowledge_publish"
+    KNOWLEDGE_ROLLBACK = "knowledge_rollback"
+    KNOWLEDGE_HISTORY = "knowledge_history"
 
     @property
     def is_write(self) -> bool:
-        return self in {self.INGESTION, self.DELETION}
+        return self in {
+            self.INGESTION,
+            self.DELETION,
+            self.ONTOLOGY_IMPORT,
+            self.ONTOLOGY_PUBLISH,
+            self.KNOWLEDGE_IMPORT,
+            self.KNOWLEDGE_CONSTRUCT,
+            self.KNOWLEDGE_REVIEW_BATCH,
+            self.KNOWLEDGE_PUBLISH,
+            self.KNOWLEDGE_ROLLBACK,
+        }
 
     @property
     def is_retry_safe(self) -> bool:
@@ -83,6 +103,9 @@ class OperationKind(str, Enum):
             self.JOB_STATUS,
             self.HEALTH,
             self.READINESS,
+            self.ONTOLOGY_LIST,
+            self.KNOWLEDGE_REVIEW_QUEUE,
+            self.KNOWLEDGE_HISTORY,
         }
 
 
@@ -95,6 +118,16 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.ANSWER: "answers:generate",
         OperationKind.HEALTH: "health:probe",
         OperationKind.READINESS: "health:probe",
+        OperationKind.ONTOLOGY_LIST: "ontology:read",
+        OperationKind.ONTOLOGY_IMPORT: "ontology:write",
+        OperationKind.ONTOLOGY_PUBLISH: "ontology:publish",
+        OperationKind.KNOWLEDGE_IMPORT: "knowledge:import",
+        OperationKind.KNOWLEDGE_CONSTRUCT: "knowledge:construct",
+        OperationKind.KNOWLEDGE_REVIEW_QUEUE: "knowledge:review",
+        OperationKind.KNOWLEDGE_REVIEW_BATCH: "knowledge:review",
+        OperationKind.KNOWLEDGE_PUBLISH: "knowledge:publish",
+        OperationKind.KNOWLEDGE_ROLLBACK: "knowledge:publish",
+        OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
     }
 )
 

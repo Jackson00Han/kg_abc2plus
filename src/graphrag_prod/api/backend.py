@@ -53,6 +53,26 @@ from .contracts import (
     RetrievalRequest,
     RetrievalResponse,
 )
+from .knowledge_contracts import (
+    AuthoritativeImportRequest,
+    AuthoritativeImportResponse,
+    KnowledgeConstructionRequest,
+    KnowledgeConstructionResponse,
+    OntologyImportRequest,
+    OntologyListRequest,
+    OntologyListResponse,
+    OntologyPublishRequest,
+    OntologyVersionResponse,
+    PublicationHistoryRequest,
+    PublicationHistoryResponse,
+    PublicationRequest,
+    PublicationResponse,
+    ReviewBatchRequest,
+    ReviewBatchResponse,
+    ReviewQueueRequest,
+    ReviewQueueResponse,
+    RollbackRequest,
+)
 from .runtime import (
     ApiRuntimeError,
     AuthorizationError,
@@ -189,6 +209,56 @@ class ReadinessOperations(Protocol):
     """Return bounded, non-sensitive dependency readiness checks."""
 
     def check(self) -> BackendResult: ...
+
+
+class KnowledgeOperations(Protocol):
+    """Governed T-Box/A-Box construction, review, and publication boundary."""
+
+    def ontology_list(
+        self, principal: Principal, request: OntologyListRequest
+    ) -> BackendResult: ...
+
+    def ontology_import(
+        self, principal: Principal, request: OntologyImportRequest
+    ) -> BackendResult: ...
+
+    def ontology_publish(
+        self,
+        principal: Principal,
+        tbox_id: str,
+        request: OntologyPublishRequest,
+    ) -> BackendResult: ...
+
+    def authoritative_import(
+        self, principal: Principal, request: AuthoritativeImportRequest
+    ) -> BackendResult: ...
+
+    def construct(
+        self, principal: Principal, request: KnowledgeConstructionRequest
+    ) -> BackendResult: ...
+
+    def review_queue(
+        self, principal: Principal, request: ReviewQueueRequest
+    ) -> BackendResult: ...
+
+    def review_batch(
+        self, principal: Principal, request: ReviewBatchRequest
+    ) -> BackendResult: ...
+
+    def publish(
+        self, principal: Principal, request: PublicationRequest
+    ) -> BackendResult: ...
+
+    def rollback(
+        self,
+        principal: Principal,
+        publication_id: str,
+        request: RollbackRequest,
+    ) -> BackendResult: ...
+
+    def history(
+        self, principal: Principal, request: PublicationHistoryRequest
+    ) -> BackendResult: ...
 
 
 def _job_response_payload(job: JobView) -> dict[str, object]:
@@ -597,6 +667,7 @@ def _trusted_principal(envelope: OperationEnvelope) -> Principal:
             principal_id=envelope.principal_id,
             tenant_id=envelope.tenant_id,
             groups=envelope.access_groups,
+            capabilities=envelope.scopes,
         )
     except (TypeError, ValueError) as error:
         raise RequestValidationError() from error
@@ -632,6 +703,7 @@ class GraphRAGApplicationBackend:
         documents: DocumentOperations,
         queries: GraphRAGQueryOperations,
         readiness: ReadinessOperations,
+        knowledge: KnowledgeOperations | None = None,
     ) -> None:
         for value, methods, name in (
             (documents, ("ingest", "delete", "get_job"), "documents"),
@@ -643,6 +715,22 @@ class GraphRAGApplicationBackend:
         self._documents = documents
         self._queries = queries
         self._readiness = readiness
+        if knowledge is not None:
+            methods = (
+                "ontology_list",
+                "ontology_import",
+                "ontology_publish",
+                "authoritative_import",
+                "construct",
+                "review_queue",
+                "review_batch",
+                "publish",
+                "rollback",
+                "history",
+            )
+            if any(not callable(getattr(knowledge, method, None)) for method in methods):
+                raise TypeError("knowledge does not implement its required operations")
+        self._knowledge = knowledge
 
     def execute(self, envelope: OperationEnvelope, /) -> BackendResult:
         if not isinstance(envelope, OperationEnvelope):
@@ -653,6 +741,90 @@ class GraphRAGApplicationBackend:
             return _response(self._readiness.check(), ReadinessResponse)
 
         principal = _trusted_principal(envelope)
+        knowledge_operations = {
+            OperationKind.ONTOLOGY_LIST,
+            OperationKind.ONTOLOGY_IMPORT,
+            OperationKind.ONTOLOGY_PUBLISH,
+            OperationKind.KNOWLEDGE_IMPORT,
+            OperationKind.KNOWLEDGE_CONSTRUCT,
+            OperationKind.KNOWLEDGE_REVIEW_QUEUE,
+            OperationKind.KNOWLEDGE_REVIEW_BATCH,
+            OperationKind.KNOWLEDGE_PUBLISH,
+            OperationKind.KNOWLEDGE_ROLLBACK,
+            OperationKind.KNOWLEDGE_HISTORY,
+        }
+        if envelope.operation in knowledge_operations:
+            if self._knowledge is None:
+                raise ResourceNotFoundError()
+            if envelope.operation is OperationKind.ONTOLOGY_LIST:
+                request = _validated(OntologyListRequest, envelope.payload)
+                return _response(
+                    self._knowledge.ontology_list(principal, request),
+                    OntologyListResponse,
+                )
+            if envelope.operation is OperationKind.ONTOLOGY_IMPORT:
+                request = _validated(OntologyImportRequest, envelope.payload)
+                return _response(
+                    self._knowledge.ontology_import(principal, request),
+                    OntologyVersionResponse,
+                )
+            if envelope.operation is OperationKind.ONTOLOGY_PUBLISH:
+                tbox_id = _internal_identifier(envelope.payload.get("tbox_id"))
+                request_payload = envelope.payload.get("request")
+                if not isinstance(request_payload, Mapping):
+                    raise RequestValidationError()
+                request = _validated(OntologyPublishRequest, request_payload)
+                return _response(
+                    self._knowledge.ontology_publish(principal, tbox_id, request),
+                    OntologyVersionResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_IMPORT:
+                request = _validated(AuthoritativeImportRequest, envelope.payload)
+                return _response(
+                    self._knowledge.authoritative_import(principal, request),
+                    AuthoritativeImportResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCT:
+                request = _validated(KnowledgeConstructionRequest, envelope.payload)
+                return _response(
+                    self._knowledge.construct(principal, request),
+                    KnowledgeConstructionResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_REVIEW_QUEUE:
+                request = _validated(ReviewQueueRequest, envelope.payload)
+                return _response(
+                    self._knowledge.review_queue(principal, request),
+                    ReviewQueueResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_REVIEW_BATCH:
+                request = _validated(ReviewBatchRequest, envelope.payload)
+                return _response(
+                    self._knowledge.review_batch(principal, request),
+                    ReviewBatchResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_PUBLISH:
+                request = _validated(PublicationRequest, envelope.payload)
+                return _response(
+                    self._knowledge.publish(principal, request),
+                    PublicationResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_ROLLBACK:
+                publication_id = _internal_identifier(
+                    envelope.payload.get("publication_id")
+                )
+                request_payload = envelope.payload.get("request")
+                if not isinstance(request_payload, Mapping):
+                    raise RequestValidationError()
+                request = _validated(RollbackRequest, request_payload)
+                return _response(
+                    self._knowledge.rollback(principal, publication_id, request),
+                    PublicationResponse,
+                )
+            request = _validated(PublicationHistoryRequest, envelope.payload)
+            return _response(
+                self._knowledge.history(principal, request),
+                PublicationHistoryResponse,
+            )
         if envelope.operation is OperationKind.INGESTION:
             request = _validated(IngestionRequest, envelope.payload)
             # Defense in depth: a caller may grant only groups already held by
@@ -702,6 +874,7 @@ __all__ = [
     "GraphRAGQueryOperations",
     "MeteredGenerationService",
     "IncrementalIngestionPlanner",
+    "KnowledgeOperations",
     "Neo4jDocumentOperations",
     "ProviderUsage",
     "QueryEmbedder",

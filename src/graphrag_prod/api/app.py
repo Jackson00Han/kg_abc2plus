@@ -13,7 +13,7 @@ import time
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Path, Request, Response, status
+from fastapi import Depends, FastAPI, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError as FastAPIValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -40,6 +40,24 @@ from .contracts import (
     ReadinessResponse,
     RetrievalRequest,
     RetrievalResponse,
+)
+from .knowledge_contracts import (
+    AuthoritativeImportRequest,
+    AuthoritativeImportResponse,
+    KnowledgeConstructionRequest,
+    KnowledgeConstructionResponse,
+    MAX_BASE64_DOCUMENT_CHARS,
+    OntologyImportRequest,
+    OntologyListResponse,
+    OntologyPublishRequest,
+    OntologyVersionResponse,
+    PublicationHistoryResponse,
+    PublicationRequest,
+    PublicationResponse,
+    ReviewBatchRequest,
+    ReviewBatchResponse,
+    ReviewQueueResponse,
+    RollbackRequest,
 )
 from .runtime import (
     ApiRuntimeError,
@@ -70,7 +88,9 @@ class APISettings:
     version: str = "0.1.0"
     metrics_tenant_id: str = "system"
     metrics_group: str = "system-observer"
-    max_request_body_bytes: int = MAX_DOCUMENT_BYTES + _MAX_JSON_OVERHEAD_BYTES
+    max_request_body_bytes: int = (
+        MAX_BASE64_DOCUMENT_CHARS + _MAX_JSON_OVERHEAD_BYTES
+    )
     max_concurrent_body_buffers: int = 16
     body_receive_timeout_seconds: float = 10.0
     shutdown_timeout_seconds: float = 5.0
@@ -612,6 +632,14 @@ def create_app(
         str,
         Path(min_length=1, max_length=256, pattern=_PATH_ID),
     ]
+    OntologyPath = Annotated[
+        str,
+        Path(min_length=1, max_length=256, pattern=_PATH_ID),
+    ]
+    PublicationPath = Annotated[
+        str,
+        Path(min_length=1, max_length=256, pattern=_PATH_ID),
+    ]
 
     @app.post(
         "/v1/documents:ingest",
@@ -691,6 +719,184 @@ def create_app(
             identity,
             OperationKind.ANSWER,
             body.model_dump(mode="python"),
+        )
+
+    @app.get("/v1/ontologies", response_model=OntologyListResponse)
+    async def list_ontologies(
+        request: Request,
+        identity: IdentityDependency,
+        key: Annotated[
+            str | None,
+            Query(min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9._-]*$"),
+        ] = None,
+        ontology_status: Annotated[
+            str | None,
+            Query(alias="status", pattern=r"^(DRAFT|PUBLISHED|RETIRED)$"),
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.ONTOLOGY_LIST,
+            {"key": key, "status": ontology_status, "limit": limit},
+        )
+
+    @app.post(
+        "/v1/ontologies:import",
+        response_model=OntologyVersionResponse,
+        status_code=status.HTTP_200_OK,
+    )
+    async def import_ontology(
+        request: Request,
+        body: OntologyImportRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.ONTOLOGY_IMPORT,
+            body.model_dump(mode="python"),
+        )
+
+    @app.post(
+        "/v1/ontologies/{tbox_id}:publish",
+        response_model=OntologyVersionResponse,
+    )
+    async def publish_ontology(
+        request: Request,
+        tbox_id: OntologyPath,
+        body: OntologyPublishRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.ONTOLOGY_PUBLISH,
+            {"tbox_id": tbox_id, "request": body.model_dump(mode="python")},
+        )
+
+    @app.post(
+        "/v1/knowledge/authoritative:import",
+        response_model=AuthoritativeImportResponse,
+    )
+    async def import_authoritative_knowledge(
+        request: Request,
+        body: AuthoritativeImportRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_IMPORT,
+            body.model_dump(mode="python"),
+        )
+
+    @app.post(
+        "/v1/knowledge:construct",
+        response_model=KnowledgeConstructionResponse,
+    )
+    async def construct_knowledge(
+        request: Request,
+        body: KnowledgeConstructionRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_CONSTRUCT,
+            body.model_dump(mode="python"),
+        )
+
+    @app.get(
+        "/v1/knowledge/review-queue",
+        response_model=ReviewQueueResponse,
+    )
+    async def knowledge_review_queue(
+        request: Request,
+        identity: IdentityDependency,
+        statuses: Annotated[
+            list[str] | None,
+            Query(alias="status", min_length=1, max_length=2),
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_REVIEW_QUEUE,
+            {
+                "statuses": tuple(statuses or ("CANDIDATE", "QUARANTINED")),
+                "limit": limit,
+            },
+        )
+
+    @app.post(
+        "/v1/knowledge/reviews:batch",
+        response_model=ReviewBatchResponse,
+    )
+    async def review_knowledge_batch(
+        request: Request,
+        body: ReviewBatchRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_REVIEW_BATCH,
+            body.model_dump(mode="python"),
+        )
+
+    @app.post(
+        "/v1/knowledge/publications:publish",
+        response_model=PublicationResponse,
+    )
+    async def publish_knowledge(
+        request: Request,
+        body: PublicationRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_PUBLISH,
+            body.model_dump(mode="python"),
+        )
+
+    @app.post(
+        "/v1/knowledge/publications/{publication_id}:rollback",
+        response_model=PublicationResponse,
+    )
+    async def rollback_knowledge(
+        request: Request,
+        publication_id: PublicationPath,
+        body: RollbackRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_ROLLBACK,
+            {
+                "publication_id": publication_id,
+                "request": body.model_dump(mode="python"),
+            },
+        )
+
+    @app.get(
+        "/v1/knowledge/publications",
+        response_model=PublicationHistoryResponse,
+    )
+    async def knowledge_publication_history(
+        request: Request,
+        identity: IdentityDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_HISTORY,
+            {"limit": limit},
         )
 
     @app.get("/health/live", response_model=HealthResponse)

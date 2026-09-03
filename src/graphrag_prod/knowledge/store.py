@@ -526,13 +526,26 @@ class Neo4jKnowledgeStore:
     def _validate_evidence_tx(tx: Any, evidence: EvidenceReference) -> None:
         row = tx.run(
             """
-            MATCH (document:Document {document_id: $document_id})-[:HAS_VERSION]->
-                  (version:DocumentVersion {version_id: $version_id})-[:HAS_CHUNK]->
-                  (chunk:Chunk {chunk_id: $chunk_id})
-            WHERE document.tenant_id = $tenant_id
-              AND version.tenant_id = $tenant_id
-              AND chunk.tenant_id = $tenant_id
-              AND version.document_id = document.document_id
+            MATCH (document:Document {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })-[:ACTIVE_VERSION]->(version:DocumentVersion {
+                tenant_id: $tenant_id,
+                version_id: $version_id
+            })
+            MATCH (document)-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+                tenant_id: $tenant_id,
+                document_id: $document_id,
+                version_id: $version_id,
+                build_state: 'PUBLISHED'
+            })-[:OF_VERSION]->(version)
+            MATCH (document)-[:HAS_VERSION]->(version)-[:HAS_CHUNK]->
+                  (chunk:Chunk {
+                      tenant_id: $tenant_id,
+                      chunk_id: $chunk_id
+                  })
+            MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk)
+            WHERE version.document_id = document.document_id
               AND chunk.document_id = document.document_id
               AND chunk.version_id = version.version_id
             RETURN chunk.char_start AS chunk_char_start,

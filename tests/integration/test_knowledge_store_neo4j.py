@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import neo4j
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import knowledge_snapshot_id
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.knowledge import (
@@ -123,6 +124,43 @@ class Neo4jKnowledgeStoreIntegrationTests(unittest.TestCase):
         self.tbox_id = tbox.tbox_id
         self.bundle = make_bundle(tenant_id=self.tenant_id)
         Neo4jProvenanceStore(self.driver, self.database).write_bundle(self.bundle)
+        profile_id = "knowledge-store-integration:v1"
+        self.snapshot_id = knowledge_snapshot_id(
+            self.bundle.version.version_id,
+            profile_id,
+        )
+        self.driver.execute_query(
+            """
+            MATCH (document:Document {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })-[:ACTIVE_VERSION]->(version:DocumentVersion {
+                tenant_id: $tenant_id,
+                version_id: $version_id
+            })-[:HAS_CHUNK]->(chunk:Chunk {
+                tenant_id: $tenant_id,
+                chunk_id: $chunk_id
+            })
+            CREATE (snapshot:KnowledgeSnapshot {
+                snapshot_id: $snapshot_id,
+                tenant_id: $tenant_id,
+                document_id: $document_id,
+                version_id: $version_id,
+                profile_id: $profile_id,
+                build_state: 'PUBLISHED'
+            })
+            MERGE (document)-[:ACTIVE_SNAPSHOT]->(snapshot)
+            MERGE (snapshot)-[:OF_VERSION]->(version)
+            MERGE (snapshot)-[:INCLUDES_CHUNK]->(chunk)
+            """,
+            tenant_id=self.tenant_id,
+            document_id=self.bundle.document.document_id,
+            version_id=self.bundle.version.version_id,
+            chunk_id=self.bundle.chunk.chunk_id,
+            snapshot_id=self.snapshot_id,
+            profile_id=profile_id,
+            database_=self.database,
+        )
         self.store = Neo4jKnowledgeStore(self.driver, self.database)
         self.principal = Principal(
             "expert:alice",
@@ -218,6 +256,37 @@ class Neo4jKnowledgeStoreIntegrationTests(unittest.TestCase):
         )
         with self.assertRaises(KnowledgeEvidenceError):
             self.store.import_authoritative(invalid)
+        records, _, _ = self.driver.execute_query(
+            "MATCH (head:KnowledgeRecordHead) RETURN count(head) AS count",
+            database_=self.database,
+        )
+        self.assertEqual(records[0]["count"], 0)
+
+    def test_historical_chunk_cannot_be_imported_as_authoritative_evidence(
+        self,
+    ) -> None:
+        self.driver.execute_query(
+            """
+            MATCH (:Document {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })-[active:ACTIVE_SNAPSHOT]->(:KnowledgeSnapshot {
+                tenant_id: $tenant_id,
+                snapshot_id: $snapshot_id
+            })
+            DELETE active
+            """,
+            tenant_id=self.tenant_id,
+            document_id=self.bundle.document.document_id,
+            snapshot_id=self.snapshot_id,
+            database_=self.database,
+        )
+        batch = make_knowledge_batch(
+            tenant_id=self.tenant_id,
+            ontology_version_id=self.tbox_id,
+        )
+        with self.assertRaises(KnowledgeEvidenceError):
+            self.store.import_authoritative(batch)
         records, _, _ = self.driver.execute_query(
             "MATCH (head:KnowledgeRecordHead) RETURN count(head) AS count",
             database_=self.database,

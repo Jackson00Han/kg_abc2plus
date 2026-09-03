@@ -1,0 +1,225 @@
+"""Adversarial HTTP checks for industrial knowledge-governance routes."""
+
+from __future__ import annotations
+
+import base64
+from datetime import UTC, datetime
+import threading
+import unittest
+
+from fastapi.testclient import TestClient
+import jwt
+
+from graphrag_prod.api import JWTAuthConfig, JWTAuthenticator, create_app
+from graphrag_prod.api.knowledge_contracts import (
+    KnowledgeConstructionResponse,
+    OntologyListResponse,
+)
+from graphrag_prod.api.runtime import (
+    BackendResult,
+    OperationEnvelope,
+    OperationKind,
+    ResourceNotFoundError,
+)
+
+
+SECRET = "knowledge-api-security-key-with-32-diverse-bytes!"
+ISSUER = "https://identity.example.test"
+AUDIENCE = "graphrag-api"
+
+
+def _token(
+    *,
+    tenant_id: str = "tenant-alpha",
+    scope: str = "ontology:read",
+) -> str:
+    now = int(datetime.now(UTC).timestamp())
+    return jwt.encode(
+        {
+            "iss": ISSUER,
+            "aud": AUDIENCE,
+            "iat": now,
+            "exp": now + 300,
+            "sub": "industrial-expert",
+            "tenant_id": tenant_id,
+            "groups": ["engineers"],
+            "scope": scope,
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+
+
+def _headers(**kwargs: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {_token(**kwargs)}"}
+
+
+def _construct_body(**changes: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "operation_key": "construction-000001",
+        "canonical_uri": "https://example.test/asset.txt",
+        "title": "Asset report",
+        "source_name": "controlled upload",
+        "mime_type": "text/plain",
+        "language": "en",
+        "tbox_key": "industrial-assets",
+        "content_base64": base64.b64encode(b"Acme owns Pump-7.").decode(),
+    }
+    body.update(changes)
+    return body
+
+
+class _Backend:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.envelopes: list[OperationEnvelope] = []
+
+    def execute(self, envelope: OperationEnvelope, /) -> BackendResult:
+        with self._lock:
+            self.envelopes.append(envelope)
+        if envelope.operation is OperationKind.ONTOLOGY_LIST:
+            return BackendResult(OntologyListResponse(items=()))
+        if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCT:
+            return BackendResult(
+                KnowledgeConstructionResponse(
+                    job_id="job-1",
+                    document_id="document-1",
+                    version_id="version-1",
+                    snapshot_id="snapshot-1",
+                    tbox_id="tbox-1",
+                    chunks=(
+                        {
+                            "chunk_id": "chunk-1",
+                            "artifact_id": "artifact-1",
+                            "status": "REJECTED",
+                            "finding_codes": ("NO_RELATIONSHIPS",),
+                            "mention_record_ids": (),
+                            "assertion_record_ids": (),
+                            "replayed": False,
+                        },
+                    ),
+                )
+            )
+        if envelope.operation is OperationKind.READINESS:
+            return BackendResult({"status": "ready", "checks": {"backend": "ok"}})
+        raise ResourceNotFoundError()
+
+
+class KnowledgeAPISecurityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.backend = _Backend()
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=self.backend,
+        )
+        self.context = TestClient(app)
+        self.client = self.context.__enter__()
+
+    def tearDown(self) -> None:
+        self.context.__exit__(None, None, None)
+
+    def test_each_action_requires_its_independent_verified_scope(self) -> None:
+        allowed = self.client.get("/v1/ontologies", headers=_headers())
+        denied = self.client.post(
+            "/v1/ontologies:import",
+            headers=_headers(),
+            json={
+                "key": "industrial-assets",
+                "version": 1,
+                "entity_types": [
+                    {
+                        "name": "Asset",
+                        "canonical_key_namespaces": ["asset-id"],
+                    }
+                ],
+            },
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json()["code"], "forbidden")
+        self.assertEqual(len(self.backend.envelopes), 1)
+
+    def test_identity_and_capability_injection_never_reaches_backend(self) -> None:
+        for forbidden in (
+            "tenant_id",
+            "principal_id",
+            "capabilities",
+            "access_groups",
+        ):
+            with self.subTest(forbidden=forbidden):
+                response = self.client.post(
+                    "/v1/knowledge:construct",
+                    headers=_headers(scope="knowledge:construct"),
+                    json=_construct_body(**{forbidden: "tenant-victim"}),
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json()["code"], "invalid_request")
+                self.assertNotIn("tenant-victim", response.text)
+        self.assertEqual(self.backend.envelopes, [])
+
+    def test_upload_mime_and_base64_fail_closed_before_worker_submission(self) -> None:
+        for changes in (
+            {"mime_type": "application/pdf"},
+            {"content_base64": "not base64"},
+            {"content_base64": "eA"},
+        ):
+            with self.subTest(changes=changes):
+                response = self.client.post(
+                    "/v1/knowledge:construct",
+                    headers=_headers(scope="knowledge:construct"),
+                    json=_construct_body(**changes),
+                )
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.backend.envelopes, [])
+
+    def test_valid_upload_uses_only_jwt_identity_in_bounded_envelope(self) -> None:
+        response = self.client.post(
+            "/v1/knowledge:construct",
+            headers=_headers(
+                tenant_id="tenant-industrial",
+                scope="knowledge:construct ontology:read",
+            ),
+            json=_construct_body(),
+        )
+        self.assertEqual(response.status_code, 200)
+        envelope = self.backend.envelopes[0]
+        self.assertEqual(envelope.operation, OperationKind.KNOWLEDGE_CONSTRUCT)
+        self.assertEqual(envelope.tenant_id, "tenant-industrial")
+        self.assertEqual(envelope.access_groups, frozenset({"engineers"}))
+        self.assertEqual(
+            envelope.scopes,
+            frozenset({"knowledge:construct", "ontology:read"}),
+        )
+        for forbidden in (
+            "tenant_id",
+            "principal_id",
+            "capabilities",
+            "access_groups",
+        ):
+            self.assertNotIn(forbidden, envelope.payload)
+
+    def test_missing_and_cross_tenant_ids_have_identical_public_response(self) -> None:
+        responses = tuple(
+            self.client.post(
+                "/v1/ontologies/unknown-tbox:publish",
+                headers=_headers(tenant_id=tenant, scope="ontology:publish"),
+                json={"expected_active_tbox_id": None},
+            )
+            for tenant in ("tenant-alpha", "tenant-other")
+        )
+        self.assertEqual(
+            tuple(
+                (item.status_code, item.json()["code"], item.json()["message"])
+                for item in responses
+            ),
+            (
+                (404, "not_found", "the requested resource was not found"),
+                (404, "not_found", "the requested resource was not found"),
+            ),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

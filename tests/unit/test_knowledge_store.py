@@ -13,6 +13,7 @@ from graphrag_prod.knowledge import (
     EntityMentionRecord,
     GovernanceStatus,
     KnowledgeConflict,
+    KnowledgeEvidenceError,
     KnowledgeOrigin,
     KnowledgeSchemaError,
     Neo4jKnowledgeStore,
@@ -56,10 +57,12 @@ class _WriteTx:
         *,
         stale: bool = False,
         missing_tbox: bool = False,
+        historical_evidence: bool = False,
     ) -> None:
         self.batch = batch
         self.stale = stale
         self.missing_tbox = missing_tbox
+        self.historical_evidence = historical_evidence
         self.queries: list[tuple[str, dict[str, object]]] = []
         self.profile_writes = 0
 
@@ -99,6 +102,8 @@ class _WriteTx:
                 )
             )
         if "substring(" in query and "document_access_groups" in query:
+            if self.historical_evidence:
+                return _Result(one=None)
             evidence = next(
                 record.evidence
                 for record in (*self.batch.mentions, *self.batch.assertions)
@@ -163,11 +168,13 @@ class _WriteDriver:
         *,
         stale: bool = False,
         missing_tbox: bool = False,
+        historical_evidence: bool = False,
     ) -> None:
         self.tx = _WriteTx(
             batch,
             stale=stale,
             missing_tbox=missing_tbox,
+            historical_evidence=historical_evidence,
         )
         self.session_calls = 0
 
@@ -468,6 +475,31 @@ class Neo4jKnowledgeStoreUnitTests(unittest.TestCase):
         driver = _WriteDriver(batch, stale=True)
         with self.assertRaisesRegex(KnowledgeConflict, "stale"):
             Neo4jKnowledgeStore(driver).import_authoritative(batch)
+
+    def test_historical_evidence_is_rejected_inside_the_write_transaction(
+        self,
+    ) -> None:
+        batch = _batch(authoritative=True)
+        driver = _WriteDriver(batch, historical_evidence=True)
+        with self.assertRaisesRegex(KnowledgeEvidenceError, "does not exist"):
+            Neo4jKnowledgeStore(driver).import_authoritative(batch)
+
+        evidence_query = next(
+            query
+            for query, _ in driver.tx.queries
+            if "document_access_groups" in query
+        )
+        for required_path in (
+            "ACTIVE_VERSION",
+            "ACTIVE_SNAPSHOT",
+            "INCLUDES_CHUNK",
+            "OF_VERSION",
+            "build_state: 'PUBLISHED'",
+        ):
+            self.assertIn(required_path, evidence_query)
+        self.assertFalse(
+            any("KnowledgeRecordHead" in query for query, _ in driver.tx.queries)
+        )
 
     def test_exact_published_tbox_is_required_before_any_record_write(self) -> None:
         batch = _batch(authoritative=True)
