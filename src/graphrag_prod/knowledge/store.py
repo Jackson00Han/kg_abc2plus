@@ -358,6 +358,11 @@ WHERE head.tenant_id = $tenant_id
   AND version.tenant_id = $tenant_id
   AND chunk.tenant_id = $tenant_id
   AND ($record_id IS NULL OR head.record_id = $record_id)
+  AND ($subject_entity_id IS NULL OR
+       revision.subject_entity_id = $subject_entity_id)
+  AND ($ontology_version_id IS NULL OR
+       revision.ontology_version_id = $ontology_version_id)
+  AND (size($predicates) = 0 OR revision.predicate IN $predicates)
   AND revision.governance_status IN $statuses
   AND revision.document_id = document.document_id
   AND revision.version_id = version.version_id
@@ -1008,8 +1013,41 @@ class Neo4jKnowledgeStore:
         return self._read_assertions(
             principal,
             record_id=None,
+            subject_entity_id=None,
+            ontology_version_id=None,
+            predicates=(),
             statuses=statuses,
             limit=limit,
+        )
+
+    def list_identity_property_assertions(
+        self,
+        principal: Principal,
+        *,
+        subject_entity_id: str,
+        ontology_version_id: str,
+        predicates: tuple[str, ...],
+        statuses: Iterable[GovernanceStatus],
+    ) -> tuple[AssertionRecord, ...]:
+        """Read current candidate identity facts without scanning the tenant queue."""
+
+        entity_id = subject_entity_id.strip()
+        tbox_id = ontology_version_id.strip()
+        normalized_predicates = tuple(
+            dict.fromkeys(item.strip() for item in predicates if item.strip())
+        )
+        if not entity_id or not tbox_id or not normalized_predicates:
+            raise ValueError(
+                "identity-property lookup requires entity, T-Box, and predicates"
+            )
+        return self._read_assertions(
+            principal,
+            record_id=None,
+            subject_entity_id=entity_id,
+            ontology_version_id=tbox_id,
+            predicates=normalized_predicates,
+            statuses=statuses,
+            limit=min(MAX_RECORDS_PER_READ, len(normalized_predicates) + 1),
         )
 
     def get_assertion(
@@ -1024,6 +1062,9 @@ class Neo4jKnowledgeStore:
         records = self._read_assertions(
             principal,
             record_id=record_id.strip(),
+            subject_entity_id=None,
+            ontology_version_id=None,
+            predicates=(),
             statuses=statuses,
             limit=1,
         )
@@ -1034,6 +1075,9 @@ class Neo4jKnowledgeStore:
         principal: Principal,
         *,
         record_id: str | None,
+        subject_entity_id: str | None,
+        ontology_version_id: str | None,
+        predicates: tuple[str, ...],
         statuses: Iterable[GovernanceStatus] | None,
         limit: int,
     ) -> tuple[AssertionRecord, ...]:
@@ -1043,6 +1087,9 @@ class Neo4jKnowledgeStore:
             "tenant_id": principal.tenant_id,
             "groups": sorted(principal.groups),
             "record_id": record_id,
+            "subject_entity_id": subject_entity_id,
+            "ontology_version_id": ontology_version_id,
+            "predicates": list(predicates),
             "statuses": _normalized_statuses(statuses),
             "limit": _read_limit(limit),
         }

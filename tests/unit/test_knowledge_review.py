@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime
 import unittest
+from unittest.mock import patch
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.models import TypedLiteralValue
@@ -49,6 +50,107 @@ def _principal() -> Principal:
 
 
 class KnowledgeReviewContractTests(unittest.TestCase):
+    def test_resolution_atomically_rebinds_dependents_without_approving_facts(self) -> None:
+        candidate_batch = make_knowledge_batch(authoritative=False)
+        assertion = candidate_batch.assertions[0]
+        current = next(
+            mention
+            for mention in candidate_batch.mentions
+            if mention.entity.entity_id == assertion.subject.entity_id
+        )
+        target = next(
+            mention.entity
+            for mention in make_knowledge_batch(authoritative=True).mentions
+            if mention.entity.entity_type == current.entity.entity_type
+        )
+
+        class _Rows:
+            def __iter__(self):  # type: ignore[no-untyped-def]
+                return iter(({"revision": {}},))
+
+        class _Tx:
+            query = ""
+            parameters: dict[str, object] = {}
+
+            def run(self, query: str, **parameters: object) -> _Rows:
+                self.query = query
+                self.parameters = parameters
+                return _Rows()
+
+        tx = _Tx()
+        created_mentions: list[object] = []
+        created_assertions: list[object] = []
+
+        with (
+            patch.object(
+                Neo4jKnowledgeReviewService,
+                "_lock_tenant_corpus_tx",
+            ),
+            patch.object(
+                Neo4jKnowledgeReviewService,
+                "_lock_review_head_tx",
+            ) as lock_head,
+            patch.object(
+                Neo4jKnowledgeReviewService,
+                "_load_current_review_record_tx",
+                return_value=current,
+            ),
+            patch.object(
+                Neo4jKnowledgeReviewService,
+                "_validate_record_tbox_tx",
+            ),
+            patch(
+                "graphrag_prod.knowledge.review._stored_assertion",
+                return_value=assertion,
+            ),
+            patch(
+                "graphrag_prod.knowledge.review.Neo4jKnowledgeStore."
+                "_create_mention_revision_tx",
+                side_effect=lambda _tx, value, **_kwargs: created_mentions.append(value),
+            ),
+            patch(
+                "graphrag_prod.knowledge.review.Neo4jKnowledgeStore."
+                "_create_assertion_revision_tx",
+                side_effect=lambda _tx, value, **_kwargs: created_assertions.append(value),
+            ),
+        ):
+            outcomes = Neo4jKnowledgeReviewService._apply_entity_resolution_tx(
+                tx,
+                _principal(),
+                current.record_id,
+                current.revision.revision,
+                target,
+                REVIEWED_AT,
+                "Verified exact identity properties.",
+            )
+
+        self.assertEqual(len(created_mentions), 1)
+        self.assertEqual(created_mentions[0].entity, target)
+        self.assertEqual(created_mentions[0].trust.status, GovernanceStatus.APPROVED)
+        self.assertEqual(len(created_assertions), 1)
+        rebound = created_assertions[0]
+        self.assertEqual(rebound.subject, target)
+        self.assertEqual(
+            rebound.subject_mention_revision_id,
+            created_mentions[0].revision_id,
+        )
+        self.assertEqual(rebound.trust.status, GovernanceStatus.CANDIDATE)
+        self.assertEqual(rebound.object_entity, assertion.object_entity)
+        self.assertEqual(
+            [item.status for item in outcomes],
+            [GovernanceStatus.APPROVED, GovernanceStatus.CANDIDATE],
+        )
+        self.assertEqual(lock_head.call_count, 2)
+        for required in (
+            "ACTIVE_SNAPSHOT",
+            "ACTIVE_TBOX_VERSION",
+            "revision.subject_mention_revision_id = $mention_revision_id",
+            "any(group IN $groups WHERE group IN revision.access_groups)",
+            "any(group IN $groups WHERE group IN chunk.access_groups)",
+            "any(group IN $groups WHERE group IN document.access_groups)",
+        ):
+            self.assertIn(required, tx.query)
+
     def test_review_request_requires_bounded_auditable_decision(self) -> None:
         mention = make_knowledge_batch(authoritative=False).mentions[0]
         request = ReviewRequest(

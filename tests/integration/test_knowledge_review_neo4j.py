@@ -405,6 +405,125 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             "original_status": "CANDIDATE",
         })
 
+    def test_entity_resolution_atomically_rebinds_both_assertion_endpoints(
+        self,
+    ) -> None:
+        assertion = self.batch.assertions[0]
+        subject_mention = next(
+            item
+            for item in self.batch.mentions
+            if item.revision_id == assertion.subject_mention_revision_id
+        )
+        object_mention = next(
+            item
+            for item in self.batch.mentions
+            if item.revision_id == assertion.object_mention_revision_id
+        )
+        subject_target = next(
+            item.entity
+            for item in self.authoritative_batch.mentions
+            if item.entity.entity_type == subject_mention.entity.entity_type
+        )
+        object_target = next(
+            item.entity
+            for item in self.authoritative_batch.mentions
+            if item.entity.entity_type == object_mention.entity.entity_type
+        )
+
+        subject_result = self.review.apply_entity_resolution(
+            self.principal,
+            record_id=subject_mention.record_id,
+            expected_revision=1,
+            target=subject_target,
+            reviewed_at=REVIEWED_AT,
+            notes="Exact authoritative subject identity verified.",
+        )
+        object_result = self.review.apply_entity_resolution(
+            self.principal,
+            record_id=object_mention.record_id,
+            expected_revision=1,
+            target=object_target,
+            reviewed_at=REVIEWED_AT,
+            notes="Exact authoritative object identity verified.",
+        )
+
+        self.assertEqual(
+            [item.status for item in subject_result.outcomes],
+            [GovernanceStatus.APPROVED, GovernanceStatus.CANDIDATE],
+        )
+        self.assertEqual(
+            [item.status for item in object_result.outcomes],
+            [GovernanceStatus.APPROVED, GovernanceStatus.CANDIDATE],
+        )
+        linked_subject = self.store.get_entity_mention(
+            self.principal,
+            subject_mention.record_id,
+            statuses=(GovernanceStatus.APPROVED,),
+        )
+        linked_object = self.store.get_entity_mention(
+            self.principal,
+            object_mention.record_id,
+            statuses=(GovernanceStatus.APPROVED,),
+        )
+        rebound = self.store.get_assertion(
+            self.principal,
+            assertion.record_id,
+            statuses=(GovernanceStatus.CANDIDATE,),
+        )
+        assert linked_subject is not None
+        assert linked_object is not None
+        assert rebound is not None
+        self.assertEqual(linked_subject.entity, subject_target)
+        self.assertEqual(linked_object.entity, object_target)
+        self.assertEqual(rebound.subject, subject_target)
+        self.assertEqual(rebound.object_entity, object_target)
+        self.assertEqual(
+            rebound.subject_mention_revision_id,
+            linked_subject.revision_id,
+        )
+        self.assertEqual(
+            rebound.object_mention_revision_id,
+            linked_object.revision_id,
+        )
+        self.assertEqual(rebound.revision.revision, 3)
+        self.assertEqual(rebound.trust.status, GovernanceStatus.CANDIDATE)
+
+        rows, _, _ = self.driver.execute_query(
+            """
+            MATCH (head:KnowledgeRecordHead {
+                tenant_id: $tenant_id,
+                record_id: $record_id,
+                record_kind: 'ASSERTION'
+            })-[:CURRENT_REVISION]->(current:GovernedAssertionRevision)
+            MATCH (current)-[:SUPERSEDES]->(second)-[:SUPERSEDES]->(original)
+            RETURN current.revision AS current_revision,
+                   second.revision AS second_revision,
+                   original.revision AS original_revision,
+                   current.governance_status AS current_status
+            """,
+            tenant_id=self.tenant_id,
+            record_id=assertion.record_id,
+            database_=self.database,
+        )
+        self.assertEqual(
+            dict(rows[0]),
+            {
+                "current_revision": 3,
+                "second_revision": 2,
+                "original_revision": 1,
+                "current_status": "CANDIDATE",
+            },
+        )
+        with self.assertRaises(KnowledgeConflict):
+            self.review.apply_entity_resolution(
+                self.principal,
+                record_id=subject_mention.record_id,
+                expected_revision=1,
+                target=subject_target,
+                reviewed_at=REVIEWED_AT,
+                notes="Stale entity-resolution retry.",
+            )
+
     def test_reject_and_quarantine_are_audited_new_revisions(self) -> None:
         rejected = self.review.reject(
             self.principal,

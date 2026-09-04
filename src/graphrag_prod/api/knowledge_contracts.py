@@ -617,6 +617,93 @@ class ReviewQueueResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class EntityResolutionRequest(StrictAPIModel):
+    record_id: Identifier
+    expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+
+
+class IdentityPropertyResponse(StrictAPIModel):
+    name: TypeName
+    datatype: TypeName
+    canonical_value: LiteralSourceText
+    canonical_unit: LiteralUnitText | None = None
+
+
+class ResolutionAuthoritativeEvidenceResponse(StrictAPIModel):
+    mention_revision_id: Identifier
+    document_id: Identifier
+    version_id: Identifier
+    chunk_id: Identifier
+    char_start: Annotated[int, Field(strict=True, ge=0)]
+    char_end: Annotated[int, Field(strict=True, ge=1)]
+    quoted_text: ExactEvidenceText
+
+
+class ResolutionEvidenceResponse(StrictAPIModel):
+    match_kind: TypeName
+    candidate_value: LongText
+    target_value: LongText
+    matcher_version: ShortText
+    authoritative_evidence: Annotated[
+        tuple[ResolutionAuthoritativeEvidenceResponse, ...],
+        Field(min_length=1, max_length=5),
+    ]
+
+    @field_validator("authoritative_evidence", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class EntityResolutionSuggestionResponse(StrictAPIModel):
+    target: EntityIdentityResponse | None = None
+    ontology_version_id: Identifier
+    rule_version: ShortText
+    matcher_version: ShortText
+    evidence: Annotated[tuple[ResolutionEvidenceResponse, ...], Field(max_length=5)]
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
+    outcome: Literal["AUTO_LINK", "REVIEW", "NO_MATCH", "CONFLICT"]
+    reason: LongText
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def valid_target_shape(self) -> Self:
+        if self.outcome == "AUTO_LINK" and self.target is None:
+            raise ValueError("AUTO_LINK resolution requires a target")
+        if self.outcome == "NO_MATCH" and self.target is not None:
+            raise ValueError("NO_MATCH resolution cannot carry a target")
+        if (self.target is None) != (not self.evidence):
+            raise ValueError("resolution target and evidence must be present together")
+        return self
+
+
+class EntityResolutionResponse(StrictAPIModel):
+    record_id: Identifier
+    revision_id: Identifier
+    revision: Annotated[int, Field(strict=True, ge=1)]
+    candidate: EntityIdentityResponse
+    identity_properties: Annotated[
+        tuple[IdentityPropertyResponse, ...], Field(max_length=64)
+    ]
+    suggestions: Annotated[
+        tuple[EntityResolutionSuggestionResponse, ...], Field(min_length=1, max_length=50)
+    ]
+
+    @field_validator("identity_properties", "suggestions", mode="before")
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class EntityResolutionApplyRequest(EntityResolutionRequest):
+    target_entity_id: Identifier
+    notes: LongText
+
+
 class MentionEditInput(StrictAPIModel):
     entity: KnowledgeEntityInput
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
@@ -688,6 +775,28 @@ class ReviewOutcomeResponse(StrictAPIModel):
     revision_id: Identifier
     revision: Annotated[int, Field(strict=True, ge=2)]
     status: Literal["APPROVED", "REJECTED", "QUARANTINED"]
+
+
+class EntityResolutionOutcomeResponse(StrictAPIModel):
+    record_kind: Literal["ENTITY_MENTION", "ASSERTION"]
+    record_id: Identifier
+    previous_revision_id: Identifier
+    revision_id: Identifier
+    revision: Annotated[int, Field(strict=True, ge=2)]
+    status: Literal["CANDIDATE", "APPROVED", "QUARANTINED"]
+
+
+class EntityResolutionApplyResponse(StrictAPIModel):
+    outcomes: Annotated[
+        tuple[EntityResolutionOutcomeResponse, ...],
+        Field(min_length=1, max_length=MAX_REVIEW_RECORDS),
+    ]
+    applied_suggestion: EntityResolutionSuggestionResponse
+
+    @field_validator("outcomes", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
 
 
 class ReviewBatchResponse(StrictAPIModel):
@@ -797,6 +906,10 @@ __all__ = [
     "AuthoritativeImportResponse",
     "ConstructionChunkResponse",
     "EvidenceInput",
+    "EntityResolutionApplyRequest",
+    "EntityResolutionApplyResponse",
+    "EntityResolutionRequest",
+    "EntityResolutionResponse",
     "KnowledgeConstructionRequest",
     "KnowledgeConstructionResponse",
     "MAX_BASE64_DOCUMENT_CHARS",

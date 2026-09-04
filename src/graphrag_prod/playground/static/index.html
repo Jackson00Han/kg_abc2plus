@@ -682,6 +682,7 @@
         view: 'retrieval',
         ontologies: [],
         reviews: [],
+        resolutions: new Map(),
         publications: [],
         approvedRevisions: new Set(),
       };
@@ -1014,6 +1015,7 @@
         state.identityEpoch += 1;
         state.ontologies = [];
         state.reviews = [];
+        state.resolutions.clear();
         state.publications = [];
         state.approvedRevisions.clear();
         elements.publicationRevisions.value = '';
@@ -1371,6 +1373,22 @@
         return edit;
       }
 
+      function resolutionMarkup(item, index) {
+        if (item.record_kind !== 'ENTITY_MENTION') return '';
+        const resolution = state.resolutions.get(item.record_id);
+        if (!resolution || resolution.revision !== item.revision) return '<div class="workbench-actions"><button class="button" type="button" data-resolution-load="' + index + '">匹配权威实体</button></div>';
+        if (resolution.error) return `<div class="output-box">${escapeHtml(resolution.error)}</div><div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">重新匹配</button></div>`;
+        const properties = (resolution.identity_properties || []).map(value => `${escapeHtml(value.name)} = ${escapeHtml(value.canonical_value)}${value.canonical_unit ? ` ${escapeHtml(value.canonical_unit)}` : ''}`).join(' · ');
+        const suggestions = (resolution.suggestions || []).map((suggestion, suggestionIndex) => {
+          const target = suggestion.target;
+          const evidence = suggestion.evidence?.[0];
+          const source = evidence?.authoritative_evidence?.[0];
+          const canApply = target && ['AUTO_LINK', 'REVIEW'].includes(suggestion.outcome);
+          return `<div class="governance-item" style="margin-top:8px"><div class="governance-item-head"><strong>${escapeHtml(suggestion.outcome)}${target ? ` · ${escapeHtml(target.canonical_name)}` : ''}</strong><span class="trust-badge ${suggestion.outcome === 'AUTO_LINK' ? 'authoritative' : ''}">${escapeHtml(suggestion.confidence)}</span></div><p>${escapeHtml(suggestion.reason)}<br>rule ${escapeHtml(suggestion.rule_version)} · matcher ${escapeHtml(suggestion.matcher_version)}${target ? `<br>${escapeHtml(target.entity_type)} · ${escapeHtml(target.canonical_key)}` : ''}${evidence ? `<br>${escapeHtml(evidence.match_kind)} · ${escapeHtml(evidence.candidate_value)}` : ''}</p>${source ? `<div class="exact-evidence">权威证据 Chunk ${escapeHtml(shortId(source.chunk_id))} · chars ${escapeHtml(source.char_start)}:${escapeHtml(source.char_end)} · ${escapeHtml(source.quoted_text)}</div>` : ''}${canApply ? `<div class="workbench-actions"><button class="button primary" type="button" data-resolution-apply="${index}" data-resolution-suggestion="${suggestionIndex}">确认链接并批准实体</button></div>` : ''}</div>`;
+        }).join('');
+        return `<div class="provider-note" style="margin-top:10px"><strong>实体消歧建议</strong><br>${properties || 'T-Box 未声明/候选未提供完整 identity properties；结果已保守处理。'}<br>仅显示建议；确认后以 CAS 新 revision 链接实体，并原子重绑依赖 assertions，但不会自动批准这些事实。</div>${suggestions}<div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">刷新匹配</button></div>`;
+      }
+
       function renderReviews() {
         if (!state.reviews.length) {
           elements.reviewList.innerHTML = '<div class="output-box">没有当前身份可见的 CANDIDATE / QUARANTINED 记录。</div>';
@@ -1379,11 +1397,70 @@
         elements.reviewList.innerHTML = state.reviews.map((item, index) => {
           const entity = item.entity || item.subject || {};
           const object = item.object_entity?.canonical_name ?? item.literal_value ?? '';
-          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : ''}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div><label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : ''}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div>${resolutionMarkup(item, index)}<label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
         }).join('');
         elements.reviewList.querySelectorAll('[data-review-action]').forEach(button => {
           button.addEventListener('click', () => submitReviews(button.dataset.reviewAction, [Number(button.dataset.reviewIndex)]));
         });
+        elements.reviewList.querySelectorAll('[data-resolution-load]').forEach(button => {
+          button.addEventListener('click', () => loadResolution(Number(button.dataset.resolutionLoad), button));
+        });
+        elements.reviewList.querySelectorAll('[data-resolution-apply]').forEach(button => {
+          button.addEventListener('click', () => applyResolution(Number(button.dataset.resolutionApply), Number(button.dataset.resolutionSuggestion), button));
+        });
+      }
+
+      async function loadResolution(index, button) {
+        const item = state.reviews[index];
+        if (!item || item.record_kind !== 'ENTITY_MENTION') { showToast('审核队列已变化，请刷新'); return; }
+        const identityEpoch = state.identityEpoch;
+        button.disabled = true;
+        try {
+          const payload = await apiRequest(`/v1/knowledge/entity-resolution/${encodeURIComponent(item.record_id)}?expected_revision=${encodeURIComponent(item.revision)}`);
+          if (identityEpoch !== state.identityEpoch) return;
+          state.resolutions.set(item.record_id, payload);
+          renderReviews();
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
+          state.resolutions.set(item.record_id, {error: error.message, revision: item.revision});
+          renderReviews();
+        }
+      }
+
+      async function applyResolution(index, suggestionIndex, button) {
+        const item = state.reviews[index];
+        const resolution = item && state.resolutions.get(item.record_id);
+        const suggestion = resolution?.suggestions?.[suggestionIndex];
+        if (!item || resolution?.revision !== item.revision || !suggestion?.target) { showToast('消歧建议已变化，请重新匹配'); return; }
+        const reviewNotes = globalThis.prompt('请输入本次实体链接的人工审核依据：', '已核对 identity properties 与权威来源证据。');
+        if (reviewNotes === null) return;
+        if (!reviewNotes.trim()) { showToast('审核依据不能为空'); return; }
+        if (!globalThis.confirm(`确认将“${item.entity?.canonical_name || item.record_id}”链接到权威实体“${suggestion.target.canonical_name}”？依赖事实只重绑，不会自动批准。`)) return;
+        const identityEpoch = state.identityEpoch;
+        button.disabled = true;
+        try {
+          const payload = await apiRequest('/v1/knowledge/entity-resolution:apply', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+              record_id: item.record_id,
+              expected_revision: item.revision,
+              target_entity_id: suggestion.target.entity_id,
+              notes: reviewNotes.trim(),
+            }),
+          });
+          if (identityEpoch !== state.identityEpoch) return;
+          const outcomes = payload.outcomes || [];
+          for (const outcome of outcomes) {
+            if (outcome.record_kind === 'ENTITY_MENTION' && outcome.status === 'APPROVED') state.approvedRevisions.add(outcome.revision_id);
+          }
+          elements.publicationRevisions.value = [...state.approvedRevisions].join('\n');
+          state.resolutions.delete(item.record_id);
+          showToast(`实体已链接；${Math.max(0, outcomes.length - 1)} 条依赖事实已重绑并保留待审核状态`);
+          await loadReviews();
+        } catch (error) {
+          if (identityEpoch === state.identityEpoch) showToast(error.message);
+          button.disabled = false;
+        }
       }
 
       async function loadReviews() {

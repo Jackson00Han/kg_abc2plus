@@ -58,6 +58,10 @@ from .contracts import (
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
+    EntityResolutionApplyRequest,
+    EntityResolutionApplyResponse,
+    EntityResolutionRequest,
+    EntityResolutionResponse,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
     OntologyImportRequest,
@@ -258,6 +262,14 @@ class KnowledgeOperations(Protocol):
 
     def review_batch(
         self, principal: Principal, request: ReviewBatchRequest
+    ) -> BackendResult: ...
+
+    def resolution_suggestions(
+        self, principal: Principal, request: EntityResolutionRequest
+    ) -> BackendResult: ...
+
+    def apply_resolution(
+        self, principal: Principal, request: EntityResolutionApplyRequest
     ) -> BackendResult: ...
 
     def publish(
@@ -985,6 +997,8 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_CONSTRUCT,
             OperationKind.KNOWLEDGE_REVIEW_QUEUE,
             OperationKind.KNOWLEDGE_REVIEW_BATCH,
+            OperationKind.ENTITY_RESOLUTION_SUGGEST,
+            OperationKind.ENTITY_RESOLUTION_APPLY,
             OperationKind.KNOWLEDGE_PUBLISH,
             OperationKind.KNOWLEDGE_ROLLBACK,
             OperationKind.KNOWLEDGE_HISTORY,
@@ -1039,6 +1053,18 @@ class GraphRAGApplicationBackend:
                 return _response(
                     self._knowledge.review_batch(principal, request),
                     ReviewBatchResponse,
+                )
+            if envelope.operation is OperationKind.ENTITY_RESOLUTION_SUGGEST:
+                request = _validated(EntityResolutionRequest, envelope.payload)
+                return _response(
+                    self._knowledge.resolution_suggestions(principal, request),
+                    EntityResolutionResponse,
+                )
+            if envelope.operation is OperationKind.ENTITY_RESOLUTION_APPLY:
+                request = _validated(EntityResolutionApplyRequest, envelope.payload)
+                return _response(
+                    self._knowledge.apply_resolution(principal, request),
+                    EntityResolutionApplyResponse,
                 )
             if envelope.operation is OperationKind.KNOWLEDGE_PUBLISH:
                 request = _validated(PublicationRequest, envelope.payload)

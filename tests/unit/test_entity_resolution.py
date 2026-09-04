@@ -12,6 +12,7 @@ from graphrag_prod.knowledge.entity_resolution import (
     AuthoritativeEvidence,
     EntityResolutionService,
     ExactAuthoritativeMatch,
+    IdentityPropertyValue,
     Neo4jAuthoritativeEntitySource,
     ResolutionBoundaryError,
     ResolutionOutcome,
@@ -20,7 +21,10 @@ from graphrag_prod.knowledge.entity_resolution import (
 from graphrag_prod.knowledge.models import EntityIdentity
 from graphrag_prod.knowledge.trust import AuthorityLevel, GovernanceStatus
 from graphrag_prod.ontology.models import (
+    Cardinality,
     EntityTypeDefinition,
+    PropertyDataType,
+    PropertyDefinition,
     TBoxStatus,
     TBoxVersion,
 )
@@ -163,12 +167,257 @@ class FakeSource:
         )
         return self.targets[:limit]
 
+    def find_exact_identity_properties(
+        self,
+        principal: Principal,
+        *,
+        ontology_version_id: str,
+        entity_type: str,
+        identity_properties: tuple[IdentityPropertyValue, ...],
+    ) -> ExactAuthoritativeMatch:
+        self.calls.append(
+            {
+                "kind": "exact-identity-properties",
+                "principal": principal,
+                "ontology_version_id": ontology_version_id,
+                "entity_type": entity_type,
+                "identity_properties": identity_properties,
+            }
+        )
+        matches = tuple(
+            target
+            for target in self.targets
+            if target.entity.canonical_key.endswith(
+                identity_properties[0].canonical_value
+            )
+        )
+        signature = (
+            f"serial_number=STRING:{identity_properties[0].canonical_value}"
+        )
+        return ExactAuthoritativeMatch(
+            match_count=len(matches),
+            target=matches[0] if len(matches) == 1 else None,
+            matched_target_value=signature if len(matches) == 1 else None,
+        )
+
 
 def _principal() -> Principal:
     return Principal("engineer-1", TENANT, frozenset({"asset-engineers"}))
 
 
 class EntityResolutionTests(unittest.TestCase):
+    def test_declared_identity_properties_auto_link_unique_authority(self) -> None:
+        tbox = TBoxVersion(
+            tenant_id=TENANT,
+            key="plant-assets",
+            version=2,
+            status=TBoxStatus.PUBLISHED,
+            entity_types=(
+                EntityTypeDefinition(
+                    "Asset",
+                    ("asset-id",),
+                    properties=(
+                        PropertyDefinition(
+                            "serial_number",
+                            PropertyDataType.STRING,
+                            True,
+                            Cardinality.ONE,
+                        ),
+                    ),
+                    identity_properties=("serial_number",),
+                ),
+            ),
+            relationship_types=(),
+        )
+        target = AuthoritativeEntityProfile(
+            entity=_identity("asset-id:SN-77", "Primary Pump"),
+            ontology_version_id=tbox.tbox_id,
+            authority=AuthorityLevel.AUTHORITATIVE,
+            status=GovernanceStatus.PUBLISHED,
+            evidence=_profile(
+                _identity("asset-id:SN-77", "Primary Pump"), suffix="sn77"
+            ).evidence,
+        )
+        source = FakeSource((target,))
+
+        suggestion = EntityResolutionService(
+            source, active_tbox=tbox
+        ).suggest(
+            _principal(),
+            _identity("llm-candidate:77", "Pump mentioned in report"),
+            identity_properties=(
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+            ),
+        )[0]
+
+        self.assertEqual(suggestion.outcome, ResolutionOutcome.AUTO_LINK)
+        self.assertEqual(suggestion.target, target.entity)
+        self.assertEqual(
+            suggestion.evidence[0].match_kind,
+            "EXACT_IDENTITY_PROPERTIES",
+        )
+        self.assertEqual(
+            suggestion.matcher_version,
+            "tbox-identity-properties:v1",
+        )
+        self.assertEqual(source.calls[1]["kind"], "exact-identity-properties")
+
+    def test_declared_identity_mismatch_never_falls_back_to_alias_auto_link(
+        self,
+    ) -> None:
+        tbox = TBoxVersion(
+            tenant_id=TENANT,
+            key="plant-assets",
+            version=2,
+            status=TBoxStatus.PUBLISHED,
+            entity_types=(
+                EntityTypeDefinition(
+                    "Asset",
+                    ("asset-id",),
+                    properties=(
+                        PropertyDefinition(
+                            "serial_number",
+                            PropertyDataType.STRING,
+                            True,
+                            Cardinality.ONE,
+                        ),
+                    ),
+                    identity_properties=("serial_number",),
+                ),
+            ),
+            relationship_types=(),
+        )
+        alias_target = _profile(
+            _identity(
+                "asset-id:SN-88",
+                "Primary Pump",
+                aliases=("Pump from report",),
+            ),
+            suffix="sn88",
+        )
+        source = FakeSource((alias_target,))
+
+        suggestion = EntityResolutionService(source, active_tbox=tbox).suggest(
+            _principal(),
+            _identity("llm-candidate:77", "Pump from report"),
+            identity_properties=(
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+            ),
+        )[0]
+
+        self.assertEqual(suggestion.outcome, ResolutionOutcome.NO_MATCH)
+        self.assertIsNone(suggestion.target)
+        self.assertEqual(
+            [call["kind"] for call in source.calls],
+            ["exact-key", "exact-identity-properties"],
+        )
+
+    def test_partial_identity_contract_is_conflict_without_authority_query(self) -> None:
+        tbox = TBoxVersion(
+            tenant_id=TENANT,
+            key="plant-assets",
+            version=2,
+            status=TBoxStatus.PUBLISHED,
+            entity_types=(
+                EntityTypeDefinition(
+                    "Asset",
+                    ("asset-id",),
+                    properties=(
+                        PropertyDefinition(
+                            "serial_number",
+                            PropertyDataType.STRING,
+                            True,
+                            Cardinality.ONE,
+                        ),
+                        PropertyDefinition(
+                            "site_code",
+                            PropertyDataType.STRING,
+                            True,
+                            Cardinality.ONE,
+                        ),
+                    ),
+                    identity_properties=("serial_number", "site_code"),
+                ),
+            ),
+            relationship_types=(),
+        )
+        source = FakeSource(())
+        suggestion = EntityResolutionService(source, active_tbox=tbox).suggest(
+            _principal(),
+            _identity("llm-candidate:77", "Pump"),
+            identity_properties=(
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+            ),
+        )[0]
+
+        self.assertEqual(suggestion.outcome, ResolutionOutcome.CONFLICT)
+        self.assertIn("active T-Box", suggestion.reason)
+        self.assertEqual(
+            [call["kind"] for call in source.calls],
+            ["exact-key"],
+        )
+
+    def test_ambiguous_and_duplicate_identity_values_fail_closed(self) -> None:
+        tbox = TBoxVersion(
+            tenant_id=TENANT,
+            key="plant-assets",
+            version=2,
+            status=TBoxStatus.PUBLISHED,
+            entity_types=(
+                EntityTypeDefinition(
+                    "Asset",
+                    ("asset-id",),
+                    properties=(
+                        PropertyDefinition(
+                            "serial_number",
+                            PropertyDataType.STRING,
+                            True,
+                            Cardinality.ONE,
+                        ),
+                    ),
+                    identity_properties=("serial_number",),
+                ),
+            ),
+            relationship_types=(),
+        )
+        profiles = tuple(
+            AuthoritativeEntityProfile(
+                entity=_identity(key, name),
+                ontology_version_id=tbox.tbox_id,
+                authority=AuthorityLevel.AUTHORITATIVE,
+                status=GovernanceStatus.PUBLISHED,
+                evidence=_profile(_identity(key, name), suffix=name).evidence,
+            )
+            for key, name in (
+                ("asset-id:A-SN-77", "Pump A"),
+                ("asset-id:B-SN-77", "Pump B"),
+            )
+        )
+        ambiguous = EntityResolutionService(
+            FakeSource(profiles), active_tbox=tbox
+        ).suggest(
+            _principal(),
+            _identity("llm-candidate:77", "Pump"),
+            identity_properties=(
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+            ),
+        )[0]
+        self.assertEqual(ambiguous.outcome, ResolutionOutcome.CONFLICT)
+        self.assertIsNone(ambiguous.target)
+
+        source = FakeSource(())
+        duplicate = EntityResolutionService(source, active_tbox=tbox).suggest(
+            _principal(),
+            _identity("llm-candidate:77", "Pump"),
+            identity_properties=(
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+            ),
+        )[0]
+        self.assertEqual(duplicate.outcome, ResolutionOutcome.CONFLICT)
+        self.assertIn("duplicated", duplicate.reason)
+        self.assertEqual([call["kind"] for call in source.calls], ["exact-key"])
+
     def test_unique_exact_canonical_key_is_the_strongest_auto_link(self) -> None:
         target = _profile(_identity("asset-id:P-7", "Primary Pump"), suffix="p7")
         source = FakeSource((target,))
@@ -356,6 +605,76 @@ class _Driver:
 
 
 class Neo4jAuthoritativeEntitySourceTests(unittest.TestCase):
+    def test_identity_property_query_is_publication_tbox_and_acl_bounded(self) -> None:
+        identity = _identity("asset-id:SN-77", "Primary Pump")
+        target = {
+            "entity_id": identity.entity_id,
+            "tenant_id": identity.tenant_id,
+            "entity_type": identity.entity_type,
+            "canonical_key": identity.canonical_key,
+            "canonical_name": identity.canonical_name,
+            "aliases": [],
+            "ontology_version_id": _tbox().tbox_id,
+            "matched_value": "serial_number=STRING:SN-77",
+            "evidence": [
+                {
+                    "mention_revision_id": "mention-sn77",
+                    "document_id": "document-sn77",
+                    "version_id": "version-sn77",
+                    "chunk_id": "chunk-sn77",
+                    "char_start": 0,
+                    "char_end": 5,
+                    "quoted_text": "SN-77",
+                }
+            ],
+        }
+        session = _Session(
+            (
+                {
+                    "match_count": 1,
+                    "only_entity_id": identity.entity_id,
+                    "publication_id": "publication-1",
+                    "activation_generation": 2,
+                    "publication_count": 1,
+                },
+            ),
+            subsequent_rows=(({"target": target},),),
+        )
+        source = Neo4jAuthoritativeEntitySource(_Driver(session))
+
+        result = source.find_exact_identity_properties(
+            _principal(),
+            ontology_version_id=_tbox().tbox_id,
+            entity_type="Asset",
+            identity_properties=(
+                IdentityPropertyValue("serial_number", "STRING", "SN-77"),
+            ),
+        )
+
+        self.assertEqual(result.target.entity, identity)  # type: ignore[union-attr]
+        query, parameters = session.calls[0]
+        for required in (
+            "all(",
+            "PUBLISHES_KNOWLEDGE_REVISION",
+            "fact:GovernedAssertionRevision",
+            "fact.literal_canonical_value = identity.canonical_value",
+            "fact.ontology_version_id = $ontology_version_id",
+            "any(group IN $groups WHERE group IN fact.access_groups)",
+            "any(group IN $groups WHERE group IN fact_chunk.access_groups)",
+            "any(group IN $groups WHERE group IN fact_document.access_groups)",
+        ):
+            self.assertIn(required, query)
+        self.assertEqual(
+            parameters["identity_properties"],
+            [
+                {
+                    "name": "serial_number",
+                    "datatype": "STRING",
+                    "canonical_value": "SN-77",
+                    "canonical_unit": None,
+                }
+            ],
+        )
     def test_query_and_mapping_are_tenant_acl_tbox_and_authority_bounded(self) -> None:
         identity = _identity("asset-id:P-7", "Primary Pump", aliases=("Pump 7",))
         row = {

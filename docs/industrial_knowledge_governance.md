@@ -189,12 +189,22 @@ homonyms or ambiguous aliases are conflicts. Every proposal records its rule
 and matcher versions plus the authorized evidence supporting the target; it
 never rewires graph records by itself.
 
-`identity_properties` are currently validated and persisted as ontology
-declarations and are included in the extraction prompt. They are not yet an
-automatic entity-resolution key: resolution currently uses canonical keys,
-governed aliases, exact names, and review-only name similarity. Industrial
-deployments must therefore supply stable canonical keys or retain human review
-until an evidence-backed identity-property matcher is implemented.
+`identity_properties` are validated and persisted as ontology declarations,
+included in the extraction prompt, and consumed by the resolution service.
+The matcher reads the candidate's server-normalized typed property facts and
+requires exactly one value for every identity property declared by its entity
+type. A globally unique, active, published authoritative entity with the same
+datatype, canonical value, and canonical unit produces an `AUTO_LINK`
+suggestion. Missing values, duplicate values, partial keys, or a value shared
+by multiple authoritative entities produce a conservative conflict or no
+match; they never fall through to an automatic alias link.
+
+Suggestions are computed inside the caller's tenant and evidence ACL and carry
+the exact authoritative Chunk evidence plus rule and matcher versions. Applying
+one recomputes the suggestion, verifies the expected candidate revision and
+selected target, then atomically creates an approved mention revision and
+rebinds every dependent candidate assertion to it. The assertions keep their
+existing candidate/quarantine status and still require separate human review.
 
 Review decisions create immutable record revisions through optimistic
 compare-and-swap. Reviewers may approve, reject, quarantine, or edit a bounded

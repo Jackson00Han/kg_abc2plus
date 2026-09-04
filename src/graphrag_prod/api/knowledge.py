@@ -26,12 +26,20 @@ from graphrag_prod.knowledge import (
     EntityIdentity,
     EntityMentionRecord,
     EvidenceReference,
+    EntityResolutionService,
+    IdentityPropertyValue,
     KnowledgeEvidenceError,
     KnowledgeSchemaError,
     Neo4jKnowledgeStore,
+    Neo4jAuthoritativeEntitySource,
     RecordRevision,
     authoritative_import_trust,
     knowledge_record_id,
+)
+from graphrag_prod.knowledge.entity_resolution import (
+    ResolutionBoundaryError,
+    ResolutionOutcome,
+    ResolutionSuggestion,
 )
 from graphrag_prod.knowledge.review import (
     AssertionEdit,
@@ -57,6 +65,10 @@ from graphrag_prod.ontology.store import TBoxConflict, TBoxValidationError
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
+    EntityResolutionApplyRequest,
+    EntityResolutionApplyResponse,
+    EntityResolutionRequest,
+    EntityResolutionResponse,
     EvidenceInput,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
@@ -285,6 +297,42 @@ def _publication_payload(value: Any) -> dict[str, object]:
     }
 
 
+def _resolution_evidence_payload(value: Any) -> dict[str, object]:
+    return {
+        "match_kind": value.match_kind,
+        "candidate_value": value.candidate_value,
+        "target_value": value.target_value,
+        "matcher_version": value.matcher_version,
+        "authoritative_evidence": tuple(
+            {
+                "mention_revision_id": item.mention_revision_id,
+                "document_id": item.document_id,
+                "version_id": item.version_id,
+                "chunk_id": item.chunk_id,
+                "char_start": item.char_start,
+                "char_end": item.char_end,
+                "quoted_text": item.quoted_text,
+            }
+            for item in value.authoritative_evidence
+        ),
+    }
+
+
+def _resolution_suggestion_payload(value: ResolutionSuggestion) -> dict[str, object]:
+    return {
+        "target": None if value.target is None else _entity_payload(value.target),
+        "ontology_version_id": value.ontology_version_id,
+        "rule_version": value.rule_version,
+        "matcher_version": value.matcher_version,
+        "evidence": tuple(
+            _resolution_evidence_payload(item) for item in value.evidence
+        ),
+        "confidence": value.confidence,
+        "outcome": value.outcome.value,
+        "reason": value.reason,
+    }
+
+
 class Neo4jKnowledgeOperations:
     """Real adapter over T-Box, A-Box, construction, review, and publication."""
 
@@ -298,6 +346,7 @@ class Neo4jKnowledgeOperations:
         knowledge: Any | None = None,
         reviews: Any | None = None,
         publications: Any | None = None,
+        resolution_source: Any | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if not callable(getattr(construction, "run", None)):
@@ -309,6 +358,9 @@ class Neo4jKnowledgeOperations:
         self.knowledge = knowledge or Neo4jKnowledgeStore(driver, database)
         self.reviews = reviews or Neo4jKnowledgeReviewService(driver, database)
         self.publications = publications or Neo4jKnowledgePublicationService(
+            driver, database
+        )
+        self.resolution_source = resolution_source or Neo4jAuthoritativeEntitySource(
             driver, database
         )
         self.literal_normalizer = TBoxLiteralNormalizer()
@@ -783,6 +835,183 @@ class Neo4jKnowledgeOperations:
         except (AttributeError, KeyError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(ReviewQueueResponse, payload))
+
+    def _resolution_context(
+        self,
+        principal: Principal,
+        request: EntityResolutionRequest | EntityResolutionApplyRequest,
+    ) -> tuple[EntityMentionRecord, tuple[IdentityPropertyValue, ...], tuple[ResolutionSuggestion, ...]]:
+        _require_capability(principal, "knowledge:review")
+        try:
+            candidate = self.knowledge.get_entity_mention(
+                principal,
+                request.record_id,
+                statuses=(
+                    GovernanceStatus.CANDIDATE,
+                    GovernanceStatus.QUARANTINED,
+                ),
+            )
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except KnowledgeStoreError as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if candidate is None:
+            raise ResourceNotFoundError()
+        if candidate.revision.revision != request.expected_revision:
+            raise ConflictError()
+
+        tbox = self._active_tbox(principal, candidate.trust.ontology_version_id)
+        definition = next(
+            (
+                item
+                for item in tbox.entity_types
+                if item.name == candidate.entity.entity_type
+            ),
+            None,
+        )
+        if definition is None:
+            raise ConflictError()
+        properties: tuple[IdentityPropertyValue, ...] = ()
+        if definition.identity_properties:
+            try:
+                facts = self.knowledge.list_identity_property_assertions(
+                    principal,
+                    subject_entity_id=candidate.entity.entity_id,
+                    ontology_version_id=tbox.tbox_id,
+                    predicates=definition.identity_properties,
+                    statuses=(
+                        GovernanceStatus.CANDIDATE,
+                        GovernanceStatus.QUARANTINED,
+                    ),
+                )
+                properties = tuple(
+                    IdentityPropertyValue.from_literal(
+                        fact.predicate,
+                        fact.literal_semantics,
+                    )
+                    for fact in facts
+                    if fact.object_entity is None
+                    and fact.literal_semantics is not None
+                    and fact.subject_mention_revision_id == candidate.revision_id
+                )
+            except TimeoutError as error:
+                raise DependencyTimeoutError() from error
+            except KnowledgeStoreError as error:
+                raise DependencyUnavailableError() from error
+            except (TypeError, ValueError) as error:
+                raise DependencyUnavailableError() from error
+            except Exception as error:
+                raise DependencyUnavailableError() from error
+        try:
+            suggestions = EntityResolutionService(
+                self.resolution_source,
+                active_tbox=tbox,
+            ).suggest(
+                principal,
+                candidate.entity,
+                identity_properties=properties,
+            )
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except ResolutionBoundaryError as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return candidate, properties, suggestions
+
+    def resolution_suggestions(
+        self,
+        principal: Principal,
+        request: EntityResolutionRequest,
+    ) -> BackendResult:
+        candidate, properties, suggestions = self._resolution_context(
+            principal, request
+        )
+        payload = {
+            "record_id": candidate.record_id,
+            "revision_id": candidate.revision_id,
+            "revision": candidate.revision.revision,
+            "candidate": _entity_payload(candidate.entity),
+            "identity_properties": tuple(
+                {
+                    "name": item.property_name,
+                    "datatype": item.datatype,
+                    "canonical_value": item.canonical_value,
+                    "canonical_unit": item.canonical_unit,
+                }
+                for item in properties
+            ),
+            "suggestions": tuple(
+                _resolution_suggestion_payload(item) for item in suggestions
+            ),
+        }
+        return BackendResult(_outbound(EntityResolutionResponse, payload))
+
+    def apply_resolution(
+        self,
+        principal: Principal,
+        request: EntityResolutionApplyRequest,
+    ) -> BackendResult:
+        candidate, _properties, suggestions = self._resolution_context(
+            principal, request
+        )
+        selected = next(
+            (
+                item
+                for item in suggestions
+                if item.target is not None
+                and item.target.entity_id == request.target_entity_id
+                and item.outcome
+                in {ResolutionOutcome.AUTO_LINK, ResolutionOutcome.REVIEW}
+            ),
+            None,
+        )
+        if selected is None or selected.target is None:
+            raise ResourceNotFoundError()
+        reviewed_at = self._now()
+        try:
+            result = self.reviews.apply_entity_resolution(
+                principal,
+                record_id=candidate.record_id,
+                expected_revision=request.expected_revision,
+                target=selected.target,
+                reviewed_at=reviewed_at,
+                notes=(
+                    f"{request.notes}\n"
+                    f"Resolution rule={selected.rule_version}; "
+                    f"matcher={selected.matcher_version}; "
+                    f"target={selected.target.entity_id}"
+                ),
+            )
+        except KnowledgeReviewUnavailable as error:
+            raise ResourceNotFoundError() from error
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except KnowledgeConflict as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except KnowledgeStoreError as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        payload = {
+            "outcomes": tuple(
+                {
+                    "record_kind": outcome.record_kind.value,
+                    "record_id": outcome.record_id,
+                    "previous_revision_id": outcome.previous_revision_id,
+                    "revision_id": outcome.revision_id,
+                    "revision": outcome.revision,
+                    "status": outcome.status.value,
+                }
+                for outcome in result.outcomes
+            ),
+            "applied_suggestion": _resolution_suggestion_payload(selected),
+        }
+        return BackendResult(_outbound(EntityResolutionApplyResponse, payload))
 
     def review_batch(
         self, principal: Principal, request: ReviewBatchRequest

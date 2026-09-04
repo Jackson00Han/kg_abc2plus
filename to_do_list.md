@@ -32,12 +32,15 @@
   entities, relationships, typed properties, entity resolution, trust
   contamination, and human-review policy.
 
+- [x] Connect conservative entity-resolution suggestions to the governed
+  review workflow and Playground. Exact values for every declared
+  `identity_property` can propose a unique authoritative link; ambiguous,
+  incomplete, stale, or unauthorized matches fail closed. Applying a link
+  creates immutable revisions and atomically rebinds dependent candidate
+  assertions without approving those assertions.
+
 ## Follow-up limitations
 
 - [ ] Extend the current T-Box relationship-property definitions into
   evidence-backed relationship-property extraction, authoritative import,
   review, publication, and retrieval instances.
-
-- [ ] Use declared `identity_properties` in automatic entity disambiguation
-  and resolution. They are currently validated ontology metadata; stable
-  canonical keys and human review remain the implemented identity boundary.

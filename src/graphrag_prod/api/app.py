@@ -44,6 +44,9 @@ from .contracts import (
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
+    EntityResolutionApplyRequest,
+    EntityResolutionApplyResponse,
+    EntityResolutionResponse,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
     MAX_BASE64_DOCUMENT_CHARS,
@@ -640,6 +643,10 @@ def create_app(
         str,
         Path(min_length=1, max_length=256, pattern=_PATH_ID),
     ]
+    KnowledgeRecordPath = Annotated[
+        str,
+        Path(min_length=1, max_length=256, pattern=_PATH_ID),
+    ]
 
     @app.post(
         "/v1/documents:ingest",
@@ -831,6 +838,42 @@ def create_app(
                 "statuses": tuple(statuses or ("CANDIDATE", "QUARANTINED")),
                 "limit": limit,
             },
+        )
+
+    @app.get(
+        "/v1/knowledge/entity-resolution/{record_id}",
+        response_model=EntityResolutionResponse,
+    )
+    async def entity_resolution_suggestions(
+        request: Request,
+        record_id: KnowledgeRecordPath,
+        identity: IdentityDependency,
+        expected_revision: Annotated[int, Query(ge=1, le=2_147_483_647)],
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.ENTITY_RESOLUTION_SUGGEST,
+            {
+                "record_id": record_id,
+                "expected_revision": expected_revision,
+            },
+        )
+
+    @app.post(
+        "/v1/knowledge/entity-resolution:apply",
+        response_model=EntityResolutionApplyResponse,
+    )
+    async def apply_entity_resolution(
+        request: Request,
+        body: EntityResolutionApplyRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.ENTITY_RESOLUTION_APPLY,
+            body.model_dump(mode="python"),
         )
 
     @app.post(

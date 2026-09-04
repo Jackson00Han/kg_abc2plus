@@ -15,6 +15,8 @@ selected group must be a non-empty subset of the verified JWT groups.
 | Import authoritative A-Box | `POST /v1/knowledge/authoritative:import` | `knowledge:import` |
 | Upload and construct candidates | `POST /v1/knowledge:construct` | `knowledge:construct` |
 | Read the review queue | `GET /v1/knowledge/review-queue` | `knowledge:review` |
+| Compute entity-resolution suggestions | `GET /v1/knowledge/entity-resolution/{record_id}` | `knowledge:review` |
+| Apply one reviewed entity link | `POST /v1/knowledge/entity-resolution:apply` | `knowledge:review` |
 | Submit review decisions | `POST /v1/knowledge/reviews:batch` | `knowledge:review` |
 | Publish approved revisions | `POST /v1/knowledge/publications:publish` | `knowledge:publish` |
 | Roll back a publication | `POST /v1/knowledge/publications/{id}:rollback` | `knowledge:publish` |
@@ -30,11 +32,20 @@ or extraction-character budget. Module ceilings prevent configuration above
 512 Chunks, 512 model calls, 5 MiB of extraction text, or a 900-second
 cooperative deadline. Provider calls must expose a smaller per-call timeout.
 
-T-Box contracts can carry typed relationship-property definitions and declared
-entity `identity_properties`, but the current A-Box API does not accept,
-extract, review, or publish relationship-property values, and automatic entity
-resolution does not yet use `identity_properties`. They are governance metadata
-until those evidence-backed instance paths are implemented.
+T-Box contracts can carry typed relationship-property definitions, but the
+current A-Box API does not yet accept, extract, review, or publish those
+relationship-property values. They remain governance metadata until that
+evidence-backed instance path is implemented.
+
+Declared entity `identity_properties` are active resolution keys. The
+suggestion route reads the current candidate mention and its server-normalized
+typed identity facts, searches only the caller's authorized evidence in the
+active publication and exact T-Box version, and returns auditable
+`AUTO_LINK`/`REVIEW`/`NO_MATCH`/`CONFLICT` outcomes. Apply requires the expected
+candidate revision and one target returned by a freshly recomputed suggestion;
+it atomically rebinds dependent candidate assertions while leaving those facts
+unapproved. Unknown, stale, unauthorized, and cross-tenant targets do not
+expose existence.
 
 Model extraction uses only the system-reserved `llm-candidate` identity
 namespace. Every extractable entity type must declare that namespace; an

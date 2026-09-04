@@ -313,6 +313,8 @@ class KnowledgeContractTests(unittest.TestCase):
             OperationKind.KNOWLEDGE_CONSTRUCT: ("knowledge:construct", True),
             OperationKind.KNOWLEDGE_REVIEW_QUEUE: ("knowledge:review", False),
             OperationKind.KNOWLEDGE_REVIEW_BATCH: ("knowledge:review", True),
+            OperationKind.ENTITY_RESOLUTION_SUGGEST: ("knowledge:review", False),
+            OperationKind.ENTITY_RESOLUTION_APPLY: ("knowledge:review", True),
             OperationKind.KNOWLEDGE_PUBLISH: ("knowledge:publish", True),
             OperationKind.KNOWLEDGE_ROLLBACK: ("knowledge:publish", True),
             OperationKind.KNOWLEDGE_HISTORY: ("knowledge:publish", False),
@@ -346,6 +348,7 @@ class _Knowledge:
 
     ontology_import = ontology_publish = authoritative_import = lambda *args: None
     construct = review_queue = review_batch = lambda *args: None
+    resolution_suggestions = apply_resolution = lambda *args: None
     publish = rollback = history = lambda *args: None
 
 

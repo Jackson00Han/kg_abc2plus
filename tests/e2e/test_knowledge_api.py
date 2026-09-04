@@ -18,6 +18,8 @@ from graphrag_prod.api import (
 )
 from graphrag_prod.api.knowledge_contracts import (
     AuthoritativeImportResponse,
+    EntityResolutionApplyResponse,
+    EntityResolutionResponse,
     KnowledgeConstructionResponse,
     OntologyListResponse,
     OntologyVersionResponse,
@@ -97,6 +99,43 @@ def _publication() -> PublicationResponse:
         created_at=NOW,
         activated_at=NOW,
     )
+
+
+def _resolution_suggestion() -> dict[str, object]:
+    return {
+        "target": {
+            "entity_id": "target-entity-1",
+            "entity_type": "Asset",
+            "canonical_key": "asset-id:P-7",
+            "canonical_name": "Pump-7",
+            "aliases": [],
+        },
+        "ontology_version_id": "tbox-1",
+        "rule_version": "authoritative-resolution-rules:v1",
+        "matcher_version": "tbox-identity-properties:v1",
+        "evidence": [
+            {
+                "match_kind": "EXACT_IDENTITY_PROPERTIES",
+                "candidate_value": "serial_number=STRING:P-7",
+                "target_value": "serial_number=STRING:P-7",
+                "matcher_version": "tbox-identity-properties:v1",
+                "authoritative_evidence": [
+                    {
+                        "mention_revision_id": "authority-revision-1",
+                        "document_id": "authority-document-1",
+                        "version_id": "authority-version-1",
+                        "chunk_id": "authority-chunk-1",
+                        "char_start": 0,
+                        "char_end": 6,
+                        "quoted_text": "Pump-7",
+                    }
+                ],
+            }
+        ],
+        "confidence": 1.0,
+        "outcome": "AUTO_LINK",
+        "reason": "unique authoritative identity-property match",
+    }
 
 
 class _Documents:
@@ -193,6 +232,59 @@ class _Knowledge:
                         "status": "REJECTED",
                     },
                 )
+            )
+        )
+
+    def resolution_suggestions(
+        self, principal: object, request: object
+    ) -> BackendResult:
+        self._record("resolution_suggestions", principal, request)
+        return BackendResult(
+            EntityResolutionResponse(
+                record_id="mention-1",
+                revision_id="mention-revision-1",
+                revision=1,
+                candidate={
+                    "entity_id": "candidate-entity-1",
+                    "entity_type": "Asset",
+                    "canonical_key": "llm-candidate:p-7",
+                    "canonical_name": "Pump seven",
+                    "aliases": [],
+                },
+                identity_properties=(
+                    {
+                        "name": "serial_number",
+                        "datatype": "STRING",
+                        "canonical_value": "P-7",
+                    },
+                ),
+                suggestions=(_resolution_suggestion(),),
+            )
+        )
+
+    def apply_resolution(self, principal: object, request: object) -> BackendResult:
+        self._record("apply_resolution", principal, request)
+        return BackendResult(
+            EntityResolutionApplyResponse(
+                outcomes=(
+                    {
+                        "record_kind": "ENTITY_MENTION",
+                        "record_id": "mention-1",
+                        "previous_revision_id": "mention-revision-1",
+                        "revision_id": "mention-revision-2",
+                        "revision": 2,
+                        "status": "APPROVED",
+                    },
+                    {
+                        "record_kind": "ASSERTION",
+                        "record_id": "assertion-1",
+                        "previous_revision_id": "assertion-revision-1",
+                        "revision_id": "assertion-revision-2",
+                        "revision": 2,
+                        "status": "CANDIDATE",
+                    },
+                ),
+                applied_suggestion=_resolution_suggestion(),
             )
         )
 
@@ -457,6 +549,20 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                     },
                 ),
                 client.get("/v1/knowledge/review-queue?limit=10", headers=auth),
+                client.get(
+                    "/v1/knowledge/entity-resolution/mention-1?expected_revision=1",
+                    headers=auth,
+                ),
+                client.post(
+                    "/v1/knowledge/entity-resolution:apply",
+                    headers=auth,
+                    json={
+                        "record_id": "mention-1",
+                        "expected_revision": 1,
+                        "target_entity_id": "target-entity-1",
+                        "notes": "Expert verified exact identity properties.",
+                    },
+                ),
                 client.post(
                     "/v1/knowledge/reviews:batch",
                     headers=auth,
@@ -486,7 +592,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
             )
 
         self.assertTrue(all(response.status_code == 200 for response in responses))
-        self.assertEqual(len(knowledge.calls), 10)
+        self.assertEqual(len(knowledge.calls), 12)
         self.assertEqual(
             [name for name, _, _ in knowledge.calls],
             [
@@ -496,6 +602,8 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 "authoritative_import",
                 "construct",
                 "review_queue",
+                "resolution_suggestions",
+                "apply_resolution",
                 "review_batch",
                 "publish",
                 "rollback",

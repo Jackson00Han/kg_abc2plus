@@ -428,6 +428,53 @@ _CURRENT_REVIEW_QUERY = {
     for kind in ReviewRecordKind
 }
 
+_DEPENDENT_ASSERTION_QUERY = """
+MATCH (head:KnowledgeRecordHead {
+    tenant_id: $tenant_id,
+    record_kind: 'ASSERTION'
+})-[:CURRENT_REVISION]->(revision:GovernedAssertionRevision {
+    tenant_id: $tenant_id
+})-[:EVIDENCED_BY]->(chunk:Chunk {tenant_id: $tenant_id})
+MATCH (document:Document {tenant_id: $tenant_id})
+      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id,
+          build_state: 'PUBLISHED'
+      })-[:INCLUDES_CHUNK]->(chunk)
+MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+    tenant_id: $tenant_id
+})
+MATCH (snapshot)-[:OF_VERSION]->(version)
+MATCH (:TBoxCatalog {tenant_id: $tenant_id})
+      -[:ACTIVE_TBOX_VERSION]->(tbox:TBoxVersion {
+          tenant_id: $tenant_id,
+          tbox_id: $ontology_version_id,
+          status: 'PUBLISHED'
+      })
+WHERE revision.ontology_version_id = tbox.tbox_id
+  AND revision.governance_status IN ['CANDIDATE', 'QUARANTINED']
+  AND (
+      revision.subject_mention_revision_id = $mention_revision_id OR
+      revision.object_mention_revision_id = $mention_revision_id
+  )
+  AND revision.document_id = document.document_id
+  AND revision.version_id = version.version_id
+  AND revision.chunk_id = chunk.chunk_id
+  AND revision.access_policy_id = chunk.access_policy_id
+  AND revision.access_policy_version = chunk.access_policy_version
+  AND revision.access_groups = chunk.access_groups
+  AND substring(
+      chunk.text,
+      revision.evidence_char_start - chunk.char_start,
+      revision.evidence_char_end - revision.evidence_char_start
+  ) = revision.evidence_text
+  AND any(group IN $groups WHERE group IN revision.access_groups)
+  AND any(group IN $groups WHERE group IN chunk.access_groups)
+  AND any(group IN $groups WHERE group IN document.access_groups)
+RETURN revision {.*} AS revision
+ORDER BY revision.record_id
+LIMIT $limit
+"""
+
 
 class SessionDriver(Protocol):
     def session(self, **kwargs: object) -> Any: ...
@@ -534,6 +581,178 @@ class Neo4jKnowledgeReviewService:
                 outcome_by_record[record_id] for record_id in record_ids
             ),
         )
+
+    def apply_entity_resolution(
+        self,
+        principal: Principal,
+        *,
+        record_id: str,
+        expected_revision: int,
+        target: EntityIdentity,
+        reviewed_at: datetime,
+        notes: str,
+    ) -> ReviewBatchResult:
+        """Atomically link a mention and rebind every dependent candidate fact.
+
+        Dependent assertions remain in their existing candidate/quarantine
+        lane.  Only their immutable endpoint identity and mention revision are
+        revised, so entity resolution never silently approves extracted facts.
+        """
+
+        _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
+        record_id = _required_text(record_id, "record_id")
+        _positive_integer(expected_revision, "expected_revision", 2_147_483_647)
+        if not isinstance(target, EntityIdentity):
+            raise TypeError("resolution target must be an EntityIdentity")
+        if target.tenant_id != principal.tenant_id:
+            raise KnowledgeReviewUnavailable("review target is unavailable")
+        reviewed_at = _aware(reviewed_at, "reviewed_at")
+        notes = _required_text(notes, "review notes")
+        with self.driver.session(database=self.database) as session:
+            outcomes = session.execute_write(
+                self._apply_entity_resolution_tx,
+                principal,
+                record_id,
+                expected_revision,
+                target,
+                reviewed_at,
+                notes,
+            )
+        return ReviewBatchResult(principal.tenant_id, outcomes)
+
+    @classmethod
+    def _apply_entity_resolution_tx(
+        cls,
+        tx: Any,
+        principal: Principal,
+        record_id: str,
+        expected_revision: int,
+        target: EntityIdentity,
+        reviewed_at: datetime,
+        notes: str,
+    ) -> tuple[ReviewOutcome, ...]:
+        mention_request = ReviewRequest(
+            ReviewRecordKind.ENTITY_MENTION,
+            record_id,
+            expected_revision,
+            GovernanceStatus.APPROVED,
+            reviewed_at,
+            notes,
+            MentionEdit(target, 1.0),
+        )
+        cls._lock_tenant_corpus_tx(tx, principal.tenant_id, reviewed_at)
+        cls._lock_review_head_tx(tx, principal, mention_request)
+        current = cls._load_current_review_record_tx(tx, principal, mention_request)
+        if not isinstance(current, EntityMentionRecord) or current.trust.status not in {
+            GovernanceStatus.CANDIDATE,
+            GovernanceStatus.QUARANTINED,
+        }:
+            raise KnowledgeReviewUnavailable("review target is unavailable")
+        if current.entity.entity_type != target.entity_type:
+            raise KnowledgeReviewUnavailable("review target is unavailable")
+
+        rows = tuple(
+            tx.run(
+                _DEPENDENT_ASSERTION_QUERY,
+                tenant_id=principal.tenant_id,
+                groups=sorted(principal.groups),
+                ontology_version_id=current.trust.ontology_version_id,
+                mention_revision_id=current.revision_id,
+                limit=MAX_REVIEW_BATCH,
+            )
+        )
+        if len(rows) >= MAX_REVIEW_BATCH:
+            raise KnowledgeReviewUnavailable(
+                "entity resolution exceeds the bounded dependent-assertion limit"
+            )
+        dependents = tuple(
+            _stored_assertion(dict(row["revision"])) for row in rows
+        )
+        for assertion in dependents:
+            lock_request = ReviewRequest(
+                ReviewRecordKind.ASSERTION,
+                assertion.record_id,
+                assertion.revision.revision,
+                GovernanceStatus.REJECTED,
+                reviewed_at,
+                notes,
+            )
+            cls._lock_review_head_tx(tx, principal, lock_request)
+
+        updated_mention = cls._reviewed_record_tx(
+            tx,
+            principal,
+            current,
+            mention_request,
+        )
+        assert isinstance(updated_mention, EntityMentionRecord)
+        updated_mention = dataclasses.replace(
+            updated_mention,
+            confidence=current.confidence,
+        )
+        cls._validate_record_tbox_tx(tx, updated_mention)
+        Neo4jKnowledgeStore._create_mention_revision_tx(
+            tx,
+            updated_mention,
+            link_canonical_entity=False,
+        )
+
+        outcomes = [
+            ReviewOutcome(
+                ReviewRecordKind.ENTITY_MENTION,
+                updated_mention.record_id,
+                current.revision_id,
+                updated_mention.revision_id,
+                updated_mention.revision.revision,
+                updated_mention.trust.status,
+            )
+        ]
+        for assertion in dependents:
+            is_subject = (
+                assertion.subject_mention_revision_id == current.revision_id
+            )
+            is_object = (
+                assertion.object_mention_revision_id == current.revision_id
+            )
+            if not is_subject and not is_object:
+                raise KnowledgeReviewUnavailable("review target is unavailable")
+            updated_assertion = dataclasses.replace(
+                assertion,
+                revision=RecordRevision.next(
+                    assertion.record_id,
+                    assertion.revision.revision,
+                ),
+                subject=target if is_subject else assertion.subject,
+                subject_mention_revision_id=(
+                    updated_mention.revision_id
+                    if is_subject
+                    else assertion.subject_mention_revision_id
+                ),
+                object_entity=(
+                    target if is_object else assertion.object_entity
+                ),
+                object_mention_revision_id=(
+                    updated_mention.revision_id
+                    if is_object
+                    else assertion.object_mention_revision_id
+                ),
+            )
+            Neo4jKnowledgeStore._create_assertion_revision_tx(
+                tx,
+                updated_assertion,
+                link_canonical_entities=False,
+            )
+            outcomes.append(
+                ReviewOutcome(
+                    ReviewRecordKind.ASSERTION,
+                    updated_assertion.record_id,
+                    assertion.revision_id,
+                    updated_assertion.revision_id,
+                    updated_assertion.revision.revision,
+                    updated_assertion.trust.status,
+                )
+            )
+        return tuple(outcomes)
 
     def approve(
         self,

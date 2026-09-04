@@ -93,6 +93,9 @@ The page shows:
   final-ranking traces;
 - an advanced retrieval panel for document/version cutoffs, every bounded
   retrieval limit, graph inclusion, and authoritative-only graph projection;
+- evidence-backed entity-resolution suggestions in the human-review queue,
+  including exact `identity_properties` matches and atomic dependent-fact
+  rebinding after expert confirmation;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a

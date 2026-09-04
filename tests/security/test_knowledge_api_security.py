@@ -254,6 +254,56 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
             ),
         )
 
+    def test_entity_resolution_requires_review_scope_and_hides_target_existence(self) -> None:
+        denied = self.client.get(
+            "/v1/knowledge/entity-resolution/candidate-1?expected_revision=1",
+            headers=_headers(scope="ontology:read"),
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(self.backend.envelopes, [])
+
+        responses = tuple(
+            self.client.get(
+                "/v1/knowledge/entity-resolution/candidate-1?expected_revision=1",
+                headers=_headers(
+                    tenant_id=tenant,
+                    scope="knowledge:review",
+                ),
+            )
+            for tenant in ("tenant-alpha", "tenant-other")
+        )
+        self.assertEqual(
+            tuple((item.status_code, item.json()["code"]) for item in responses),
+            ((404, "not_found"), (404, "not_found")),
+        )
+        self.assertEqual(
+            [item.operation for item in self.backend.envelopes],
+            [
+                OperationKind.ENTITY_RESOLUTION_SUGGEST,
+                OperationKind.ENTITY_RESOLUTION_SUGGEST,
+            ],
+        )
+        self.assertEqual(
+            [item.tenant_id for item in self.backend.envelopes],
+            ["tenant-alpha", "tenant-other"],
+        )
+        self.assertNotIn("tenant_id", self.backend.envelopes[0].payload)
+
+        before = len(self.backend.envelopes)
+        forged = self.client.post(
+            "/v1/knowledge/entity-resolution:apply",
+            headers=_headers(scope="knowledge:review"),
+            json={
+                "record_id": "candidate-1",
+                "expected_revision": 1,
+                "target_entity_id": "target-1",
+                "notes": "Forged boundary test",
+                "tenant_id": "tenant-victim",
+            },
+        )
+        self.assertEqual(forged.status_code, 422)
+        self.assertEqual(len(self.backend.envelopes), before)
+
 
 if __name__ == "__main__":
     unittest.main()

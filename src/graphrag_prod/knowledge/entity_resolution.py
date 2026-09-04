@@ -15,6 +15,7 @@ import re
 from typing import Any, Protocol
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.models import TypedLiteralValue
 from graphrag_prod.graph.governance import normalized_name_key
 from graphrag_prod.ontology.models import TBoxStatus, TBoxVersion
 
@@ -148,6 +149,67 @@ class ExactAuthoritativeMatch:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityPropertyValue:
+    """One server-normalized value from a T-Box identity property.
+
+    Matching deliberately excludes raw spelling and source-time metadata.  Two
+    values identify the same thing only when their declared datatype,
+    canonical value, and canonical unit are exactly equal.
+    """
+
+    property_name: str
+    datatype: str
+    canonical_value: str
+    canonical_unit: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "property_name",
+            _required_text(self.property_name, "identity property name"),
+        )
+        object.__setattr__(
+            self,
+            "datatype",
+            _required_text(self.datatype, "identity property datatype").upper(),
+        )
+        object.__setattr__(
+            self,
+            "canonical_value",
+            _required_text(self.canonical_value, "identity property canonical value"),
+        )
+        if self.canonical_unit is not None:
+            object.__setattr__(
+                self,
+                "canonical_unit",
+                _required_text(self.canonical_unit, "identity property canonical unit"),
+            )
+
+    @classmethod
+    def from_literal(
+        cls,
+        property_name: str,
+        literal: TypedLiteralValue,
+    ) -> IdentityPropertyValue:
+        if not isinstance(literal, TypedLiteralValue):
+            raise TypeError("identity property requires server-normalized literal semantics")
+        return cls(
+            property_name=property_name,
+            datatype=literal.datatype,
+            canonical_value=literal.canonical_value,
+            canonical_unit=literal.canonical_unit,
+        )
+
+    def to_match_mapping(self) -> dict[str, str | None]:
+        return {
+            "name": self.property_name,
+            "datatype": self.datatype,
+            "canonical_value": self.canonical_value,
+            "canonical_unit": self.canonical_unit,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ResolutionEvidence:
     """Why a candidate/target pair was proposed, with target provenance."""
 
@@ -273,6 +335,15 @@ class AuthoritativeEntitySource(Protocol):
         ontology_version_id: str,
         entity_type: str,
         candidate_values: tuple[str, ...],
+    ) -> ExactAuthoritativeMatch: ...
+
+    def find_exact_identity_properties(
+        self,
+        principal: Principal,
+        *,
+        ontology_version_id: str,
+        entity_type: str,
+        identity_properties: tuple[IdentityPropertyValue, ...],
     ) -> ExactAuthoritativeMatch: ...
 
     def list_authoritative_entities(
@@ -416,6 +487,63 @@ _EXACT_GOVERNED_ALIAS_QUERIES = _exact_authority_queries(
     "any(pattern IN $alias_patterns WHERE normalize(alias, NFKC) =~ pattern)])",
 )
 
+_IDENTITY_PROPERTY_PREDICATE = """all(
+    identity IN $identity_properties
+    WHERE EXISTS {
+        MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
+              (fact:GovernedAssertionRevision {
+                  tenant_id: $tenant_id,
+                  authority_level: 'AUTHORITATIVE',
+                  governance_status: 'PUBLISHED',
+                  object_kind: 'literal'
+              })-[:EVIDENCED_BY]->(fact_chunk:Chunk {tenant_id: $tenant_id})
+        MATCH (fact)-[:SUPPORTED_BY_MENTION]->
+              (fact_subject:GovernedEntityMentionRevision {
+                  tenant_id: $tenant_id,
+                  authority_level: 'AUTHORITATIVE',
+                  governance_status: 'PUBLISHED'
+              })
+        MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->(fact_subject)
+        MATCH (fact_head:KnowledgeRecordHead {
+                  tenant_id: $tenant_id,
+                  record_kind: 'ASSERTION'
+              })-[:CURRENT_REVISION]->(fact)
+        MATCH (fact_document:Document {tenant_id: $tenant_id})
+              -[:ACTIVE_VERSION]->(fact_version:DocumentVersion {
+                  tenant_id: $tenant_id
+              })-[:HAS_CHUNK]->(fact_chunk)
+        WHERE fact_head.record_id = fact.record_id
+          AND fact.ontology_version_id = $ontology_version_id
+          AND fact.subject_entity_id = entity.entity_id
+          AND fact.subject_mention_revision_id = fact_subject.revision_id
+          AND fact_subject.entity_id = entity.entity_id
+          AND fact.predicate = identity.name
+          AND fact.literal_datatype = identity.datatype
+          AND fact.literal_canonical_value = identity.canonical_value
+          AND coalesce(fact.literal_canonical_unit, '') =
+              coalesce(identity.canonical_unit, '')
+          AND fact.document_id = fact_document.document_id
+          AND fact.version_id = fact_version.version_id
+          AND fact.chunk_id = fact_chunk.chunk_id
+          AND fact.access_policy_id = fact_chunk.access_policy_id
+          AND fact.access_policy_version = fact_chunk.access_policy_version
+          AND fact.access_groups = fact_chunk.access_groups
+          AND substring(
+              fact_chunk.text,
+              fact.evidence_char_start - fact_chunk.char_start,
+              fact.evidence_char_end - fact.evidence_char_start
+          ) = fact.evidence_text
+          AND any(group IN $groups WHERE group IN fact.access_groups)
+          AND any(group IN $groups WHERE group IN fact_chunk.access_groups)
+          AND any(group IN $groups WHERE group IN fact_document.access_groups)
+    }
+)"""
+
+_EXACT_IDENTITY_PROPERTY_QUERIES = _exact_authority_queries(
+    _IDENTITY_PROPERTY_PREDICATE,
+    "$identity_signature",
+)
+
 _AUTHORIZED_ENTITY_QUERY = f"""
 {_ACTIVE_AUTHORITY_MATCH}
 WITH DISTINCT entity, tbox, mention, document, version, chunk
@@ -493,6 +621,26 @@ class Neo4jAuthoritativeEntitySource:
         )
         parameters["alias_patterns"] = list(patterns)
         return self._exact_match(_EXACT_GOVERNED_ALIAS_QUERIES, parameters)
+
+    def find_exact_identity_properties(
+        self,
+        principal: Principal,
+        *,
+        ontology_version_id: str,
+        entity_type: str,
+        identity_properties: tuple[IdentityPropertyValue, ...],
+    ) -> ExactAuthoritativeMatch:
+        normalized = _normalized_identity_properties(identity_properties)
+        parameters = self._parameters(
+            principal,
+            ontology_version_id=ontology_version_id,
+            entity_type=entity_type,
+        )
+        parameters["identity_properties"] = [
+            item.to_match_mapping() for item in normalized
+        ]
+        parameters["identity_signature"] = _identity_signature(normalized)
+        return self._exact_match(_EXACT_IDENTITY_PROPERTY_QUERIES, parameters)
 
     def list_authoritative_entities(
         self,
@@ -650,11 +798,16 @@ class EntityResolutionService:
         self.active_tbox = active_tbox
         self.policy = policy or ResolutionPolicy()
         self._entity_types = {item.name for item in active_tbox.entity_types}
+        self._identity_properties = {
+            item.name: item.identity_properties for item in active_tbox.entity_types
+        }
 
     def suggest(
         self,
         principal: Principal,
         candidate: EntityIdentity,
+        *,
+        identity_properties: tuple[IdentityPropertyValue, ...] = (),
     ) -> tuple[ResolutionSuggestion, ...]:
         boundary_reason: str | None = None
         if principal.tenant_id != self.active_tbox.tenant_id:
@@ -701,6 +854,83 @@ class EntityResolutionService:
                     target_value=exact_key.matched_target_value or "",
                     matcher_version="exact-canonical-key:v2",
                     confidence=1.0,
+                ),
+            )
+
+        declared_identity = self._identity_properties[candidate.entity_type]
+        if declared_identity and not identity_properties:
+            return (
+                self._targetless(
+                    candidate,
+                    ResolutionOutcome.CONFLICT,
+                    "candidate is missing identity properties required by the active T-Box",
+                    matcher_version="tbox-identity-properties:v1",
+                ),
+            )
+        if declared_identity:
+            try:
+                normalized_identity = _normalized_identity_properties(identity_properties)
+            except (TypeError, ValueError):
+                return (
+                    self._targetless(
+                        candidate,
+                        ResolutionOutcome.CONFLICT,
+                        "candidate identity properties are duplicated or malformed",
+                        matcher_version="tbox-identity-properties:v1",
+                    ),
+                )
+            if tuple(item.property_name for item in normalized_identity) != tuple(
+                sorted(declared_identity)
+            ):
+                return (
+                    self._targetless(
+                        candidate,
+                        ResolutionOutcome.CONFLICT,
+                        "candidate identity properties do not exactly satisfy the active T-Box",
+                        matcher_version="tbox-identity-properties:v1",
+                    ),
+                )
+            identity_match = self.source.find_exact_identity_properties(
+                principal,
+                ontology_version_id=self.active_tbox.tbox_id,
+                entity_type=candidate.entity_type,
+                identity_properties=normalized_identity,
+            )
+            self._validate_exact_match(candidate, identity_match)
+            if identity_match.match_count > 1:
+                return (
+                    self._targetless(
+                        candidate,
+                        ResolutionOutcome.CONFLICT,
+                        "identity properties resolve to multiple active authoritative entities",
+                        matcher_version="tbox-identity-properties:v1",
+                    ),
+                )
+            if identity_match.target is not None:
+                signature = _identity_signature(normalized_identity)
+                return (
+                    self._suggestion(
+                        candidate,
+                        identity_match.target,
+                        outcome=ResolutionOutcome.AUTO_LINK,
+                        reason=(
+                            "one globally unique authoritative entity matched every "
+                            "declared identity property"
+                        ),
+                        match_kind="EXACT_IDENTITY_PROPERTIES",
+                        candidate_value=signature,
+                        target_value=identity_match.matched_target_value or signature,
+                        matcher_version="tbox-identity-properties:v1",
+                        confidence=1.0,
+                    ),
+                )
+            return (
+                self._targetless(
+                    candidate,
+                    ResolutionOutcome.NO_MATCH,
+                    "no active authoritative entity exactly matched every "
+                    "declared identity property",
+                    matcher_version="tbox-identity-properties:v1",
                 ),
             )
 
@@ -978,3 +1208,26 @@ class EntityResolutionService:
             outcome=outcome,
             reason=reason,
         )
+
+
+def _normalized_identity_properties(
+    values: tuple[IdentityPropertyValue, ...],
+) -> tuple[IdentityPropertyValue, ...]:
+    if not isinstance(values, tuple) or not values:
+        raise ValueError("identity_properties must be a non-empty tuple")
+    if any(not isinstance(item, IdentityPropertyValue) for item in values):
+        raise TypeError("identity_properties must contain IdentityPropertyValue values")
+    ordered = tuple(sorted(values, key=lambda item: item.property_name))
+    names = tuple(item.property_name for item in ordered)
+    if len(names) != len(set(names)):
+        raise ValueError("identity property names must be unique")
+    return ordered
+
+
+def _identity_signature(values: tuple[IdentityPropertyValue, ...]) -> str:
+    normalized = _normalized_identity_properties(values)
+    return "; ".join(
+        f"{item.property_name}={item.datatype}:{item.canonical_value}"
+        + ("" if item.canonical_unit is None else f" {item.canonical_unit}")
+        for item in normalized
+    )
