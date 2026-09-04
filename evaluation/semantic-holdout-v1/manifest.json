@@ -1,0 +1,93 @@
+{
+  "schema_version": "semantic-retrieval-holdout-manifest-v1",
+  "dataset_id": "semantic-holdout-v1",
+  "version": "1.0.0",
+  "owner": "GraphRAG retrieval evaluation maintainers",
+  "description": "Independently authored, answer-free semantic retrieval holdout bound to dev-corpus-v1 and manually reviewed before release.",
+  "authorship": "independently-authored-reviewed-holdout",
+  "source_corpus": {
+    "dataset_id": "dev-corpus-v1",
+    "version": "1.0.1",
+    "manifest_path": "datasets/dev-corpus-v1/manifest.json",
+    "manifest_sha256": "54e73d0e249b7ed28b8b137ad8c87b4fede184647b5a44be23eb1568e8efe666",
+    "chunks_path": "datasets/dev-corpus-v1/chunks.jsonl",
+    "chunks_sha256": "58457e947940f4d25b6846ce372f8cbb47957f58b0964a44a0f3e429788a2a44",
+    "legacy_questions_path": "datasets/dev-corpus-v1/questions.jsonl",
+    "legacy_questions_sha256": "27aaf4e4f227d4cda913c74ef3f92ba739bb7d70a3250c97c2e5476080f690ee"
+  },
+  "artifact": {
+    "path": "evaluation/semantic-holdout-v1/questions.jsonl",
+    "sha256": "ac6fa411e048a4fdd1b75aa82b886bfba40feeb547589edae5349816c33100b2",
+    "item_count": 14
+  },
+  "coverage": {
+    "question_classes": {
+      "cross_chunk": 2,
+      "exact_value": 2,
+      "graph_relationship": 2,
+      "single_chunk": 2,
+      "temporal_conflict": 2,
+      "unanswerable": 2,
+      "unauthorized": 2
+    },
+    "required_case_ids": [
+      "semantic-holdout-cross-01",
+      "semantic-holdout-cross-02",
+      "semantic-holdout-exact-01",
+      "semantic-holdout-exact-02",
+      "semantic-holdout-relationship-01",
+      "semantic-holdout-relationship-02",
+      "semantic-holdout-single-01",
+      "semantic-holdout-single-02",
+      "semantic-holdout-temporal-01",
+      "semantic-holdout-temporal-02",
+      "semantic-holdout-unanswerable-01",
+      "semantic-holdout-unanswerable-02",
+      "semantic-holdout-unauthorized-01",
+      "semantic-holdout-unauthorized-02"
+    ],
+    "tenant_ids": [
+      "tenant-alpha",
+      "tenant-beta"
+    ],
+    "access_groups": [
+      "alpha-legal",
+      "alpha-public",
+      "beta-board",
+      "beta-public"
+    ],
+    "unanswerable_case_ids": [
+      "semantic-holdout-unanswerable-01",
+      "semantic-holdout-unanswerable-02"
+    ],
+    "unauthorized_case_ids": [
+      "semantic-holdout-unauthorized-01",
+      "semantic-holdout-unauthorized-02"
+    ]
+  },
+  "execution": {
+    "transport": "local_authenticated_http",
+    "endpoint": "/v1/retrieval",
+    "query_embedding_source": "server_live_provider",
+    "gold_query_vectors_present": false,
+    "request_fields": [
+      "limits",
+      "query_text"
+    ],
+    "allowed_embedding_providers": [
+      "dashscope-openai-compatible"
+    ]
+  },
+  "novelty": {
+    "maximum_legacy_sequence_similarity": 0.65,
+    "maximum_legacy_token_jaccard": 0.4,
+    "legacy_copy_shingle_words": 5,
+    "source_copy_shingle_words": 6
+  },
+  "thresholds": {
+    "minimum_complete_evidence_recall_at_5": 0.7,
+    "minimum_evidence_id_recall_at_5": 0.8,
+    "minimum_mrr": 0.7,
+    "maximum_forbidden_exposure_count": 0
+  }
+}
