@@ -87,6 +87,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
             capabilities={
                 "ontology_governance": True,
                 "document_upload": True,
+                "published_graph_quality": True,
                 "answer_generation": True,
                 "extraction_provider": {
                     "protocol": "openai-compatible",
@@ -97,6 +98,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         ).bootstrap()
         self.assertEqual(governed["mode"], "retrieval-and-governance")
         self.assertTrue(governed["capabilities"]["document_upload"])
+        self.assertTrue(governed["capabilities"]["published_graph_quality"])
         self.assertFalse(governed["capabilities"]["answer_generation"])
         self.assertNotIn("credential", governed["capabilities"]["extraction_provider"])
 
@@ -147,6 +149,14 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertEqual(
             by_groups[frozenset({"alpha-finance", "alpha-legal"})].scopes,
             PLAYGROUND_SCOPES,
+        )
+        self.assertIn(
+            "knowledge:quality",
+            by_groups[frozenset({"alpha-finance", "alpha-legal"})].scopes,
+        )
+        self.assertNotIn(
+            "knowledge:quality",
+            by_groups[frozenset({"alpha-legal"})].scopes,
         )
         self.assertEqual(
             by_groups[frozenset({"beta-board"})].scopes,
@@ -423,6 +433,11 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("/v1/knowledge/publication-candidates?limit=100", page.text)
         self.assertIn('id="construction-job-list"', page.text)
         self.assertIn('id="publication-candidate-list"', page.text)
+        self.assertIn('id="quality-content"', page.text)
+        self.assertIn('id="quality-refresh-button"', page.text)
+        self.assertIn("/v1/knowledge/quality", page.text)
+        self.assertIn("当前身份缺少 knowledge:quality", page.text)
+        self.assertIn("绝不返回源文本", page.text)
         self.assertIn("graphrag-construction-operation", page.text)
         self.assertIn("constructionFingerprint(bytes", page.text)
         self.assertIn("globalThis.crypto.subtle.digest('SHA-256', bytes)", page.text)
@@ -431,6 +446,11 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertNotIn("operation_key: `playground-${nonce}`", page.text)
         self.assertIn("requires_replacement", page.text)
         self.assertIn("replace_record_ids: replaceRecordIds", page.text)
+        self.assertIn('id="publication-removals"', page.text)
+        self.assertIn("remove_record_ids: removeRecordIds", page.text)
+        self.assertIn("!revisionIds.length && !removeRecordIds.length", page.text)
+        self.assertIn("同一 record 不能同时移除和替换", page.text)
+        self.assertIn("不会删除 source", page.text)
         self.assertIn("/v1/ontologies:import", page.text)
         self.assertIn('id="tab-graph"', page.text)
         self.assertIn('id="governance-workspace"', page.text)

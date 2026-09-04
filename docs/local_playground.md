@@ -100,6 +100,9 @@ The page shows:
   relationship-property and endpoint-cardinality T-Box contracts;
 - recoverable construction-job progress and bounded Chunk-outcome detail,
   immutable per-record revision history, and selectable publication candidates;
+- an independently authorized active-publication quality card showing the
+  exact T-Box/publication binding, graph digest, bounded counts, pass state,
+  issue metadata, and deterministic review sample Chunk IDs without source text;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a
@@ -149,10 +152,18 @@ Use the **知识构建** view for the complete property-graph governance loop:
 5. Refresh recoverable publication candidates and select current approved or
    previously published-but-inactive revisions. Replacement candidates are
    identified and sent with the required logical record IDs. Manual revision
-   IDs remain available for expert workflows. View publication history and use
+   IDs remain available for expert workflows. A separate record-ID input can
+   remove references from the active publication, including a removal-only
+   change set. IDs are deduplicated and cannot be removed and replaced in the
+   same request. This is an auditable publication change; it does not directly
+   delete the source document or immutable record revisions. View publication history and use
    CAS-protected rollback when required. History shows the exact published
    T-Box version so schema lineage remains visible.
-6. Retrieve the uploaded content. Only records in the active publication that
+6. Run the active graph quality audit as a full steward. The dedicated
+   `knowledge:quality` scope is required, complete publication ACL visibility is
+   mandatory, and missing/conflicted active state is shown without leaking
+   graph contents. The card contains only bounded metadata and Chunk IDs.
+7. Retrieve the uploaded content. Only records in the active publication that
    remain bound to current authorized evidence appear in **知识子图**.
 
 Expert imports are marked `AUTHORITATIVE`; LLM-extracted records are marked
@@ -173,8 +184,8 @@ persona administrator access:
 | `alpha-public`, `beta-public` | retrieval and ontology read |
 | `alpha-finance` | read plus knowledge construction |
 | `alpha-legal` | read plus knowledge review |
-| `alpha-finance + alpha-legal` | full local ontology/knowledge governance |
-| any `beta-board` identity | full local ontology/knowledge governance |
+| `alpha-finance + alpha-legal` | full local ontology/knowledge governance, including active graph quality |
+| any `beta-board` identity | full local ontology/knowledge governance, including active graph quality |
 
 The page shows the selected persona's scopes. A `403` is an expected,
 non-leaking result when a persona attempts a duty it does not hold.

@@ -23,6 +23,14 @@ from graphrag_prod.domain.ids import (
     entity_id as make_entity_id,
     relationship_property_value_id,
 )
+from graphrag_prod.graph.published_quality import (
+    Neo4jPublishedGraphQualityService,
+    PublishedGraphQualityAuthorizationError,
+    PublishedGraphQualityConflict,
+    PublishedGraphQualityLimitExceeded,
+    PublishedGraphQualityReport,
+    PublishedGraphQualityUnavailable,
+)
 from graphrag_prod.ingestion import IngestionConflict
 from graphrag_prod.knowledge import (
     ABoxRecordBatch,
@@ -91,6 +99,7 @@ from .knowledge_contracts import (
     PublicationCandidatesResponse,
     PublicationRequest,
     PublicationResponse,
+    PublishedGraphQualityResponse,
     RawLiteralInput,
     RelationshipPropertyInput,
     ReviewBatchRequest,
@@ -415,6 +424,49 @@ def _resolution_suggestion_payload(value: ResolutionSuggestion) -> dict[str, obj
     }
 
 
+def _published_quality_payload(
+    value: PublishedGraphQualityReport,
+) -> dict[str, object]:
+    """Project only bounded metadata; source/evidence text is never an API field."""
+
+    return {
+        "run_id": value.run_id,
+        "ruleset_version": value.ruleset_version,
+        "publication_id": value.publication_id,
+        "publication_generation": value.publication_generation,
+        "manifest_hash": value.manifest_hash,
+        "ontology_version_id": value.ontology_version_id,
+        "tbox_checksum": value.tbox_checksum,
+        "corpus_revision": value.corpus_revision,
+        "graph_digest": value.graph_digest,
+        "counts": dict(value.counts),
+        "total_issue_count": value.total_issue_count,
+        "total_error_count": value.total_error_count,
+        "issues_truncated": value.issues_truncated,
+        "issues": tuple(
+            {
+                "issue_id": item.issue_id,
+                "code": item.code,
+                "severity": item.severity.value,
+                "object_kind": item.object_kind,
+                "object_id": item.object_id,
+                "detail": item.detail,
+            }
+            for item in value.issues
+        ),
+        "review_sample": tuple(
+            {
+                "object_kind": item.object_kind,
+                "object_id": item.object_id,
+                "issue_codes": item.issue_codes,
+                "evidence_chunk_ids": item.evidence_chunk_ids,
+            }
+            for item in value.review_sample
+        ),
+        "passed": value.passed,
+    }
+
+
 class Neo4jKnowledgeOperations:
     """Real adapter over T-Box, A-Box, construction, review, and publication."""
 
@@ -430,10 +482,15 @@ class Neo4jKnowledgeOperations:
         publications: Any | None = None,
         construction_audit: Any | None = None,
         resolution_source: Any | None = None,
+        quality_service: Any | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if not callable(getattr(construction, "run", None)):
             raise TypeError("construction must implement run")
+        if quality_service is not None and not callable(
+            getattr(quality_service, "audit", None)
+        ):
+            raise TypeError("quality_service must implement audit")
         self.driver = driver
         self.database = database
         self.construction = construction
@@ -450,6 +507,9 @@ class Neo4jKnowledgeOperations:
             driver, database
         )
         self.resolution_source = resolution_source or Neo4jAuthoritativeEntitySource(
+            driver, database
+        )
+        self.quality_service = quality_service or Neo4jPublishedGraphQualityService(
             driver, database
         )
         self.literal_normalizer = TBoxLiteralNormalizer()
@@ -1532,6 +1592,30 @@ class Neo4jKnowledgeOperations:
         except (AttributeError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(PublicationHistoryResponse, payload))
+
+    def quality(self, principal: Principal) -> BackendResult:
+        """Audit the caller's complete active publication through a dedicated scope."""
+
+        _require_capability(principal, "knowledge:quality")
+        try:
+            report = self.quality_service.audit(principal)
+        except ApiRuntimeError:
+            raise
+        except PublishedGraphQualityAuthorizationError as error:
+            raise AuthorizationError() from error
+        except (PublishedGraphQualityConflict, PublishedGraphQualityLimitExceeded) as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except PublishedGraphQualityUnavailable as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        try:
+            payload = _published_quality_payload(report)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(PublishedGraphQualityResponse, payload))
 
 
 __all__ = ["Neo4jKnowledgeOperations"]

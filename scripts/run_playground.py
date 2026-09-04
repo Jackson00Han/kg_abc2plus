@@ -497,6 +497,7 @@ def build_playground_app(
             "ontology_governance": True,
             "human_review": True,
             "knowledge_publication": True,
+            "published_graph_quality": True,
             "evidence_subgraph": True,
             "extraction_provider": {
                 "protocol": "openai-compatible",

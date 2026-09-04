@@ -16,8 +16,10 @@ from graphrag_prod.api.knowledge_contracts import (
     KnowledgeConstructionResponse,
     OntologyListResponse,
     PublicationCandidatesResponse,
+    PublishedGraphQualityResponse,
 )
 from graphrag_prod.api.runtime import (
+    AuthorizationError,
     BackendResult,
     OperationEnvelope,
     OperationKind,
@@ -108,6 +110,34 @@ class _Backend:
             return BackendResult(ConstructionJobListResponse(items=()))
         if envelope.operation is OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES:
             return BackendResult(PublicationCandidatesResponse(items=()))
+        if envelope.operation is OperationKind.KNOWLEDGE_QUALITY:
+            return BackendResult(
+                PublishedGraphQualityResponse(
+                    run_id="published-graph-quality:" + "1" * 64,
+                    ruleset_version="published-governed-graph-quality-v1",
+                    publication_id="publication-1",
+                    publication_generation=1,
+                    manifest_hash="2" * 64,
+                    ontology_version_id="tbox-1",
+                    tbox_checksum="3" * 64,
+                    corpus_revision=4,
+                    graph_digest="4" * 64,
+                    counts={
+                        "revisions": 0,
+                        "entity_mentions": 0,
+                        "assertions": 0,
+                        "relationship_assertions": 0,
+                        "literal_assertions": 0,
+                        "canonical_entities": 0,
+                    },
+                    total_issue_count=0,
+                    total_error_count=0,
+                    issues_truncated=False,
+                    issues=(),
+                    review_sample=(),
+                    passed=True,
+                )
+            )
         if envelope.operation is OperationKind.READINESS:
             return BackendResult({"status": "ready", "checks": {"backend": "ok"}})
         raise ResourceNotFoundError()
@@ -148,6 +178,66 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.json()["code"], "forbidden")
         self.assertEqual(len(self.backend.envelopes), 1)
+
+    def test_published_quality_requires_dedicated_scope_and_returns_no_source_text(
+        self,
+    ) -> None:
+        denied = self.client.get(
+            "/v1/knowledge/quality",
+            headers=_headers(scope="knowledge:review"),
+        )
+        allowed = self.client.get(
+            "/v1/knowledge/quality",
+            headers=_headers(
+                tenant_id="tenant-alpha",
+                scope="knowledge:quality",
+                groups=("engineers", "public"),
+            ),
+        )
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.json()["code"], "forbidden")
+        self.assertEqual(allowed.status_code, 200)
+        self.assertNotIn("tenant_id", allowed.json())
+        self.assertNotIn("source_text", allowed.text)
+        self.assertNotIn("quoted_text", allowed.text)
+        self.assertEqual(len(self.backend.envelopes), 1)
+        envelope = self.backend.envelopes[0]
+        self.assertEqual(envelope.operation, OperationKind.KNOWLEDGE_QUALITY)
+        self.assertEqual(envelope.tenant_id, "tenant-alpha")
+        self.assertEqual(envelope.access_groups, frozenset({"engineers", "public"}))
+        self.assertEqual(envelope.payload, {})
+
+    def test_partial_acl_quality_denial_is_generic_and_non_leaking(self) -> None:
+        class _CompletePublicationBackend(_Backend):
+            def execute(self, envelope: OperationEnvelope, /) -> BackendResult:
+                if (
+                    envelope.operation is OperationKind.KNOWLEDGE_QUALITY
+                    and "public" not in envelope.access_groups
+                ):
+                    raise AuthorizationError()
+                return super().execute(envelope)
+
+        backend = _CompletePublicationBackend()
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=backend,
+        )
+        with TestClient(app) as client:
+            response = client.get(
+                "/v1/knowledge/quality",
+                headers=_headers(
+                    scope="knowledge:quality",
+                    groups=("engineers",),
+                ),
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["message"], "the operation is not permitted")
+        self.assertNotIn("public", response.text)
+        self.assertNotIn("revision", response.text)
 
     def test_identity_and_capability_injection_never_reaches_backend(self) -> None:
         for forbidden in (

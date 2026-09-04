@@ -28,6 +28,7 @@ from graphrag_prod.api.knowledge_contracts import (
     PublicationHistoryResponse,
     PublicationCandidatesResponse,
     PublicationResponse,
+    PublishedGraphQualityResponse,
     ReviewBatchResponse,
     ReviewQueueResponse,
 )
@@ -46,6 +47,7 @@ SCOPES = " ".join(
         "knowledge:construct",
         "knowledge:review",
         "knowledge:publish",
+        "knowledge:quality",
     )
 )
 NOW = datetime(2026, 9, 4, 10, 0, tzinfo=UTC)
@@ -101,6 +103,34 @@ def _publication() -> PublicationResponse:
         created_by="expert-1",
         created_at=NOW,
         activated_at=NOW,
+    )
+
+
+def _quality() -> PublishedGraphQualityResponse:
+    return PublishedGraphQualityResponse(
+        run_id="published-graph-quality:" + "1" * 64,
+        ruleset_version="published-governed-graph-quality-v1",
+        publication_id="publication-1",
+        publication_generation=1,
+        manifest_hash="2" * 64,
+        ontology_version_id="tbox-1",
+        tbox_checksum="3" * 64,
+        corpus_revision=7,
+        graph_digest="4" * 64,
+        counts={
+            "revisions": 1,
+            "entity_mentions": 1,
+            "assertions": 0,
+            "relationship_assertions": 0,
+            "literal_assertions": 0,
+            "canonical_entities": 1,
+        },
+        total_issue_count=0,
+        total_error_count=0,
+        issues_truncated=False,
+        issues=(),
+        review_sample=(),
+        passed=True,
     )
 
 
@@ -339,8 +369,50 @@ class _Knowledge:
         self._record("publication_candidates", principal, request)
         return BackendResult(PublicationCandidatesResponse(items=()))
 
+    def quality(self, principal: object) -> BackendResult:
+        self._record("quality", principal, None)
+        return BackendResult(_quality())
+
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
+    def test_publication_accepts_removal_only_and_rejects_remove_replace_overlap(
+        self,
+    ) -> None:
+        knowledge = _Knowledge()
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=GraphRAGApplicationBackend(
+                documents=_Documents(),
+                queries=_Queries(),
+                readiness=_Readiness(),
+                knowledge=knowledge,
+            ),
+        )
+        with TestClient(app) as client:
+            removal = client.post(
+                "/v1/knowledge/publications:publish",
+                headers=_headers(),
+                json={"remove_record_ids": ["record-1"]},
+            )
+            overlap = client.post(
+                "/v1/knowledge/publications:publish",
+                headers=_headers(),
+                json={
+                    "approved_revision_ids": ["revision-2"],
+                    "remove_record_ids": ["record-1"],
+                    "replace_record_ids": ["record-1"],
+                },
+            )
+
+        self.assertEqual(removal.status_code, 200)
+        self.assertEqual(overlap.status_code, 422)
+        self.assertEqual(len(knowledge.calls), 1)
+        request = knowledge.calls[0][2]
+        self.assertEqual(request.approved_revision_ids, ())
+        self.assertEqual(request.remove_record_ids, ("record-1",))
+
     def test_invalid_declared_unit_returns_http_422(self) -> None:
         class _RejectingKnowledge(_Knowledge):
             def ontology_import(
@@ -638,10 +710,11 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                     json={"expected_active_publication_id": "publication-2"},
                 ),
                 client.get("/v1/knowledge/publications?limit=10", headers=auth),
+                client.get("/v1/knowledge/quality", headers=auth),
             )
 
         self.assertTrue(all(response.status_code == 200 for response in responses))
-        self.assertEqual(len(knowledge.calls), 15)
+        self.assertEqual(len(knowledge.calls), 16)
         self.assertEqual(
             [name for name, _, _ in knowledge.calls],
             [
@@ -660,6 +733,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 "publication_candidates",
                 "rollback",
                 "history",
+                "quality",
             ],
         )
         for _, principal, _ in knowledge.calls:

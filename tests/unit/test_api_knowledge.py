@@ -24,6 +24,7 @@ from graphrag_prod.api.knowledge_contracts import (
     PublicationHistoryRequest,
     PublicationCandidatesRequest,
     PublicationRequest,
+    PublishedGraphQualityResponse,
     ReviewBatchRequest,
     ReviewQueueRequest,
     RecordRevisionHistoryRequest,
@@ -48,6 +49,16 @@ from graphrag_prod.construction import (
 )
 from graphrag_prod.domain import Principal, TypedLiteralValue
 from graphrag_prod.domain.ids import entity_id as make_entity_id
+from graphrag_prod.graph.published_quality import (
+    PublishedGraphQualityAuthorizationError,
+    PublishedGraphQualityConflict,
+    PublishedGraphQualityIssue,
+    PublishedGraphQualityLimitExceeded,
+    PublishedGraphQualityReport,
+    PublishedGraphQualityUnavailable,
+    PublishedGraphReviewSampleItem,
+)
+from graphrag_prod.graph.quality import IssueSeverity
 from graphrag_prod.knowledge import (
     AssertionRecord,
     EntityIdentity,
@@ -129,6 +140,50 @@ RELATIONSHIP_TBOX = TBoxVersion(
         ),
     ),
 )
+
+
+def _quality_report() -> PublishedGraphQualityReport:
+    return PublishedGraphQualityReport(
+        run_id="published-graph-quality:" + "1" * 64,
+        ruleset_version="published-governed-graph-quality-v1",
+        tenant_id="tenant-alpha",
+        publication_id="publication-1",
+        publication_generation=2,
+        manifest_hash="2" * 64,
+        ontology_version_id="tbox-1",
+        tbox_checksum="3" * 64,
+        corpus_revision=7,
+        graph_digest="4" * 64,
+        counts=(
+            ("assertions", 1),
+            ("canonical_entities", 2),
+            ("entity_mentions", 2),
+            ("literal_assertions", 0),
+            ("relationship_assertions", 1),
+            ("revisions", 3),
+        ),
+        total_issue_count=1,
+        total_error_count=0,
+        issues_truncated=False,
+        issues=(
+            PublishedGraphQualityIssue(
+                issue_id="published-quality-issue:" + "5" * 64,
+                code="ANOMALOUS_HUB",
+                severity=IssueSeverity.REVIEW,
+                object_kind="Entity",
+                object_id="entity-1",
+                detail="entity degree exceeds the configured review threshold",
+            ),
+        ),
+        review_sample=(
+            PublishedGraphReviewSampleItem(
+                object_kind="Entity",
+                object_id="entity-1",
+                issue_codes=("ANOMALOUS_HUB",),
+                evidence_chunk_ids=("chunk-1",),
+            ),
+        ),
+    )
 
 
 def _construct_payload(**changes: object) -> dict[str, object]:
@@ -231,6 +286,28 @@ def _candidate_literal() -> AssertionRecord:
 
 
 class KnowledgeContractTests(unittest.TestCase):
+    def test_published_quality_response_is_bounded_and_has_no_source_text_shape(
+        self,
+    ) -> None:
+        payload = _quality_report().to_dict()
+        payload.pop("tenant_id")
+        response = PublishedGraphQualityResponse.model_validate(payload)
+        self.assertEqual(len(response.issues), 1)
+        self.assertFalse(response.issues_truncated)
+
+        with self.assertRaises(ValidationError):
+            PublishedGraphQualityResponse.model_validate(
+                {**payload, "source_text": "protected source"}
+            )
+        with self.assertRaises(ValidationError):
+            PublishedGraphQualityResponse.model_validate(
+                {**payload, "total_issue_count": 2, "issues_truncated": False}
+            )
+        with self.assertRaises(ValidationError):
+            PublishedGraphQualityResponse.model_validate(
+                {**payload, "issues": payload["issues"] * 1_001}
+            )
+
     def test_construct_uses_strict_canonical_base64_and_supported_mime(self) -> None:
         for mime_type in (
             "text/plain",
@@ -362,6 +439,7 @@ class KnowledgeContractTests(unittest.TestCase):
             OperationKind.KNOWLEDGE_ROLLBACK: ("knowledge:publish", True),
             OperationKind.KNOWLEDGE_HISTORY: ("knowledge:publish", False),
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: ("knowledge:publish", False),
+            OperationKind.KNOWLEDGE_QUALITY: ("knowledge:quality", False),
         }
         for operation, (scope, write) in expected.items():
             with self.subTest(operation=operation):
@@ -399,6 +477,12 @@ class _Knowledge:
     review_queue = revision_history = review_batch = lambda *args: None
     resolution_suggestions = apply_resolution = lambda *args: None
     publish = rollback = history = publication_candidates = lambda *args: None
+
+    def quality(self, principal: Principal) -> BackendResult:
+        self.principal = principal
+        payload = _quality_report().to_dict()
+        payload.pop("tenant_id")
+        return BackendResult(PublishedGraphQualityResponse.model_validate(payload))
 
 
 class KnowledgeBackendTests(unittest.TestCase):
@@ -495,6 +579,30 @@ class KnowledgeBackendTests(unittest.TestCase):
         self.assertEqual(result.payload.items, ())
         assert knowledge.principal is not None
         self.assertEqual(knowledge.principal.tenant_id, "tenant-alpha")
+
+    def test_backend_routes_quality_with_its_independent_scope(self) -> None:
+        knowledge = _Knowledge()
+        backend = GraphRAGApplicationBackend(
+            documents=_Documents(),
+            queries=_Queries(),
+            readiness=_Readiness(),
+            knowledge=knowledge,
+        )
+        result = backend.execute(
+            OperationEnvelope(
+                operation=OperationKind.KNOWLEDGE_QUALITY,
+                request_id="request-1",
+                trace_id="trace-1",
+                principal_id="expert-1",
+                tenant_id="tenant-alpha",
+                access_groups=frozenset({"engineers"}),
+                scopes=frozenset({"knowledge:quality"}),
+                payload={},
+            )
+        )
+        self.assertTrue(result.payload.passed)
+        assert knowledge.principal is not None
+        self.assertEqual(knowledge.principal.capabilities, frozenset({"knowledge:quality"}))
 
 
 class _RowsSession:
@@ -789,6 +897,19 @@ class _Publications:
         return self.candidate_values
 
 
+class _Quality:
+    def __init__(self, value: object = None, failure: Exception | None = None) -> None:
+        self.value = _quality_report() if value is None else value
+        self.failure = failure
+        self.calls: list[Principal] = []
+
+    def audit(self, principal: Principal) -> object:
+        self.calls.append(principal)
+        if self.failure is not None:
+            raise self.failure
+        return self.value
+
+
 class KnowledgeAdapterTests(unittest.TestCase):
     def _adapter(
         self,
@@ -800,6 +921,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
         reviews: object | None = None,
         publications: object | None = None,
         construction_audit: object | None = None,
+        quality_service: object | None = None,
     ) -> Neo4jKnowledgeOperations:
         return Neo4jKnowledgeOperations(
             driver=driver,
@@ -809,8 +931,82 @@ class KnowledgeAdapterTests(unittest.TestCase):
             reviews=reviews or SimpleNamespace(),
             publications=publications or SimpleNamespace(),
             construction_audit=construction_audit,
+            quality_service=quality_service,
             clock=lambda: NOW,
         )
+
+    def test_quality_service_injection_requires_an_audit_boundary(self) -> None:
+        with self.assertRaisesRegex(TypeError, "quality_service must implement audit"):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                quality_service=object(),
+            )
+
+    def test_published_quality_adapter_is_dedicated_bounded_and_metadata_only(
+        self,
+    ) -> None:
+        quality = _Quality()
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:quality"}),
+        )
+        result = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            quality_service=quality,
+        ).quality(principal)
+
+        self.assertIsInstance(result.payload, PublishedGraphQualityResponse)
+        self.assertTrue(result.payload.passed)
+        self.assertEqual(result.payload.publication_id, "publication-1")
+        self.assertEqual(result.payload.counts.relationship_assertions, 1)
+        self.assertEqual(result.payload.issues[0].code, "ANOMALOUS_HUB")
+        self.assertEqual(result.payload.review_sample[0].evidence_chunk_ids, ("chunk-1",))
+        payload = result.payload.model_dump(mode="json")
+        self.assertNotIn("tenant_id", payload)
+        self.assertNotIn("source_text", str(payload))
+        self.assertNotIn("quoted_text", str(payload))
+        self.assertEqual(quality.calls, [principal])
+
+        review_only = dataclasses.replace(
+            principal,
+            capabilities=frozenset({"knowledge:review"}),
+        )
+        with self.assertRaises(AuthorizationError):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                quality_service=quality,
+            ).quality(review_only)
+        self.assertEqual(quality.calls, [principal])
+
+    def test_published_quality_failures_use_public_runtime_taxonomy(self) -> None:
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:quality"}),
+        )
+        cases = (
+            (PublishedGraphQualityAuthorizationError(), AuthorizationError),
+            (PublishedGraphQualityConflict(), ConflictError),
+            (PublishedGraphQualityLimitExceeded(), ConflictError),
+            (TimeoutError("driver address and source text"), DependencyTimeoutError),
+            (PublishedGraphQualityUnavailable(), DependencyUnavailableError),
+            (RuntimeError("secret backend detail"), DependencyUnavailableError),
+        )
+        for failure, expected in cases:
+            with self.subTest(failure=type(failure).__name__):
+                adapter = self._adapter(
+                    _Driver(),
+                    _KnowledgeStore(),
+                    quality_service=_Quality(failure=failure),
+                )
+                with self.assertRaises(expected):
+                    adapter.quality(principal)
 
     def test_authoritative_import_hydrates_acl_from_authorized_chunk(self) -> None:
         driver = _Driver()

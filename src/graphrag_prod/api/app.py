@@ -60,6 +60,7 @@ from .knowledge_contracts import (
     PublicationCandidatesResponse,
     PublicationRequest,
     PublicationResponse,
+    PublishedGraphQualityResponse,
     ReviewBatchRequest,
     ReviewBatchResponse,
     ReviewQueueResponse,
@@ -999,6 +1000,21 @@ def create_app(
                 "publication_id": publication_id,
                 "request": body.model_dump(mode="python"),
             },
+        )
+
+    @app.get(
+        "/v1/knowledge/quality",
+        response_model=PublishedGraphQualityResponse,
+    )
+    async def published_graph_quality(
+        request: Request,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_QUALITY,
+            {},
         )
 
     @app.get(

@@ -39,6 +39,8 @@ MAX_ONTOLOGY_PROPERTIES = 256
 MAX_KNOWLEDGE_RECORDS = 500
 MAX_REVIEW_RECORDS = 100
 MAX_PUBLICATION_RECORDS = 500
+MAX_PUBLISHED_QUALITY_ISSUES = 1_000
+MAX_PUBLISHED_QUALITY_SAMPLE = 20
 MAX_EVIDENCE_CHARS = 100_000
 MAX_BASE64_DOCUMENT_CHARS = 4 * ((MAX_DOCUMENT_BYTES + 2) // 3)
 
@@ -88,6 +90,36 @@ ExactEvidenceText = Annotated[
         strip_whitespace=False,
         min_length=1,
         max_length=MAX_EVIDENCE_CHARS,
+    ),
+]
+QualityCode = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Z][A-Z0-9_]*$",
+    ),
+]
+QualityObjectKind = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+    ),
+]
+QualityObjectId = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=1_024,
+        pattern=r"^[^\x00-\x20\x7f]+$",
     ),
 ]
 
@@ -1040,6 +1072,80 @@ class PublicationCandidatesResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class PublishedGraphQualityCountsResponse(StrictAPIModel):
+    revisions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
+    entity_mentions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
+    assertions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
+    relationship_assertions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
+    literal_assertions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
+    canonical_entities: Annotated[int, Field(strict=True, ge=0, le=50_000)]
+
+
+class PublishedGraphQualityIssueResponse(StrictAPIModel):
+    issue_id: Identifier
+    code: QualityCode
+    severity: Literal["ERROR", "WARNING", "REVIEW"]
+    object_kind: QualityObjectKind
+    object_id: QualityObjectId
+    detail: ShortText
+
+
+class PublishedGraphQualitySampleResponse(StrictAPIModel):
+    object_kind: QualityObjectKind
+    object_id: QualityObjectId
+    issue_codes: Annotated[
+        tuple[QualityCode, ...], Field(min_length=1, max_length=MAX_PUBLISHED_QUALITY_ISSUES)
+    ]
+    evidence_chunk_ids: Annotated[tuple[Identifier, ...], Field(max_length=3)]
+
+    @field_validator("issue_codes", "evidence_chunk_ids", mode="before")
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class PublishedGraphQualityResponse(StrictAPIModel):
+    run_id: Identifier
+    ruleset_version: ShortText
+    publication_id: Identifier
+    publication_generation: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    manifest_hash: Digest
+    ontology_version_id: Identifier
+    tbox_checksum: Digest
+    corpus_revision: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+    graph_digest: Digest
+    counts: PublishedGraphQualityCountsResponse
+    total_issue_count: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+    total_error_count: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+    issues_truncated: bool
+    issues: Annotated[
+        tuple[PublishedGraphQualityIssueResponse, ...],
+        Field(max_length=MAX_PUBLISHED_QUALITY_ISSUES),
+    ]
+    review_sample: Annotated[
+        tuple[PublishedGraphQualitySampleResponse, ...],
+        Field(max_length=MAX_PUBLISHED_QUALITY_SAMPLE),
+    ]
+    passed: bool
+
+    @field_validator("issues", "review_sample", mode="before")
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def consistent_totals(self) -> Self:
+        if self.total_error_count > self.total_issue_count:
+            raise ValueError("quality error count cannot exceed issue count")
+        if len(self.issues) > self.total_issue_count:
+            raise ValueError("returned issues cannot exceed total issue count")
+        if self.issues_truncated != (len(self.issues) < self.total_issue_count):
+            raise ValueError("issues_truncated must match the returned issue count")
+        if self.passed != (self.total_error_count == 0):
+            raise ValueError("passed must match the quality error count")
+        return self
+
+
 __all__ = [
     "AuthoritativeImportRequest",
     "AuthoritativeImportResponse",
@@ -1066,6 +1172,10 @@ __all__ = [
     "PublicationCandidatesResponse",
     "PublicationRequest",
     "PublicationResponse",
+    "PublishedGraphQualityCountsResponse",
+    "PublishedGraphQualityIssueResponse",
+    "PublishedGraphQualityResponse",
+    "PublishedGraphQualitySampleResponse",
     "RawLiteralInput",
     "ReviewBatchRequest",
     "ReviewBatchResponse",

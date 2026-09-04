@@ -58,6 +58,9 @@ trust-aware evidence subgraphs—is documented in
 [`docs/industrial_knowledge_governance.md`](docs/industrial_knowledge_governance.md),
 with its authenticated routes and request boundaries in
 [`docs/industrial_knowledge_api.md`](docs/industrial_knowledge_api.md).
+The complete active-publication integrity audit and its source-text-free output
+boundary are documented in
+[`docs/published_graph_quality.md`](docs/published_graph_quality.md).
 Extraction precision, exact-evidence, typed temporal-property, entity-resolution,
 human-review, and drift gates are documented in
 [`docs/knowledge_extraction_quality_gates.md`](docs/knowledge_extraction_quality_gates.md).

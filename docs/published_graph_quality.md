@@ -7,7 +7,10 @@ inactive publication as the live governed A-Box.
 
 ## Trust boundary
 
-An audit requires `knowledge:quality` or `knowledge:review` and complete access
+The internal service accepts `knowledge:quality` or the existing trusted review
+capability for non-HTTP callers. The public `GET /v1/knowledge/quality` route is
+stricter: it requires the independent `knowledge:quality` scope; review or
+publication permission does not imply audit permission. Every audit requires complete access
 to every source revision in the active publication. The database query applies
 tenant and Chunk ACL predicates before returning metadata. If the publication,
 its exact T-Box binding, an evidence path, or the caller's complete visibility
@@ -18,6 +21,13 @@ The operation is bounded by server-owned limits for revisions, entities,
 issues, review samples, anomalous hub degree, and transaction time. Reports
 carry stable IDs and a graph digest so an unchanged active graph produces a
 repeatable result.
+
+The HTTP response contains only active publication/T-Box identifiers and
+digests, fixed counts, pass/error totals, at most 1,000 issue metadata records,
+and at most 20 deterministic sample objects with up to three evidence Chunk IDs
+each. It never exposes source or quoted evidence text. The local Playground
+renders the same bounded response in its **活动已发布图谱质量** card for full
+steward identities.
 
 ## Checks
 

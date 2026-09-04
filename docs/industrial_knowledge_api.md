@@ -25,6 +25,7 @@ selected group must be a non-empty subset of the verified JWT groups.
 | List recoverable publication candidates | `GET /v1/knowledge/publication-candidates` | `knowledge:publish` |
 | Roll back a publication | `POST /v1/knowledge/publications/{id}:rollback` | `knowledge:publish` |
 | Read publication history | `GET /v1/knowledge/publications` | `knowledge:publish` |
+| Audit the complete active publication | `GET /v1/knowledge/quality` | `knowledge:quality` |
 
 Upload content is canonical base64 and decodes to at most 5 MiB. Supported MIME
 types are `text/plain`, `text/markdown`, `text/csv`, and `application/json`.
@@ -100,3 +101,15 @@ All mutations are non-retry-safe at the HTTP runner. T-Box publication,
 knowledge review, and publication/rollback preserve their underlying CAS
 preconditions. Unknown and cross-tenant IDs share the same public not-found
 response.
+
+The active-publication quality read is independently authorized and retry-safe.
+`knowledge:review` or `knowledge:publish` does not imply `knowledge:quality` at
+the HTTP boundary. A successful response is strictly bounded to 1,000 issue
+metadata records, 20 deterministic review samples, and three evidence Chunk IDs
+per sample. It returns publication/T-Box identities and digests, fixed graph
+counts, pass/error totals, issue codes/details, and review sample IDs; it has no
+source-text or quoted-evidence field. Incomplete publication ACL returns the
+generic forbidden response. Missing/ambiguous active publication, a broken
+exact T-Box binding, or a server audit-bound conflict returns the generic
+conflict response, while backend availability failures use the existing
+dependency taxonomy.

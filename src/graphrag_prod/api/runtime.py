@@ -87,6 +87,7 @@ class OperationKind(str, Enum):
     KNOWLEDGE_ROLLBACK = "knowledge_rollback"
     KNOWLEDGE_HISTORY = "knowledge_history"
     KNOWLEDGE_PUBLICATION_CANDIDATES = "knowledge_publication_candidates"
+    KNOWLEDGE_QUALITY = "knowledge_quality"
 
     @property
     def is_write(self) -> bool:
@@ -118,6 +119,7 @@ class OperationKind(str, Enum):
             self.ENTITY_RESOLUTION_SUGGEST,
             self.KNOWLEDGE_HISTORY,
             self.KNOWLEDGE_PUBLICATION_CANDIDATES,
+            self.KNOWLEDGE_QUALITY,
         }
 
 
@@ -146,6 +148,7 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_ROLLBACK: "knowledge:publish",
         OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
         OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: "knowledge:publish",
+        OperationKind.KNOWLEDGE_QUALITY: "knowledge:quality",
     }
 )
 

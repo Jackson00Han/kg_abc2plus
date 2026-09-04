@@ -2,9 +2,6 @@
 
 ## Deferred
 
-- [ ] Add a broader set of manually authored, non-Gold questions to evaluate
-  real-world semantic retrieval behavior beyond the 49 reviewed fixtures.
-
 - [ ] Evaluate and add an independent reranker after the graph-expansion
   tuning is validated. Compare the current embedding-cosine candidate rerank
   against an established cross-encoder or provider reranker on the versioned
@@ -40,6 +37,18 @@
   assertions without approving those assertions.
 
 ## Completed follow-ups
+
+- [x] Add the independently authored and reviewed `semantic-holdout-v1` beyond
+  the 49 builder-coupled questions. Its 14 balanced cases passed the recorded
+  real-provider run with complete-evidence Recall@5 0.90, evidence-ID Recall@5
+  0.8667, MRR 0.7583, and zero forbidden Chunk exposure.
+
+- [x] Add a bounded active-publication graph-quality audit with complete ACL and
+  exact T-Box binding, expose it through an independent `knowledge:quality`
+  API/Playground card, and keep source text out of the response.
+
+- [x] Expose auditable active-publication record removal in the Playground,
+  including removal-only change sets without directly deleting source data.
 
 - [x] Add resumable knowledge-construction operations: bounded ACL-safe job
   status/list reads, immutable governed-record revision history, recoverable

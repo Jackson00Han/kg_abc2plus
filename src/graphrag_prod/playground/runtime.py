@@ -36,6 +36,7 @@ PLAYGROUND_SCOPES = (
     "knowledge:construct",
     "knowledge:review",
     "knowledge:publish",
+    "knowledge:quality",
 )
 PLAYGROUND_RETRIEVAL_LIMITS = RetrievalLimits(
     top_k=5,
@@ -311,6 +312,7 @@ class PlaygroundCatalog:
             "ontology_governance": False,
             "human_review": False,
             "knowledge_publication": False,
+            "published_graph_quality": False,
             "evidence_subgraph": False,
             **self._capabilities,
         }
