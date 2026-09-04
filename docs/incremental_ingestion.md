@@ -118,6 +118,52 @@ An old in-flight upsert carries the prior source generation and cannot
 resurrect a deleted document. Repeating the same delete returns the committed
 terminal result; a new delete against an already absent document is a no-op.
 
+Physical deletion is restricted to documents that have never entered the
+governed knowledge workflow. Before creating a tombstone or mutating any source
+node, the delete transaction checks the exact tenant/document boundary for all
+governed mention/assertion revisions, current or historical knowledge
+publications, construction-job audit records, and evidence-bearing
+`RelationshipPropertyValue` nodes. It checks both immutable identity properties
+and evidence edges, so a partially damaged edge/property pair fails closed
+instead of silently severing provenance. Such a document must use governed
+logical retirement, which removes it from active retrieval while retaining its
+source, review, publication, and activation audit chain. A foreign tenant with
+the same document identifier cannot affect this decision, and the public API
+maps every blocker to the same non-enumerating conflict response.
+
+This guard deliberately does not change the Stage 3 semantics for an
+ungoverned document: its physical delete remains atomic, repeatable, and
+tombstone-fenced. A future compliance purge that also destroys governed audit
+history would require a separate, explicitly authorized retention workflow; it
+must not reuse the generic delete operation.
+
+### Governed logical retirement
+
+`Neo4jDocumentRetirementService` is the audit-preserving withdrawal path for
+governed sources. A principal needs the `knowledge:lifecycle` capability and
+complete access to every Chunk owned by the active document. The request binds
+an operation key to the expected active snapshot and source generation; the
+service rechecks that compare-and-swap boundary while holding the tenant corpus,
+publication, and document locks.
+
+Retirement is allowed only when no active publication, current review record,
+or in-flight construction/ingestion job depends on the source. It removes the
+active snapshot/version pointers, clears every owned Chunk's retrieval scope,
+advances the corpus revision, and invalidates the active embedding generation.
+It does **not** delete source text, versions, Chunks, governed revisions, review
+decisions, or publication history. The Document, Snapshot, Version, Tombstone,
+and immutable `RETIRE` job retain actor, time, before/after generation, and
+exact graph links. An exact replay returns the same result only after validating
+that complete audit projection; missing links or changed fields fail closed.
+
+Re-ingesting the same content is an explicit managed reactivation. It restores
+the current Document/Snapshot/Version lifecycle projection but never edits the
+prior tombstone or retirement event, so a later second retirement produces a
+new immutable event. The bounded active-document listing returns metadata,
+source generation, ACL, active IDs, Chunk count, and stable blocker codes only;
+it never returns source text and hides partially authorized or provenance-broken
+documents.
+
 ## Vector Generation Cutover
 
 `Neo4jEmbeddingIndexManager` provides an explicit migration path:

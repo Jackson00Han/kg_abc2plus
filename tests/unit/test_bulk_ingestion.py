@@ -297,6 +297,26 @@ class BulkInitialLoadUnitTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("scripts.", source)
 
+    def test_bulk_refuses_to_clear_current_retirement_marker(self) -> None:
+        source = (ROOT / "src" / "graphrag_prod" / "ingestion" / "bulk.py").read_text(
+            encoding="utf-8"
+        )
+        for property_name in (
+            "document.retirement_id",
+            "document.retirement_request_fingerprint",
+            "document.retired_at",
+            "document.retired_by_principal_id",
+            "document.retired_active_snapshot_id",
+            "document.retired_active_version_id",
+        ):
+            self.assertIn(property_name, source)
+        self.assertIn(
+            "bulk initial load cannot clear managed retirement audit state",
+            source,
+        )
+        self.assertNotIn("REMOVE document.retirement_id", source)
+        self.assertNotIn("DELETE tombstone", source)
+
 
 if __name__ == "__main__":
     unittest.main()

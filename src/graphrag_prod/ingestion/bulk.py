@@ -673,6 +673,16 @@ class Neo4jBulkInitialLoader:
                    document.access_policy_id AS access_policy_id,
                    document.access_policy_version AS access_policy_version,
                    document.access_groups AS access_groups,
+                   document.lifecycle_status AS lifecycle_status,
+                   document.retirement_id AS retirement_id,
+                   document.retirement_request_fingerprint
+                       AS retirement_request_fingerprint,
+                   document.retired_at AS retired_at,
+                   document.retired_by_principal_id AS retired_by_principal_id,
+                   document.retired_active_snapshot_id
+                       AS retired_active_snapshot_id,
+                   document.retired_active_version_id
+                       AS retired_active_version_id,
                    collect(DISTINCT active_snapshot.snapshot_id)
                        AS active_snapshot_ids,
                    collect(DISTINCT active_version.version_id)
@@ -689,6 +699,20 @@ class Neo4jBulkInitialLoader:
         if _result_value(state, "lifecycle_mode") != "OFFLINE_INITIAL_LOAD":
             raise IngestionConflict(
                 "bulk initial load is disabled after managed ingestion begins"
+            )
+        retirement_markers = (
+            "retirement_id",
+            "retirement_request_fingerprint",
+            "retired_at",
+            "retired_by_principal_id",
+            "retired_active_snapshot_id",
+            "retired_active_version_id",
+        )
+        if _result_value(state, "lifecycle_status") not in (None, "ACTIVE") or any(
+            _result_value(state, name) is not None for name in retirement_markers
+        ):
+            raise IngestionConflict(
+                "bulk initial load cannot clear managed retirement audit state"
             )
         if int(_result_value(state, "source_generation")) != plan.source_generation:
             raise IngestionConflict(
@@ -904,7 +928,8 @@ class Neo4jBulkInitialLoader:
                 document.access_policy_id = $policy_id,
                 document.access_policy_version = $policy_version,
                 document.access_groups = $groups,
-                document.generation = $generation
+                document.generation = $generation,
+                document.lifecycle_status = 'ACTIVE'
             """,
             tenant_id=plan.tenant_id,
             document_id=plan.document_id,

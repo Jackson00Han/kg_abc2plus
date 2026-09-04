@@ -134,7 +134,7 @@ class Neo4jBulkInitialLoadIntegrationTests(unittest.TestCase):
             ),
         )
 
-    def test_create_replay_v2_retirement_and_retrieval_compatibility(self) -> None:
+    def test_create_replay_v2_and_retrieval_compatibility(self) -> None:
         tenant_id = "tenant-bulk-lifecycle"
         v1 = self._with_partitioned_chunk_access(make_plan(tenant_id=tenant_id))
         created = self.loader.ingest(v1)
@@ -306,6 +306,73 @@ class Neo4jBulkInitialLoadIntegrationTests(unittest.TestCase):
             "disabled after managed ingestion begins",
         ):
             self.loader.ingest(v2)
+
+    def test_bulk_fails_closed_without_clearing_retirement_markers(self) -> None:
+        tenant_id = "tenant-bulk-retirement-guard"
+        v1 = make_plan(tenant_id=tenant_id)
+        self.loader.ingest(v1)
+        self.driver.execute_query(
+            """
+            MATCH (document:Document {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })
+            SET document.lifecycle_status = 'RETIRED',
+                document.retirement_id = 'unanchored-retirement',
+                document.retirement_request_fingerprint = 'unanchored-fingerprint',
+                document.retired_at = datetime('2026-01-02T00:00:00Z'),
+                document.retired_by_principal_id = 'unknown-operator',
+                document.retired_active_snapshot_id = $snapshot_id,
+                document.retired_active_version_id = $version_id
+            """,
+            tenant_id=tenant_id,
+            document_id=v1.document_id,
+            snapshot_id=v1.snapshot.snapshot_id,
+            version_id=v1.version_id,
+            database_=self.database,
+        )
+        v2 = make_plan(
+            tenant_id=tenant_id,
+            operation_key="bulk-retirement-guard-v2",
+            chunk_specs=CHUNKS_V2,
+            version_number=2,
+            expected_active_snapshot_id=v1.snapshot.snapshot_id,
+        )
+
+        with self.assertRaisesRegex(
+            IngestionConflict,
+            "cannot clear managed retirement audit state",
+        ):
+            self.loader.ingest(v2)
+
+        state = self._records(
+            """
+            MATCH (corpus:TenantCorpusState {tenant_id: $tenant_id})
+            MATCH (document:Document {
+                tenant_id: $tenant_id,
+                document_id: $document_id
+            })-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot)
+            RETURN corpus.corpus_revision AS corpus_revision,
+                   document.lifecycle_status AS lifecycle_status,
+                   document.retirement_id AS retirement_id,
+                   document.retirement_request_fingerprint AS fingerprint,
+                   document.retired_by_principal_id AS actor,
+                   snapshot.snapshot_id AS active_snapshot_id,
+                   COUNT {
+                       MATCH (:DocumentVersion {version_id: $new_version_id})
+                   } AS new_version_count
+            """,
+            tenant_id=tenant_id,
+            document_id=v1.document_id,
+            new_version_id=v2.version_id,
+        )[0]
+        self.assertEqual(state["corpus_revision"], 1)
+        self.assertEqual(state["lifecycle_status"], "RETIRED")
+        self.assertEqual(state["retirement_id"], "unanchored-retirement")
+        self.assertEqual(state["fingerprint"], "unanchored-fingerprint")
+        self.assertEqual(state["actor"], "unknown-operator")
+        self.assertEqual(state["active_snapshot_id"], v1.snapshot.snapshot_id)
+        self.assertEqual(state["new_version_count"], 0)
 
     def test_stable_id_conflict_rolls_back_the_document_transaction(self) -> None:
         plan = make_plan(tenant_id="tenant-bulk-conflict")

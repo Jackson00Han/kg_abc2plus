@@ -225,6 +225,30 @@ active publication pointer while retaining all revisions, manifests, and
 activation history. Stale source snapshots, unauthorized evidence, and T-Box
 mismatches fail closed.
 
+Once a source has a governed revision, publication/snapshot binding,
+construction audit record, or evidence-bearing relationship-property value,
+the generic document delete endpoint cannot physically remove it. Its
+tenant/document-scoped preflight runs before the tombstone and source mutation,
+also recognizing damaged records through either their immutable evidence
+identity or their surviving Chunk edge. The operation returns one generic
+conflict rather than disclosing which governed record exists. Operators must
+use logical retirement to withdraw the source from active vector, BM25, and
+graph retrieval while preserving review and publication history. Destructive
+retention erasure is intentionally outside this workflow and would require its
+own governed policy and audit design.
+
+Governed logical retirement requires `knowledge:lifecycle`, complete Chunk
+visibility, an expected active-snapshot CAS, and the current source generation.
+It is blocked by an active publication, a current candidate/quarantined/approved
+review revision, or an in-flight construction/ingestion job. A successful
+retirement atomically removes active pointers and retrieval eligibility,
+invalidates the tenant embedding generation, and advances the corpus revision,
+while preserving the source, every review revision, and immutable actor/time
+audit links. Re-ingesting identical content may reactivate the source, but it
+cannot rewrite a prior retirement event. The lifecycle inventory exposes only
+bounded metadata and stable blocker codes to a fully authorized steward; it is
+not a document-content export.
+
 Relationship endpoint cardinality is a closed-world publication invariant.
 Across the complete final manifest, source cardinality counts distinct target
 IDs per predicate/source and target cardinality counts distinct source IDs per
@@ -252,3 +276,14 @@ requested governance policy. Tenant and access-group checks apply to the
 source Chunk on every graph path. Graph results always return the evidence
 Chunks that support them; graph structure never becomes independent factual
 evidence.
+
+## Active publication quality
+
+The governed A-Box can be audited from its active `KnowledgePublication`, not
+only from extraction fixtures or pre-publication snapshots. The bounded audit
+reconciles immutable revisions, exact source evidence, the pinned T-Box,
+current navigation materializations, relationship-property values, entity and
+endpoint cardinalities, duplicates, orphans, and anomalous hubs. It requires
+complete tenant/ACL visibility and never returns source text. See
+[`published_graph_quality.md`](published_graph_quality.md) for the executable
+boundary and limitations.

@@ -1068,6 +1068,7 @@ class Neo4jIngestionService:
             raise IngestionConflict("active snapshot changed during publication")
         if current_snapshot != plan.expected_active_snapshot_id:
             raise IngestionConflict("active snapshot CAS failed")
+        self._assert_reactivation_audit_state(state)
 
         document = plan.bundles[0].document
         chunk_access_rows = _chunk_access_rows(plan)
@@ -1100,7 +1101,14 @@ class Neo4jIngestionService:
                 document.access_policy_id = $policy_id,
                 document.access_policy_version = $policy_version,
                 document.access_groups = $groups,
-                document.generation = $generation
+                document.generation = $generation,
+                document.lifecycle_status = 'ACTIVE'
+            REMOVE document.retirement_id,
+                   document.retirement_request_fingerprint,
+                   document.retired_at,
+                   document.retired_by_principal_id,
+                   document.retired_active_snapshot_id,
+                   document.retired_active_version_id
             WITH document
             UNWIND $chunk_access_rows AS row
             MATCH (chunk:Chunk {chunk_id: row.chunk_id, tenant_id: $tenant_id})
@@ -1175,7 +1183,15 @@ class Neo4jIngestionService:
             DELETE old_version
             MERGE (document)-[:ACTIVE_SNAPSHOT]->(snapshot)
             MERGE (document)-[:ACTIVE_VERSION]->(version)
-            SET snapshot.build_state = 'PUBLISHED', snapshot.published_at = $now
+            SET snapshot.build_state = 'PUBLISHED',
+                snapshot.published_at = $now,
+                version.lifecycle_status = 'ACTIVE'
+            REMOVE snapshot.retirement_id,
+                   snapshot.retired_at,
+                   snapshot.retired_by_principal_id,
+                   version.retirement_id,
+                   version.retired_at,
+                   version.retired_by_principal_id
             """,
             document_id=plan.document_id,
             tenant_id=plan.tenant_id,
@@ -1503,13 +1519,105 @@ class Neo4jIngestionService:
                 tenant_id: $tenant_id,
                 document_id: $document_id
             })
+            OPTIONAL MATCH (retirement_event:IngestionJob {
+                job_id: document.retirement_id
+            })
             RETURN snapshot.snapshot_id AS active_snapshot_id,
                    version.version_id AS active_version_id,
                    coalesce(document.generation, tombstone.generation, 0) AS generation,
                    document.access_policy_id AS access_policy_id,
                    document.access_policy_version AS access_policy_version,
                    document.access_groups AS access_groups,
-                   document.title AS title
+                   document.title AS title,
+                   document.lifecycle_status AS lifecycle_status,
+                   document.retirement_id AS retirement_id,
+                   document.retirement_request_fingerprint
+                       AS retirement_request_fingerprint,
+                   document.retired_at AS retired_at,
+                   document.retired_by_principal_id AS retired_by_principal_id,
+                   document.retired_active_snapshot_id
+                       AS retired_active_snapshot_id,
+                   document.retired_active_version_id
+                       AS retired_active_version_id,
+                   CASE
+                       WHEN document.lifecycle_status <> 'RETIRED' THEN false
+                       ELSE tombstone.tenant_id = document.tenant_id
+                        AND tombstone.document_id = document.document_id
+                        AND tombstone.retirement_id = document.retirement_id
+                        AND tombstone.retirement_request_fingerprint
+                            = document.retirement_request_fingerprint
+                        AND tombstone.generation = document.generation
+                        AND tombstone.retired_snapshot_id
+                            = document.retired_active_snapshot_id
+                        AND tombstone.retired_version_id
+                            = document.retired_active_version_id
+                        AND tombstone.retired_by_principal_id
+                            = document.retired_by_principal_id
+                        AND tombstone.retired_at = document.retired_at
+                        AND retirement_event.tenant_id = document.tenant_id
+                        AND retirement_event.document_id = document.document_id
+                        AND retirement_event.operation = 'RETIRE'
+                        AND retirement_event.operation_key
+                            = retirement_event.idempotency_key
+                        AND retirement_event.status = 'SUCCEEDED'
+                        AND retirement_event.phase = 'COMPLETE'
+                        AND retirement_event.outcome = 'RETIRED'
+                        AND retirement_event.request_fingerprint
+                            = document.retirement_request_fingerprint
+                        AND retirement_event.target_snapshot_id
+                            = document.retired_active_snapshot_id
+                        AND retirement_event.expected_active_snapshot_id
+                            = retirement_event.target_snapshot_id
+                        AND retirement_event.target_version_id
+                            = document.retired_active_version_id
+                        AND retirement_event.source_generation_after
+                            = document.generation
+                        AND retirement_event.source_generation_after
+                            = retirement_event.source_generation + 1
+                        AND tombstone.source_generation_before
+                            = retirement_event.source_generation
+                        AND tombstone.corpus_revision
+                            = retirement_event.corpus_revision
+                        AND retirement_event.retired_by_principal_id
+                            = document.retired_by_principal_id
+                        AND retirement_event.retired_at = document.retired_at
+                        AND retirement_event.finished_at = retirement_event.retired_at
+                        AND COUNT {
+                            MATCH (tombstone)-[:HAS_RETIREMENT_EVENT]->(
+                                retirement_event
+                            )
+                        } = 1
+                        AND COUNT {
+                            MATCH (retirement_event)-[:RETIRED_DOCUMENT]->(document)
+                        } = 1
+                        AND COUNT {
+                            MATCH (retirement_event)-[:RETIRED_DOCUMENT]->(:Document)
+                        } = 1
+                        AND COUNT {
+                            MATCH (retirement_event)-[:RETIRED_SNAPSHOT]->(
+                                retired_snapshot:KnowledgeSnapshot
+                            )
+                            WHERE retired_snapshot.snapshot_id
+                                = document.retired_active_snapshot_id
+                        } = 1
+                        AND COUNT {
+                            MATCH (retirement_event)-[:RETIRED_SNAPSHOT]->(
+                                :KnowledgeSnapshot
+                            )
+                        } = 1
+                        AND COUNT {
+                            MATCH (retirement_event)-[:RETIRED_VERSION]->(
+                                retired_version:DocumentVersion
+                            )
+                            WHERE retired_version.version_id
+                                = document.retired_active_version_id
+                        } = 1
+                        AND COUNT {
+                            MATCH (retirement_event)-[:RETIRED_VERSION]->(
+                                :DocumentVersion
+                            )
+                        } = 1
+                   END AS retirement_audit_valid
             """,
             tenant_id=tenant_id,
             document_id=document_id,
@@ -1517,6 +1625,40 @@ class Neo4jIngestionService:
         if record is None:
             raise IngestionConflict("staged document disappeared before publish")
         return dict(record)
+
+    @staticmethod
+    def _assert_reactivation_audit_state(state: dict[str, Any]) -> None:
+        """Refuse to erase a current retirement projection without its audit."""
+
+        marker_names = (
+            "retirement_id",
+            "retirement_request_fingerprint",
+            "retired_at",
+            "retired_by_principal_id",
+            "retired_active_snapshot_id",
+            "retired_active_version_id",
+        )
+        lifecycle_status = state.get("lifecycle_status")
+        marker_present = any(state.get(name) is not None for name in marker_names)
+        active_pointer_present = any(
+            state.get(name) is not None
+            for name in ("active_snapshot_id", "active_version_id")
+        )
+        if lifecycle_status in (None, "ACTIVE"):
+            if marker_present:
+                raise IngestionConflict(
+                    "document retirement projection lacks an immutable audit"
+                )
+            return
+        if (
+            lifecycle_status != "RETIRED"
+            or active_pointer_present
+            or not marker_present
+            or state.get("retirement_audit_valid") is not True
+        ):
+            raise IngestionConflict(
+                "document retirement projection lacks an immutable audit"
+            )
 
     @staticmethod
     def _lock_tenant_corpus_state_tx(
@@ -1794,6 +1936,19 @@ class Neo4jIngestionService:
         if active != expected_active_snapshot_id:
             raise IngestionConflict("active snapshot CAS failed for deletion")
 
+        # Governed A-Box revisions and publication/construction audit records
+        # are append-only evidence.  The legacy Stage 3 physical delete would
+        # otherwise DETACH DELETE their source Chunk/Snapshot edges while
+        # leaving an apparently valid audit history behind.  Check every
+        # supported governed dependency before the tombstone or any source
+        # node is mutated.  Governed sources must use the audit-preserving
+        # logical-retirement workflow instead.
+        self._assert_no_governed_delete_references_tx(
+            tx,
+            tenant_id,
+            document_id,
+        )
+
         next_generation = source_generation + 1
         tx.run(
             """
@@ -1910,3 +2065,125 @@ class Neo4jIngestionService:
             lease_token,
             now,
         )
+
+    @staticmethod
+    def _assert_no_governed_delete_references_tx(
+        tx: Any,
+        tenant_id: str,
+        document_id: str,
+    ) -> None:
+        """Reject physical deletion when it would sever governed audit data.
+
+        Every branch is closed over both tenant and document.  A foreign
+        tenant that happens to use the same external ``document_id`` cannot
+        affect, or be detected through, this decision.  Both denormalized
+        evidence identity and graph edges are checked so a partially damaged
+        graph fails closed rather than allowing the destructive operation.
+        """
+
+        record = tx.run(
+            """
+            RETURN EXISTS {
+                MATCH (revision {tenant_id: $tenant_id})
+                WHERE (
+                    revision:GovernedEntityMentionRevision
+                    OR revision:GovernedAssertionRevision
+                )
+                  AND (
+                      revision.document_id = $document_id
+                      OR EXISTS {
+                          MATCH (revision)-[evidence]->(
+                              chunk:Chunk {
+                                  tenant_id: $tenant_id,
+                                  document_id: $document_id
+                              }
+                          )
+                          WHERE type(evidence) IN ['IN_CHUNK', 'EVIDENCED_BY']
+                      }
+                  )
+            } AS governed_revision_reference,
+            EXISTS {
+                MATCH (publication:KnowledgePublication {
+                    tenant_id: $tenant_id
+                })
+                WHERE EXISTS {
+                    MATCH (publication)-[snapshot_binding]->(
+                        snapshot:KnowledgeSnapshot {
+                            tenant_id: $tenant_id,
+                            document_id: $document_id
+                        }
+                    )
+                    WHERE type(snapshot_binding) = 'USES_KNOWLEDGE_SNAPSHOT'
+                }
+                   OR EXISTS {
+                       MATCH (publication)-[published_revision]->(
+                           revision {tenant_id: $tenant_id}
+                       )
+                       WHERE type(published_revision)
+                                 = 'PUBLISHES_KNOWLEDGE_REVISION'
+                         AND (
+                           revision:GovernedEntityMentionRevision
+                           OR revision:GovernedAssertionRevision
+                       )
+                         AND (
+                             revision.document_id = $document_id
+                             OR EXISTS {
+                                 MATCH (revision)-[evidence]->(
+                                     chunk:Chunk {
+                                         tenant_id: $tenant_id,
+                                         document_id: $document_id
+                                     }
+                                 )
+                                 WHERE type(evidence) IN [
+                                     'IN_CHUNK',
+                                     'EVIDENCED_BY'
+                                 ]
+                             }
+                         )
+                   }
+            } AS knowledge_publication_reference,
+            EXISTS {
+                MATCH (value:RelationshipPropertyValue {
+                    tenant_id: $tenant_id
+                })
+                WHERE value.document_id = $document_id
+                   OR EXISTS {
+                       MATCH (value)-[evidence]->(chunk:Chunk {
+                           tenant_id: $tenant_id,
+                           document_id: $document_id
+                       })
+                       WHERE type(evidence) = 'EVIDENCED_BY'
+                   }
+            } AS relationship_property_reference,
+            EXISTS {
+                MATCH (job:KnowledgeConstructionJob {
+                    tenant_id: $tenant_id,
+                    document_id: $document_id
+                })
+            } OR EXISTS {
+                MATCH (outcome:KnowledgeConstructionChunkOutcome {
+                    tenant_id: $tenant_id
+                })-[chunk_binding]->(chunk:Chunk {
+                    tenant_id: $tenant_id,
+                    document_id: $document_id
+                })
+                WHERE type(chunk_binding) = 'FOR_CHUNK'
+            } AS knowledge_construction_reference
+            """,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        ).single()
+        blocker_fields = (
+            "governed_revision_reference",
+            "knowledge_publication_reference",
+            "relationship_property_reference",
+            "knowledge_construction_reference",
+        )
+        if record is None or any(bool(record[field]) for field in blocker_fields):
+            # Keep one stable, non-enumerating message.  API adapters map this
+            # to their generic conflict envelope and do not reveal whether a
+            # particular governed object or history record exists.
+            raise IngestionConflict(
+                "physical deletion is unavailable for governed knowledge; "
+                "use logical retirement"
+            )
