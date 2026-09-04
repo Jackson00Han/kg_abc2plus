@@ -450,6 +450,13 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         )
         self.assertIn("if (identityEpoch !== state.identityEpoch) return", source)
         self.assertIn("activeOntology(item.key)?.tbox_id", source)
+        self.assertIn('data-load-tbox="${index}"', source)
+        self.assertIn('data-copy-tbox="${index}"', source)
+        self.assertIn('data-download-tbox="${index}"', source)
+        self.assertIn("expected_checksum = item.checksum", source)
+        self.assertIn("Math.max(0, ...versions) + 1", source)
+        self.assertIn("schema: 'graphrag-property-tbox-export-v1'", source)
+        self.assertIn("URL.revokeObjectURL(objectUrl)", source)
         self.assertIn("Candidate cosine ranking", source)
         self.assertNotIn("Candidate rerank", source)
 

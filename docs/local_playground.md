@@ -123,8 +123,11 @@ import or extraction, review, and publication flow.
 Use the **知识构建** view for the complete property-graph governance loop:
 
 1. Edit and import the visible default industrial T-Box JSON. This creates a
-   draft only; a human must explicitly publish it. Each starter entity type
-   declares both its expert-managed namespace and the explicit
+   draft only; a human must explicitly publish it. Existing versions can be
+   loaded with their checksum for exact replay validation, copied to the next
+   unused version for editing, or downloaded as a self-describing JSON
+   artifact. Each starter entity type declares both its expert-managed
+   namespace and the explicit
    `llm-candidate` provisional namespace required for reviewable model
    proposals. Approval never silently promotes that namespace to expert truth;
    authority and origin remain separate governed fields.

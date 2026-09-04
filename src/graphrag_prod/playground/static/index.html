@@ -600,7 +600,7 @@
 
       <div class="governance-grid">
         <section class="workbench-card" aria-labelledby="ontology-title">
-          <div class="workbench-head"><div><h2 id="ontology-title">定义与发布 T-Box</h2><p>模板只是可编辑草稿，不会静默导入或发布。</p></div><span class="step-chip">01</span></div>
+          <div class="workbench-head"><div><h2 id="ontology-title">定义与发布 T-Box</h2><p>模板只是可编辑草稿，不会静默导入或发布；已有版本可载入校验、复制为下一版本或导出 JSON。</p></div><span class="step-chip">01</span></div>
           <label class="query-label" for="ontology-editor">属性图本体 JSON</label>
           <textarea class="json-editor" id="ontology-editor" spellcheck="false"></textarea>
           <div class="workbench-actions">
@@ -1280,11 +1280,70 @@
             const properties = (value.properties || []).map(property => `${escapeHtml(property.name)}:${escapeHtml(property.datatype)} ${escapeHtml(property.cardinality)}${property.unit ? ` [${escapeHtml(property.unit)}]` : ''}`).join(', ');
             return `${escapeHtml(value.name)} · source ${escapeHtml(value.source_cardinality || 'ZERO_OR_MORE')} · target ${escapeHtml(value.target_cardinality || 'ZERO_OR_MORE')}${properties ? ` · properties ${properties}` : ''}`;
           }).join('<br>');
-          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}<br>${relationshipContracts || 'Relationship contracts: —'}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${item.status === 'DRAFT' ? `<div class="workbench-actions"><button class="button" type="button" data-publish-tbox="${index}">发布此版本</button></div>` : ''}</article>`;
+          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}<br>${relationshipContracts || 'Relationship contracts: —'}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div><div class="workbench-actions"><button class="button" type="button" data-load-tbox="${index}">载入并校验</button><button class="button" type="button" data-copy-tbox="${index}">复制为下一版本</button><button class="button" type="button" data-download-tbox="${index}">导出 JSON</button>${item.status === 'DRAFT' ? `<button class="button primary" type="button" data-publish-tbox="${index}">发布此版本</button>` : ''}</div></article>`;
         }).join('');
+        elements.ontologyList.querySelectorAll('[data-load-tbox]').forEach(button => {
+          button.addEventListener('click', () => loadOntologyIntoEditor(Number(button.dataset.loadTbox), false));
+        });
+        elements.ontologyList.querySelectorAll('[data-copy-tbox]').forEach(button => {
+          button.addEventListener('click', () => loadOntologyIntoEditor(Number(button.dataset.copyTbox), true));
+        });
+        elements.ontologyList.querySelectorAll('[data-download-tbox]').forEach(button => {
+          button.addEventListener('click', () => downloadOntology(Number(button.dataset.downloadTbox)));
+        });
         elements.ontologyList.querySelectorAll('[data-publish-tbox]').forEach(button => {
           button.addEventListener('click', () => publishOntology(Number(button.dataset.publishTbox)));
         });
+      }
+
+      function editableOntology(item, nextVersion = false) {
+        const versions = state.ontologies
+          .filter(candidate => candidate.key === item.key)
+          .map(candidate => Number(candidate.version))
+          .filter(Number.isSafeInteger);
+        const definition = {
+          key: item.key,
+          version: nextVersion ? Math.max(0, ...versions) + 1 : item.version,
+          description: item.description ?? null,
+          entity_types: JSON.parse(JSON.stringify(item.entity_types || [])),
+          relationship_types: JSON.parse(JSON.stringify(item.relationship_types || [])),
+        };
+        if (definition.description == null) delete definition.description;
+        if (!nextVersion) definition.expected_checksum = item.checksum;
+        return definition;
+      }
+
+      function loadOntologyIntoEditor(index, nextVersion) {
+        const item = state.ontologies[index];
+        if (!item) return;
+        elements.ontologyEditor.value = JSON.stringify(editableOntology(item, nextVersion), null, 2);
+        elements.ontologyEditor.focus();
+        showToast(nextVersion
+          ? `已复制 ${item.key} 为下一版本；修改后仍需导入与发布`
+          : `已载入 ${item.key} v${item.version}；checksum 将校验精确重放`);
+      }
+
+      function downloadOntology(index) {
+        const item = state.ontologies[index];
+        if (!item) return;
+        const artifact = {
+          schema: 'graphrag-property-tbox-export-v1',
+          exported_tbox_id: item.tbox_id,
+          status: item.status,
+          checksum: item.checksum,
+          definition: editableOntology(item, false),
+        };
+        const blob = new Blob([`${JSON.stringify(artifact, null, 2)}\n`], {type: 'application/json'});
+        const link = document.createElement('a');
+        const safeKey = String(item.key).replace(/[^A-Za-z0-9._-]+/g, '-');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${safeKey}-v${item.version}-tbox.json`;
+        document.body.appendChild(link);
+        link.click();
+        const objectUrl = link.href;
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+        showToast(`已导出 ${item.key} v${item.version}`);
       }
 
       async function loadOntologies() {

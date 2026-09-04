@@ -38,6 +38,10 @@
 
 ## Completed follow-ups
 
+- [x] Make complete T-Box versions reusable from the Playground: load an exact
+  checksum-bound definition, copy it to the next version for expert edits, or
+  export a self-describing property-graph JSON artifact.
+
 - [x] Add the independently authored and reviewed `semantic-holdout-v1` beyond
   the 49 builder-coupled questions. Its 14 balanced cases passed the recorded
   real-provider run with complete-evidence Recall@5 0.90, evidence-ID Recall@5
