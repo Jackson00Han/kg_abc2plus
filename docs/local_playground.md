@@ -98,6 +98,8 @@ The page shows:
   rebinding after expert confirmation;
 - typed relationship-property values, their exact evidence spans, and visible
   relationship-property and endpoint-cardinality T-Box contracts;
+- recoverable construction-job progress and bounded Chunk-outcome detail,
+  immutable per-record revision history, and selectable publication candidates;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a
@@ -135,10 +137,19 @@ Use the **知识构建** view for the complete property-graph governance loop:
    The 5 MiB transport limit is not a promise that a large file will pass these
    tighter local construction budgets; oversize parsed workloads are rejected
    before extraction calls begin.
+   Failed submissions retain one browser-session operation key for the exact
+   file bytes, metadata, identity, T-Box, and selected ACL. Retrying unchanged
+   input therefore resumes the same durable job; a successful response or any
+   input change rotates the key. The task panel can recover recent visible jobs
+   and inspect their bounded durable outcomes.
 4. Inspect each Chunk's findings and each candidate/quarantined record. A human
    may approve, reject, quarantine, or submit a strict JSON edit, individually
-   or in a batch.
-5. Publish approved immutable revision IDs. View publication history and use
+   or in a batch. Each card can also load the stable record's immutable revision
+   history, including review status, actor, time, and notes where present.
+5. Refresh recoverable publication candidates and select current approved or
+   previously published-but-inactive revisions. Replacement candidates are
+   identified and sent with the required logical record IDs. Manual revision
+   IDs remain available for expert workflows. View publication history and use
    CAS-protected rollback when required. History shows the exact published
    T-Box version so schema lineage remains visible.
 6. Retrieve the uploaded content. Only records in the active publication that

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+import json
 from types import SimpleNamespace
 import unittest
 
@@ -570,6 +571,93 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
             driver.session_value.tx.parameters["artifact_input_hash"],
             "a" * 64,
         )
+
+    def test_construction_job_reads_are_bounded_by_tenant_acl_and_outcome_integrity(self) -> None:
+        payload = json.dumps(
+            {
+                "format_version": 1,
+                "chunk_id": "chunk-1",
+                "artifact_id": "artifact-1",
+                "status": "CANDIDATE",
+                "finding_codes": [],
+                "mention_record_ids": ["mention-1"],
+                "assertion_record_ids": ["assertion-1"],
+            }
+        )
+        properties = {
+            "job_id": "job-1",
+            "tenant_id": self.principal.tenant_id,
+            "document_id": "document-1",
+            "version_id": "version-1",
+            "snapshot_id": "snapshot-1",
+            "tbox_id": "tbox-1",
+            "status": "COMPLETED",
+            "expected_chunks": 1,
+            "completed_chunks": 1,
+            "created_at": NOW,
+            "updated_at": NOW,
+            "completed_at": NOW,
+        }
+
+        class _Result(list):
+            def single(self):  # type: ignore[no-untyped-def]
+                return self[0] if self else None
+
+        class _Session:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def __enter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+                return None
+
+            def run(self, query: str, **parameters: object) -> _Result:
+                self.calls.append((query, parameters))
+                if "job_id: $job_id" in query:
+                    return _Result(({"job": properties, "result_jsons": [payload]},))
+                return _Result(({"job": properties, "result_jsons": []},))
+
+        class _Driver:
+            def __init__(self) -> None:
+                self.value = _Session()
+
+            def session(self, **_kwargs: object) -> _Session:
+                return self.value
+
+        driver = _Driver()
+        store = Neo4jConstructionAuditStore(driver)
+        detail = store.get_job(self.principal, "job-1")
+        listed = store.list_jobs(
+            self.principal,
+            statuses=("COMPLETED",),
+            limit=10,
+        )
+        assert detail is not None
+        self.assertEqual(detail.chunks[0].chunk_id, "chunk-1")
+        self.assertTrue(detail.chunks[0].replayed)
+        self.assertEqual(len(listed), 1)
+        detail_query, detail_parameters = driver.value.calls[0]
+        for boundary in (
+            "tenant_id: $tenant_id",
+            "any(group IN $groups WHERE group IN job.access_groups)",
+            "AND NOT EXISTS",
+            "invalid.access_groups <> job.access_groups",
+            "USED_ARTIFACT",
+            "HAS_VERSION",
+            "coalesce(job.completed_chunks, 0) = size(result_jsons)",
+            "job.expected_chunks = size(result_jsons)",
+        ):
+            self.assertIn(boundary, detail_query)
+        self.assertEqual(detail_parameters["tenant_id"], self.principal.tenant_id)
+        self.assertEqual(detail_parameters["groups"], ["engineers"])
+        list_query, list_parameters = driver.value.calls[1]
+        self.assertLess(list_query.index("job.status IN $statuses"), list_query.index("LIMIT $limit"))
+        self.assertEqual(list_parameters["limit"], 10)
+
+        with self.assertRaisesRegex(ValueError, "between"):
+            store.list_jobs(self.principal, limit=101)
 
     def test_construction_requires_dedicated_capability_before_any_work(self) -> None:
         extractor = _Extractor(_tbox())

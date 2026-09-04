@@ -289,6 +289,14 @@ class ReviewQueueItem:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicationCandidate:
+    """One current publishable revision absent from the active manifest."""
+
+    item: ReviewQueueItem
+    requires_replacement: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewOutcome:
     record_kind: ReviewRecordKind
     record_id: str
@@ -443,6 +451,95 @@ _CURRENT_REVIEW_QUERY = {
     for kind in ReviewRecordKind
 }
 
+
+def _revision_history_query(kind: ReviewRecordKind) -> str:
+    if kind is ReviewRecordKind.ENTITY_MENTION:
+        label = "GovernedEntityMentionRevision"
+        chunk_edge = "IN_CHUNK"
+        record_kind = "ENTITY_MENTION"
+    else:
+        label = "GovernedAssertionRevision"
+        chunk_edge = "EVIDENCED_BY"
+        record_kind = "ASSERTION"
+    return f"""
+        MATCH (head:KnowledgeRecordHead {{
+            tenant_id: $tenant_id,
+            record_id: $record_id,
+            record_kind: '{record_kind}'
+        }})
+        MATCH (revision:{label} {{tenant_id: $tenant_id}})
+              -[:{chunk_edge}]->(chunk:Chunk {{tenant_id: $tenant_id}})
+        MATCH (document:Document {{
+            tenant_id: $tenant_id,
+            document_id: revision.document_id
+        }})-[:HAS_VERSION]->(version:DocumentVersion {{
+            tenant_id: $tenant_id,
+            version_id: revision.version_id
+        }})-[:HAS_CHUNK]->(chunk)
+        MATCH (tbox:TBoxVersion {{
+            tenant_id: $tenant_id,
+            tbox_id: revision.ontology_version_id
+        }})
+        WHERE revision.record_id = head.record_id
+          AND tbox.status IN ['PUBLISHED', 'RETIRED']
+          AND revision.document_id = document.document_id
+          AND revision.version_id = version.version_id
+          AND revision.chunk_id = chunk.chunk_id
+          AND revision.access_policy_id = chunk.access_policy_id
+          AND revision.access_policy_version = chunk.access_policy_version
+          AND revision.access_groups = chunk.access_groups
+          AND substring(
+              chunk.text,
+              revision.evidence_char_start - chunk.char_start,
+              revision.evidence_char_end - revision.evidence_char_start
+          ) = revision.evidence_text
+          AND any(group IN $groups WHERE group IN revision.access_groups)
+          AND any(group IN $groups WHERE group IN chunk.access_groups)
+          AND any(group IN $groups WHERE group IN document.access_groups)
+        RETURN revision {{.*}} AS revision
+        ORDER BY revision.revision DESC
+        LIMIT $limit
+    """
+
+
+_REVISION_HISTORY_QUERY = {
+    kind: _revision_history_query(kind) for kind in ReviewRecordKind
+}
+
+
+def _publication_candidate_query(kind: ReviewRecordKind) -> str:
+    base = _active_revision_query(kind, one_record=False)
+    base = base.replace(
+        "AND revision.governance_status IN $statuses",
+        """AND revision.governance_status IN $statuses
+          AND NOT EXISTS {
+              MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                    -[:ACTIVE_KNOWLEDGE_PUBLICATION]->
+                    (:KnowledgePublication {
+                        tenant_id: $tenant_id,
+                        status: 'ACTIVE'
+                    })-[:PUBLISHES_KNOWLEDGE_REVISION]->(revision)
+          }""",
+    )
+    return base.replace(
+        "RETURN revision {.*} AS revision",
+        """RETURN revision {.*} AS revision,
+               EXISTS {
+                   MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                         -[:ACTIVE_KNOWLEDGE_PUBLICATION]->
+                         (:KnowledgePublication {
+                             tenant_id: $tenant_id,
+                             status: 'ACTIVE'
+                         })-[:PUBLISHES_KNOWLEDGE_REVISION]->(active_revision)
+                   WHERE active_revision.record_id = revision.record_id
+               } AS requires_replacement""",
+    )
+
+
+_PUBLICATION_CANDIDATE_QUERY = {
+    kind: _publication_candidate_query(kind) for kind in ReviewRecordKind
+}
+
 _DEPENDENT_ASSERTION_QUERY = """
 MATCH (head:KnowledgeRecordHead {
     tenant_id: $tenant_id,
@@ -548,6 +645,49 @@ class Neo4jKnowledgeReviewService:
             key=lambda item: (
                 item.record.created_at,
                 item.record.record_id,
+                item.record_kind.value,
+            )
+        )
+        return tuple(items[:limit])
+
+    def revision_history(
+        self,
+        principal: Principal,
+        record_id: str,
+        *,
+        limit: int = 100,
+    ) -> tuple[ReviewQueueItem, ...]:
+        """Return immutable revisions newest-first without weakening ACLs."""
+
+        _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
+        record_id = _required_text(record_id, "record_id")
+        limit = _positive_integer(limit, "limit", 100)
+        parameters = {
+            "tenant_id": principal.tenant_id,
+            "record_id": record_id,
+            "groups": sorted(principal.groups),
+            "limit": limit,
+        }
+        items: list[ReviewQueueItem] = []
+        with self.driver.session(database=self.database) as session:
+            for kind in ReviewRecordKind:
+                decoder = (
+                    _stored_mention
+                    if kind is ReviewRecordKind.ENTITY_MENTION
+                    else _stored_assertion
+                )
+                items.extend(
+                    ReviewQueueItem(kind, decoder(dict(row["revision"])))
+                    for row in session.run(
+                        _REVISION_HISTORY_QUERY[kind],
+                        **parameters,
+                    )
+                )
+        if not items:
+            raise KnowledgeReviewUnavailable("knowledge record is unavailable")
+        items.sort(
+            key=lambda item: (
+                -item.record.revision.revision,
                 item.record_kind.value,
             )
         )
@@ -1256,6 +1396,55 @@ class Neo4jKnowledgePublicationService:
     def __init__(self, driver: SessionDriver, database: str = "neo4j") -> None:
         self.driver = driver
         self.database = database
+
+    def candidates(
+        self,
+        principal: Principal,
+        *,
+        limit: int = 100,
+    ) -> tuple[PublicationCandidate, ...]:
+        """List current publishable revisions not already active."""
+
+        _require_capability(principal, KNOWLEDGE_PUBLISH_CAPABILITY)
+        limit = _positive_integer(limit, "limit", 100)
+        parameters = {
+            "tenant_id": principal.tenant_id,
+            "groups": sorted(principal.groups),
+            "statuses": [
+                GovernanceStatus.APPROVED.value,
+                GovernanceStatus.PUBLISHED.value,
+            ],
+            "limit": limit,
+        }
+        candidates: list[PublicationCandidate] = []
+        with self.driver.session(database=self.database) as session:
+            for kind in ReviewRecordKind:
+                decoder = (
+                    _stored_mention
+                    if kind is ReviewRecordKind.ENTITY_MENTION
+                    else _stored_assertion
+                )
+                candidates.extend(
+                    PublicationCandidate(
+                        ReviewQueueItem(
+                            kind,
+                            decoder(dict(row["revision"])),
+                        ),
+                        bool(row["requires_replacement"]),
+                    )
+                    for row in session.run(
+                        _PUBLICATION_CANDIDATE_QUERY[kind],
+                        **parameters,
+                    )
+                )
+        candidates.sort(
+            key=lambda candidate: (
+                candidate.item.record.created_at,
+                candidate.item.record.record_id,
+                candidate.item.record_kind.value,
+            )
+        )
+        return tuple(candidates[:limit])
 
     def publish(
         self,

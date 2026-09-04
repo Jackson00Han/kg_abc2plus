@@ -306,6 +306,56 @@ class KnowledgeConstructionResult:
     chunks: tuple[ConstructionChunkResult, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ConstructionJobView:
+    """Bounded, ACL-safe projection of one durable construction operation."""
+
+    job_id: str
+    tenant_id: str
+    document_id: str
+    version_id: str
+    snapshot_id: str
+    tbox_id: str
+    status: str
+    expected_chunks: int
+    completed_chunks: int
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    failed_chunk_id: str | None = None
+    last_finding_codes: tuple[str, ...] = ()
+    chunks: tuple[ConstructionChunkResult, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in (
+            "job_id",
+            "tenant_id",
+            "document_id",
+            "version_id",
+            "snapshot_id",
+            "tbox_id",
+            "status",
+        ):
+            object.__setattr__(self, name, _required(getattr(self, name), name))
+        if self.status not in {"RUNNING", "RETRY_WAIT", "COMPLETED"}:
+            raise ValueError("unsupported construction job status")
+        for name in ("expected_chunks", "completed_chunks"):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= MAX_CONSTRUCTION_CHUNKS
+            ):
+                raise ValueError(
+                    f"{name} must be between zero and {MAX_CONSTRUCTION_CHUNKS}"
+                )
+        if self.completed_chunks > self.expected_chunks:
+            raise ValueError("completed_chunks exceeds expected_chunks")
+        _aware(self.created_at, "created_at")
+        _aware(self.updated_at, "updated_at")
+        _aware(self.completed_at, "completed_at")
+
+
 class ConstructionConflict(RuntimeError):
     """Stable workflow identity or immutable audit data conflicts."""
 
@@ -374,6 +424,20 @@ class KnowledgeStore(Protocol):
 
 
 class ConstructionAuditStore(Protocol):
+    def get_job(
+        self,
+        principal: Principal,
+        job_id: str,
+    ) -> ConstructionJobView | None: ...
+
+    def list_jobs(
+        self,
+        principal: Principal,
+        *,
+        statuses: tuple[str, ...] = (),
+        limit: int = 25,
+    ) -> tuple[ConstructionJobView, ...]: ...
+
     def observe_document(
         self,
         principal: Principal,
@@ -457,6 +521,120 @@ class Neo4jConstructionAuditStore:
     def __init__(self, driver: Any, database: str = "neo4j") -> None:
         self.driver = driver
         self.database = database
+
+    def get_job(
+        self,
+        principal: Principal,
+        job_id: str,
+    ) -> ConstructionJobView | None:
+        """Read a job through the same tenant/capability/ACL boundary as work."""
+
+        _require_construction_capability(principal)
+        job_id = _required(job_id, "job_id")
+        with self.driver.session(database=self.database) as session:
+            row = session.run(
+                """
+                MATCH (job:KnowledgeConstructionJob {
+                    tenant_id: $tenant_id,
+                    job_id: $job_id
+                })
+                WHERE any(group IN $groups WHERE group IN job.access_groups)
+                  AND NOT EXISTS {
+                    MATCH (job)-[:HAS_CHUNK_OUTCOME]->(
+                        invalid:KnowledgeConstructionChunkOutcome
+                    )
+                    WHERE invalid.tenant_id IS NULL
+                       OR invalid.tenant_id <> $tenant_id
+                       OR invalid.access_groups IS NULL
+                       OR invalid.access_groups <> job.access_groups
+                       OR NOT any(group IN $groups
+                                  WHERE group IN invalid.access_groups)
+                       OR NOT EXISTS {
+                          MATCH (invalid)-[:FOR_CHUNK]->(
+                              chunk:Chunk {
+                                  tenant_id: $tenant_id,
+                                  chunk_id: invalid.chunk_id
+                              }
+                          )
+                          MATCH (invalid)-[:USED_ARTIFACT]->(
+                              artifact:DerivationArtifact {
+                                  tenant_id: $tenant_id,
+                                  artifact_id: invalid.artifact_id,
+                                  kind: $artifact_kind
+                              }
+                          )
+                          MATCH (document:Document {
+                              tenant_id: $tenant_id,
+                              document_id: job.document_id
+                          })-[:HAS_VERSION]->(version:DocumentVersion {
+                              tenant_id: $tenant_id,
+                              version_id: job.version_id
+                          })-[:HAS_CHUNK]->(chunk)
+                          WHERE chunk.document_id = document.document_id
+                            AND chunk.version_id = version.version_id
+                            AND artifact.input_hash = invalid.artifact_input_hash
+                            AND artifact.profile_id = invalid.artifact_profile_id
+                            AND any(group IN $groups
+                                    WHERE group IN document.access_groups)
+                            AND any(group IN $groups
+                                    WHERE group IN chunk.access_groups)
+                       }
+                  }
+                OPTIONAL MATCH (job)-[:HAS_CHUNK_OUTCOME]->(
+                    outcome:KnowledgeConstructionChunkOutcome {
+                        tenant_id: $tenant_id
+                    }
+                )
+                WITH job, collect(outcome.result_json) AS result_jsons
+                WHERE coalesce(job.completed_chunks, 0) = size(result_jsons)
+                  AND (
+                    job.status <> 'COMPLETED'
+                    OR job.expected_chunks = size(result_jsons)
+                  )
+                RETURN job {.*} AS job, result_jsons
+                LIMIT 1
+                """,
+                tenant_id=principal.tenant_id,
+                job_id=job_id,
+                groups=sorted(principal.groups),
+                artifact_kind=AUDIT_ARTIFACT_KIND,
+            ).single()
+        return None if row is None else _construction_job_view(row)
+
+    def list_jobs(
+        self,
+        principal: Principal,
+        *,
+        statuses: tuple[str, ...] = (),
+        limit: int = 25,
+    ) -> tuple[ConstructionJobView, ...]:
+        """List recent visible jobs without unbounded outcome expansion."""
+
+        _require_construction_capability(principal)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        normalized_statuses = tuple(statuses)
+        if len(normalized_statuses) > 3 or any(
+            value not in {"RUNNING", "RETRY_WAIT", "COMPLETED"}
+            for value in normalized_statuses
+        ):
+            raise ValueError("unsupported construction job status filter")
+        with self.driver.session(database=self.database) as session:
+            rows = session.run(
+                """
+                MATCH (job:KnowledgeConstructionJob {tenant_id: $tenant_id})
+                WHERE any(group IN $groups WHERE group IN job.access_groups)
+                  AND (size($statuses) = 0 OR job.status IN $statuses)
+                RETURN job {.*} AS job, [] AS result_jsons
+                ORDER BY job.updated_at DESC, job.job_id
+                LIMIT $limit
+                """,
+                tenant_id=principal.tenant_id,
+                groups=sorted(principal.groups),
+                statuses=list(normalized_statuses),
+                limit=limit,
+            )
+            return tuple(_construction_job_view(row) for row in rows)
 
     def observe_document(
         self,
@@ -990,6 +1168,38 @@ def _native_datetime(value: object, name: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ConstructionConflict(f"stored {name} is not timezone-aware")
     return value
+
+
+def _construction_job_view(row: Any) -> ConstructionJobView:
+    try:
+        properties = dict(row["job"])
+        chunks = tuple(
+            _chunk_result_from_payload(json.loads(value), replayed=True)
+            for value in (row.get("result_jsons") or ())
+        )
+        return ConstructionJobView(
+            job_id=properties["job_id"],
+            tenant_id=properties["tenant_id"],
+            document_id=properties["document_id"],
+            version_id=properties["version_id"],
+            snapshot_id=properties["snapshot_id"],
+            tbox_id=properties["tbox_id"],
+            status=properties["status"],
+            expected_chunks=int(properties["expected_chunks"]),
+            completed_chunks=int(properties.get("completed_chunks", 0)),
+            created_at=_native_datetime(properties["created_at"], "created_at"),
+            updated_at=_native_datetime(properties["updated_at"], "updated_at"),
+            completed_at=(
+                None
+                if properties.get("completed_at") is None
+                else _native_datetime(properties["completed_at"], "completed_at")
+            ),
+            failed_chunk_id=properties.get("failed_chunk_id"),
+            last_finding_codes=tuple(properties.get("last_finding_codes") or ()),
+            chunks=tuple(sorted(chunks, key=lambda item: item.chunk_id)),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ConstructionConflict("stored construction job is invalid") from exc
 
 
 def _chunk_result_payload(result: ConstructionChunkResult) -> dict[str, object]:

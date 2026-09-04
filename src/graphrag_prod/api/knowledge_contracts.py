@@ -512,6 +512,61 @@ class KnowledgeConstructionResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class ConstructionJobListRequest(StrictAPIModel):
+    statuses: Annotated[
+        tuple[Literal["RUNNING", "RETRY_WAIT", "COMPLETED"], ...],
+        Field(max_length=3),
+    ] = ()
+    limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 25
+
+    @field_validator("statuses", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @field_validator("statuses")
+    @classmethod
+    def unique_statuses(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _unique(value, "statuses")
+
+
+class ConstructionJobResponse(StrictAPIModel):
+    job_id: Identifier
+    document_id: Identifier
+    version_id: Identifier
+    snapshot_id: Identifier
+    tbox_id: Identifier
+    status: Literal["RUNNING", "RETRY_WAIT", "COMPLETED"]
+    expected_chunks: Annotated[int, Field(strict=True, ge=0, le=512)]
+    completed_chunks: Annotated[int, Field(strict=True, ge=0, le=512)]
+    failed_chunk_id: Identifier | None = None
+    last_finding_codes: Annotated[tuple[Identifier, ...], Field(max_length=1_000)] = ()
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+    chunks: Annotated[tuple[ConstructionChunkResponse, ...], Field(max_length=512)] = ()
+
+    @field_validator("last_finding_codes", "chunks", mode="before")
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def valid_progress(self) -> Self:
+        if self.completed_chunks > self.expected_chunks:
+            raise ValueError("completed_chunks exceeds expected_chunks")
+        return self
+
+
+class ConstructionJobListResponse(StrictAPIModel):
+    items: Annotated[tuple[ConstructionJobResponse, ...], Field(max_length=100)]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
 class EntityIdentityResponse(StrictAPIModel):
     entity_id: Identifier
     entity_type: TypeName
@@ -649,6 +704,20 @@ class ReviewQueueRequest(StrictAPIModel):
 
 class ReviewQueueResponse(StrictAPIModel):
     items: Annotated[tuple[ReviewRecordResponse, ...], Field(max_length=100)]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class RecordRevisionHistoryRequest(StrictAPIModel):
+    limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 100
+
+
+class RecordRevisionHistoryResponse(StrictAPIModel):
+    record_id: Identifier
+    items: Annotated[tuple[ReviewRecordResponse, ...], Field(min_length=1, max_length=100)]
 
     @field_validator("items", mode="before")
     @classmethod
@@ -953,10 +1022,31 @@ class PublicationHistoryResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class PublicationCandidatesRequest(StrictAPIModel):
+    limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 100
+
+
+class PublicationCandidateResponse(StrictAPIModel):
+    record: ReviewRecordResponse
+    requires_replacement: bool
+
+
+class PublicationCandidatesResponse(StrictAPIModel):
+    items: Annotated[tuple[PublicationCandidateResponse, ...], Field(max_length=100)]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
 __all__ = [
     "AuthoritativeImportRequest",
     "AuthoritativeImportResponse",
     "ConstructionChunkResponse",
+    "ConstructionJobListRequest",
+    "ConstructionJobListResponse",
+    "ConstructionJobResponse",
     "EvidenceInput",
     "EntityResolutionApplyRequest",
     "EntityResolutionApplyResponse",
@@ -972,6 +1062,8 @@ __all__ = [
     "OntologyVersionResponse",
     "PublicationHistoryRequest",
     "PublicationHistoryResponse",
+    "PublicationCandidatesRequest",
+    "PublicationCandidatesResponse",
     "PublicationRequest",
     "PublicationResponse",
     "RawLiteralInput",
@@ -979,5 +1071,7 @@ __all__ = [
     "ReviewBatchResponse",
     "ReviewQueueRequest",
     "ReviewQueueResponse",
+    "RecordRevisionHistoryRequest",
+    "RecordRevisionHistoryResponse",
     "RollbackRequest",
 ]

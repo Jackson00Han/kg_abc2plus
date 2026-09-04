@@ -16,6 +16,7 @@ from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
     ConstructionBudgetExceeded,
     ConstructionConflict,
+    Neo4jConstructionAuditStore,
 )
 from graphrag_prod.domain import Principal, RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.domain.ids import (
@@ -68,6 +69,9 @@ from graphrag_prod.ontology.store import TBoxConflict, TBoxValidationError
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
+    ConstructionJobListRequest,
+    ConstructionJobListResponse,
+    ConstructionJobResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
@@ -83,6 +87,8 @@ from .knowledge_contracts import (
     OntologyVersionResponse,
     PublicationHistoryRequest,
     PublicationHistoryResponse,
+    PublicationCandidatesRequest,
+    PublicationCandidatesResponse,
     PublicationRequest,
     PublicationResponse,
     RawLiteralInput,
@@ -91,6 +97,8 @@ from .knowledge_contracts import (
     ReviewBatchResponse,
     ReviewQueueRequest,
     ReviewQueueResponse,
+    RecordRevisionHistoryRequest,
+    RecordRevisionHistoryResponse,
     RollbackRequest,
 )
 from .runtime import (
@@ -340,6 +348,37 @@ def _publication_payload(value: Any) -> dict[str, object]:
     }
 
 
+def _construction_chunk_payload(value: Any) -> dict[str, object]:
+    return {
+        "chunk_id": value.chunk_id,
+        "artifact_id": value.artifact_id,
+        "status": value.status,
+        "finding_codes": value.finding_codes,
+        "mention_record_ids": value.mention_record_ids,
+        "assertion_record_ids": value.assertion_record_ids,
+        "replayed": value.replayed,
+    }
+
+
+def _construction_job_payload(value: Any) -> dict[str, object]:
+    return {
+        "job_id": value.job_id,
+        "document_id": value.document_id,
+        "version_id": value.version_id,
+        "snapshot_id": value.snapshot_id,
+        "tbox_id": value.tbox_id,
+        "status": value.status,
+        "expected_chunks": value.expected_chunks,
+        "completed_chunks": value.completed_chunks,
+        "failed_chunk_id": value.failed_chunk_id,
+        "last_finding_codes": value.last_finding_codes,
+        "created_at": value.created_at,
+        "updated_at": value.updated_at,
+        "completed_at": value.completed_at,
+        "chunks": tuple(_construction_chunk_payload(item) for item in value.chunks),
+    }
+
+
 def _resolution_evidence_payload(value: Any) -> dict[str, object]:
     return {
         "match_kind": value.match_kind,
@@ -389,6 +428,7 @@ class Neo4jKnowledgeOperations:
         knowledge: Any | None = None,
         reviews: Any | None = None,
         publications: Any | None = None,
+        construction_audit: Any | None = None,
         resolution_source: Any | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -397,6 +437,12 @@ class Neo4jKnowledgeOperations:
         self.driver = driver
         self.database = database
         self.construction = construction
+        workflow_audit = getattr(construction, "audit_store", None)
+        self.construction_audit = (
+            construction_audit
+            or workflow_audit
+            or Neo4jConstructionAuditStore(driver, database)
+        )
         self.tboxes = tboxes or Neo4jTBoxStore(driver, database)
         self.knowledge = knowledge or Neo4jKnowledgeStore(driver, database)
         self.reviews = reviews or Neo4jKnowledgeReviewService(driver, database)
@@ -968,6 +1014,115 @@ class Neo4jKnowledgeOperations:
         except (AttributeError, KeyError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(ReviewQueueResponse, payload))
+
+    def construction_job(
+        self,
+        principal: Principal,
+        job_id: str,
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:construct")
+        try:
+            value = self.construction_audit.get_job(principal, job_id)
+        except ApiRuntimeError:
+            raise
+        except ConstructionAuthorizationError as error:
+            raise ResourceNotFoundError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except ConstructionConflict as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if value is None:
+            raise ResourceNotFoundError()
+        return BackendResult(
+            _outbound(ConstructionJobResponse, _construction_job_payload(value))
+        )
+
+    def construction_jobs(
+        self,
+        principal: Principal,
+        request: ConstructionJobListRequest,
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:construct")
+        try:
+            values = self.construction_audit.list_jobs(
+                principal,
+                statuses=request.statuses,
+                limit=request.limit,
+            )
+            payload = {"items": tuple(_construction_job_payload(item) for item in values)}
+        except ApiRuntimeError:
+            raise
+        except ConstructionAuthorizationError as error:
+            raise AuthorizationError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except ConstructionConflict as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(ConstructionJobListResponse, payload))
+
+    def revision_history(
+        self,
+        principal: Principal,
+        record_id: str,
+        request: RecordRevisionHistoryRequest,
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:review")
+        try:
+            items = self.reviews.revision_history(
+                principal,
+                record_id,
+                limit=request.limit,
+            )
+            payload = {
+                "record_id": record_id,
+                "items": tuple(_review_record_payload(item) for item in items),
+            }
+        except ApiRuntimeError:
+            raise
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except KnowledgeReviewUnavailable as error:
+            raise ResourceNotFoundError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except KnowledgeStoreError as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(RecordRevisionHistoryResponse, payload))
+
+    def publication_candidates(
+        self,
+        principal: Principal,
+        request: PublicationCandidatesRequest,
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:publish")
+        try:
+            values = self.publications.candidates(principal, limit=request.limit)
+            payload = {
+                "items": tuple(
+                    {
+                        "record": _review_record_payload(value.item),
+                        "requires_replacement": value.requires_replacement,
+                    }
+                    for value in values
+                )
+            }
+        except ApiRuntimeError:
+            raise
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except KnowledgeStoreError as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(PublicationCandidatesResponse, payload))
 
     def _resolution_context(
         self,

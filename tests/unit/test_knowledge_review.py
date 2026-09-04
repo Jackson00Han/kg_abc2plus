@@ -261,6 +261,156 @@ class KnowledgeReviewContractTests(unittest.TestCase):
                 published_at=REVIEWED_AT,
             )
 
+    def test_revision_history_uses_immutable_source_chain_and_acl(self) -> None:
+        mention = make_knowledge_batch(authoritative=False).mentions[0]
+        newer = dataclasses.replace(
+            mention,
+            revision=RecordRevision.next(mention.record_id, 1),
+        )
+
+        class _Rows(list):
+            pass
+
+        class _Session:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def __enter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+                return None
+
+            def run(self, query: str, **parameters: object) -> _Rows:
+                self.calls.append((query, parameters))
+                if "GovernedEntityMentionRevision" in query:
+                    return _Rows(
+                        (
+                            {"revision": {"revision": 1}},
+                            {"revision": {"revision": 2}},
+                        )
+                    )
+                return _Rows()
+
+        class _Driver:
+            def __init__(self) -> None:
+                self.value = _Session()
+
+            def session(self, **_kwargs: object) -> _Session:
+                return self.value
+
+        driver = _Driver()
+        with patch(
+            "graphrag_prod.knowledge.review._stored_mention",
+            side_effect=lambda value: mention if value["revision"] == 1 else newer,
+        ):
+            history = Neo4jKnowledgeReviewService(driver).revision_history(
+                _principal(),
+                mention.record_id,
+                limit=10,
+            )
+        self.assertEqual(
+            [item.record.revision.revision for item in history],
+            [2, 1],
+        )
+        query, parameters = driver.value.calls[0]
+        for boundary in (
+            "tenant_id: $tenant_id",
+            "record_id: $record_id",
+            "HAS_VERSION",
+            "HAS_CHUNK",
+            "tbox.status IN ['PUBLISHED', 'RETIRED']",
+            "revision.access_policy_id = chunk.access_policy_id",
+            "any(group IN $groups WHERE group IN document.access_groups)",
+            "ORDER BY revision.revision DESC",
+            "LIMIT $limit",
+        ):
+            self.assertIn(boundary, query)
+        self.assertNotIn("ACTIVE_SNAPSHOT", query)
+        self.assertNotIn("ACTIVE_TBOX_VERSION", query)
+        self.assertEqual(parameters["tenant_id"], _principal().tenant_id)
+
+    def test_publication_candidates_exclude_active_ids_but_keep_replacements(self) -> None:
+        mention = make_knowledge_batch(authoritative=False).mentions[0]
+        approved = dataclasses.replace(
+            mention,
+            trust=dataclasses.replace(
+                mention.trust,
+                status=GovernanceStatus.APPROVED,
+                reviewed_by="expert:reviewer",
+                reviewed_at=REVIEWED_AT,
+                review_notes="Verified source identity.",
+            ),
+        )
+
+        class _Rows(list):
+            pass
+
+        class _Session:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def __enter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+                return None
+
+            def run(self, query: str, **parameters: object) -> _Rows:
+                self.calls.append((query, parameters))
+                if "GovernedEntityMentionRevision" in query:
+                    return _Rows(
+                        ({"revision": {"id": "approved"}, "requires_replacement": True},)
+                    )
+                return _Rows()
+
+        class _Driver:
+            def __init__(self) -> None:
+                self.value = _Session()
+
+            def session(self, **_kwargs: object) -> _Session:
+                return self.value
+
+        driver = _Driver()
+        with patch(
+            "graphrag_prod.knowledge.review._stored_mention",
+            return_value=approved,
+        ):
+            candidates = Neo4jKnowledgePublicationService(driver).candidates(
+                _principal(),
+                limit=7,
+            )
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0].requires_replacement)
+        self.assertEqual(candidates[0].item.record, approved)
+        query, parameters = driver.value.calls[0]
+        for boundary in (
+            "CURRENT_REVISION",
+            "revision.governance_status IN $statuses",
+            "ACTIVE_TBOX_VERSION",
+            "ACTIVE_SNAPSHOT",
+            "NOT EXISTS",
+            "PUBLISHES_KNOWLEDGE_REVISION]->(revision)",
+            "active_revision.record_id = revision.record_id",
+            "any(group IN $groups WHERE group IN revision.access_groups)",
+        ):
+            self.assertIn(boundary, query)
+        self.assertLess(
+            query.index("PUBLISHES_KNOWLEDGE_REVISION]->(revision)"),
+            query.index("LIMIT $limit"),
+        )
+        self.assertEqual(
+            set(parameters["statuses"]),
+            {"APPROVED", "PUBLISHED"},
+        )
+        self.assertEqual(parameters["limit"], 7)
+
+        with self.assertRaisesRegex(ValueError, "between"):
+            Neo4jKnowledgePublicationService(_NoSessionDriver()).candidates(
+                _principal(),
+                limit=0,
+            )
+
     def test_review_and_publication_require_explicit_capabilities(self) -> None:
         review = Neo4jKnowledgeReviewService(_NoSessionDriver())
         publication = Neo4jKnowledgePublicationService(_NoSessionDriver())

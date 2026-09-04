@@ -18,12 +18,15 @@ from graphrag_prod.api import (
 )
 from graphrag_prod.api.knowledge_contracts import (
     AuthoritativeImportResponse,
+    ConstructionJobListResponse,
+    ConstructionJobResponse,
     EntityResolutionApplyResponse,
     EntityResolutionResponse,
     KnowledgeConstructionResponse,
     OntologyListResponse,
     OntologyVersionResponse,
     PublicationHistoryResponse,
+    PublicationCandidatesResponse,
     PublicationResponse,
     ReviewBatchResponse,
     ReviewQueueResponse,
@@ -214,9 +217,37 @@ class _Knowledge:
             )
         )
 
+    def construction_job(self, principal: object, job_id: str) -> BackendResult:
+        self._record("construction_job", principal, job_id)
+        return BackendResult(
+            ConstructionJobResponse(
+                job_id="job-1",
+                document_id="document-1",
+                version_id="version-1",
+                snapshot_id="snapshot-1",
+                tbox_id="tbox-1",
+                status="COMPLETED",
+                expected_chunks=1,
+                completed_chunks=1,
+                created_at=NOW,
+                updated_at=NOW,
+                completed_at=NOW,
+            )
+        )
+
+    def construction_jobs(self, principal: object, request: object) -> BackendResult:
+        self._record("construction_jobs", principal, request)
+        return BackendResult(ConstructionJobListResponse(items=()))
+
     def review_queue(self, principal: object, request: object) -> BackendResult:
         self._record("review_queue", principal, request)
         return BackendResult(ReviewQueueResponse(items=()))
+
+    def revision_history(
+        self, principal: object, record_id: str, request: object
+    ) -> BackendResult:
+        self._record("revision_history", principal, (record_id, request))
+        raise RequestValidationError()
 
     def review_batch(self, principal: object, request: object) -> BackendResult:
         self._record("review_batch", principal, request)
@@ -301,6 +332,12 @@ class _Knowledge:
     def history(self, principal: object, request: object) -> BackendResult:
         self._record("history", principal, request)
         return BackendResult(PublicationHistoryResponse(items=(_publication(),)))
+
+    def publication_candidates(
+        self, principal: object, request: object
+    ) -> BackendResult:
+        self._record("publication_candidates", principal, request)
+        return BackendResult(PublicationCandidatesResponse(items=()))
 
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
@@ -548,6 +585,14 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                         ).decode(),
                     },
                 ),
+                client.get(
+                    "/v1/knowledge/construction-jobs/job-1",
+                    headers=auth,
+                ),
+                client.get(
+                    "/v1/knowledge/construction-jobs?status=COMPLETED&limit=10",
+                    headers=auth,
+                ),
                 client.get("/v1/knowledge/review-queue?limit=10", headers=auth),
                 client.get(
                     "/v1/knowledge/entity-resolution/mention-1?expected_revision=1",
@@ -583,6 +628,10 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                     headers=auth,
                     json={"approved_revision_ids": ["revision-1"]},
                 ),
+                client.get(
+                    "/v1/knowledge/publication-candidates?limit=10",
+                    headers=auth,
+                ),
                 client.post(
                     "/v1/knowledge/publications/publication-1:rollback",
                     headers=auth,
@@ -592,7 +641,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
             )
 
         self.assertTrue(all(response.status_code == 200 for response in responses))
-        self.assertEqual(len(knowledge.calls), 12)
+        self.assertEqual(len(knowledge.calls), 15)
         self.assertEqual(
             [name for name, _, _ in knowledge.calls],
             [
@@ -601,11 +650,14 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 "ontology_publish",
                 "authoritative_import",
                 "construct",
+                "construction_job",
+                "construction_jobs",
                 "review_queue",
                 "resolution_suggestions",
                 "apply_resolution",
                 "review_batch",
                 "publish",
+                "publication_candidates",
                 "rollback",
                 "history",
             ],

@@ -10,7 +10,7 @@ import math
 import re
 import threading
 import time
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Path, Query, Request, Response, status
@@ -44,6 +44,8 @@ from .contracts import (
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
+    ConstructionJobListResponse,
+    ConstructionJobResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionResponse,
@@ -55,11 +57,13 @@ from .knowledge_contracts import (
     OntologyPublishRequest,
     OntologyVersionResponse,
     PublicationHistoryResponse,
+    PublicationCandidatesResponse,
     PublicationRequest,
     PublicationResponse,
     ReviewBatchRequest,
     ReviewBatchResponse,
     ReviewQueueResponse,
+    RecordRevisionHistoryResponse,
     RollbackRequest,
 )
 from .runtime import (
@@ -818,6 +822,42 @@ def create_app(
         )
 
     @app.get(
+        "/v1/knowledge/construction-jobs/{job_id}",
+        response_model=ConstructionJobResponse,
+    )
+    async def knowledge_construction_job(
+        request: Request,
+        job_id: JobPath,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_CONSTRUCTION_JOB,
+            {"job_id": job_id},
+        )
+
+    @app.get(
+        "/v1/knowledge/construction-jobs",
+        response_model=ConstructionJobListResponse,
+    )
+    async def knowledge_construction_jobs(
+        request: Request,
+        identity: IdentityDependency,
+        statuses: Annotated[
+            list[Literal["RUNNING", "RETRY_WAIT", "COMPLETED"]] | None,
+            Query(alias="status", min_length=1, max_length=3),
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS,
+            {"statuses": tuple(statuses or ()), "limit": limit},
+        )
+
+    @app.get(
         "/v1/knowledge/review-queue",
         response_model=ReviewQueueResponse,
     )
@@ -838,6 +878,23 @@ def create_app(
                 "statuses": tuple(statuses or ("CANDIDATE", "QUARANTINED")),
                 "limit": limit,
             },
+        )
+
+    @app.get(
+        "/v1/knowledge/records/{record_id}/revisions",
+        response_model=RecordRevisionHistoryResponse,
+    )
+    async def knowledge_record_revisions(
+        request: Request,
+        record_id: KnowledgeRecordPath,
+        identity: IdentityDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_REVISION_HISTORY,
+            {"record_id": record_id, "request": {"limit": limit}},
         )
 
     @app.get(
@@ -906,6 +963,22 @@ def create_app(
             identity,
             OperationKind.KNOWLEDGE_PUBLISH,
             body.model_dump(mode="python"),
+        )
+
+    @app.get(
+        "/v1/knowledge/publication-candidates",
+        response_model=PublicationCandidatesResponse,
+    )
+    async def knowledge_publication_candidates(
+        request: Request,
+        identity: IdentityDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
+            {"limit": limit},
         )
 
     @app.post(

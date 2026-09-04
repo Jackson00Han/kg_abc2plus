@@ -634,6 +634,8 @@
           </div>
           <div class="workbench-actions"><button class="button primary" id="construct-button" type="button">上传、切块、向量化并抽取</button></div>
           <div class="output-box" id="construction-output">等待上传。抽取结果先进入 CANDIDATE / QUARANTINED，不会自动成为已发布知识。</div>
+          <div class="workbench-actions"><button class="button" id="construction-jobs-refresh-button" type="button">刷新构建任务</button></div>
+          <div class="history-list" id="construction-job-list" aria-live="polite"><div class="output-box">构建任务尚未加载。</div></div>
         </section>
 
         <section class="workbench-card full" aria-labelledby="review-title">
@@ -649,6 +651,8 @@
 
         <section class="workbench-card" aria-labelledby="publication-title">
           <div class="workbench-head"><div><h2 id="publication-title">发布审核通过的知识</h2><p>发布是租户内不可变、累积且 CAS 保护的 active publication。</p></div><span class="step-chip">05</span></div>
+          <div class="workbench-actions"><button class="button" id="publication-candidates-refresh-button" type="button">刷新可发布候选</button></div>
+          <div class="history-list" id="publication-candidate-list" aria-live="polite"><div class="output-box">可发布候选尚未加载。</div></div>
           <label class="query-label" for="publication-revisions">APPROVED revision IDs（每行一个）</label>
           <textarea class="json-editor compact" id="publication-revisions" spellcheck="false" placeholder="review 后会自动填入，也可手工粘贴"></textarea>
           <div class="workbench-actions"><button class="button primary" id="publication-button" type="button">发布变更集</button></div>
@@ -683,7 +687,12 @@
         ontologies: [],
         reviews: [],
         resolutions: new Map(),
+        revisionHistories: new Map(),
+        constructionJobs: [],
+        constructionOperation: null,
         publications: [],
+        publicationCandidates: [],
+        selectedCandidateRevisions: new Set(),
         approvedRevisions: new Set(),
       };
 
@@ -702,9 +711,9 @@
         retrievalDefaults: $('retrieval-defaults-button'),
         ontologyEditor: $('ontology-editor'), ontologyList: $('ontology-list'),
         aboxEditor: $('abox-editor'), aboxOutput: $('abox-output'),
-        constructionOutput: $('construction-output'), reviewList: $('review-list'),
+        constructionOutput: $('construction-output'), constructionJobList: $('construction-job-list'), reviewList: $('review-list'),
         publicationRevisions: $('publication-revisions'), publicationOutput: $('publication-output'),
-        historyList: $('history-list'),
+        publicationCandidateList: $('publication-candidate-list'), historyList: $('history-list'),
       };
 
       const classLabels = {
@@ -1016,13 +1025,18 @@
         state.ontologies = [];
         state.reviews = [];
         state.resolutions.clear();
+        state.revisionHistories.clear();
+        state.constructionJobs = [];
+        state.constructionOperation = null;
         state.publications = [];
+        state.publicationCandidates = [];
+        state.selectedCandidateRevisions.clear();
         state.approvedRevisions.clear();
         elements.publicationRevisions.value = '';
         resetRetrievalResult();
         renderIdentity();
         updateMode();
-        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadReviews(), loadHistory()]);
+        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory()]);
       }
 
       async function run() {
@@ -1223,7 +1237,7 @@
         $('retrieval-nav').classList.toggle('active', !governance);
         $('governance-nav').classList.toggle('active', governance);
         if (governance) {
-          Promise.allSettled([loadOntologies(), loadReviews(), loadHistory()]);
+          Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory()]);
         }
       }
 
@@ -1323,6 +1337,70 @@
         return btoa(binary);
       }
 
+      async function constructionFingerprint(bytes, metadata) {
+        if (!globalThis.crypto?.subtle) throw new Error('浏览器不支持安全的构建重试指纹');
+        const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+        const contentHash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+        return JSON.stringify({content_sha256: contentHash, ...metadata, access_groups: [...metadata.access_groups].sort()});
+      }
+
+      function nextConstructionOperation(fingerprint) {
+        let operation = state.constructionOperation;
+        if (!operation) {
+          try { operation = JSON.parse(sessionStorage.getItem('graphrag-construction-operation') || 'null'); } catch (_) {}
+        }
+        if (!operation || operation.fingerprint !== fingerprint || !operation.operationKey) {
+          const nonce = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          operation = {fingerprint, operationKey: `playground-${nonce}`};
+          try { sessionStorage.setItem('graphrag-construction-operation', JSON.stringify(operation)); } catch (_) {}
+        }
+        state.constructionOperation = operation;
+        return operation.operationKey;
+      }
+
+      function completeConstructionOperation() {
+        state.constructionOperation = null;
+        try { sessionStorage.removeItem('graphrag-construction-operation'); } catch (_) {}
+      }
+
+      function renderConstructionJobs() {
+        if (!state.constructionJobs.length) {
+          elements.constructionJobList.innerHTML = '<div class="output-box">当前身份没有可见的构建任务。</div>';
+          return;
+        }
+        elements.constructionJobList.innerHTML = state.constructionJobs.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.status)} · ${escapeHtml(shortId(item.job_id))}</strong><p>${escapeHtml(item.completed_chunks)} / ${escapeHtml(item.expected_chunks)} Chunks · document ${escapeHtml(shortId(item.document_id))}<br>updated ${escapeHtml(item.updated_at)}</p></div><span class="trust-badge ${item.status === 'COMPLETED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${item.failed_chunk_id ? `<div class="exact-evidence">failed Chunk ${escapeHtml(shortId(item.failed_chunk_id))} · ${escapeHtml((item.last_finding_codes || []).join(', '))}</div>` : ''}<div class="workbench-actions"><button class="button" type="button" data-construction-job-detail="${index}">查看任务明细</button></div></article>`).join('');
+        elements.constructionJobList.querySelectorAll('[data-construction-job-detail]').forEach(button => {
+          button.addEventListener('click', () => loadConstructionJob(Number(button.dataset.constructionJobDetail), button));
+        });
+      }
+
+      async function loadConstructionJobs() {
+        const identityEpoch = state.identityEpoch;
+        try {
+          const payload = await apiRequest('/v1/knowledge/construction-jobs?limit=25');
+          if (identityEpoch !== state.identityEpoch) return;
+          state.constructionJobs = Array.isArray(payload.items) ? payload.items : [];
+          renderConstructionJobs();
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
+          elements.constructionJobList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function loadConstructionJob(index, button) {
+        const item = state.constructionJobs[index];
+        if (!item) { showToast('构建任务列表已变化，请刷新'); return; }
+        button.disabled = true;
+        try {
+          const payload = await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(item.job_id)}`);
+          output(elements.constructionOutput, payload);
+        } catch (error) {
+          showToast(error.message);
+        } finally {
+          button.disabled = false;
+        }
+      }
+
       async function constructKnowledge() {
         const file = $('document-file').files?.[0];
         if (!file) { output(elements.constructionOutput, '请选择一个文档。'); return; }
@@ -1339,11 +1417,20 @@
           if (!accessGroups.length) throw new Error('至少选择一个新文档访问组');
           output(elements.constructionOutput, '正在上传、解析、切块、向量化，并按已发布 T-Box 调用抽取模型…');
           const bytes = new Uint8Array(await file.arrayBuffer());
-          const nonce = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          const operationKey = nextConstructionOperation(await constructionFingerprint(bytes, {
+            persona_id: currentPersona()?.id,
+            canonical_uri: canonicalUri,
+            title,
+            source_name: sourceName,
+            mime_type: mime,
+            language,
+            tbox_key: tboxKey,
+            access_groups: accessGroups,
+          }));
           const payload = await apiRequest('/v1/knowledge:construct', {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
-              operation_key: `playground-${nonce}`,
+              operation_key: operationKey,
               canonical_uri: canonicalUri,
               title,
               source_name: sourceName,
@@ -1360,9 +1447,10 @@
             mentions: item.mention_record_ids.length, assertions: item.assertion_record_ids.length,
             replayed: item.replayed,
           }));
+          completeConstructionOperation();
           output(elements.constructionOutput, {job_id: payload.job_id, document_id: payload.document_id, version_id: payload.version_id, tbox_id: payload.tbox_id, chunks: summary});
           showToast(`构建完成：${payload.chunks.length} Chunks，等待人工审核`);
-          await loadReviews();
+          await Promise.allSettled([loadConstructionJobs(), loadReviews()]);
         } catch (error) {
           output(elements.constructionOutput, error.message);
         }
@@ -1415,6 +1503,14 @@
         return `<div class="provider-note" style="margin-top:10px"><strong>实体消歧建议</strong><br>${properties || 'T-Box 未声明/候选未提供完整 identity properties；结果已保守处理。'}<br>仅显示建议；确认后以 CAS 新 revision 链接实体，并原子重绑依赖 assertions，但不会自动批准这些事实。</div>${suggestions}<div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">刷新匹配</button></div>`;
       }
 
+      function revisionHistoryMarkup(item, index) {
+        const history = state.revisionHistories.get(item.record_id);
+        if (!history || history.headRevision !== item.revision) return `<div class="workbench-actions"><button class="button" type="button" data-revision-history="${index}">查看不可变 revision 历史</button></div>`;
+        if (history.error) return `<div class="output-box">${escapeHtml(history.error)}</div><div class="workbench-actions"><button class="button" type="button" data-revision-history="${index}">重试历史</button></div>`;
+        const rows = (history.items || []).map(revision => `<div class="exact-evidence"><strong>revision ${escapeHtml(revision.revision)} · ${escapeHtml(revision.trust?.status)}</strong> · ${escapeHtml(revision.revision_id)}<br>${escapeHtml(revision.trust?.reviewed_by || 'unreviewed')}${revision.trust?.reviewed_at ? ` · ${escapeHtml(revision.trust.reviewed_at)}` : ''}${revision.trust?.review_notes ? `<br>${escapeHtml(revision.trust.review_notes)}` : ''}</div>`).join('');
+        return `<div class="provider-note" style="margin-top:10px"><strong>不可变 revision 历史</strong><br>按 revision 由新到旧；读取仍执行租户、原文证据与 ACL 校验。</div>${rows}<div class="workbench-actions"><button class="button" type="button" data-revision-history="${index}">刷新历史</button></div>`;
+      }
+
       function renderReviews() {
         if (!state.reviews.length) {
           elements.reviewList.innerHTML = '<div class="output-box">没有当前身份可见的 CANDIDATE / QUARANTINED 记录。</div>';
@@ -1423,7 +1519,7 @@
         elements.reviewList.innerHTML = state.reviews.map((item, index) => {
           const entity = item.entity || item.subject || {};
           const object = item.object_entity?.canonical_name ?? item.literal_value ?? '';
-          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : relationshipPropertiesMarkup(item)}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div>${resolutionMarkup(item, index)}<label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : relationshipPropertiesMarkup(item)}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div>${resolutionMarkup(item, index)}${revisionHistoryMarkup(item, index)}<label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
         }).join('');
         elements.reviewList.querySelectorAll('[data-review-action]').forEach(button => {
           button.addEventListener('click', () => submitReviews(button.dataset.reviewAction, [Number(button.dataset.reviewIndex)]));
@@ -1434,6 +1530,26 @@
         elements.reviewList.querySelectorAll('[data-resolution-apply]').forEach(button => {
           button.addEventListener('click', () => applyResolution(Number(button.dataset.resolutionApply), Number(button.dataset.resolutionSuggestion), button));
         });
+        elements.reviewList.querySelectorAll('[data-revision-history]').forEach(button => {
+          button.addEventListener('click', () => loadRevisionHistory(Number(button.dataset.revisionHistory), button));
+        });
+      }
+
+      async function loadRevisionHistory(index, button) {
+        const item = state.reviews[index];
+        if (!item) { showToast('审核队列已变化，请刷新'); return; }
+        const identityEpoch = state.identityEpoch;
+        button.disabled = true;
+        try {
+          const payload = await apiRequest(`/v1/knowledge/records/${encodeURIComponent(item.record_id)}/revisions?limit=100`);
+          if (identityEpoch !== state.identityEpoch) return;
+          state.revisionHistories.set(item.record_id, {headRevision: item.revision, items: payload.items || []});
+          renderReviews();
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
+          state.revisionHistories.set(item.record_id, {headRevision: item.revision, error: error.message});
+          renderReviews();
+        }
       }
 
       async function loadResolution(index, button) {
@@ -1545,6 +1661,42 @@
         return state.publications.find(item => item.status === 'ACTIVE') || null;
       }
 
+      function renderPublicationCandidates() {
+        if (!state.publicationCandidates.length) {
+          elements.publicationCandidateList.innerHTML = '<div class="output-box">没有可恢复的 APPROVED / 非 active PUBLISHED revision。</div>';
+          return;
+        }
+        elements.publicationCandidateList.innerHTML = state.publicationCandidates.map((candidate, index) => {
+          const item = candidate.record;
+          const entity = item.entity || item.subject || {};
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-publication-candidate="${index}" ${state.selectedCandidateRevisions.has(item.revision_id) ? 'checked' : ''}> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge ${item.trust?.authority === 'AUTHORITATIVE' ? 'authoritative' : ''}">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span></div></div><p>revision ${escapeHtml(item.revision)} · ${escapeHtml(item.revision_id)}${candidate.requires_replacement ? '<br>将替换 active publication 中同 record 的旧 revision' : ''}</p></article>`;
+        }).join('');
+        elements.publicationCandidateList.querySelectorAll('[data-publication-candidate]').forEach(input => {
+          input.addEventListener('change', () => {
+            const candidate = state.publicationCandidates[Number(input.dataset.publicationCandidate)];
+            const revisionId = candidate?.record?.revision_id;
+            if (!revisionId) return;
+            if (input.checked) state.selectedCandidateRevisions.add(revisionId);
+            else state.selectedCandidateRevisions.delete(revisionId);
+          });
+        });
+      }
+
+      async function loadPublicationCandidates() {
+        const identityEpoch = state.identityEpoch;
+        try {
+          const payload = await apiRequest('/v1/knowledge/publication-candidates?limit=100');
+          if (identityEpoch !== state.identityEpoch) return;
+          state.publicationCandidates = Array.isArray(payload.items) ? payload.items : [];
+          const visibleIds = new Set(state.publicationCandidates.map(item => item.record?.revision_id).filter(Boolean));
+          state.selectedCandidateRevisions = new Set([...state.selectedCandidateRevisions].filter(value => visibleIds.has(value)));
+          renderPublicationCandidates();
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch) return;
+          elements.publicationCandidateList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
       function renderHistory() {
         if (!state.publications.length) {
           elements.historyList.innerHTML = '<div class="output-box">当前租户尚无知识 publication。</div>';
@@ -1571,18 +1723,24 @@
       }
 
       async function publishKnowledge() {
-        const revisionIds = [...new Set(elements.publicationRevisions.value.split(/\s+/).map(value => value.trim()).filter(Boolean))];
+        const revisionIds = [...new Set([
+          ...elements.publicationRevisions.value.split(/\s+/).map(value => value.trim()).filter(Boolean),
+          ...state.selectedCandidateRevisions,
+        ])];
         if (!revisionIds.length) { output(elements.publicationOutput, '至少需要一个 APPROVED revision ID。'); return; }
+        const selectedCandidates = state.publicationCandidates.filter(item => state.selectedCandidateRevisions.has(item.record?.revision_id));
+        const replaceRecordIds = [...new Set(selectedCandidates.filter(item => item.requires_replacement).map(item => item.record.record_id))];
         try {
           const payload = await apiRequest('/v1/knowledge/publications:publish', {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({approved_revision_ids: revisionIds, expected_active_publication_id: activePublication()?.publication_id || null, remove_record_ids: [], replace_record_ids: []}),
+            body: JSON.stringify({approved_revision_ids: revisionIds, expected_active_publication_id: activePublication()?.publication_id || null, remove_record_ids: [], replace_record_ids: replaceRecordIds}),
           });
           output(elements.publicationOutput, payload);
           state.approvedRevisions.clear();
+          state.selectedCandidateRevisions.clear();
           elements.publicationRevisions.value = '';
           showToast(`知识 publication ${shortId(payload.publication_id)} 已激活`);
-          await loadHistory();
+          await Promise.allSettled([loadPublicationCandidates(), loadHistory()]);
         } catch (error) {
           output(elements.publicationOutput, error.message);
         }
@@ -1712,11 +1870,13 @@
       $('ontology-import-button').addEventListener('click', importOntology);
       $('abox-import-button').addEventListener('click', importABox);
       $('construct-button').addEventListener('click', constructKnowledge);
+      $('construction-jobs-refresh-button').addEventListener('click', loadConstructionJobs);
       $('review-refresh-button').addEventListener('click', loadReviews);
       $('review-approve-button').addEventListener('click', () => submitReviews('APPROVED', chosenReviews()));
       $('review-reject-button').addEventListener('click', () => submitReviews('REJECTED', chosenReviews()));
       $('review-quarantine-button').addEventListener('click', () => submitReviews('QUARANTINED', chosenReviews()));
       $('publication-button').addEventListener('click', publishKnowledge);
+      $('publication-candidates-refresh-button').addEventListener('click', loadPublicationCandidates);
       $('history-refresh-button').addEventListener('click', loadHistory);
       $('document-file').addEventListener('change', event => {
         const file = event.currentTarget.files?.[0];

@@ -76,13 +76,17 @@ class OperationKind(str, Enum):
     ONTOLOGY_PUBLISH = "ontology_publish"
     KNOWLEDGE_IMPORT = "knowledge_import"
     KNOWLEDGE_CONSTRUCT = "knowledge_construct"
+    KNOWLEDGE_CONSTRUCTION_JOB = "knowledge_construction_job"
+    KNOWLEDGE_CONSTRUCTION_JOBS = "knowledge_construction_jobs"
     KNOWLEDGE_REVIEW_QUEUE = "knowledge_review_queue"
+    KNOWLEDGE_REVISION_HISTORY = "knowledge_revision_history"
     KNOWLEDGE_REVIEW_BATCH = "knowledge_review_batch"
     ENTITY_RESOLUTION_SUGGEST = "entity_resolution_suggest"
     ENTITY_RESOLUTION_APPLY = "entity_resolution_apply"
     KNOWLEDGE_PUBLISH = "knowledge_publish"
     KNOWLEDGE_ROLLBACK = "knowledge_rollback"
     KNOWLEDGE_HISTORY = "knowledge_history"
+    KNOWLEDGE_PUBLICATION_CANDIDATES = "knowledge_publication_candidates"
 
     @property
     def is_write(self) -> bool:
@@ -107,9 +111,13 @@ class OperationKind(str, Enum):
             self.HEALTH,
             self.READINESS,
             self.ONTOLOGY_LIST,
+            self.KNOWLEDGE_CONSTRUCTION_JOB,
+            self.KNOWLEDGE_CONSTRUCTION_JOBS,
             self.KNOWLEDGE_REVIEW_QUEUE,
+            self.KNOWLEDGE_REVISION_HISTORY,
             self.ENTITY_RESOLUTION_SUGGEST,
             self.KNOWLEDGE_HISTORY,
+            self.KNOWLEDGE_PUBLICATION_CANDIDATES,
         }
 
 
@@ -127,13 +135,17 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.ONTOLOGY_PUBLISH: "ontology:publish",
         OperationKind.KNOWLEDGE_IMPORT: "knowledge:import",
         OperationKind.KNOWLEDGE_CONSTRUCT: "knowledge:construct",
+        OperationKind.KNOWLEDGE_CONSTRUCTION_JOB: "knowledge:construct",
+        OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS: "knowledge:construct",
         OperationKind.KNOWLEDGE_REVIEW_QUEUE: "knowledge:review",
+        OperationKind.KNOWLEDGE_REVISION_HISTORY: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_BATCH: "knowledge:review",
         OperationKind.ENTITY_RESOLUTION_SUGGEST: "knowledge:review",
         OperationKind.ENTITY_RESOLUTION_APPLY: "knowledge:review",
         OperationKind.KNOWLEDGE_PUBLISH: "knowledge:publish",
         OperationKind.KNOWLEDGE_ROLLBACK: "knowledge:publish",
         OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
+        OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: "knowledge:publish",
     }
 )
 

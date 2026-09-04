@@ -58,6 +58,9 @@ from .contracts import (
 from .knowledge_contracts import (
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
+    ConstructionJobListRequest,
+    ConstructionJobListResponse,
+    ConstructionJobResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
@@ -71,12 +74,16 @@ from .knowledge_contracts import (
     OntologyVersionResponse,
     PublicationHistoryRequest,
     PublicationHistoryResponse,
+    PublicationCandidatesRequest,
+    PublicationCandidatesResponse,
     PublicationRequest,
     PublicationResponse,
     ReviewBatchRequest,
     ReviewBatchResponse,
     ReviewQueueRequest,
     ReviewQueueResponse,
+    RecordRevisionHistoryRequest,
+    RecordRevisionHistoryResponse,
     RollbackRequest,
 )
 from .runtime import (
@@ -256,8 +263,23 @@ class KnowledgeOperations(Protocol):
         self, principal: Principal, request: KnowledgeConstructionRequest
     ) -> BackendResult: ...
 
+    def construction_job(
+        self, principal: Principal, job_id: str
+    ) -> BackendResult: ...
+
+    def construction_jobs(
+        self, principal: Principal, request: ConstructionJobListRequest
+    ) -> BackendResult: ...
+
     def review_queue(
         self, principal: Principal, request: ReviewQueueRequest
+    ) -> BackendResult: ...
+
+    def revision_history(
+        self,
+        principal: Principal,
+        record_id: str,
+        request: RecordRevisionHistoryRequest,
     ) -> BackendResult: ...
 
     def review_batch(
@@ -285,6 +307,10 @@ class KnowledgeOperations(Protocol):
 
     def history(
         self, principal: Principal, request: PublicationHistoryRequest
+    ) -> BackendResult: ...
+
+    def publication_candidates(
+        self, principal: Principal, request: PublicationCandidatesRequest
     ) -> BackendResult: ...
 
 
@@ -997,11 +1023,15 @@ class GraphRAGApplicationBackend:
                 "ontology_publish",
                 "authoritative_import",
                 "construct",
+                "construction_job",
+                "construction_jobs",
                 "review_queue",
+                "revision_history",
                 "review_batch",
                 "publish",
                 "rollback",
                 "history",
+                "publication_candidates",
             )
             if any(not callable(getattr(knowledge, method, None)) for method in methods):
                 raise TypeError("knowledge does not implement its required operations")
@@ -1022,13 +1052,17 @@ class GraphRAGApplicationBackend:
             OperationKind.ONTOLOGY_PUBLISH,
             OperationKind.KNOWLEDGE_IMPORT,
             OperationKind.KNOWLEDGE_CONSTRUCT,
+            OperationKind.KNOWLEDGE_CONSTRUCTION_JOB,
+            OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS,
             OperationKind.KNOWLEDGE_REVIEW_QUEUE,
+            OperationKind.KNOWLEDGE_REVISION_HISTORY,
             OperationKind.KNOWLEDGE_REVIEW_BATCH,
             OperationKind.ENTITY_RESOLUTION_SUGGEST,
             OperationKind.ENTITY_RESOLUTION_APPLY,
             OperationKind.KNOWLEDGE_PUBLISH,
             OperationKind.KNOWLEDGE_ROLLBACK,
             OperationKind.KNOWLEDGE_HISTORY,
+            OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
         }
         if envelope.operation in knowledge_operations:
             if self._knowledge is None:
@@ -1069,11 +1103,37 @@ class GraphRAGApplicationBackend:
                     self._knowledge.construct(principal, request),
                     KnowledgeConstructionResponse,
                 )
+            if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCTION_JOB:
+                job_id = _internal_identifier(envelope.payload.get("job_id"))
+                return _response(
+                    self._knowledge.construction_job(principal, job_id),
+                    ConstructionJobResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS:
+                request = _validated(ConstructionJobListRequest, envelope.payload)
+                return _response(
+                    self._knowledge.construction_jobs(principal, request),
+                    ConstructionJobListResponse,
+                )
             if envelope.operation is OperationKind.KNOWLEDGE_REVIEW_QUEUE:
                 request = _validated(ReviewQueueRequest, envelope.payload)
                 return _response(
                     self._knowledge.review_queue(principal, request),
                     ReviewQueueResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_REVISION_HISTORY:
+                record_id = _internal_identifier(envelope.payload.get("record_id"))
+                request_payload = envelope.payload.get("request")
+                if not isinstance(request_payload, Mapping):
+                    raise RequestValidationError()
+                request = _validated(RecordRevisionHistoryRequest, request_payload)
+                return _response(
+                    self._knowledge.revision_history(
+                        principal,
+                        record_id,
+                        request,
+                    ),
+                    RecordRevisionHistoryResponse,
                 )
             if envelope.operation is OperationKind.KNOWLEDGE_REVIEW_BATCH:
                 request = _validated(ReviewBatchRequest, envelope.payload)
@@ -1110,6 +1170,12 @@ class GraphRAGApplicationBackend:
                 return _response(
                     self._knowledge.rollback(principal, publication_id, request),
                     PublicationResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES:
+                request = _validated(PublicationCandidatesRequest, envelope.payload)
+                return _response(
+                    self._knowledge.publication_candidates(principal, request),
+                    PublicationCandidatesResponse,
                 )
             request = _validated(PublicationHistoryRequest, envelope.payload)
             return _response(

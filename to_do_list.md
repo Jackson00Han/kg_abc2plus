@@ -41,6 +41,11 @@
 
 ## Completed follow-ups
 
+- [x] Add resumable knowledge-construction operations: bounded ACL-safe job
+  status/list reads, immutable governed-record revision history, recoverable
+  publication candidates, and Playground selection/retry controls with stable
+  same-input operation keys.
+
 - [x] Extend T-Box relationship-property definitions into evidence-backed,
   typed/unit/time-normalized extraction, authoritative import, review,
   publication, retrieval, API, and Playground instances. Publication also

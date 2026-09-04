@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 from datetime import UTC, datetime
 from types import SimpleNamespace
 import unittest
@@ -13,15 +14,19 @@ from graphrag_prod.api.backend import GraphRAGApplicationBackend
 from graphrag_prod.api.knowledge import Neo4jKnowledgeOperations
 from graphrag_prod.api.knowledge_contracts import (
     AuthoritativeImportRequest,
+    ConstructionJobListRequest,
+    ConstructionJobListResponse,
     KnowledgeConstructionRequest,
     OntologyImportRequest,
     OntologyListRequest,
     OntologyListResponse,
     OntologyPublishRequest,
     PublicationHistoryRequest,
+    PublicationCandidatesRequest,
     PublicationRequest,
     ReviewBatchRequest,
     ReviewQueueRequest,
+    RecordRevisionHistoryRequest,
     RollbackRequest,
 )
 from graphrag_prod.api.runtime import (
@@ -36,13 +41,18 @@ from graphrag_prod.api.runtime import (
     ResourceNotFoundError,
     required_scope,
 )
-from graphrag_prod.construction import ConstructionBudgetExceeded, DocumentParseError
+from graphrag_prod.construction import (
+    ConstructionBudgetExceeded,
+    ConstructionJobView,
+    DocumentParseError,
+)
 from graphrag_prod.domain import Principal, TypedLiteralValue
 from graphrag_prod.domain.ids import entity_id as make_entity_id
 from graphrag_prod.knowledge import (
     AssertionRecord,
     EntityIdentity,
     EvidenceReference,
+    GovernanceStatus,
     KnowledgeWriteResult,
     RecordRevision,
     knowledge_record_id,
@@ -50,6 +60,7 @@ from graphrag_prod.knowledge import (
 )
 from graphrag_prod.knowledge.review import (
     KnowledgePublicationView,
+    PublicationCandidate,
     ReviewBatchResult,
     ReviewOutcome,
     ReviewQueueItem,
@@ -340,13 +351,17 @@ class KnowledgeContractTests(unittest.TestCase):
             OperationKind.ONTOLOGY_PUBLISH: ("ontology:publish", True),
             OperationKind.KNOWLEDGE_IMPORT: ("knowledge:import", True),
             OperationKind.KNOWLEDGE_CONSTRUCT: ("knowledge:construct", True),
+            OperationKind.KNOWLEDGE_CONSTRUCTION_JOB: ("knowledge:construct", False),
+            OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS: ("knowledge:construct", False),
             OperationKind.KNOWLEDGE_REVIEW_QUEUE: ("knowledge:review", False),
+            OperationKind.KNOWLEDGE_REVISION_HISTORY: ("knowledge:review", False),
             OperationKind.KNOWLEDGE_REVIEW_BATCH: ("knowledge:review", True),
             OperationKind.ENTITY_RESOLUTION_SUGGEST: ("knowledge:review", False),
             OperationKind.ENTITY_RESOLUTION_APPLY: ("knowledge:review", True),
             OperationKind.KNOWLEDGE_PUBLISH: ("knowledge:publish", True),
             OperationKind.KNOWLEDGE_ROLLBACK: ("knowledge:publish", True),
             OperationKind.KNOWLEDGE_HISTORY: ("knowledge:publish", False),
+            OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: ("knowledge:publish", False),
         }
         for operation, (scope, write) in expected.items():
             with self.subTest(operation=operation):
@@ -375,10 +390,15 @@ class _Knowledge:
         self.principal = principal
         return BackendResult(OntologyListResponse(items=()))
 
+    def construction_jobs(self, principal: Principal, _request: object) -> BackendResult:
+        self.principal = principal
+        return BackendResult(ConstructionJobListResponse(items=()))
+
     ontology_import = ontology_publish = authoritative_import = lambda *args: None
-    construct = review_queue = review_batch = lambda *args: None
+    construct = construction_job = lambda *args: None
+    review_queue = revision_history = review_batch = lambda *args: None
     resolution_suggestions = apply_resolution = lambda *args: None
-    publish = rollback = history = lambda *args: None
+    publish = rollback = history = publication_candidates = lambda *args: None
 
 
 class KnowledgeBackendTests(unittest.TestCase):
@@ -452,6 +472,30 @@ class KnowledgeBackendTests(unittest.TestCase):
             )
         self.assertIsNone(knowledge.principal)
 
+    def test_backend_routes_bounded_construction_job_list(self) -> None:
+        knowledge = _Knowledge()
+        backend = GraphRAGApplicationBackend(
+            documents=_Documents(),
+            queries=_Queries(),
+            readiness=_Readiness(),
+            knowledge=knowledge,
+        )
+        result = backend.execute(
+            OperationEnvelope(
+                operation=OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS,
+                request_id="request-1",
+                trace_id="trace-1",
+                principal_id="expert-1",
+                tenant_id="tenant-alpha",
+                access_groups=frozenset({"engineers"}),
+                scopes=frozenset({"knowledge:construct"}),
+                payload={"statuses": ("RETRY_WAIT",), "limit": 25},
+            )
+        )
+        self.assertEqual(result.payload.items, ())
+        assert knowledge.principal is not None
+        self.assertEqual(knowledge.principal.tenant_id, "tenant-alpha")
+
 
 class _RowsSession:
     def __init__(self, owner: "_Driver") -> None:
@@ -522,6 +566,35 @@ class _Construction:
                 ),
             ),
         )
+
+
+class _ConstructionAudit:
+    def __init__(self) -> None:
+        self.value = ConstructionJobView(
+            job_id="job-1",
+            tenant_id="tenant-alpha",
+            document_id="document-1",
+            version_id="version-1",
+            snapshot_id="snapshot-1",
+            tbox_id="tbox-1",
+            status="COMPLETED",
+            expected_chunks=1,
+            completed_chunks=1,
+            created_at=NOW,
+            updated_at=NOW,
+            completed_at=NOW,
+        )
+        self.calls: list[tuple[str, object]] = []
+
+    def get_job(self, principal: Principal, job_id: str) -> ConstructionJobView | None:
+        self.calls.append(("get", (principal, job_id)))
+        if principal.tenant_id != self.value.tenant_id or job_id != self.value.job_id:
+            return None
+        return self.value
+
+    def list_jobs(self, principal: Principal, **kwargs: object) -> tuple[ConstructionJobView, ...]:
+        self.calls.append(("list", (principal, kwargs)))
+        return (self.value,) if principal.tenant_id == self.value.tenant_id else ()
 
 
 class _MalformedConstruction:
@@ -646,6 +719,15 @@ class _Reviews:
         self.queue_call = (principal, kwargs)
         return self.queue
 
+    def revision_history(
+        self,
+        principal: Principal,
+        record_id: str,
+        **kwargs: object,
+    ) -> tuple[object, ...]:
+        self.history_call = (principal, record_id, kwargs)
+        return self.queue
+
     def review_batch(
         self, principal: Principal, requests: tuple[object, ...]
     ) -> ReviewBatchResult:
@@ -667,7 +749,7 @@ class _Reviews:
 
 
 class _Publications:
-    def __init__(self) -> None:
+    def __init__(self, candidates: tuple[object, ...] = ()) -> None:
         self.value = KnowledgePublicationView(
             publication_id="publication-1",
             tenant_id="tenant-alpha",
@@ -684,6 +766,7 @@ class _Publications:
             activated_at=NOW,
         )
         self.calls: list[tuple[str, object]] = []
+        self.candidate_values = candidates
 
     def publish(self, principal: Principal, ids: tuple[str, ...], **kwargs: object) -> object:
         self.calls.append(("publish", (principal, ids, kwargs)))
@@ -701,6 +784,10 @@ class _Publications:
         self.calls.append(("history", (principal, limit)))
         return (self.value,)
 
+    def candidates(self, principal: Principal, *, limit: int) -> tuple[object, ...]:
+        self.calls.append(("candidates", (principal, limit)))
+        return self.candidate_values
+
 
 class KnowledgeAdapterTests(unittest.TestCase):
     def _adapter(
@@ -712,6 +799,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
         tboxes: object | None = None,
         reviews: object | None = None,
         publications: object | None = None,
+        construction_audit: object | None = None,
     ) -> Neo4jKnowledgeOperations:
         return Neo4jKnowledgeOperations(
             driver=driver,
@@ -720,6 +808,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
             knowledge=store,
             reviews=reviews or SimpleNamespace(),
             publications=publications or SimpleNamespace(),
+            construction_audit=construction_audit,
             clock=lambda: NOW,
         )
 
@@ -1248,6 +1337,67 @@ class KnowledgeAdapterTests(unittest.TestCase):
             rollback[2]["expected_active_publication_id"],
             "publication-2",
         )
+
+    def test_recovery_adapters_project_jobs_revisions_and_publishable_candidates(self) -> None:
+        record = dataclasses.replace(
+            _candidate_literal(),
+            trust=dataclasses.replace(
+                _candidate_literal().trust,
+                status=GovernanceStatus.APPROVED,
+                reviewed_by="expert-1",
+                reviewed_at=NOW,
+                review_notes="Verified exact source evidence.",
+            ),
+        )
+        item = ReviewQueueItem(ReviewRecordKind.ASSERTION, record)
+        audit = _ConstructionAudit()
+        reviews = _Reviews((item,))
+        publications = _Publications((PublicationCandidate(item, True),))
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset(
+                {"knowledge:construct", "knowledge:review", "knowledge:publish"}
+            ),
+        )
+        adapter = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            reviews=reviews,
+            publications=publications,
+            construction_audit=audit,
+        )
+
+        detail = adapter.construction_job(principal, "job-1")
+        jobs = adapter.construction_jobs(
+            principal,
+            ConstructionJobListRequest(statuses=("COMPLETED",), limit=5),
+        )
+        revisions = adapter.revision_history(
+            principal,
+            record.record_id,
+            RecordRevisionHistoryRequest(limit=5),
+        )
+        candidates = adapter.publication_candidates(
+            principal,
+            PublicationCandidatesRequest(limit=5),
+        )
+
+        self.assertEqual(detail.payload.status, "COMPLETED")
+        self.assertEqual(jobs.payload.items[0].job_id, "job-1")
+        self.assertEqual(revisions.payload.record_id, record.record_id)
+        self.assertEqual(revisions.payload.items[0].revision_id, record.revision_id)
+        self.assertTrue(candidates.payload.items[0].requires_replacement)
+        self.assertEqual(
+            candidates.payload.items[0].record.revision_id,
+            record.revision_id,
+        )
+        self.assertEqual(audit.calls[1][1][1]["statuses"], ("COMPLETED",))
+        self.assertEqual(reviews.history_call[1], record.record_id)
+
+        with self.assertRaises(ResourceNotFoundError):
+            adapter.construction_job(principal, "missing-job")
 
     def test_construct_returns_empty_for_a_valid_no_fact_extraction(self) -> None:
         principal = Principal(

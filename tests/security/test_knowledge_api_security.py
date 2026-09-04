@@ -12,8 +12,10 @@ import jwt
 
 from graphrag_prod.api import JWTAuthConfig, JWTAuthenticator, create_app
 from graphrag_prod.api.knowledge_contracts import (
+    ConstructionJobListResponse,
     KnowledgeConstructionResponse,
     OntologyListResponse,
+    PublicationCandidatesResponse,
 )
 from graphrag_prod.api.runtime import (
     BackendResult,
@@ -102,6 +104,10 @@ class _Backend:
                     ),
                 )
             )
+        if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS:
+            return BackendResult(ConstructionJobListResponse(items=()))
+        if envelope.operation is OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES:
+            return BackendResult(PublicationCandidatesResponse(items=()))
         if envelope.operation is OperationKind.READINESS:
             return BackendResult({"status": "ready", "checks": {"backend": "ok"}})
         raise ResourceNotFoundError()
@@ -253,6 +259,52 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
                 (404, "not_found", "the requested resource was not found"),
             ),
         )
+
+    def test_recovery_reads_require_independent_scopes_and_keep_no_existence_boundary(self) -> None:
+        jobs = self.client.get(
+            "/v1/knowledge/construction-jobs?status=RETRY_WAIT&limit=25",
+            headers=_headers(scope="knowledge:construct"),
+        )
+        candidates = self.client.get(
+            "/v1/knowledge/publication-candidates?limit=100",
+            headers=_headers(scope="knowledge:publish"),
+        )
+        denied = self.client.get(
+            "/v1/knowledge/construction-jobs",
+            headers=_headers(scope="knowledge:review"),
+        )
+        invalid = self.client.get(
+            "/v1/knowledge/construction-jobs?status=UNKNOWN",
+            headers=_headers(scope="knowledge:construct"),
+        )
+        self.assertEqual(jobs.status_code, 200)
+        self.assertEqual(jobs.json(), {"items": []})
+        self.assertEqual(candidates.status_code, 200)
+        self.assertEqual(candidates.json(), {"items": []})
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(invalid.status_code, 422)
+
+        for path, scope in (
+            ("/v1/knowledge/construction-jobs/missing-job", "knowledge:construct"),
+            ("/v1/knowledge/records/missing-record/revisions", "knowledge:review"),
+        ):
+            responses = tuple(
+                self.client.get(
+                    path,
+                    headers=_headers(tenant_id=tenant, scope=scope),
+                )
+                for tenant in ("tenant-alpha", "tenant-other")
+            )
+            self.assertEqual(
+                tuple(
+                    (item.status_code, item.json()["code"], item.json()["message"])
+                    for item in responses
+                ),
+                (
+                    (404, "not_found", "the requested resource was not found"),
+                    (404, "not_found", "the requested resource was not found"),
+                ),
+            )
 
     def test_entity_resolution_requires_review_scope_and_hides_target_existence(self) -> None:
         denied = self.client.get(
