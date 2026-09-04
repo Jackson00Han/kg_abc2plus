@@ -24,7 +24,8 @@ from graphrag_prod.domain.ids import (
     assertion_id as canonical_assertion_id,
     mention_id as canonical_mention_id,
 )
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
+from graphrag_prod.ontology.models import Cardinality
 
 from .models import (
     AssertionRecord,
@@ -161,6 +162,7 @@ class AssertionEdit:
     object_mention_revision_id: str | None = None
     literal_value: str | None = None
     literal_semantics: TypedLiteralValue | None = None
+    relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.subject, EntityIdentity):
@@ -190,6 +192,15 @@ class AssertionEdit:
                 raise TypeError("assertion edit object must be EntityIdentity")
             if self.literal_semantics is not None:
                 raise ValueError("entity assertion edit must not carry literal semantics")
+            properties = tuple(self.relationship_properties)
+            if any(
+                not isinstance(item, RelationshipPropertyValue)
+                for item in properties
+            ):
+                raise TypeError(
+                    "relationship_properties must contain RelationshipPropertyValue values"
+                )
+            object.__setattr__(self, "relationship_properties", properties)
             object.__setattr__(
                 self,
                 "object_mention_revision_id",
@@ -203,6 +214,10 @@ class AssertionEdit:
                 "literal assertion edit cannot reference an object mention"
             )
         else:
+            if self.relationship_properties:
+                raise ValueError(
+                    "literal assertion edit cannot carry relationship properties"
+                )
             object.__setattr__(
                 self,
                 "literal_value",
@@ -1018,6 +1033,7 @@ class Neo4jKnowledgeReviewService:
                 ),
                 "literal_value": request.edit.literal_value,
                 "literal_semantics": request.edit.literal_semantics,
+                "relationship_properties": request.edit.relationship_properties,
             }
         updated = dataclasses.replace(
             current,
@@ -1165,9 +1181,16 @@ class Neo4jKnowledgeReviewService:
                       (relationship:TBoxRelationshipType {
                           name: $predicate
                       })
+                OPTIONAL MATCH (relationship)-[:DECLARES_PROPERTY]->
+                               (property:TBoxPropertyDefinition)
                 WHERE $subject_type IN relationship.source_types
                   AND $object_type IN relationship.target_types
-                RETURN relationship.name AS name
+                RETURN relationship.name AS name,
+                       collect(
+                           CASE WHEN property IS NULL THEN NULL
+                           ELSE properties(property)
+                           END
+                       ) AS property_definitions
                 """,
                 tenant_id=record.tenant_id,
                 tbox_id=record.trust.ontology_version_id,
@@ -1189,6 +1212,41 @@ class Neo4jKnowledgeReviewService:
             except (KeyError, TypeError, ValueError, KnowledgeStoreError) as exc:
                 raise KnowledgeReviewUnavailable(
                     "edited literal violates the active T-Box"
+                ) from exc
+        else:
+            try:
+                definitions = {
+                    definition.name: definition
+                    for definition in (
+                        _property_definition(dict(item))
+                        for item in (row.get("property_definitions") or ())
+                    )
+                }
+                counts: dict[str, int] = {}
+                for value in record.relationship_properties:
+                    definition = definitions.get(value.name)
+                    if definition is None:
+                        raise KnowledgeStoreError(
+                            "relationship property is outside the active T-Box"
+                        )
+                    _validate_literal_semantics(
+                        value.literal_semantics,
+                        definition,
+                    )
+                    counts[value.name] = counts.get(value.name, 0) + 1
+                for name, definition in definitions.items():
+                    count = counts.get(name, 0)
+                    if definition.cardinality.required and count == 0:
+                        raise KnowledgeStoreError(
+                            f"required relationship property {name} is absent"
+                        )
+                    if definition.cardinality.single_valued and count > 1:
+                        raise KnowledgeStoreError(
+                            f"relationship property {name} exceeds cardinality"
+                        )
+            except (KeyError, TypeError, ValueError, KnowledgeStoreError) as exc:
+                raise KnowledgeReviewUnavailable(
+                    "edited relationship properties violate the active T-Box"
                 ) from exc
 
 
@@ -2171,6 +2229,7 @@ class Neo4jKnowledgePublicationService:
 
         entities: dict[str, EntityIdentity] = {}
         literal_counts: dict[tuple[str, str], int] = {}
+        relationship_records: list[AssertionRecord] = []
         for record in records:
             if isinstance(record, EntityMentionRecord):
                 entities[record.entity.entity_id] = record.entity
@@ -2178,6 +2237,7 @@ class Neo4jKnowledgePublicationService:
             entities[record.subject.entity_id] = record.subject
             if record.object_entity is not None:
                 entities[record.object_entity.entity_id] = record.object_entity
+                relationship_records.append(record)
                 continue
             property_definition = definitions.get(
                 record.subject.entity_type,
@@ -2219,6 +2279,172 @@ class Neo4jKnowledgePublicationService:
                         f"property {entity.entity_type}.{name} exceeds its "
                         "single-valued cardinality"
                     )
+
+        relationship_rows = tuple(
+            tx.run(
+                """
+                MATCH (tbox:TBoxVersion {
+                    tenant_id: $tenant_id,
+                    tbox_id: $tbox_id
+                })
+                WHERE tbox.status IN ['PUBLISHED', 'RETIRED']
+                  AND (
+                      NOT $require_active_tbox
+                      OR (
+                          tbox.status = 'PUBLISHED'
+                          AND EXISTS {
+                              MATCH (:TBoxCatalog {
+                                  tenant_id: $tenant_id
+                              })-[:ACTIVE_TBOX_VERSION]->(tbox)
+                          }
+                      )
+                  )
+                OPTIONAL MATCH (tbox)-[:DECLARES_RELATIONSHIP_TYPE]->
+                               (relationship:TBoxRelationshipType)
+                OPTIONAL MATCH (relationship)-[:DECLARES_PROPERTY]->
+                               (property:TBoxPropertyDefinition)
+                RETURN relationship.name AS name,
+                       relationship.source_types AS source_types,
+                       relationship.target_types AS target_types,
+                       coalesce(
+                           relationship.source_cardinality,
+                           'ZERO_OR_MORE'
+                       ) AS source_cardinality,
+                       coalesce(
+                           relationship.target_cardinality,
+                           'ZERO_OR_MORE'
+                       ) AS target_cardinality,
+                       collect(
+                           CASE WHEN property IS NULL THEN NULL
+                           ELSE properties(property)
+                           END
+                       ) AS property_definitions
+                """,
+                tenant_id=tenant_id,
+                tbox_id=ontology_id,
+                require_active_tbox=require_active_tbox,
+            )
+        )
+        try:
+            relationship_definitions = {
+                row.get("name"): {
+                    "source_types": frozenset(row.get("source_types") or ()),
+                    "target_types": frozenset(row.get("target_types") or ()),
+                    "source_cardinality": Cardinality(
+                        row.get("source_cardinality")
+                        or Cardinality.ZERO_OR_MORE.value
+                    ),
+                    "target_cardinality": Cardinality(
+                        row.get("target_cardinality")
+                        or Cardinality.ZERO_OR_MORE.value
+                    ),
+                    "properties": {
+                        definition.name: definition
+                        for definition in (
+                            _property_definition(dict(item))
+                            for item in (row.get("property_definitions") or ())
+                        )
+                    },
+                }
+                for row in relationship_rows
+                if row.get("name") is not None
+            }
+        except (KeyError, TypeError, ValueError, KnowledgeStoreError) as exc:
+            raise KnowledgePublicationConflict(
+                "bound T-Box relationship contract is invalid"
+            ) from exc
+
+        outgoing: dict[tuple[str, str], set[str]] = {}
+        incoming: dict[tuple[str, str], set[str]] = {}
+        for record in relationship_records:
+            assert record.object_entity is not None
+            contract = relationship_definitions.get(record.predicate)
+            if contract is None:
+                raise KnowledgePublicationConflict(
+                    "relationship assertion is outside the bound T-Box"
+                )
+            if (
+                record.subject.entity_type not in contract["source_types"]
+                or record.object_entity.entity_type not in contract["target_types"]
+            ):
+                raise KnowledgePublicationConflict(
+                    "relationship assertion violates its bound T-Box domain/range"
+                )
+
+            property_counts: dict[str, int] = {}
+            for value in record.relationship_properties:
+                definition = contract["properties"].get(value.name)
+                if definition is None:
+                    raise KnowledgePublicationConflict(
+                        f"relationship property {record.predicate}.{value.name} "
+                        "is outside the bound T-Box"
+                    )
+                try:
+                    _validate_literal_semantics(
+                        value.literal_semantics,
+                        definition,
+                    )
+                except KnowledgeStoreError as exc:
+                    raise KnowledgePublicationConflict(
+                        f"relationship property {record.predicate}.{value.name} "
+                        "violates the bound T-Box"
+                    ) from exc
+                property_counts[value.name] = property_counts.get(value.name, 0) + 1
+            for name, definition in contract["properties"].items():
+                count = property_counts.get(name, 0)
+                if definition.cardinality.required and count == 0:
+                    raise KnowledgePublicationConflict(
+                        f"required relationship property {record.predicate}.{name} "
+                        "is absent"
+                    )
+                if definition.cardinality.single_valued and count > 1:
+                    raise KnowledgePublicationConflict(
+                        f"relationship property {record.predicate}.{name} exceeds "
+                        "its single-valued cardinality"
+                    )
+
+            outgoing.setdefault(
+                (record.predicate, record.subject.entity_id),
+                set(),
+            ).add(record.object_entity.entity_id)
+            incoming.setdefault(
+                (record.predicate, record.object_entity.entity_id),
+                set(),
+            ).add(record.subject.entity_id)
+
+        # Endpoint cardinality is deliberately a closed-world publication
+        # invariant. ``records`` is the complete final manifest (carried plus
+        # new revisions after removals/replacements), so a missing required
+        # edge is meaningful here.  Bounded/ACL-filtered retrieval subgraphs
+        # must never reuse this validation.
+        for predicate, contract in relationship_definitions.items():
+            source_cardinality = contract["source_cardinality"]
+            target_cardinality = contract["target_cardinality"]
+            for entity in entities.values():
+                if entity.entity_type in contract["source_types"]:
+                    count = len(outgoing.get((predicate, entity.entity_id), set()))
+                    if source_cardinality.required and count == 0:
+                        raise KnowledgePublicationConflict(
+                            f"required relationship {predicate} is absent from "
+                            f"source entity {entity.entity_id}"
+                        )
+                    if source_cardinality.single_valued and count > 1:
+                        raise KnowledgePublicationConflict(
+                            f"relationship {predicate} exceeds source endpoint "
+                            "single-valued cardinality"
+                        )
+                if entity.entity_type in contract["target_types"]:
+                    count = len(incoming.get((predicate, entity.entity_id), set()))
+                    if target_cardinality.required and count == 0:
+                        raise KnowledgePublicationConflict(
+                            f"required relationship {predicate} is absent at "
+                            f"target entity {entity.entity_id}"
+                        )
+                    if target_cardinality.single_valued and count > 1:
+                        raise KnowledgePublicationConflict(
+                            f"relationship {predicate} exceeds target endpoint "
+                            "single-valued cardinality"
+                        )
         return ontology_id
 
     @staticmethod
@@ -2579,6 +2805,14 @@ class Neo4jKnowledgePublicationService:
                 tenant_id=tenant_id,
                 publication_id=publication_id,
             ).consume()
+        tx.run(
+            """
+            MATCH (value:RelationshipPropertyValue {tenant_id: $tenant_id})
+            WHERE NOT (:Assertion)-[:HAS_RELATIONSHIP_PROPERTY]->(value)
+            DETACH DELETE value
+            """,
+            tenant_id=tenant_id,
+        ).consume()
 
     @classmethod
     def _materialize_records_tx(
@@ -2774,9 +3008,15 @@ class Neo4jKnowledgePublicationService:
             "predicate": assertion.predicate,
             "object_kind": assertion.object_kind,
             "literal_value": assertion.literal_value or "",
+            "document_id": assertion.evidence.document_id,
+            "version_id": assertion.evidence.version_id,
             "evidence_chunk_id": assertion.evidence.chunk_id,
             "evidence_char_start": assertion.evidence.char_start,
             "evidence_char_end": assertion.evidence.char_end,
+            "evidence_text": assertion.evidence.quoted_text,
+            "access_policy_id": assertion.evidence.access_policy_id,
+            "access_policy_version": assertion.evidence.access_policy_version,
+            "access_groups": sorted(assertion.evidence.access_groups),
             "extractor_version": extractor,
             "schema_version": assertion.trust.ontology_version_id,
             "confidence": assertion.confidence,
@@ -2789,6 +3029,15 @@ class Neo4jKnowledgePublicationService:
         }
         if assertion.literal_semantics is not None:
             properties.update(assertion.literal_semantics.to_flat_properties())
+        properties.update(
+            relationship_properties_format_version=1,
+            relationship_properties_json=json.dumps(
+                [item.to_mapping() for item in assertion.relationship_properties],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
         row = tx.run(
             """
             MATCH (revision:GovernedAssertionRevision {
@@ -2885,6 +3134,87 @@ class Neo4jKnowledgePublicationService:
             raise KnowledgePublicationConflict(
                 "canonical assertion materialization conflicts or is stale"
             )
+        if assertion.relationship_properties:
+            property_rows = tuple(
+                {
+                    "property_value_id": item.property_value_id,
+                    "properties": {
+                        "property_value_id": item.property_value_id,
+                        "tenant_id": assertion.tenant_id,
+                        "relationship_type": item.relationship_type,
+                        "name": item.name,
+                        "evidence_chunk_id": item.evidence_chunk_id,
+                        "evidence_char_start": item.evidence_char_start,
+                        "evidence_char_end": item.evidence_char_end,
+                        "evidence_text": item.evidence_text,
+                        "extractor_version": item.extractor_version,
+                        "schema_version": item.schema_version,
+                        "confidence": item.confidence,
+                        "document_id": assertion.evidence.document_id,
+                        "version_id": assertion.evidence.version_id,
+                        "access_policy_id": assertion.evidence.access_policy_id,
+                        "access_policy_version": (
+                            assertion.evidence.access_policy_version
+                        ),
+                        "access_groups": sorted(assertion.evidence.access_groups),
+                        **item.literal_semantics.to_flat_properties(),
+                    },
+                }
+                for item in assertion.relationship_properties
+            )
+            property_result = tx.run(
+                """
+                MATCH (assertion:Assertion {
+                    tenant_id: $tenant_id,
+                    assertion_id: $assertion_id,
+                    governed_publication_id: $publication_id
+                })-[:EVIDENCED_BY]->(chunk:Chunk {
+                    tenant_id: $tenant_id,
+                    chunk_id: $chunk_id
+                })
+                UNWIND $rows AS row
+                MERGE (value:RelationshipPropertyValue {
+                    property_value_id: row.property_value_id
+                })
+                ON CREATE SET value = row.properties
+                WITH assertion, chunk, value, row,
+                     all(
+                         key IN keys(row.properties)
+                         WHERE value[key] = row.properties[key]
+                     ) AS compatible
+                WHERE compatible
+                  AND value.tenant_id = $tenant_id
+                  AND value.evidence_chunk_id = chunk.chunk_id
+                  AND assertion.evidence_char_start <= value.evidence_char_start
+                  AND value.evidence_char_start < value.evidence_char_end
+                  AND value.evidence_char_end <= assertion.evidence_char_end
+                  AND substring(
+                      chunk.text,
+                      value.evidence_char_start - chunk.char_start,
+                      value.evidence_char_end - value.evidence_char_start
+                  ) = value.evidence_text
+                  AND value.document_id = assertion.document_id
+                  AND value.version_id = assertion.version_id
+                  AND value.access_policy_id = assertion.access_policy_id
+                  AND value.access_policy_version = assertion.access_policy_version
+                  AND value.access_groups = assertion.access_groups
+                MERGE (assertion)-[:HAS_RELATIONSHIP_PROPERTY]->(value)
+                MERGE (value)-[:EVIDENCED_BY]->(chunk)
+                RETURN count(value) AS count
+                """,
+                tenant_id=assertion.tenant_id,
+                assertion_id=assertion_id,
+                publication_id=publication_id,
+                chunk_id=assertion.evidence.chunk_id,
+                rows=property_rows,
+            ).single()
+            if (
+                property_result is None
+                or property_result["count"] != len(property_rows)
+            ):
+                raise KnowledgePublicationConflict(
+                    "relationship-property materialization conflicts or is stale"
+                )
 
     @staticmethod
     def _activate_publication_tx(

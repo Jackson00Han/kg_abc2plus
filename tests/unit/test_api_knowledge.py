@@ -60,6 +60,7 @@ from graphrag_prod.ontology import (
     EntityTypeDefinition,
     PropertyDataType,
     PropertyDefinition,
+    RelationshipTypeDefinition,
     TBoxStatus,
     TBoxValidationError,
     TBoxVersion,
@@ -88,6 +89,34 @@ ACTIVE_TBOX = TBoxVersion(
         ),
     ),
     relationship_types=(),
+)
+
+
+RELATIONSHIP_TBOX = TBoxVersion(
+    tenant_id="tenant-alpha",
+    key="industrial-relations",
+    version=1,
+    status=TBoxStatus.PUBLISHED,
+    entity_types=(
+        EntityTypeDefinition("Asset", ("asset-id",)),
+        EntityTypeDefinition("Organization", ("org-id",)),
+    ),
+    relationship_types=(
+        RelationshipTypeDefinition(
+            "SUPPLIED_BY",
+            ("Asset",),
+            ("Organization",),
+            properties=(
+                PropertyDefinition(
+                    "SupplyShare",
+                    PropertyDataType.DECIMAL,
+                    True,
+                    Cardinality.ONE,
+                    unit="percent",
+                ),
+            ),
+        ),
+    ),
 )
 
 
@@ -601,6 +630,12 @@ class _TBoxes:
         return self.value.with_status(TBoxStatus.PUBLISHED)
 
 
+class _TBoxesWithValue(_TBoxes):
+    def __init__(self, value: TBoxVersion) -> None:
+        super().__init__()
+        self.value = value
+
+
 class _Reviews:
     def __init__(self, queue: tuple[object, ...] = ()) -> None:
         self.queue_call = None
@@ -759,6 +794,118 @@ class KnowledgeAdapterTests(unittest.TestCase):
             literal.literal_semantics.raw_observed_at,
             "2025-01-02T03:04:05Z",
         )
+
+    def test_authoritative_relationship_property_is_server_identified_and_scoped(
+        self,
+    ) -> None:
+        text = "Pump-7 supplied by Acme at 40 percent."
+        payload = {
+            "ontology_version_id": RELATIONSHIP_TBOX.tbox_id,
+            "mentions": [
+                {
+                    "source_key": "asset",
+                    "entity": {
+                        "entity_type": "Asset",
+                        "canonical_key": "asset-id:P-7",
+                        "canonical_name": "Pump-7",
+                    },
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "char_start": 0,
+                        "char_end": 6,
+                        "quoted_text": "Pump-7",
+                    },
+                },
+                {
+                    "source_key": "supplier",
+                    "entity": {
+                        "entity_type": "Organization",
+                        "canonical_key": "org-id:ACME",
+                        "canonical_name": "Acme",
+                    },
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "char_start": 19,
+                        "char_end": 23,
+                        "quoted_text": "Acme",
+                    },
+                },
+            ],
+            "assertions": [
+                {
+                    "source_key": "supply",
+                    "subject_mention_source_key": "asset",
+                    "object_mention_source_key": "supplier",
+                    "predicate": "SUPPLIED_BY",
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "char_start": 0,
+                        "char_end": len(text),
+                        "quoted_text": text,
+                    },
+                    "relationship_properties": [
+                        {
+                            "name": "SupplyShare",
+                            "literal": {
+                                "raw_literal": "40",
+                                "raw_unit": "percent",
+                            },
+                            "evidence": {
+                                "document_id": "document-1",
+                                "version_id": "version-1",
+                                "chunk_id": "chunk-1",
+                                "char_start": 27,
+                                "char_end": 37,
+                                "quoted_text": "40 percent",
+                            },
+                            "confidence": 0.99,
+                        }
+                    ],
+                }
+            ],
+        }
+        driver = _Driver()
+        store = _KnowledgeStore()
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:import"}),
+        )
+        self._adapter(
+            driver,
+            store,
+            tboxes=_TBoxesWithValue(RELATIONSHIP_TBOX),
+        ).authoritative_import(
+            principal,
+            AuthoritativeImportRequest.model_validate(payload),
+        )
+        relation = store.batch.assertions[0]  # type: ignore[union-attr]
+        value = relation.relationship_properties[0]
+        self.assertEqual(value.name, "SupplyShare")
+        self.assertEqual(value.literal_semantics.raw_value, "40")
+        self.assertEqual(value.literal_semantics.raw_unit, "percent")
+        self.assertEqual(value.evidence_text, "40 percent")
+        self.assertEqual(value.confidence, 0.99)
+
+        payload["assertions"][0]["relationship_properties"][0]["evidence"][  # type: ignore[index]
+            "chunk_id"
+        ] = "chunk-other"
+        with self.assertRaises(ResourceNotFoundError):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                tboxes=_TBoxesWithValue(RELATIONSHIP_TBOX),
+            ).authoritative_import(
+                principal,
+                AuthoritativeImportRequest.model_validate(payload),
+            )
 
     def test_review_queue_and_edit_preserve_server_owned_literal_semantics(self) -> None:
         current = _candidate_literal()

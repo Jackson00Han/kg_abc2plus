@@ -15,7 +15,11 @@ import json
 from uuid import uuid5
 
 from graphrag_prod.domain.ids import ID_NAMESPACE, entity_id as make_entity_id
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.models import (
+    RelationshipPropertyValue,
+    TypedLiteralValue,
+    canonical_relationship_object_reference,
+)
 
 from .trust import (
     AuthorityLevel,
@@ -312,6 +316,9 @@ class AssertionRecord:
     object_mention_revision_id: str | None = None
     literal_value: str | None = None
     literal_semantics: TypedLiteralValue | None = None
+    relationship_properties: tuple[RelationshipPropertyValue, ...] = field(
+        default_factory=tuple
+    )
 
     def __post_init__(self) -> None:
         tenant_id = _required_text(self.tenant_id, "tenant_id")
@@ -332,6 +339,28 @@ class AssertionRecord:
         has_literal = self.literal_value is not None
         if has_entity == has_literal:
             raise ValueError("assertion requires exactly one entity or literal object")
+        properties = tuple(self.relationship_properties)
+        if any(not isinstance(item, RelationshipPropertyValue) for item in properties):
+            raise TypeError(
+                "relationship_properties must contain RelationshipPropertyValue values"
+            )
+        properties = tuple(
+            sorted(
+                properties,
+                key=lambda item: (
+                    item.name,
+                    item.literal_semantics.identity_reference,
+                    item.evidence_chunk_id,
+                    item.evidence_char_start,
+                    item.evidence_char_end,
+                    item.property_value_id,
+                ),
+            )
+        )
+        property_ids = tuple(item.property_value_id for item in properties)
+        if len(property_ids) != len(set(property_ids)):
+            raise ValueError("relationship_properties contain duplicate value IDs")
+        object.__setattr__(self, "relationship_properties", properties)
         if has_entity:
             assert self.object_entity is not None
             if self.literal_semantics is not None:
@@ -346,9 +375,42 @@ class AssertionRecord:
                     "object_mention_revision_id",
                 ),
             )
+            for item in properties:
+                if item.tenant_id != tenant_id:
+                    raise ValueError(
+                        "relationship property and assertion must share one tenant"
+                    )
+                if item.relationship_type != self.predicate:
+                    raise ValueError(
+                        "relationship property type must match assertion predicate"
+                    )
+                if item.evidence_chunk_id != self.evidence.chunk_id:
+                    raise ValueError(
+                        "relationship property must use the assertion evidence Chunk"
+                    )
+                if (
+                    item.evidence_char_start < self.evidence.char_start
+                    or item.evidence_char_end > self.evidence.char_end
+                ):
+                    raise ValueError(
+                        "relationship property evidence falls outside assertion evidence"
+                    )
+                relative_start = item.evidence_char_start - self.evidence.char_start
+                relative_end = item.evidence_char_end - self.evidence.char_start
+                if (
+                    self.evidence.quoted_text[relative_start:relative_end]
+                    != item.evidence_text
+                ):
+                    raise ValueError(
+                        "relationship property evidence must match assertion evidence"
+                    )
         elif self.object_mention_revision_id is not None:
             raise ValueError("literal assertion must not reference an object mention")
         else:
+            if properties:
+                raise ValueError(
+                    "literal assertion must not carry relationship properties"
+                )
             literal = _required_text(self.literal_value, "literal_value")
             if not _contains_exact_token(self.evidence.quoted_text, literal):
                 raise ValueError("literal_value must occur in the exact evidence text")
@@ -393,7 +455,10 @@ class AssertionRecord:
     @property
     def object_reference(self) -> str:
         if self.object_entity is not None:
-            return self.object_entity.entity_id
+            return canonical_relationship_object_reference(
+                self.object_entity.entity_id,
+                self.relationship_properties,
+            )
         if self.literal_semantics is not None:
             return self.literal_semantics.identity_reference
         return self.literal_value or ""

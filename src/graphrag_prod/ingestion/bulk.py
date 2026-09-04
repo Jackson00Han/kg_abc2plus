@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+import json
 import math
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
@@ -430,6 +431,18 @@ def _build_payload(plan: IngestionPlan, now: datetime) -> _Payload:
                 assertion_identity.update(
                     assertion.literal_semantics.to_flat_properties()
                 )
+            assertion_identity.update(
+                relationship_properties_format_version=1,
+                relationship_properties_json=json.dumps(
+                    [
+                        item.to_mapping()
+                        for item in assertion.relationship_properties
+                    ],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            )
             assertion_rows.append(
                 _node_row(
                     assertion.assertion_id,

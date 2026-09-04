@@ -17,8 +17,11 @@ from graphrag_prod.construction.workflow import (
     ConstructionBudgetExceeded,
     ConstructionConflict,
 )
-from graphrag_prod.domain import Principal, TypedLiteralValue
-from graphrag_prod.domain.ids import entity_id as make_entity_id
+from graphrag_prod.domain import Principal, RelationshipPropertyValue, TypedLiteralValue
+from graphrag_prod.domain.ids import (
+    entity_id as make_entity_id,
+    relationship_property_value_id,
+)
 from graphrag_prod.ingestion import IngestionConflict
 from graphrag_prod.knowledge import (
     ABoxRecordBatch,
@@ -83,6 +86,7 @@ from .knowledge_contracts import (
     PublicationRequest,
     PublicationResponse,
     RawLiteralInput,
+    RelationshipPropertyInput,
     ReviewBatchRequest,
     ReviewBatchResponse,
     ReviewQueueRequest,
@@ -227,6 +231,26 @@ def _literal_semantics_payload(value: TypedLiteralValue) -> dict[str, object]:
     }
 
 
+def _relationship_property_payload(
+    value: RelationshipPropertyValue,
+    parent: EvidenceReference,
+) -> dict[str, object]:
+    return {
+        "property_value_id": value.property_value_id,
+        "name": value.name,
+        "literal_semantics": _literal_semantics_payload(value.literal_semantics),
+        "evidence": {
+            "document_id": parent.document_id,
+            "version_id": parent.version_id,
+            "chunk_id": value.evidence_chunk_id,
+            "char_start": value.evidence_char_start,
+            "char_end": value.evidence_char_end,
+            "quoted_text": value.evidence_text,
+        },
+        "confidence": value.confidence,
+    }
+
+
 def _declared_entity_property(
     tbox: TBoxVersion,
     entity_type: str,
@@ -237,6 +261,21 @@ def _declared_entity_property(
             continue
         for property_definition in definition.properties:
             if property_definition.name == predicate:
+                return property_definition
+        break
+    raise RequestValidationError()
+
+
+def _declared_relationship_property(
+    tbox: TBoxVersion,
+    relationship_type: str,
+    property_name: str,
+) -> PropertyDefinition:
+    for definition in tbox.relationship_types:
+        if definition.name != relationship_type:
+            continue
+        for property_definition in definition.properties:
+            if property_definition.name == property_name:
                 return property_definition
         break
     raise RequestValidationError()
@@ -271,6 +310,10 @@ def _review_record_payload(item: Any) -> dict[str, object]:
                 None
                 if record.literal_semantics is None
                 else _literal_semantics_payload(record.literal_semantics)
+            ),
+            relationship_properties=tuple(
+                _relationship_property_payload(value, record.evidence)
+                for value in record.relationship_properties
             ),
         )
     else:
@@ -431,6 +474,82 @@ class Neo4jKnowledgeOperations:
             )
         except LiteralNormalizationError as error:
             raise RequestValidationError() from error
+
+    def _relationship_properties(
+        self,
+        principal: Principal,
+        tbox: TBoxVersion,
+        *,
+        relationship_type: str,
+        values: tuple[RelationshipPropertyInput, ...],
+        parent_evidence: EvidenceReference,
+        extractor_version: str,
+        schema_version: str,
+    ) -> tuple[RelationshipPropertyValue, ...]:
+        results: list[RelationshipPropertyValue] = []
+        for value in values:
+            definition = _declared_relationship_property(
+                tbox,
+                relationship_type,
+                value.name,
+            )
+            try:
+                literal = self.literal_normalizer.normalize(
+                    definition,
+                    raw_value=value.literal.raw_literal,
+                    raw_unit=value.literal.raw_unit,
+                    valid_from=value.literal.raw_valid_from,
+                    valid_to=value.literal.raw_valid_to,
+                    observed_at=value.literal.raw_observed_at,
+                )
+            except LiteralNormalizationError as error:
+                raise RequestValidationError() from error
+            evidence = self._evidence(principal, value.evidence)
+            same_scope = (
+                evidence.tenant_id == parent_evidence.tenant_id
+                and evidence.document_id == parent_evidence.document_id
+                and evidence.version_id == parent_evidence.version_id
+                and evidence.chunk_id == parent_evidence.chunk_id
+                and evidence.access_policy_id == parent_evidence.access_policy_id
+                and evidence.access_policy_version
+                == parent_evidence.access_policy_version
+                and evidence.access_groups == parent_evidence.access_groups
+                and parent_evidence.char_start
+                <= evidence.char_start
+                < evidence.char_end
+                <= parent_evidence.char_end
+            )
+            if not same_scope:
+                # Keep cross-document, cross-policy, and unauthorized details
+                # behind the same no-existence boundary as source evidence.
+                raise ResourceNotFoundError()
+            results.append(
+                RelationshipPropertyValue(
+                    property_value_id=relationship_property_value_id(
+                        principal.tenant_id,
+                        relationship_type,
+                        value.name,
+                        literal.identity_reference,
+                        evidence.chunk_id,
+                        evidence.char_start,
+                        evidence.char_end,
+                        extractor_version,
+                        schema_version,
+                    ),
+                    tenant_id=principal.tenant_id,
+                    relationship_type=relationship_type,
+                    name=value.name,
+                    literal_semantics=literal,
+                    evidence_chunk_id=evidence.chunk_id,
+                    evidence_char_start=evidence.char_start,
+                    evidence_char_end=evidence.char_end,
+                    evidence_text=evidence.quoted_text,
+                    extractor_version=extractor_version,
+                    schema_version=schema_version,
+                    confidence=value.confidence,
+                )
+            )
+        return tuple(results)
 
     def _current_review_assertion(
         self,
@@ -667,6 +786,19 @@ class Neo4jKnowledgeOperations:
                     )
                 )
                 evidence = self._evidence(principal, item.evidence)
+                relationship_properties = (
+                    ()
+                    if object_mention is None
+                    else self._relationship_properties(
+                        principal,
+                        tbox,
+                        relationship_type=item.predicate,
+                        values=item.relationship_properties,
+                        parent_evidence=evidence,
+                        extractor_version="EXPERT_IMPORT:reviewed",
+                        schema_version=tbox.tbox_id,
+                    )
+                )
                 assertions.append(
                     AssertionRecord(
                         revision=RecordRevision.next(
@@ -694,6 +826,7 @@ class Neo4jKnowledgeOperations:
                             else item.literal.raw_literal
                         ),
                         literal_semantics=literal_semantics,
+                        relationship_properties=relationship_properties,
                     )
                 )
             batch = ABoxRecordBatch(
@@ -1030,21 +1163,39 @@ class Neo4jKnowledgeOperations:
                 elif item.assertion_edit is not None:
                     source = item.assertion_edit
                     literal_semantics = None
+                    current = self._current_review_assertion(
+                        principal,
+                        item.record_id,
+                        item.expected_revision,
+                    )
+                    tbox = self._active_tbox(
+                        principal,
+                        current.trust.ontology_version_id,
+                    )
                     if source.literal is not None:
-                        current = self._current_review_assertion(
-                            principal,
-                            item.record_id,
-                            item.expected_revision,
-                        )
-                        tbox = self._active_tbox(
-                            principal,
-                            current.trust.ontology_version_id,
-                        )
                         literal_semantics = self._normalize_literal(
                             tbox,
                             entity_type=source.subject.entity_type,
                             predicate=source.predicate,
                             source=source.literal,
+                        )
+                    relationship_properties = ()
+                    if source.object_entity is not None:
+                        relationship_properties = (
+                            current.relationship_properties
+                            if source.relationship_properties is None
+                            else self._relationship_properties(
+                                principal,
+                                tbox,
+                                relationship_type=source.predicate,
+                                values=source.relationship_properties,
+                                parent_evidence=current.evidence,
+                                extractor_version=(
+                                    current.trust.extractor_version
+                                    or f"{current.trust.origin.value}:reviewed"
+                                ),
+                                schema_version=current.trust.ontology_version_id,
+                            )
                         )
                     edit = AssertionEdit(
                         subject=_entity(principal, source.subject),
@@ -1067,6 +1218,7 @@ class Neo4jKnowledgeOperations:
                             else source.literal.raw_literal
                         ),
                         literal_semantics=literal_semantics,
+                        relationship_properties=relationship_properties,
                     )
                 work.append(
                     ReviewRequest(

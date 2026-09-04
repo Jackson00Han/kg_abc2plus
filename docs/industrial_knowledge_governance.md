@@ -47,13 +47,13 @@ The T-Box is persisted as ordinary Neo4j property-graph nodes and
 relationships. User-defined type names are stored as data; they are never
 concatenated into Cypher labels or relationship types.
 
-The current A-Box implementation extracts and materializes relationship
-instances and typed **entity** property facts. Although relationship-property
-definitions can be represented and persisted in the T-Box, relationship
-property values are not yet accepted by the extraction schema, authoritative
-import, review model, or publication materialization. They must not be treated
-as an implemented instance capability until those evidence-backed paths are
-added.
+Relationship-property definitions are enforced as A-Box contracts. Each value
+is a stably identified `RelationshipPropertyValue` with typed and
+unit/time-normalized semantics plus its own exact evidence span. Its evidence
+must be nested inside the parent assertion and match that assertion's tenant,
+document/version, Chunk, access policy, and ACL. Extraction, authoritative
+import, immutable review, publication, retrieval, and the Playground preserve
+this representation.
 
 ## Evidence rule
 
@@ -130,8 +130,9 @@ text. Both source and canonical representations are retained:
 These fields form part of the Assertion's stable identity, review revision,
 portable extraction artifact, and publication materialization. Neo4j stores
 them as flat scalar Assertion properties; it does not store a nested object.
-Extraction artifact format v2 carries the structured mapping, while the reader
-continues to decode legacy v1 artifacts as untyped literals. Invalid datatype,
+Extraction artifact format v3 carries entity- and relationship-property
+mappings, while the reader continues to decode legacy v1/v2 artifacts with no
+relationship-property values. Invalid datatype,
 unit, span, time range, cardinality, or fabricated qualifier findings are
 explicitly rejected; low-confidence property facts enter quarantine.
 
@@ -223,6 +224,15 @@ activates a monotonically versioned tenant publication. Rollback changes the
 active publication pointer while retaining all revisions, manifests, and
 activation history. Stale source snapshots, unauthorized evidence, and T-Box
 mismatches fail closed.
+
+Relationship endpoint cardinality is a closed-world publication invariant.
+Across the complete final manifest, source cardinality counts distinct target
+IDs per predicate/source and target cardinality counts distinct source IDs per
+predicate/target; duplicate evidence for one canonical edge counts once.
+Required and single-valued constraints are checked against the exact bound
+T-Box before materialization or activation changes. Partial ACL-filtered
+retrieval subgraphs are never treated as a complete world. Omitted legacy
+endpoint cardinalities retain the `ZERO_OR_MORE` default.
 
 Every `KnowledgePublication` stores its exact immutable
 `ontology_version_id` and a `USES_TBOX_VERSION` edge. A fresh publication may

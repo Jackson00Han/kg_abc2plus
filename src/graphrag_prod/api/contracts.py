@@ -715,6 +715,14 @@ class GraphEntityResponse(StrictAPIModel):
         return self
 
 
+class GraphRelationshipPropertyResponse(StrictAPIModel):
+    property_value_id: Identifier
+    name: GraphTypeName
+    literal_semantics: TypedLiteralSemanticsResponse
+    evidence: GraphEvidenceResponse
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
+
+
 class GraphAssertionResponse(StrictAPIModel):
     record_id: Identifier
     revision_id: Identifier
@@ -726,7 +734,16 @@ class GraphAssertionResponse(StrictAPIModel):
     object_mention_revision_id: Identifier | None = None
     literal_value: GraphExactText | None = None
     literal_semantics: TypedLiteralSemanticsResponse | None = None
+    relationship_properties: Annotated[
+        tuple[GraphRelationshipPropertyResponse, ...],
+        Field(max_length=MAX_GRAPH_ASSERTIONS),
+    ] = ()
     evidence: GraphEvidenceResponse
+
+    @field_validator("relationship_properties", mode="before")
+    @classmethod
+    def accept_json_relationship_properties(cls, value: object) -> object:
+        return _json_array(value)
 
     @model_validator(mode="after")
     def validate_object_and_identity(self) -> Self:
@@ -749,6 +766,8 @@ class GraphAssertionResponse(StrictAPIModel):
             or self.literal_value is None
         ):
             raise ValueError("literal assertion object is invalid")
+        if self.object_kind == "literal" and self.relationship_properties:
+            raise ValueError("literal assertion cannot carry relationship properties")
         if (
             self.literal_semantics is not None
             and self.literal_semantics.raw_value != self.literal_value
@@ -764,7 +783,16 @@ class GraphPathResponse(StrictAPIModel):
     object_entity_id: Identifier | None = None
     literal_value: GraphExactText | None = None
     literal_semantics: TypedLiteralSemanticsResponse | None = None
+    relationship_properties: Annotated[
+        tuple[GraphRelationshipPropertyResponse, ...],
+        Field(max_length=MAX_GRAPH_ASSERTIONS),
+    ] = ()
     evidence: GraphEvidenceResponse
+
+    @field_validator("relationship_properties", mode="before")
+    @classmethod
+    def accept_json_relationship_properties(cls, value: object) -> object:
+        return _json_array(value)
 
     @model_validator(mode="after")
     def validate_one_hop_object(self) -> Self:
@@ -772,6 +800,8 @@ class GraphPathResponse(StrictAPIModel):
             raise ValueError("graph path requires exactly one object")
         if self.object_entity_id is not None and self.literal_semantics is not None:
             raise ValueError("relationship path must not carry literal semantics")
+        if self.object_entity_id is None and self.relationship_properties:
+            raise ValueError("literal path cannot carry relationship properties")
         if (
             self.literal_semantics is not None
             and self.literal_semantics.raw_value != self.literal_value

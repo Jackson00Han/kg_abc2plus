@@ -304,6 +304,99 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
         self.assertEqual(forged.status_code, 422)
         self.assertEqual(len(self.backend.envelopes), before)
 
+    def test_relationship_property_identity_and_canonical_values_are_server_owned(
+        self,
+    ) -> None:
+        text = "Pump-7 supplied by Acme at 40 percent."
+        base_property = {
+            "name": "SupplyShare",
+            "literal": {"raw_literal": "40", "raw_unit": "percent"},
+            "evidence": {
+                "document_id": "document-1",
+                "version_id": "version-1",
+                "chunk_id": "chunk-1",
+                "char_start": 27,
+                "char_end": 37,
+                "quoted_text": "40 percent",
+            },
+        }
+        body = {
+            "ontology_version_id": "tbox-1",
+            "mentions": [
+                {
+                    "source_key": "asset",
+                    "entity": {
+                        "entity_type": "Asset",
+                        "canonical_key": "asset-id:P-7",
+                        "canonical_name": "Pump-7",
+                    },
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "char_start": 0,
+                        "char_end": 6,
+                        "quoted_text": "Pump-7",
+                    },
+                },
+                {
+                    "source_key": "supplier",
+                    "entity": {
+                        "entity_type": "Organization",
+                        "canonical_key": "org-id:ACME",
+                        "canonical_name": "Acme",
+                    },
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "char_start": 19,
+                        "char_end": 23,
+                        "quoted_text": "Acme",
+                    },
+                },
+            ],
+            "assertions": [
+                {
+                    "source_key": "supply",
+                    "subject_mention_source_key": "asset",
+                    "object_mention_source_key": "supplier",
+                    "predicate": "SUPPLIED_BY",
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "char_start": 0,
+                        "char_end": len(text),
+                        "quoted_text": text,
+                    },
+                    "relationship_properties": [base_property],
+                }
+            ],
+        }
+        before = len(self.backend.envelopes)
+        forged_values = (
+            {**base_property, "property_value_id": "client-chosen"},
+            {
+                **base_property,
+                "literal": {
+                    **base_property["literal"],
+                    "canonical_value": "0.4",
+                },
+            },
+        )
+        for forged in forged_values:
+            with self.subTest(forged=forged):
+                body["assertions"][0]["relationship_properties"] = [forged]  # type: ignore[index]
+                response = self.client.post(
+                    "/v1/knowledge/authoritative:import",
+                    headers=_headers(scope="knowledge:import"),
+                    json=body,
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json()["code"], "invalid_request")
+        self.assertEqual(len(self.backend.envelopes), before)
+
 
 if __name__ == "__main__":
     unittest.main()

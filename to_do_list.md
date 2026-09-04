@@ -39,8 +39,9 @@
   creates immutable revisions and atomically rebinds dependent candidate
   assertions without approving those assertions.
 
-## Follow-up limitations
+## Completed follow-ups
 
-- [ ] Extend the current T-Box relationship-property definitions into
-  evidence-backed relationship-property extraction, authoritative import,
-  review, publication, and retrieval instances.
+- [x] Extend T-Box relationship-property definitions into evidence-backed,
+  typed/unit/time-normalized extraction, authoritative import, review,
+  publication, retrieval, API, and Playground instances. Publication also
+  enforces relationship-property and closed-world endpoint cardinality.

@@ -8,7 +8,9 @@ import unittest
 from unittest.mock import patch
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import entity_id
 from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.knowledge import EntityIdentity, RecordRevision, knowledge_record_id
 from graphrag_prod.knowledge.review import (
     KNOWLEDGE_PUBLISH_CAPABILITY,
     KNOWLEDGE_REVIEW_CAPABILITY,
@@ -376,6 +378,171 @@ class KnowledgeReviewContractTests(unittest.TestCase):
             batch.tenant_id,
             (*authoritative.mentions, legacy_published),
         )
+
+    def test_complete_manifest_enforces_distinct_relationship_endpoint_cardinality(
+        self,
+    ) -> None:
+        class _Rows:
+            def __init__(self, rows: tuple[dict[str, object], ...]) -> None:
+                self.rows = rows
+
+            def __iter__(self):  # type: ignore[no-untyped-def]
+                return iter(self.rows)
+
+        class _Tx:
+            def __init__(
+                self,
+                source_cardinality: str,
+                target_cardinality: str = "ZERO_OR_MORE",
+            ) -> None:
+                self.source_cardinality = source_cardinality
+                self.target_cardinality = target_cardinality
+
+            def run(self, query: str, **_parameters: object) -> _Rows:
+                if "DECLARES_RELATIONSHIP_TYPE" in query:
+                    return _Rows(
+                        (
+                            {
+                                "name": "OFFERS",
+                                "source_types": ["Company"],
+                                "target_types": ["Product"],
+                                "source_cardinality": self.source_cardinality,
+                                "target_cardinality": self.target_cardinality,
+                                "property_definitions": [],
+                            },
+                        )
+                    )
+                return _Rows(
+                    (
+                        {"entity_type": "Company", "property_definitions": []},
+                        {"entity_type": "Product", "property_definitions": []},
+                    )
+                )
+
+        batch = make_knowledge_batch(authoritative=False)
+        relation = batch.assertions[0]
+        original_product = next(
+            item for item in batch.mentions if item.entity.entity_type == "Product"
+        )
+        second_product = EntityIdentity(
+            entity_id=entity_id(
+                batch.tenant_id,
+                "Product",
+                "apple-product:second",
+            ),
+            tenant_id=batch.tenant_id,
+            entity_type="Product",
+            canonical_key="apple-product:second",
+            canonical_name="Second product",
+        )
+        mention_record_id = knowledge_record_id(
+            batch.tenant_id,
+            "ENTITY_MENTION",
+            "second-product",
+        )
+        second_mention = dataclasses.replace(
+            original_product,
+            revision=RecordRevision.next(mention_record_id, 0),
+            entity=second_product,
+        )
+        assertion_record_id = knowledge_record_id(
+            batch.tenant_id,
+            "ASSERTION",
+            "second-offer",
+        )
+        second_relation = dataclasses.replace(
+            relation,
+            revision=RecordRevision.next(assertion_record_id, 0),
+            object_entity=second_product,
+            object_mention_revision_id=second_mention.revision_id,
+        )
+
+        with self.assertRaisesRegex(
+            KnowledgePublicationConflict,
+            "source endpoint single-valued",
+        ):
+            Neo4jKnowledgePublicationService._validate_property_cardinality_tx(
+                _Tx("ZERO_OR_ONE"),
+                batch.tenant_id,
+                (*batch.mentions, second_mention, relation, second_relation),
+            )
+
+        original_company = next(
+            item for item in batch.mentions if item.entity.entity_type == "Company"
+        )
+        second_company = EntityIdentity(
+            entity_id=entity_id(
+                batch.tenant_id,
+                "Company",
+                "ticker:second",
+            ),
+            tenant_id=batch.tenant_id,
+            entity_type="Company",
+            canonical_key="ticker:second",
+            canonical_name="Second company",
+        )
+        company_record_id = knowledge_record_id(
+            batch.tenant_id,
+            "ENTITY_MENTION",
+            "second-company",
+        )
+        second_company_mention = dataclasses.replace(
+            original_company,
+            revision=RecordRevision.next(company_record_id, 0),
+            entity=second_company,
+        )
+        inbound_record_id = knowledge_record_id(
+            batch.tenant_id,
+            "ASSERTION",
+            "second-company-offer",
+        )
+        second_inbound = dataclasses.replace(
+            relation,
+            revision=RecordRevision.next(inbound_record_id, 0),
+            subject=second_company,
+            subject_mention_revision_id=second_company_mention.revision_id,
+        )
+        with self.assertRaisesRegex(
+            KnowledgePublicationConflict,
+            "target endpoint single-valued",
+        ):
+            Neo4jKnowledgePublicationService._validate_property_cardinality_tx(
+                _Tx("ZERO_OR_MORE", "ZERO_OR_ONE"),
+                batch.tenant_id,
+                (
+                    *batch.mentions,
+                    second_company_mention,
+                    relation,
+                    second_inbound,
+                ),
+            )
+
+        # Multiple evidence revisions for the same canonical edge count as one
+        # counterpart under the closed-world endpoint contract.
+        duplicate_record_id = knowledge_record_id(
+            batch.tenant_id,
+            "ASSERTION",
+            "duplicate-offer-evidence",
+        )
+        duplicate = dataclasses.replace(
+            relation,
+            revision=RecordRevision.next(duplicate_record_id, 0),
+        )
+        Neo4jKnowledgePublicationService._validate_property_cardinality_tx(
+            _Tx("ONE"),
+            batch.tenant_id,
+            (*batch.mentions, relation, duplicate),
+        )
+
+        with self.assertRaisesRegex(
+            KnowledgePublicationConflict,
+            "required relationship OFFERS is absent",
+        ):
+            Neo4jKnowledgePublicationService._validate_property_cardinality_tx(
+                _Tx("ONE"),
+                batch.tenant_id,
+                batch.mentions,
+            )
 
 
 if __name__ == "__main__":

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from typing import Any, Iterable, Protocol
 
 from graphrag_prod.domain.access import Principal
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.ontology.models import (
     Cardinality,
     PropertyDataType,
@@ -98,7 +99,7 @@ def _evidence_properties(evidence: EvidenceReference) -> dict[str, object]:
 
 
 def _revision_properties(record: EntityMentionRecord | AssertionRecord) -> dict[str, object]:
-    return {
+    properties: dict[str, object] = {
         "revision_id": record.revision_id,
         "record_id": record.record_id,
         "revision": record.revision.revision,
@@ -109,6 +110,17 @@ def _revision_properties(record: EntityMentionRecord | AssertionRecord) -> dict[
         **_evidence_properties(record.evidence),
         **_trust_properties(record.trust),
     }
+    if isinstance(record, AssertionRecord):
+        properties.update(
+            relationship_properties_format_version=1,
+            relationship_properties_json=json.dumps(
+                [item.to_mapping() for item in record.relationship_properties],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+    return properties
 
 
 def _entity_properties(entity: EntityIdentity, prefix: str = "") -> dict[str, object]:
@@ -212,6 +224,25 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
         literal_semantics = TypedLiteralValue.from_flat_properties(properties)
     except (TypeError, ValueError) as exc:
         raise KnowledgeStoreError("stored typed literal semantics are invalid") from exc
+    relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
+    properties_json = properties.get("relationship_properties_json")
+    properties_version = properties.get("relationship_properties_format_version")
+    if properties_json is not None or properties_version is not None:
+        if properties_version != 1 or not isinstance(properties_json, str):
+            raise KnowledgeStoreError(
+                "stored relationship-property codec version is invalid"
+            )
+        try:
+            decoded = json.loads(properties_json)
+            if not isinstance(decoded, list):
+                raise TypeError("relationship-property payload must be an array")
+            relationship_properties = tuple(
+                RelationshipPropertyValue.from_mapping(item) for item in decoded
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise KnowledgeStoreError(
+                "stored relationship-property payload is invalid"
+            ) from exc
     return AssertionRecord(
         revision=_stored_revision(properties),
         tenant_id=tenant_id,
@@ -236,6 +267,7 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
         literal_semantics=(
             literal_semantics if object_kind == "literal" else None
         ),
+        relationship_properties=relationship_properties,
     )
 
 
@@ -536,19 +568,33 @@ class Neo4jKnowledgeStore:
                     status: 'PUBLISHED'
                 })-[:DECLARES_RELATIONSHIP_TYPE]->
                   (relationship_type:TBoxRelationshipType)
+                OPTIONAL MATCH (relationship_type)-[:DECLARES_PROPERTY]->
+                               (property:TBoxPropertyDefinition)
                 RETURN relationship_type.name AS name,
                        relationship_type.source_types AS source_types,
-                       relationship_type.target_types AS target_types
+                       relationship_type.target_types AS target_types,
+                       collect(
+                           CASE WHEN property IS NULL THEN NULL
+                           ELSE properties(property)
+                           END
+                       ) AS property_definitions
                 """,
                 tenant_id=batch.tenant_id,
                 tbox_id=batch.ontology_version_id,
             )
         )
         relationship_contracts = {
-            row["name"]: (
-                frozenset(row["source_types"] or ()),
-                frozenset(row["target_types"] or ()),
-            )
+            row["name"]: {
+                "source_types": frozenset(row["source_types"] or ()),
+                "target_types": frozenset(row["target_types"] or ()),
+                "properties": {
+                    definition.name: definition
+                    for definition in (
+                        _property_definition(dict(item))
+                        for item in (row.get("property_definitions") or ())
+                    )
+                },
+            }
             for row in relationship_rows
         }
 
@@ -619,19 +665,41 @@ class Neo4jKnowledgeStore:
                         "single-valued T-Box cardinality in this batch"
                     )
                 continue
-            endpoints = relationship_contracts.get(assertion.predicate)
-            if endpoints is None:
+            relationship = relationship_contracts.get(assertion.predicate)
+            if relationship is None:
                 raise KnowledgeSchemaError(
                     f"relationship {assertion.predicate!r} is not declared by the T-Box"
                 )
-            source_types, target_types = endpoints
             if (
-                assertion.subject.entity_type not in source_types
-                or assertion.object_entity.entity_type not in target_types
+                assertion.subject.entity_type not in relationship["source_types"]
+                or assertion.object_entity.entity_type
+                not in relationship["target_types"]
             ):
                 raise KnowledgeSchemaError(
                     f"relationship {assertion.predicate!r} violates its domain/range"
                 )
+            property_counts: dict[str, int] = {}
+            for value in assertion.relationship_properties:
+                definition = relationship["properties"].get(value.name)
+                if definition is None:
+                    raise KnowledgeSchemaError(
+                        f"relationship property {assertion.predicate}.{value.name} "
+                        "is not declared by the T-Box"
+                    )
+                _validate_literal_semantics(value.literal_semantics, definition)
+                property_counts[value.name] = property_counts.get(value.name, 0) + 1
+            for name, definition in relationship["properties"].items():
+                count = property_counts.get(name, 0)
+                if definition.cardinality.required and count == 0:
+                    raise KnowledgeSchemaError(
+                        f"required relationship property {assertion.predicate}.{name} "
+                        "is absent"
+                    )
+                if definition.cardinality.single_valued and count > 1:
+                    raise KnowledgeSchemaError(
+                        f"relationship property {assertion.predicate}.{name} exceeds "
+                        "its single-valued T-Box cardinality in this batch"
+                    )
 
     @staticmethod
     def _validate_evidence_tx(tx: Any, evidence: EvidenceReference) -> None:

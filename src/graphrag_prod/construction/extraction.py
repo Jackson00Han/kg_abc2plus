@@ -15,14 +15,21 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
-from graphrag_prod.domain.ids import assertion_id, entity_id, mention_id
+from graphrag_prod.domain.ids import (
+    assertion_id,
+    entity_id,
+    mention_id,
+    relationship_property_value_id,
+)
 from graphrag_prod.domain.models import (
     Assertion,
     Chunk,
     Entity,
     EntityMention,
     GraphPipelineProfile,
+    RelationshipPropertyValue,
     TypedLiteralValue,
+    canonical_relationship_object_reference,
 )
 from graphrag_prod.graph.governance import normalize_display_name
 from graphrag_prod.ingestion.pipeline import ExtractionOutput
@@ -168,6 +175,17 @@ class _RelationshipCandidate:
     relationship_type: str
     source_reference: str
     target_reference: str
+    evidence_text: str
+    evidence_start: int
+    evidence_end: int
+    confidence: float
+    properties: tuple[_RelationshipPropertyCandidate, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RelationshipPropertyCandidate:
+    property_name: str
+    literal: TypedLiteralValue
     evidence_text: str
     evidence_start: int
     evidence_end: int
@@ -453,6 +471,16 @@ class OpenAICompatibleOntologyExtractor:
                         f"active T-Box property {entity_type.name}.{definition.name} "
                         f"has an invalid canonical unit: {exc.detail}"
                     ) from exc
+        for relationship_type in self.active_tbox.relationship_types:
+            for definition in relationship_type.properties:
+                try:
+                    self._literal_normalizer.validate_declared_unit(definition)
+                except LiteralNormalizationError as exc:
+                    raise ValueError(
+                        f"active T-Box relationship property "
+                        f"{relationship_type.name}.{definition.name} has an invalid "
+                        f"canonical unit: {exc.detail}"
+                    ) from exc
 
     def __call__(
         self,
@@ -600,6 +628,20 @@ class OpenAICompatibleOntologyExtractor:
         }
         if property_names:
             property_name_schema["enum"] = property_names
+        relationship_property_names = sorted(
+            {
+                definition.name
+                for item in self.active_tbox.relationship_types
+                for definition in item.properties
+            }
+        )
+        relationship_property_name_schema: dict[str, Any] = {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+        }
+        if relationship_property_names:
+            relationship_property_name_schema["enum"] = relationship_property_names
         return {
             "type": "object",
             "additionalProperties": False,
@@ -650,6 +692,7 @@ class OpenAICompatibleOntologyExtractor:
                             "target_ref",
                             "evidence",
                             "confidence",
+                            "properties",
                         ],
                         "properties": {
                             "type": {"type": "string", "enum": relationship_types},
@@ -669,6 +712,80 @@ class OpenAICompatibleOntologyExtractor:
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1,
+                            },
+                            "properties": {
+                                "type": "array",
+                                "maxItems": (
+                                    self.limits.max_property_facts
+                                    if relationship_property_names
+                                    else 0
+                                ),
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": [
+                                        "property",
+                                        "raw_literal",
+                                        "unit",
+                                        "valid_from",
+                                        "valid_to",
+                                        "observed_at",
+                                        "evidence",
+                                        "confidence",
+                                    ],
+                                    "properties": {
+                                        "property": relationship_property_name_schema,
+                                        "raw_literal": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 4096,
+                                        },
+                                        "unit": {
+                                            "type": ["string", "null"],
+                                            "minLength": 1,
+                                            "maxLength": 64,
+                                        },
+                                        "valid_from": {
+                                            "type": ["string", "null"],
+                                            "minLength": 1,
+                                            "maxLength": 64,
+                                        },
+                                        "valid_to": {
+                                            "type": ["string", "null"],
+                                            "minLength": 1,
+                                            "maxLength": 64,
+                                        },
+                                        "observed_at": {
+                                            "type": ["string", "null"],
+                                            "minLength": 1,
+                                            "maxLength": 64,
+                                        },
+                                        "evidence": {
+                                            "type": "object",
+                                            "additionalProperties": False,
+                                            "required": ["text", "start", "end"],
+                                            "properties": {
+                                                "text": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                },
+                                                "start": {
+                                                    "type": "integer",
+                                                    "minimum": 0,
+                                                },
+                                                "end": {
+                                                    "type": "integer",
+                                                    "minimum": 1,
+                                                },
+                                            },
+                                        },
+                                        "confidence": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "maximum": 1,
+                                        },
+                                    },
+                                },
                             },
                         },
                     },
@@ -788,8 +905,11 @@ class OpenAICompatibleOntologyExtractor:
             "the declared entity and relationship types and directions. All start/end "
             "offsets are zero-based, half-open, and relative to chunk_text. Mention "
             "and evidence text must exactly equal chunk_text[start:end]. Relationship "
-            "evidence must contain mentions of both endpoints. Property facts are "
-            "entity attributes declared by that entity type; raw_literal contains only "
+            "evidence must contain mentions of both endpoints. Each relationship's "
+            "properties array contains only attributes declared by that relationship "
+            "type, and each property has its own exact evidence span nested inside the "
+            "parent relationship evidence. Property facts are entity attributes "
+            "declared by that entity type; raw_literal contains only "
             "the exact source value token, unit contains the exact source unit token, "
             "and every non-null temporal qualifier must be exact RFC3339 text present "
             "inside the fact evidence. Do not infer time from document metadata. A fact "
@@ -892,6 +1012,21 @@ class OpenAICompatibleOntologyExtractor:
                     "REJECT",
                     "$.property_facts",
                     "too many property facts",
+                )
+            )
+        relationship_property_count = sum(
+            len(item.get("properties", ()))
+            for item in raw_relationships
+            if isinstance(item, Mapping)
+            and isinstance(item.get("properties"), list)
+        )
+        if relationship_property_count + len(raw_property_facts) > self.limits.max_property_facts:
+            findings.append(
+                ExtractionFinding(
+                    "PROPERTY_FACT_LIMIT_EXCEEDED",
+                    "REJECT",
+                    "$",
+                    "combined entity and relationship properties exceed the limit",
                 )
             )
 
@@ -1058,10 +1193,22 @@ class OpenAICompatibleOntologyExtractor:
             raw_relationships[: self.limits.max_relationships]
         ):
             path = f"$.relationships[{index}]"
+            # The new schema always asks providers for an explicit array.  At
+            # the non-schema compatibility boundary, pre-v3 model payloads
+            # omitted it; interpret that omission as an empty property set.
+            if isinstance(raw_relationship, Mapping) and "properties" not in raw_relationship:
+                raw_relationship = {**raw_relationship, "properties": []}
             relationship = _strict_object(
                 raw_relationship,
                 required=frozenset(
-                    {"type", "source_ref", "target_ref", "evidence", "confidence"}
+                    {
+                        "type",
+                        "source_ref",
+                        "target_ref",
+                        "evidence",
+                        "confidence",
+                        "properties",
+                    }
                 ),
                 path=path,
                 findings=findings,
@@ -1133,6 +1280,16 @@ class OpenAICompatibleOntologyExtractor:
             source = by_reference.get(source_reference)
             target = by_reference.get(target_reference)
             relationship_valid = True
+            properties, properties_valid = self._validate_relationship_properties(
+                relationship["properties"],
+                definition=definition,
+                evidence_start=evidence_start,
+                evidence_end=evidence_end,
+                chunk=chunk,
+                path=f"{path}.properties",
+                findings=findings,
+            )
+            relationship_valid = properties_valid
             if definition is None:
                 findings.append(
                     ExtractionFinding(
@@ -1234,6 +1391,7 @@ class OpenAICompatibleOntologyExtractor:
                         evidence_start,
                         evidence_end,
                         confidence,
+                        properties,
                     )
                 )
         property_facts = self._validate_property_facts(
@@ -1243,6 +1401,275 @@ class OpenAICompatibleOntologyExtractor:
             findings,
         )
         return tuple(entities), tuple(relationships), property_facts, findings
+
+    def _validate_relationship_properties(
+        self,
+        raw_properties: object,
+        *,
+        definition: Any,
+        evidence_start: int,
+        evidence_end: int,
+        chunk: Chunk,
+        path: str,
+        findings: list[ExtractionFinding],
+    ) -> tuple[tuple[_RelationshipPropertyCandidate, ...], bool]:
+        reject_count = sum(item.action == "REJECT" for item in findings)
+        if not isinstance(raw_properties, list):
+            findings.append(
+                ExtractionFinding(
+                    "INVALID_ARRAY",
+                    "REJECT",
+                    path,
+                    "relationship properties must be an array",
+                )
+            )
+            return (), False
+        if len(raw_properties) > self.limits.max_property_facts:
+            findings.append(
+                ExtractionFinding(
+                    "PROPERTY_FACT_LIMIT_EXCEEDED",
+                    "REJECT",
+                    path,
+                    "too many properties on one relationship",
+                )
+            )
+        declared = {
+            item.name: item
+            for item in (() if definition is None else definition.properties)
+        }
+        required_fields = frozenset(
+            {
+                "property",
+                "raw_literal",
+                "unit",
+                "valid_from",
+                "valid_to",
+                "observed_at",
+                "evidence",
+                "confidence",
+            }
+        )
+        values: list[_RelationshipPropertyCandidate] = []
+        counts: dict[str, int] = {}
+        seen: set[tuple[str, str, int, int]] = set()
+        for index, raw_value in enumerate(
+            raw_properties[: self.limits.max_property_facts]
+        ):
+            value_path = f"{path}[{index}]"
+            value = _strict_object(
+                raw_value,
+                required=required_fields,
+                path=value_path,
+                findings=findings,
+            )
+            if value is None:
+                continue
+            name = _required_string(
+                value["property"],
+                path=f"{value_path}.property",
+                findings=findings,
+                max_length=128,
+            )
+            raw_literal = _optional_exact_string(
+                value["raw_literal"],
+                path=f"{value_path}.raw_literal",
+                findings=findings,
+                max_length=4_096,
+            )
+            if raw_literal is None and value["raw_literal"] is None:
+                findings.append(
+                    ExtractionFinding(
+                        "INVALID_STRING",
+                        "REJECT",
+                        f"{value_path}.raw_literal",
+                        "must be a non-empty exact source string",
+                    )
+                )
+            unit = _optional_exact_string(
+                value["unit"],
+                path=f"{value_path}.unit",
+                findings=findings,
+                max_length=64,
+            )
+            valid_from = _optional_exact_string(
+                value["valid_from"],
+                path=f"{value_path}.valid_from",
+                findings=findings,
+                max_length=64,
+            )
+            valid_to = _optional_exact_string(
+                value["valid_to"],
+                path=f"{value_path}.valid_to",
+                findings=findings,
+                max_length=64,
+            )
+            observed_at = _optional_exact_string(
+                value["observed_at"],
+                path=f"{value_path}.observed_at",
+                findings=findings,
+                max_length=64,
+            )
+            confidence = _confidence(
+                value["confidence"],
+                path=f"{value_path}.confidence",
+                findings=findings,
+            )
+            raw_evidence = _strict_object(
+                value["evidence"],
+                required=frozenset({"text", "start", "end"}),
+                path=f"{value_path}.evidence",
+                findings=findings,
+            )
+            if raw_evidence is None:
+                continue
+            quoted_text = _required_string(
+                raw_evidence["text"],
+                path=f"{value_path}.evidence.text",
+                findings=findings,
+                max_length=len(chunk.text),
+            )
+            start = _offset(
+                raw_evidence["start"],
+                path=f"{value_path}.evidence.start",
+                findings=findings,
+            )
+            end = _offset(
+                raw_evidence["end"],
+                path=f"{value_path}.evidence.end",
+                findings=findings,
+            )
+            if None in {name, raw_literal, confidence, quoted_text, start, end}:
+                continue
+            assert name is not None and raw_literal is not None
+            assert confidence is not None and quoted_text is not None
+            assert start is not None and end is not None
+            property_definition = declared.get(name)
+            valid = True
+            if property_definition is None:
+                findings.append(
+                    ExtractionFinding(
+                        "RELATIONSHIP_PROPERTY_NOT_ALLOWED",
+                        "REJECT",
+                        f"{value_path}.property",
+                        f"{name!r} is not declared on this relationship type",
+                    )
+                )
+                valid = False
+            if (
+                start >= end
+                or end > len(chunk.text)
+                or chunk.text[start:end] != quoted_text
+            ):
+                findings.append(
+                    ExtractionFinding(
+                        "EVIDENCE_SPAN_MISMATCH",
+                        "REJECT",
+                        f"{value_path}.evidence",
+                        "property evidence must exactly match its Chunk span",
+                    )
+                )
+                valid = False
+            if not (evidence_start <= start < end <= evidence_end):
+                findings.append(
+                    ExtractionFinding(
+                        "RELATIONSHIP_PROPERTY_EVIDENCE_OUTSIDE_PARENT",
+                        "REJECT",
+                        f"{value_path}.evidence",
+                        "property evidence must be nested inside relationship evidence",
+                    )
+                )
+                valid = False
+            for token_name, token in (
+                ("raw_literal", raw_literal),
+                ("unit", unit),
+                ("valid_from", valid_from),
+                ("valid_to", valid_to),
+                ("observed_at", observed_at),
+            ):
+                if token is not None and not _contains_exact_token(quoted_text, token):
+                    findings.append(
+                        ExtractionFinding(
+                            "FACT_TOKEN_OUTSIDE_EVIDENCE",
+                            "REJECT",
+                            f"{value_path}.{token_name}",
+                            "property tokens must occur verbatim inside own evidence",
+                        )
+                    )
+                    valid = False
+            literal: TypedLiteralValue | None = None
+            if property_definition is not None:
+                try:
+                    literal = self._literal_normalizer.normalize(
+                        property_definition,
+                        raw_value=raw_literal,
+                        raw_unit=unit,
+                        valid_from=valid_from,
+                        valid_to=valid_to,
+                        observed_at=observed_at,
+                    )
+                except LiteralNormalizationError as exc:
+                    findings.append(
+                        ExtractionFinding(exc.code, "REJECT", value_path, exc.detail)
+                    )
+                    valid = False
+            if confidence < self.limits.minimum_property_confidence:
+                findings.append(
+                    ExtractionFinding(
+                        "LOW_RELATIONSHIP_PROPERTY_CONFIDENCE",
+                        "QUARANTINE",
+                        f"{value_path}.confidence",
+                        "relationship property confidence is below the review threshold",
+                    )
+                )
+            if not valid or literal is None:
+                continue
+            key = (name, literal.identity_reference, start, end)
+            if key in seen:
+                findings.append(
+                    ExtractionFinding(
+                        "DUPLICATE_RELATIONSHIP_PROPERTY",
+                        "REJECT",
+                        value_path,
+                        "duplicate relationship property and evidence span",
+                    )
+                )
+                continue
+            seen.add(key)
+            counts[name] = counts.get(name, 0) + 1
+            values.append(
+                _RelationshipPropertyCandidate(
+                    name,
+                    literal,
+                    quoted_text,
+                    start,
+                    end,
+                    confidence,
+                )
+            )
+        for name, property_definition in declared.items():
+            count = counts.get(name, 0)
+            if property_definition.cardinality.required and count == 0:
+                findings.append(
+                    ExtractionFinding(
+                        "RELATIONSHIP_PROPERTY_REQUIRED",
+                        "REJECT",
+                        path,
+                        f"required relationship property {name!r} is absent",
+                    )
+                )
+            if property_definition.cardinality.single_valued and count > 1:
+                findings.append(
+                    ExtractionFinding(
+                        "RELATIONSHIP_PROPERTY_CARDINALITY_CONFLICT",
+                        "REJECT",
+                        path,
+                        f"relationship property {name!r} is single-valued",
+                    )
+                )
+        return (
+            tuple(values),
+            sum(item.action == "REJECT" for item in findings) == reject_count,
+        )
 
     def _validate_property_facts(
         self,
@@ -1612,12 +2039,42 @@ class OpenAICompatibleOntologyExtractor:
             object_id = entity_ids[candidate.target_reference]
             evidence_start = chunk.char_start + candidate.evidence_start
             evidence_end = chunk.char_start + candidate.evidence_end
+            relationship_properties = tuple(
+                RelationshipPropertyValue(
+                    property_value_id=relationship_property_value_id(
+                        chunk.tenant_id,
+                        candidate.relationship_type,
+                        value.property_name,
+                        value.literal.identity_reference,
+                        chunk.chunk_id,
+                        chunk.char_start + value.evidence_start,
+                        chunk.char_start + value.evidence_end,
+                        profile.extractor_signature,
+                        profile.schema_signature,
+                    ),
+                    tenant_id=chunk.tenant_id,
+                    relationship_type=candidate.relationship_type,
+                    name=value.property_name,
+                    literal_semantics=value.literal,
+                    evidence_chunk_id=chunk.chunk_id,
+                    evidence_char_start=chunk.char_start + value.evidence_start,
+                    evidence_char_end=chunk.char_start + value.evidence_end,
+                    evidence_text=value.evidence_text,
+                    extractor_version=profile.extractor_signature,
+                    schema_version=profile.schema_signature,
+                    confidence=value.confidence,
+                )
+                for value in candidate.properties
+            )
             identifier = assertion_id(
                 chunk.tenant_id,
                 subject_id,
                 candidate.relationship_type,
                 "entity",
-                object_id,
+                canonical_relationship_object_reference(
+                    object_id,
+                    relationship_properties,
+                ),
                 chunk.chunk_id,
                 evidence_start,
                 evidence_end,
@@ -1640,6 +2097,7 @@ class OpenAICompatibleOntologyExtractor:
                     # LLM results remain review candidates; publication code must
                     # never infer approval from a syntactically valid response.
                     accepted=False,
+                    relationship_properties=relationship_properties,
                 )
             )
         for candidate in property_facts:

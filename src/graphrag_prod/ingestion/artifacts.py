@@ -11,6 +11,7 @@ from graphrag_prod.domain.ids import (
     chunk_embedding_id,
     entity_id,
     mention_id,
+    relationship_property_value_id,
 )
 from graphrag_prod.domain.models import (
     Assertion,
@@ -19,7 +20,9 @@ from graphrag_prod.domain.models import (
     Entity,
     EntityMention,
     GraphPipelineProfile,
+    RelationshipPropertyValue,
     TypedLiteralValue,
+    canonical_relationship_object_reference,
 )
 from graphrag_prod.graph.provenance import ProvenanceBundle
 
@@ -59,6 +62,19 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
                 if assertion.literal_semantics is None
                 else assertion.literal_semantics.to_mapping()
             ),
+            "relationship_properties": [
+                {
+                    "name": item.name,
+                    "literal_semantics": item.literal_semantics.to_mapping(),
+                    "relative_start": (
+                        item.evidence_char_start - bundle.chunk.char_start
+                    ),
+                    "relative_end": item.evidence_char_end - bundle.chunk.char_start,
+                    "evidence_text": item.evidence_text,
+                    "confidence": item.confidence,
+                }
+                for item in assertion.relationship_properties
+            ],
             "relative_start": assertion.evidence_char_start - bundle.chunk.char_start,
             "relative_end": assertion.evidence_char_end - bundle.chunk.char_start,
             "confidence": assertion.confidence,
@@ -67,7 +83,7 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
         for assertion in bundle.all_assertions
     ]
     return {
-        "format_version": 2,
+        "format_version": 3,
         "entities": [
             {
                 "entity_type": entity.entity_type,
@@ -116,6 +132,12 @@ def encode_extraction(bundle: ProvenanceBundle) -> dict[str, Any]:
                     separators=(",", ":"),
                     sort_keys=True,
                 ),
+                json.dumps(
+                    item["relationship_properties"],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
                 item["confidence"],
                 item["accepted"],
             ),
@@ -132,7 +154,7 @@ def decode_extraction(
 ) -> tuple[tuple[Entity, ...], tuple[EntityMention, ...], tuple[Assertion, ...]]:
     """Rebind a cached relative artifact to a stable chunk in a new version."""
     format_version = payload.get("format_version")
-    if format_version not in {1, 2}:
+    if format_version not in {1, 2, 3}:
         raise ValueError("unsupported extraction artifact format")
     entities: list[Entity] = []
     entities_by_key: dict[tuple[str, str], Entity] = {}
@@ -184,6 +206,10 @@ def decode_extraction(
 
     assertions: list[Assertion] = []
     for item in payload.get("assertions", []):
+        if format_version in {1, 2} and "relationship_properties" in item:
+            raise ValueError(
+                "relationship properties require extraction artifact format 3"
+            )
         subject = entities_by_key.get(
             (str(item["subject_type"]), str(item["subject_key"]))
         )
@@ -206,7 +232,7 @@ def decode_extraction(
             raise ValueError("artifact literal assertion requires a non-empty string")
         literal_semantics = (
             TypedLiteralValue.from_mapping(item["literal_semantics"])
-            if format_version == 2 and item.get("literal_semantics") is not None
+            if format_version >= 2 and item.get("literal_semantics") is not None
             else None
         )
         if object_entity is not None and literal_semantics is not None:
@@ -214,9 +240,106 @@ def decode_extraction(
         start = chunk.char_start + int(item["relative_start"])
         end = chunk.char_start + int(item["relative_end"])
         predicate = str(item["predicate"])
+        relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
+        if format_version == 3:
+            raw_properties = item.get("relationship_properties", [])
+            if not isinstance(raw_properties, list):
+                raise ValueError("artifact relationship_properties must be an array")
+            decoded_properties: list[RelationshipPropertyValue] = []
+            expected_fields = {
+                "name",
+                "literal_semantics",
+                "relative_start",
+                "relative_end",
+                "evidence_text",
+                "confidence",
+            }
+            for raw_property in raw_properties:
+                if not isinstance(raw_property, dict) or set(raw_property) != expected_fields:
+                    raise ValueError(
+                        "artifact relationship-property fields do not match the contract"
+                    )
+                property_name = raw_property["name"]
+                if (
+                    not isinstance(property_name, str)
+                    or not property_name
+                    or property_name != property_name.strip()
+                ):
+                    raise ValueError(
+                        "artifact relationship-property name must be exact non-empty text"
+                    )
+                property_literal = TypedLiteralValue.from_mapping(
+                    raw_property["literal_semantics"]
+                )
+                relative_start = raw_property["relative_start"]
+                relative_end = raw_property["relative_end"]
+                if (
+                    isinstance(relative_start, bool)
+                    or not isinstance(relative_start, int)
+                    or isinstance(relative_end, bool)
+                    or not isinstance(relative_end, int)
+                ):
+                    raise ValueError(
+                        "artifact relationship-property offsets must be integers"
+                    )
+                property_start = chunk.char_start + relative_start
+                property_end = chunk.char_start + relative_end
+                relative_property_start = property_start - chunk.char_start
+                relative_property_end = property_end - chunk.char_start
+                evidence_text = raw_property["evidence_text"]
+                if not isinstance(evidence_text, str) or (
+                    property_start < chunk.char_start
+                    or property_end > chunk.char_end
+                    or chunk.text[relative_property_start:relative_property_end]
+                    != evidence_text
+                ):
+                    raise ValueError(
+                        "artifact relationship-property evidence does not match its Chunk"
+                    )
+                decoded_properties.append(
+                    RelationshipPropertyValue(
+                        property_value_id=relationship_property_value_id(
+                            tenant_id,
+                            predicate,
+                            property_name,
+                            property_literal.identity_reference,
+                            chunk.chunk_id,
+                            property_start,
+                            property_end,
+                            profile.extractor_signature,
+                            profile.schema_signature,
+                        ),
+                        tenant_id=tenant_id,
+                        relationship_type=predicate,
+                        name=property_name,
+                        literal_semantics=property_literal,
+                        evidence_chunk_id=chunk.chunk_id,
+                        evidence_char_start=property_start,
+                        evidence_char_end=property_end,
+                        evidence_text=evidence_text,
+                        extractor_version=profile.extractor_signature,
+                        schema_version=profile.schema_signature,
+                        confidence=float(raw_property["confidence"]),
+                    )
+                )
+            relationship_properties = tuple(decoded_properties)
+        if object_entity is None and relationship_properties:
+            raise ValueError(
+                "artifact literal assertion cannot carry relationship properties"
+            )
+        if any(
+            value.evidence_char_start < start or value.evidence_char_end > end
+            for value in relationship_properties
+        ):
+            raise ValueError(
+                "artifact relationship-property evidence lies outside its assertion"
+            )
         object_kind = "entity" if object_entity is not None else "literal"
         object_reference = (
-            object_entity.entity_id
+            canonical_relationship_object_reference(
+                object_entity.entity_id,
+                relationship_properties,
+            )
             if object_entity is not None
             else (
                 literal_semantics.identity_reference
@@ -255,6 +378,7 @@ def decode_extraction(
                 literal_semantics=(
                     None if object_entity is not None else literal_semantics
                 ),
+                relationship_properties=relationship_properties,
             )
         )
     return tuple(entities), tuple(mentions), tuple(assertions)

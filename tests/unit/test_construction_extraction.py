@@ -59,7 +59,19 @@ def _tbox(*, status: TBoxStatus = TBoxStatus.PUBLISHED) -> TBoxVersion:
             ),
         ),
         relationship_types=(
-            RelationshipTypeDefinition("OWNS", ("Company",), ("Asset",)),
+            RelationshipTypeDefinition(
+                "OWNS",
+                ("Company",),
+                ("Asset",),
+                properties=(
+                    PropertyDefinition(
+                        "basis",
+                        PropertyDataType.STRING,
+                        False,
+                        Cardinality.ZERO_OR_ONE,
+                    ),
+                ),
+            ),
         ),
     )
 
@@ -265,6 +277,53 @@ class ConstructionExtractionTests(unittest.TestCase):
         prompt = request["messages"][0]["content"]  # type: ignore[index]
         self.assertIn("Never return database IDs", prompt)
         self.assertNotIn("api_key", request)
+
+    def test_relationship_property_is_typed_and_bound_to_own_exact_span(self) -> None:
+        payload = _valid_payload()
+        payload["relationships"][0]["properties"] = [  # type: ignore[index]
+            {
+                "property": "basis",
+                "raw_literal": "owns",
+                "unit": None,
+                "valid_from": None,
+                "valid_to": None,
+                "observed_at": None,
+                "evidence": {"text": "owns", "start": 5, "end": 9},
+                "confidence": 0.94,
+            }
+        ]
+        extractor, _ = _extractor(payload)
+        result = extractor.extract_audited(
+            artifact_id="artifact-relationship-property",
+            input_hash="input-relationship-property",
+            chunk=_chunk(),
+            profile=_profile(),
+        )
+        value = result.output.assertions[0].relationship_properties[0]
+        self.assertEqual(value.name, "basis")
+        self.assertEqual(value.literal_semantics.canonical_value, "owns")
+        self.assertEqual((value.evidence_char_start, value.evidence_char_end), (105, 109))
+        self.assertEqual(value.evidence_text, "owns")
+        self.assertEqual(value.confidence, 0.94)
+
+        forged = copy.deepcopy(payload)
+        forged["relationships"][0]["properties"][0]["evidence"] = {  # type: ignore[index]
+            "text": "Acme",
+            "start": 0,
+            "end": 4,
+        }
+        extractor, _ = _extractor(forged)
+        with self.assertRaises(ExtractionRejected) as captured:
+            extractor(
+                artifact_id="artifact-forged-property",
+                input_hash="input-forged-property",
+                chunk=_chunk(),
+                profile=_profile(),
+            )
+        self.assertIn(
+            "FACT_TOKEN_OUTSIDE_EVIDENCE",
+            {item.code for item in captured.exception.findings},
+        )
 
     def test_provider_neutral_response_format_modes_are_explicit(self) -> None:
         for mode, expected_format in (

@@ -1346,6 +1346,7 @@ def _to_abox_batch(
                 ),
                 literal_value=source.literal_value,
                 literal_semantics=source.literal_semantics,
+                relationship_properties=source.relationship_properties,
             )
         )
     return ABoxRecordBatch(
@@ -1388,6 +1389,7 @@ def _same_assertion_lineage(
         and stored.object_entity == expected.object_entity
         and stored.literal_value == expected.literal_value
         and stored.literal_semantics == expected.literal_semantics
+        and stored.relationship_properties == expected.relationship_properties
         and stored.trust.origin == expected.trust.origin
         and stored.trust.authority == expected.trust.authority
         and stored.trust.ontology_version_id == expected.trust.ontology_version_id

@@ -1,5 +1,7 @@
 """Trust, immutable A-Box records, and governed persistence."""
 
+from graphrag_prod.domain.models import RelationshipPropertyValue
+
 from .models import (
     ABoxRecordBatch,
     AssertionRecord,
@@ -94,6 +96,7 @@ __all__ = [
     "Neo4jKnowledgeReviewService",
     "Neo4jKnowledgeStore",
     "RecordRevision",
+    "RelationshipPropertyValue",
     "ResolutionBoundaryError",
     "ResolutionEvidence",
     "ResolutionOutcome",

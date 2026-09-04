@@ -34,8 +34,11 @@ from graphrag_prod.api.runtime import (
     UsageMetadata,
     required_scope,
 )
-from graphrag_prod.domain import Principal, TypedLiteralValue
-from graphrag_prod.domain.ids import entity_id as make_entity_id
+from graphrag_prod.domain import Principal, RelationshipPropertyValue, TypedLiteralValue
+from graphrag_prod.domain.ids import (
+    entity_id as make_entity_id,
+    relationship_property_value_id,
+)
 from graphrag_prod.generation import (
     AnswerCitation,
     AnswerResult,
@@ -218,6 +221,36 @@ def _evidence_subgraph(
         raw_value="USD 42 million",
         canonical_value="USD 42 million",
     )
+    relationship_literal = TypedLiteralValue(
+        datatype="STRING",
+        typed_value="reported",
+        raw_value="reported",
+        canonical_value="reported",
+    )
+    relationship_property = RelationshipPropertyValue(
+        property_value_id=relationship_property_value_id(
+            tenant_id,
+            "REPORTS",
+            "basis",
+            relationship_literal.identity_reference,
+            citation.chunk_id,
+            5,
+            13,
+            "EXPERT_IMPORT:reviewed",
+            "ontology-001",
+        ),
+        tenant_id=tenant_id,
+        relationship_type="REPORTS",
+        name="basis",
+        literal_semantics=relationship_literal,
+        evidence_chunk_id=citation.chunk_id,
+        evidence_char_start=5,
+        evidence_char_end=13,
+        evidence_text="reported",
+        extractor_version="EXPERT_IMPORT:reviewed",
+        schema_version="ontology-001",
+        confidence=0.99,
+    )
     relationship = SubgraphAssertion(
         record_id="assertion-reports",
         revision_id="assertion-reports-r1",
@@ -229,6 +262,7 @@ def _evidence_subgraph(
         object_mention_revision_id="mention-revenue-r1",
         literal_value=None,
         evidence=relationship_evidence,
+        relationship_properties=(relationship_property,),
     )
     literal = SubgraphAssertion(
         record_id="assertion-revenue",
@@ -259,6 +293,7 @@ def _evidence_subgraph(
                 object_entity_id=metric.entity_id,
                 literal_value=None,
                 evidence=relationship_evidence,
+                relationship_properties=(relationship_property,),
             ),
             SubgraphPath(
                 subject_entity_id=company.entity_id,
@@ -618,6 +653,13 @@ class QueryOperationsTests(unittest.TestCase):
         assert graph is not None
         self.assertEqual(len(graph.entities), 2)
         self.assertEqual(len(graph.relationship_assertions), 1)
+        relationship_property = graph.relationship_assertions[0].relationship_properties[0]
+        self.assertEqual(relationship_property.name, "basis")
+        self.assertEqual(
+            relationship_property.literal_semantics.canonical_value,
+            "reported",
+        )
+        self.assertEqual(relationship_property.evidence.quoted_text, "reported")
         self.assertEqual(len(graph.literal_assertions), 1)
         semantics = graph.literal_assertions[0].literal_semantics
         self.assertIsNotNone(semantics)
@@ -626,6 +668,10 @@ class QueryOperationsTests(unittest.TestCase):
         self.assertEqual(semantics.raw_value, "USD 42 million")
         self.assertEqual(semantics.canonical_value, "USD 42 million")
         self.assertEqual(graph.paths[1].literal_semantics, semantics)
+        self.assertEqual(
+            graph.paths[0].relationship_properties,
+            graph.relationship_assertions[0].relationship_properties,
+        )
         self.assertEqual(len(graph.paths), 2)
         self.assertEqual(graph.matched_chunk_ids, ("chunk-001",))
         graph_json = graph.model_dump_json()

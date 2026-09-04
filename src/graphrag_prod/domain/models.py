@@ -16,6 +16,7 @@ from .ids import (
     embedding_space_id,
     knowledge_snapshot_id,
     pipeline_profile_id,
+    relationship_property_value_id,
 )
 
 
@@ -30,6 +31,30 @@ def _exact_text(value: str, name: str) -> str:
     if value == "":
         raise ValueError(f"{name} must not be empty")
     return value
+
+
+def _contains_exact_token(evidence: str, token: str) -> bool:
+    """Return whether a source token occurs on lexical boundaries."""
+
+    start = 0
+    while True:
+        index = evidence.find(token, start)
+        if index < 0:
+            return False
+        end = index + len(token)
+        left_ok = (
+            not token[0].isalnum()
+            or index == 0
+            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
+        )
+        right_ok = (
+            not token[-1].isalnum()
+            or end == len(evidence)
+            or not (evidence[end].isalnum() or evidence[end] == "_")
+        )
+        if left_ok and right_ok:
+            return True
+        start = index + 1
 
 
 def _aware(value: datetime, name: str) -> datetime:
@@ -666,6 +691,216 @@ class TypedLiteralValue:
 
 
 @dataclass(frozen=True, slots=True)
+class RelationshipPropertyValue:
+    """One server-identified typed value on a relationship assertion.
+
+    A value has its own exact evidence range, while inheriting tenant and ACL
+    scope from its enclosing assertion.  Its ID is bound to the immutable
+    source occurrence and extraction/schema versions, so later entity
+    resolution can safely rebind relationship endpoints.
+    """
+
+    property_value_id: str
+    tenant_id: str
+    relationship_type: str
+    name: str
+    literal_semantics: TypedLiteralValue
+    evidence_chunk_id: str
+    evidence_char_start: int
+    evidence_char_end: int
+    evidence_text: str
+    extractor_version: str
+    schema_version: str
+    confidence: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in (
+            "property_value_id",
+            "tenant_id",
+            "relationship_type",
+            "name",
+            "evidence_chunk_id",
+            "extractor_version",
+            "schema_version",
+        ):
+            object.__setattr__(self, name, _text(getattr(self, name), name))
+        if not isinstance(self.literal_semantics, TypedLiteralValue):
+            raise TypeError("literal_semantics must be TypedLiteralValue")
+        if (
+            isinstance(self.evidence_char_start, bool)
+            or not isinstance(self.evidence_char_start, int)
+            or self.evidence_char_start < 0
+            or isinstance(self.evidence_char_end, bool)
+            or not isinstance(self.evidence_char_end, int)
+            or self.evidence_char_end <= self.evidence_char_start
+        ):
+            raise ValueError("relationship-property evidence range is invalid")
+        evidence_text = _exact_text(self.evidence_text, "evidence_text")
+        if len(evidence_text) != self.evidence_char_end - self.evidence_char_start:
+            raise ValueError(
+                "relationship-property evidence text must match its range"
+            )
+        object.__setattr__(self, "evidence_text", evidence_text)
+        if (
+            isinstance(self.confidence, bool)
+            or not isinstance(self.confidence, Real)
+            or not math.isfinite(float(self.confidence))
+            or not 0.0 <= float(self.confidence) <= 1.0
+        ):
+            raise ValueError(
+                "relationship-property confidence must be between zero and one"
+            )
+        object.__setattr__(self, "confidence", float(self.confidence))
+        source_tokens = (
+            self.literal_semantics.raw_value,
+            self.literal_semantics.raw_unit,
+            self.literal_semantics.raw_valid_from,
+            self.literal_semantics.raw_valid_to,
+            self.literal_semantics.raw_observed_at,
+        )
+        if any(
+            token is not None and not _contains_exact_token(evidence_text, token)
+            for token in source_tokens
+        ):
+            raise ValueError(
+                "relationship-property source tokens must occur in exact evidence"
+            )
+        expected_id = relationship_property_value_id(
+            self.tenant_id,
+            self.relationship_type,
+            self.name,
+            self.literal_semantics.identity_reference,
+            self.evidence_chunk_id,
+            self.evidence_char_start,
+            self.evidence_char_end,
+            self.extractor_version,
+            self.schema_version,
+        )
+        if self.property_value_id != expected_id:
+            raise ValueError(
+                "property_value_id does not match its immutable identity inputs"
+            )
+
+    @property
+    def identity_reference(self) -> str:
+        """Return the canonical property value representation for parent IDs."""
+
+        return json.dumps(
+            self.to_mapping(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def to_mapping(self) -> dict[str, object]:
+        return {
+            "property_value_id": self.property_value_id,
+            "tenant_id": self.tenant_id,
+            "relationship_type": self.relationship_type,
+            "name": self.name,
+            "literal_semantics": self.literal_semantics.to_mapping(),
+            "evidence_chunk_id": self.evidence_chunk_id,
+            "evidence_char_start": self.evidence_char_start,
+            "evidence_char_end": self.evidence_char_end,
+            "evidence_text": self.evidence_text,
+            "extractor_version": self.extractor_version,
+            "schema_version": self.schema_version,
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_mapping(cls, value: object) -> RelationshipPropertyValue:
+        if not isinstance(value, dict) or any(
+            not isinstance(key, str) for key in value
+        ):
+            raise TypeError("relationship-property mapping must be an object")
+        fields = {
+            "property_value_id",
+            "tenant_id",
+            "relationship_type",
+            "name",
+            "literal_semantics",
+            "evidence_chunk_id",
+            "evidence_char_start",
+            "evidence_char_end",
+            "evidence_text",
+            "extractor_version",
+            "schema_version",
+            "confidence",
+        }
+        if set(value) != fields:
+            raise ValueError(
+                "relationship-property mapping fields do not match the contract"
+            )
+        return cls(
+            property_value_id=value["property_value_id"],  # type: ignore[arg-type]
+            tenant_id=value["tenant_id"],  # type: ignore[arg-type]
+            relationship_type=value["relationship_type"],  # type: ignore[arg-type]
+            name=value["name"],  # type: ignore[arg-type]
+            literal_semantics=TypedLiteralValue.from_mapping(
+                value["literal_semantics"]
+            ),
+            evidence_chunk_id=value["evidence_chunk_id"],  # type: ignore[arg-type]
+            evidence_char_start=value["evidence_char_start"],  # type: ignore[arg-type]
+            evidence_char_end=value["evidence_char_end"],  # type: ignore[arg-type]
+            evidence_text=value["evidence_text"],  # type: ignore[arg-type]
+            extractor_version=value["extractor_version"],  # type: ignore[arg-type]
+            schema_version=value["schema_version"],  # type: ignore[arg-type]
+            confidence=value["confidence"],  # type: ignore[arg-type]
+        )
+
+
+def _relationship_property_values(
+    values: tuple[RelationshipPropertyValue, ...],
+) -> tuple[RelationshipPropertyValue, ...]:
+    result = tuple(values)
+    if any(not isinstance(item, RelationshipPropertyValue) for item in result):
+        raise TypeError(
+            "relationship_properties must contain RelationshipPropertyValue values"
+        )
+    ordered = tuple(
+        sorted(
+            result,
+            key=lambda item: (
+                item.name,
+                item.literal_semantics.identity_reference,
+                item.evidence_chunk_id,
+                item.evidence_char_start,
+                item.evidence_char_end,
+                item.property_value_id,
+            ),
+        )
+    )
+    identifiers = tuple(item.property_value_id for item in ordered)
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("relationship_properties contain duplicate value IDs")
+    return ordered
+
+
+def canonical_relationship_object_reference(
+    object_entity_id: str,
+    relationship_properties: tuple[RelationshipPropertyValue, ...],
+) -> str:
+    """Return a stable relationship object reference without changing legacy IDs."""
+
+    entity_id = _text(object_entity_id, "object_entity_id")
+    properties = _relationship_property_values(relationship_properties)
+    if not properties:
+        return entity_id
+    return json.dumps(
+        {
+            "object_entity_id": entity_id,
+            "relationship_properties": [
+                json.loads(item.identity_reference) for item in properties
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class Assertion:
     assertion_id: str
     tenant_id: str
@@ -681,6 +916,9 @@ class Assertion:
     object_entity_id: str | None = None
     literal_value: str | None = None
     literal_semantics: TypedLiteralValue | None = None
+    relationship_properties: tuple[RelationshipPropertyValue, ...] = field(
+        default_factory=tuple
+    )
 
     def __post_init__(self) -> None:
         for name in (
@@ -699,6 +937,8 @@ class Assertion:
         has_literal = self.literal_value is not None
         if has_entity == has_literal:
             raise ValueError("assertion requires exactly one entity or literal object")
+        properties = _relationship_property_values(self.relationship_properties)
+        object.__setattr__(self, "relationship_properties", properties)
         if self.object_entity_id is not None:
             if self.literal_semantics is not None:
                 raise ValueError("entity assertion must not carry literal semantics")
@@ -707,7 +947,38 @@ class Assertion:
                 "object_entity_id",
                 _text(self.object_entity_id, "object_entity_id"),
             )
+            for item in properties:
+                if item.tenant_id != self.tenant_id:
+                    raise ValueError(
+                        "relationship property and assertion must share one tenant"
+                    )
+                if item.relationship_type != self.predicate:
+                    raise ValueError(
+                        "relationship property type must match assertion predicate"
+                    )
+                if item.evidence_chunk_id != self.evidence_chunk_id:
+                    raise ValueError(
+                        "relationship property must use the assertion evidence Chunk"
+                    )
+                if (
+                    item.evidence_char_start < self.evidence_char_start
+                    or item.evidence_char_end > self.evidence_char_end
+                ):
+                    raise ValueError(
+                        "relationship property evidence falls outside assertion evidence"
+                    )
+                if (
+                    item.extractor_version != self.extractor_version
+                    or item.schema_version != self.schema_version
+                ):
+                    raise ValueError(
+                        "relationship property must use the assertion extraction profile"
+                    )
         if self.literal_value is not None:
+            if properties:
+                raise ValueError(
+                    "literal assertion must not carry relationship properties"
+                )
             object.__setattr__(
                 self,
                 "literal_value",
@@ -724,7 +995,10 @@ class Assertion:
     @property
     def object_reference(self) -> str:
         if self.object_entity_id is not None:
-            return self.object_entity_id
+            return canonical_relationship_object_reference(
+                self.object_entity_id,
+                self.relationship_properties,
+            )
         if self.literal_semantics is not None:
             return self.literal_semantics.identity_reference
         return self.literal_value or ""

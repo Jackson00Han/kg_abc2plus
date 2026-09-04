@@ -201,6 +201,48 @@ def assertion_id(
     )
 
 
+def relationship_property_value_id(
+    tenant_id: str,
+    relationship_type: str,
+    property_name: str,
+    literal_reference: str,
+    evidence_chunk_id: str,
+    evidence_char_start: int,
+    evidence_char_end: int,
+    extractor_version: str,
+    schema_version: str,
+) -> str:
+    """Identify one typed relationship-property value at an exact source span.
+
+    The identifier deliberately uses the source occurrence rather than mutable
+    canonical endpoint IDs.  Entity resolution can therefore rebind a
+    relationship without changing the identity of the evidence-backed
+    property value that was extracted from the source Chunk.
+    """
+
+    if (
+        isinstance(evidence_char_start, bool)
+        or not isinstance(evidence_char_start, int)
+        or evidence_char_start < 0
+        or isinstance(evidence_char_end, bool)
+        or not isinstance(evidence_char_end, int)
+        or evidence_char_end <= evidence_char_start
+    ):
+        raise ValueError("relationship-property evidence range is invalid")
+    return _stable_id(
+        "relationship-property-value",
+        _required(tenant_id, "tenant_id"),
+        _required(relationship_type, "relationship_type"),
+        _required(property_name, "property_name"),
+        _required(literal_reference, "literal_reference"),
+        _required(evidence_chunk_id, "evidence_chunk_id"),
+        evidence_char_start,
+        evidence_char_end,
+        _required(extractor_version, "extractor_version"),
+        _required(schema_version, "schema_version"),
+    )
+
+
 def pipeline_profile_id(
     normalizer_signature: str,
     splitter_signature: str,

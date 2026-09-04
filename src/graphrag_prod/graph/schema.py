@@ -118,6 +118,20 @@ EXPECTED_SCHEMA = (
         ("assertion_id",),
     ),
     SchemaExpectation(
+        "relationship_property_value_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "RelationshipPropertyValue",
+        ("property_value_id",),
+    ),
+    SchemaExpectation(
+        "relationship_property_value_access_lookup",
+        "index",
+        "RANGE",
+        "RelationshipPropertyValue",
+        ("tenant_id", "evidence_chunk_id"),
+    ),
+    SchemaExpectation(
         "graph_pipeline_profile_id_unique",
         "constraint",
         "UNIQUENESS",

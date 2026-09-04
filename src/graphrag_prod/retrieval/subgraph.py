@@ -11,12 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+import json
 import math
 from typing import Any, Iterable, Mapping
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.knowledge.models import EntityIdentity
 from graphrag_prod.knowledge.trust import (
     AuthorityLevel,
@@ -133,6 +134,21 @@ def _native_datetime(value: object, name: str) -> datetime | None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
     return value
+
+
+def _relationship_properties(
+    properties: Mapping[str, Any],
+) -> tuple[RelationshipPropertyValue, ...]:
+    payload = properties.get("relationship_properties_json")
+    version = properties.get("relationship_properties_format_version")
+    if payload is None and version is None:
+        return ()
+    if version != 1 or not isinstance(payload, str):
+        raise ValueError("stored relationship-property codec is invalid")
+    decoded = json.loads(payload)
+    if not isinstance(decoded, list):
+        raise ValueError("stored relationship properties must be an array")
+    return tuple(RelationshipPropertyValue.from_mapping(item) for item in decoded)
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +366,7 @@ class SubgraphAssertion:
     literal_value: str | None
     evidence: SubgraphEvidence
     literal_semantics: TypedLiteralValue | None = None
+    relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -385,6 +402,32 @@ class SubgraphAssertion:
                 raise ValueError(
                     "entity assertion must not carry literal value semantics"
                 )
+            properties = tuple(self.relationship_properties)
+            if any(
+                not isinstance(item, RelationshipPropertyValue)
+                for item in properties
+            ):
+                raise TypeError(
+                    "relationship_properties must contain RelationshipPropertyValue values"
+                )
+            for item in properties:
+                if (
+                    item.tenant_id != self.evidence.citation.tenant_id
+                    or item.relationship_type != self.predicate
+                    or item.evidence_chunk_id != self.evidence.citation.chunk_id
+                    or item.evidence_char_start < self.evidence.char_start
+                    or item.evidence_char_end > self.evidence.char_end
+                ):
+                    raise ValueError(
+                        "relationship property crossed its assertion evidence boundary"
+                    )
+                start = item.evidence_char_start - self.evidence.citation.char_start
+                end = item.evidence_char_end - self.evidence.citation.char_start
+                if self.evidence.citation.chunk_text[start:end] != item.evidence_text:
+                    raise ValueError(
+                        "relationship property evidence does not match its Chunk"
+                    )
+            object.__setattr__(self, "relationship_properties", properties)
         else:
             if (
                 self.object_entity_id is not None
@@ -422,6 +465,10 @@ class SubgraphAssertion:
                     raise ValueError(
                         "typed literal source tokens must occur in exact evidence"
                     )
+            if self.relationship_properties:
+                raise ValueError(
+                    "literal assertion must not carry relationship properties"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -433,6 +480,7 @@ class SubgraphPath:
     literal_value: str | None
     evidence: SubgraphEvidence
     literal_semantics: TypedLiteralValue | None = None
+    relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -455,6 +503,13 @@ class SubgraphPath:
             )
             if self.literal_semantics is not None:
                 raise ValueError("entity path must not carry literal semantics")
+            if any(
+                not isinstance(item, RelationshipPropertyValue)
+                for item in self.relationship_properties
+            ):
+                raise TypeError(
+                    "path relationship_properties must contain typed values"
+                )
         else:
             object.__setattr__(
                 self,
@@ -482,6 +537,10 @@ class SubgraphPath:
                     raise ValueError(
                         "path typed literal source tokens must occur in exact evidence"
                     )
+            if self.relationship_properties:
+                raise ValueError(
+                    "literal path must not carry relationship properties"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1165,6 +1224,7 @@ class Neo4jEvidenceSubgraphProjector:
                 literal_semantics = TypedLiteralValue.from_flat_properties(
                     assertion_map
                 )
+                relationship_properties = _relationship_properties(assertion_map)
             except (TypeError, ValueError) as error:
                 raise SubgraphProjectionError(
                     "stored typed literal semantics are invalid"
@@ -1224,6 +1284,7 @@ class Neo4jEvidenceSubgraphProjector:
                     ),
                     evidence=assertion_evidence,
                     literal_semantics=literal_semantics,
+                    relationship_properties=relationship_properties,
                 )
             except (KeyError, TypeError, ValueError) as error:
                 raise SubgraphProjectionError(
@@ -1277,6 +1338,7 @@ class Neo4jEvidenceSubgraphProjector:
                 literal_value=item.literal_value,
                 evidence=item.evidence,
                 literal_semantics=item.literal_semantics,
+                relationship_properties=item.relationship_properties,
             )
             for item in ordered_assertions[: limits.max_paths]
         )

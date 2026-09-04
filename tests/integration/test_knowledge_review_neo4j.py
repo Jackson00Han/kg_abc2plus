@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import UTC, datetime, timedelta
 import ipaddress
+import json
 import os
 import unittest
 from urllib.parse import urlparse
@@ -12,8 +13,12 @@ from urllib.parse import urlparse
 import neo4j
 
 from graphrag_prod.domain.access import Principal
-from graphrag_prod.domain.ids import assertion_id, mention_id
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.ids import (
+    assertion_id,
+    mention_id,
+    relationship_property_value_id,
+)
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.knowledge.review import (
@@ -135,6 +140,19 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
                     "OFFERS",
                     ("Company",),
                     ("Product",),
+                ),
+                RelationshipTypeDefinition(
+                    "QUALIFIED_OFFERS",
+                    ("Company",),
+                    ("Product",),
+                    properties=(
+                        PropertyDefinition(
+                            "BASIS",
+                            PropertyDataType.STRING,
+                            True,
+                            Cardinality.ONE,
+                        ),
+                    ),
                 ),
             ),
         )
@@ -827,6 +845,203 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
                 expected_active_publication_id="stale-publication",
                 published_at=PUBLISHED_AT,
             )
+
+    def test_relationship_property_cardinality_and_materialization(self) -> None:
+        candidate = self.batch.assertions[0]
+        authoritative = self.authoritative_batch.assertions[0]
+        extractor = candidate.trust.extractor_version or ""
+
+        def property_value(text: str, confidence: float = 1.0):
+            start = self.bundle.chunk.text.index(text)
+            end = start + len(text)
+            literal = TypedLiteralValue(
+                datatype="STRING",
+                typed_value=text,
+                raw_value=text,
+                canonical_value=text,
+            )
+            return RelationshipPropertyValue(
+                property_value_id=relationship_property_value_id(
+                    self.tenant_id,
+                    "QUALIFIED_OFFERS",
+                    "BASIS",
+                    literal.identity_reference,
+                    candidate.evidence.chunk_id,
+                    start,
+                    end,
+                    extractor,
+                    self.tbox_id,
+                ),
+                tenant_id=self.tenant_id,
+                relationship_type="QUALIFIED_OFFERS",
+                name="BASIS",
+                literal_semantics=literal,
+                evidence_chunk_id=candidate.evidence.chunk_id,
+                evidence_char_start=start,
+                evidence_char_end=end,
+                evidence_text=text,
+                extractor_version=extractor,
+                schema_version=self.tbox_id,
+                confidence=confidence,
+            )
+
+        value = property_value("offers", 0.97)
+        second = property_value("Apple")
+        relationship = dataclasses.replace(
+            candidate,
+            predicate="QUALIFIED_OFFERS",
+            relationship_properties=(value,),
+        )
+        validate_manifest = (
+            Neo4jKnowledgePublicationService._validate_property_cardinality_tx
+        )
+
+        with self.driver.session(database=self.database) as session:
+            for invalid, message in (
+                (
+                    dataclasses.replace(relationship, relationship_properties=()),
+                    "required relationship property",
+                ),
+                (
+                    dataclasses.replace(
+                        relationship,
+                        relationship_properties=(value, second),
+                    ),
+                    "single-valued cardinality",
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    KnowledgePublicationConflict,
+                    message,
+                ):
+                    session.execute_read(
+                        validate_manifest,
+                        self.tenant_id,
+                        (*self.batch.mentions, invalid),
+                    )
+
+        requests = tuple(
+            ReviewRequest(
+                ReviewRecordKind.ENTITY_MENTION,
+                record.record_id,
+                1,
+                GovernanceStatus.APPROVED,
+                REVIEWED_AT,
+                "Endpoint verified.",
+                MentionEdit(expert.entity, record.confidence),
+            )
+            for record, expert in zip(
+                self.batch.mentions,
+                self.authoritative_batch.mentions,
+                strict=True,
+            )
+        ) + (
+            ReviewRequest(
+                ReviewRecordKind.ASSERTION,
+                candidate.record_id,
+                1,
+                GovernanceStatus.APPROVED,
+                REVIEWED_AT,
+                "Relationship qualifier and exact evidence verified.",
+                AssertionEdit(
+                    authoritative.subject,
+                    "QUALIFIED_OFFERS",
+                    candidate.subject_mention_revision_id,
+                    candidate.confidence,
+                    object_entity=authoritative.object_entity,
+                    object_mention_revision_id=candidate.object_mention_revision_id,
+                    relationship_properties=(value,),
+                ),
+            ),
+        )
+        outcomes = self.review.review_batch(self.principal, requests).outcomes
+        publication = self.publication.publish(
+            self.principal,
+            tuple(item.revision_id for item in outcomes),
+            expected_active_publication_id=None,
+            published_at=PUBLISHED_AT,
+        )
+
+        rows, _, _ = self.driver.execute_query(
+            """
+            MATCH (:KnowledgePublication {publication_id: $publication_id})
+                  -[:PUBLISHES_KNOWLEDGE_REVISION]->
+                  (revision:GovernedAssertionRevision)
+            MATCH (:KnowledgeSnapshot)-[:INCLUDES_ASSERTION {
+                governed_publication_id: $publication_id
+            }]->(assertion:Assertion)-[:HAS_RELATIONSHIP_PROPERTY]->
+                  (value:RelationshipPropertyValue)-[:EVIDENCED_BY]->
+                  (chunk:Chunk)
+            WHERE assertion.governed_revision_id = revision.revision_id
+            RETURN assertion.predicate AS predicate,
+                   assertion.relationship_properties_json AS assertion_json,
+                   assertion.relationship_properties_format_version
+                       AS assertion_format_version,
+                   revision.relationship_properties_json AS revision_json,
+                   revision.relationship_properties_format_version
+                       AS revision_format_version,
+                   value.property_value_id AS property_value_id,
+                   value.relationship_type AS relationship_type,
+                   value.name AS name,
+                   value.literal_datatype AS datatype,
+                   value.literal_raw_value AS raw_value,
+                   value.literal_canonical_value AS canonical_value,
+                   value.confidence AS confidence,
+                   value.evidence_char_start AS evidence_start,
+                   value.evidence_char_end AS evidence_end,
+                   value.evidence_text AS evidence_text,
+                   substring(
+                       chunk.text,
+                       value.evidence_char_start - chunk.char_start,
+                       value.evidence_char_end - value.evidence_char_start
+                   ) AS source_text,
+                   value.tenant_id = revision.tenant_id AS same_tenant,
+                   value.document_id = revision.document_id AS same_document,
+                   value.version_id = revision.version_id AS same_version,
+                   value.evidence_chunk_id = revision.chunk_id AS same_chunk,
+                   value.access_policy_id = revision.access_policy_id AS same_policy,
+                   value.access_groups = revision.access_groups AS same_groups,
+                   revision.evidence_char_start <= value.evidence_char_start
+                       AND value.evidence_char_end <= revision.evidence_char_end
+                       AS inside_parent
+            """,
+            publication_id=publication.publication_id,
+            database_=self.database,
+        )
+        self.assertEqual(len(rows), 1)
+        row = dict(rows[0])
+        expected_json = json.dumps(
+            [value.to_mapping()],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        self.assertEqual(row["predicate"], "QUALIFIED_OFFERS")
+        self.assertEqual(row["assertion_json"], expected_json)
+        self.assertEqual(row["assertion_format_version"], 1)
+        self.assertEqual(row["revision_json"], expected_json)
+        self.assertEqual(row["revision_format_version"], 1)
+        self.assertEqual(row["property_value_id"], value.property_value_id)
+        self.assertEqual(row["relationship_type"], "QUALIFIED_OFFERS")
+        self.assertEqual(row["name"], "BASIS")
+        self.assertEqual(row["datatype"], "STRING")
+        self.assertEqual(row["raw_value"], "offers")
+        self.assertEqual(row["canonical_value"], "offers")
+        self.assertEqual(row["confidence"], 0.97)
+        self.assertEqual(row["evidence_start"], 6)
+        self.assertEqual(row["evidence_end"], 12)
+        self.assertEqual(row["evidence_text"], "offers")
+        self.assertEqual(row["source_text"], "offers")
+        for flag in (
+            "same_tenant",
+            "same_document",
+            "same_version",
+            "same_chunk",
+            "same_policy",
+            "same_groups",
+            "inside_parent",
+        ):
+            self.assertTrue(row[flag], flag)
 
     def test_incremental_publication_carries_endpoints_and_supports_removal(
         self,

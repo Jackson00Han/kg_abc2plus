@@ -296,6 +296,15 @@ class RawLiteralInput(StrictAPIModel):
     raw_observed_at: LiteralTemporalText | None = None
 
 
+class RelationshipPropertyInput(StrictAPIModel):
+    """One raw, exact-source relationship property for server normalization."""
+
+    name: TypeName
+    literal: RawLiteralInput
+    evidence: EvidenceInput
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)] = 1.0
+
+
 class AuthoritativeAssertionInput(StrictAPIModel):
     source_key: Identifier
     expected_previous_revision: Annotated[
@@ -307,11 +316,22 @@ class AuthoritativeAssertionInput(StrictAPIModel):
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)] = 1.0
     object_mention_source_key: Identifier | None = None
     literal: RawLiteralInput | None = None
+    relationship_properties: Annotated[
+        tuple[RelationshipPropertyInput, ...],
+        Field(max_length=MAX_ONTOLOGY_PROPERTIES),
+    ] = ()
+
+    @field_validator("relationship_properties", mode="before")
+    @classmethod
+    def accept_json_relationship_properties(cls, value: object) -> object:
+        return _json_array(value)
 
     @model_validator(mode="after")
     def exactly_one_object(self) -> Self:
         if (self.object_mention_source_key is None) == (self.literal is None):
             raise ValueError("assertion requires exactly one entity or literal object")
+        if self.literal is not None and self.relationship_properties:
+            raise ValueError("literal assertion cannot carry relationship properties")
         return self
 
 
@@ -531,6 +551,14 @@ class TrustResponse(StrictAPIModel):
     review_notes: LongText | None = None
 
 
+class RelationshipPropertyResponse(StrictAPIModel):
+    property_value_id: Identifier
+    name: TypeName
+    literal_semantics: TypedLiteralSemanticsResponse
+    evidence: EvidenceResponse
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
+
+
 class ReviewRecordResponse(StrictAPIModel):
     record_kind: Literal["ENTITY_MENTION", "ASSERTION"]
     record_id: Identifier
@@ -547,6 +575,15 @@ class ReviewRecordResponse(StrictAPIModel):
     object_mention_revision_id: Identifier | None = None
     literal_value: LiteralSourceText | None = None
     literal_semantics: TypedLiteralSemanticsResponse | None = None
+    relationship_properties: Annotated[
+        tuple[RelationshipPropertyResponse, ...],
+        Field(max_length=MAX_ONTOLOGY_PROPERTIES),
+    ] = ()
+
+    @field_validator("relationship_properties", mode="before")
+    @classmethod
+    def accept_json_relationship_properties(cls, value: object) -> object:
+        return _json_array(value)
 
     @model_validator(mode="after")
     def shape_matches_kind(self) -> Self:
@@ -562,7 +599,7 @@ class ReviewRecordResponse(StrictAPIModel):
                     self.literal_value,
                     self.literal_semantics,
                 )
-            ):
+            ) or self.relationship_properties:
                 raise ValueError("entity mention review shape is invalid")
         elif (
             self.entity is not None
@@ -583,6 +620,8 @@ class ReviewRecordResponse(StrictAPIModel):
             raise ValueError("assertion review mention linkage is invalid")
         if self.object_entity is not None and self.literal_semantics is not None:
             raise ValueError("entity assertion must not carry literal semantics")
+        if self.object_entity is None and self.relationship_properties:
+            raise ValueError("literal assertion must not carry relationship properties")
         if (
             self.literal_semantics is not None
             and self.literal_semantics.raw_value != self.literal_value
@@ -717,6 +756,17 @@ class AssertionEditInput(StrictAPIModel):
     object_entity: KnowledgeEntityInput | None = None
     object_mention_revision_id: Identifier | None = None
     literal: RawLiteralInput | None = None
+    relationship_properties: Annotated[
+        tuple[RelationshipPropertyInput, ...],
+        Field(max_length=MAX_ONTOLOGY_PROPERTIES),
+    ] | None = None
+
+    @field_validator("relationship_properties", mode="before")
+    @classmethod
+    def accept_json_relationship_properties(cls, value: object) -> object:
+        if value is None:
+            return None
+        return _json_array(value)
 
     @model_validator(mode="after")
     def valid_object(self) -> Self:
@@ -726,6 +776,8 @@ class AssertionEditInput(StrictAPIModel):
             raise ValueError("literal assertion edit cannot reference an object mention")
         if self.object_entity is not None and self.object_mention_revision_id is None:
             raise ValueError("entity assertion edit requires an object mention")
+        if self.literal is not None and self.relationship_properties:
+            raise ValueError("literal assertion edit cannot carry relationship properties")
         return self
 
 

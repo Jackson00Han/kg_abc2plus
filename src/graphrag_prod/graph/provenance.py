@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any, Protocol
 
 from graphrag_prod.domain.access import Principal
@@ -260,6 +261,15 @@ class ProvenanceBundle:
                 ):
                     raise ValueError(
                         "typed literal source tokens are absent from its evidence span"
+                    )
+            for property_value in assertion.relationship_properties:
+                property_evidence = self.version.normalized_text[
+                    property_value.evidence_char_start :
+                    property_value.evidence_char_end
+                ]
+                if property_evidence != property_value.evidence_text:
+                    raise ValueError(
+                        "relationship property evidence does not match source text"
                     )
 
             object_kind = (
@@ -801,6 +811,15 @@ class Neo4jProvenanceStore:
             assertion_identity.update(
                 assertion.literal_semantics.to_flat_properties()
             )
+        assertion_identity.update(
+            relationship_properties_format_version=1,
+            relationship_properties_json=json.dumps(
+                [item.to_mapping() for item in assertion.relationship_properties],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
         assertion_state = _properties(
             accepted=assertion.accepted,
             publication_state=(

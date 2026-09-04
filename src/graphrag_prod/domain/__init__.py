@@ -22,6 +22,7 @@ from .ids import (
     knowledge_snapshot_id,
     mention_id,
     pipeline_profile_id,
+    relationship_property_value_id,
     tbox_version_id,
     version_id,
 )
@@ -35,7 +36,9 @@ from .models import (
     EntityMention,
     GraphPipelineProfile,
     KnowledgeSnapshot,
+    RelationshipPropertyValue,
     TypedLiteralValue,
+    canonical_relationship_object_reference,
 )
 
 __all__ = [
@@ -48,10 +51,12 @@ __all__ = [
     "EntityMention",
     "GraphPipelineProfile",
     "KnowledgeSnapshot",
+    "RelationshipPropertyValue",
     "TypedLiteralValue",
     "Principal",
     "assertion_id",
     "active_retrieval_scope",
+    "canonical_relationship_object_reference",
     "can_access",
     "canonicalize_uri",
     "chunk_embedding_id",
@@ -67,6 +72,7 @@ __all__ = [
     "knowledge_snapshot_id",
     "mention_id",
     "pipeline_profile_id",
+    "relationship_property_value_id",
     "tbox_version_id",
     "retrieval_scope_token",
     "version_id",

@@ -10,10 +10,12 @@ from graphrag_prod.domain import (
     Assertion,
     Entity,
     EntityMention,
+    RelationshipPropertyValue,
     TypedLiteralValue,
     assertion_id,
     entity_id,
     mention_id,
+    relationship_property_value_id,
 )
 from graphrag_prod.ingestion.artifacts import decode_extraction, encode_extraction
 from graphrag_prod.ingestion.models import default_artifact_input_hash
@@ -146,7 +148,7 @@ class ArtifactCodecTests(unittest.TestCase):
             )
         )
 
-    def test_v2_round_trips_typed_literal_semantics_and_v1_remains_readable(
+    def test_v3_round_trips_typed_literal_semantics_and_v1_v2_remain_readable(
         self,
     ) -> None:
         bundle = make_bundles()[0]
@@ -178,7 +180,7 @@ class ArtifactCodecTests(unittest.TestCase):
         typed_bundle = replace(bundle, assertion=typed)
 
         payload = encode_extraction(typed_bundle)
-        self.assertEqual(payload["format_version"], 2)
+        self.assertEqual(payload["format_version"], 3)
         decoded = decode_extraction(
             payload,
             tenant_id=bundle.chunk.tenant_id,
@@ -188,10 +190,24 @@ class ArtifactCodecTests(unittest.TestCase):
         self.assertEqual(decoded[2][0].literal_semantics, literal)
         self.assertEqual(decoded[2][0].object_reference, literal.identity_reference)
 
+        legacy_v2 = encode_extraction(typed_bundle)
+        legacy_v2["format_version"] = 2
+        for item in legacy_v2["assertions"]:
+            item.pop("relationship_properties")
+        v2_decoded = decode_extraction(
+            legacy_v2,
+            tenant_id=bundle.chunk.tenant_id,
+            chunk=bundle.chunk,
+            profile=make_profile(),
+        )
+        self.assertEqual(v2_decoded[2][0].literal_semantics, literal)
+        self.assertEqual(v2_decoded[2][0].relationship_properties, ())
+
         legacy = encode_extraction(bundle)
         legacy["format_version"] = 1
         for item in legacy["assertions"]:
             item.pop("literal_semantics")
+            item.pop("relationship_properties")
         legacy_decoded = decode_extraction(
             legacy,
             tenant_id=bundle.chunk.tenant_id,
@@ -221,6 +237,124 @@ class ArtifactCodecTests(unittest.TestCase):
                 tenant_id=bundle.chunk.tenant_id,
                 chunk=bundle.chunk,
                 profile=make_profile(),
+            )
+
+    def test_v3_rebinds_relationship_property_ids_and_rejects_downgrades(self) -> None:
+        bundle = self._enrich(make_bundles()[0], reverse=False)
+        relation = bundle.additional_assertions[0]
+        profile = make_profile()
+        literal = TypedLiteralValue(
+            datatype="INTEGER",
+            typed_value=391,
+            raw_value="391",
+            canonical_value="391",
+        )
+        start = bundle.chunk.char_start + bundle.chunk.text.index("391")
+        end = start + len("391")
+        property_value = RelationshipPropertyValue(
+            property_value_id=relationship_property_value_id(
+                bundle.chunk.tenant_id,
+                relation.predicate,
+                "rank",
+                literal.identity_reference,
+                bundle.chunk.chunk_id,
+                start,
+                end,
+                profile.extractor_signature,
+                profile.schema_signature,
+            ),
+            tenant_id=bundle.chunk.tenant_id,
+            relationship_type=relation.predicate,
+            name="rank",
+            literal_semantics=literal,
+            evidence_chunk_id=bundle.chunk.chunk_id,
+            evidence_char_start=start,
+            evidence_char_end=end,
+            evidence_text="391",
+            extractor_version=profile.extractor_signature,
+            schema_version=profile.schema_signature,
+        )
+        draft = replace(relation, relationship_properties=(property_value,))
+        relation = replace(
+            draft,
+            assertion_id=assertion_id(
+                draft.tenant_id,
+                draft.subject_entity_id,
+                draft.predicate,
+                "entity",
+                draft.object_reference,
+                draft.evidence_chunk_id,
+                draft.evidence_char_start,
+                draft.evidence_char_end,
+                draft.extractor_version,
+                draft.schema_version,
+            ),
+        )
+        bundle = replace(bundle, additional_assertions=(relation,))
+
+        payload = encode_extraction(bundle)
+        self.assertEqual(payload["format_version"], 3)
+        encoded_relation = next(
+            item for item in payload["assertions"] if item["predicate"] == "OFFERS"
+        )
+        self.assertNotIn(
+            "property_value_id",
+            encoded_relation["relationship_properties"][0],
+        )
+        decoded = decode_extraction(
+            payload,
+            tenant_id=bundle.chunk.tenant_id,
+            chunk=bundle.chunk,
+            profile=profile,
+        )
+        decoded_relation = next(item for item in decoded[2] if item.predicate == "OFFERS")
+        self.assertEqual(decoded_relation.relationship_properties, (property_value,))
+        self.assertNotEqual(
+            decoded_relation.object_reference,
+            decoded_relation.object_entity_id,
+        )
+
+        rebound_bundle = self._enrich(
+            make_bundles(canonical_uri="https://example.com/rebound")[0],
+            reverse=False,
+        )
+        rebound = decode_extraction(
+            payload,
+            tenant_id=rebound_bundle.chunk.tenant_id,
+            chunk=rebound_bundle.chunk,
+            profile=profile,
+        )
+        rebound_relation = next(item for item in rebound[2] if item.predicate == "OFFERS")
+        self.assertNotEqual(
+            rebound_relation.relationship_properties[0].property_value_id,
+            property_value.property_value_id,
+        )
+        self.assertEqual(
+            rebound_relation.relationship_properties[0].evidence_chunk_id,
+            rebound_bundle.chunk.chunk_id,
+        )
+
+        downgraded = copy.deepcopy(payload)
+        downgraded["format_version"] = 2
+        with self.assertRaisesRegex(ValueError, "require.*format 3"):
+            decode_extraction(
+                downgraded,
+                tenant_id=bundle.chunk.tenant_id,
+                chunk=bundle.chunk,
+                profile=profile,
+            )
+
+        tampered = copy.deepcopy(payload)
+        tampered_relation = next(
+            item for item in tampered["assertions"] if item["predicate"] == "OFFERS"
+        )
+        tampered_relation["relationship_properties"][0]["evidence_text"] = "392"
+        with self.assertRaisesRegex(ValueError, "evidence does not match"):
+            decode_extraction(
+                tampered,
+                tenant_id=bundle.chunk.tenant_id,
+                chunk=bundle.chunk,
+                profile=profile,
             )
 
 

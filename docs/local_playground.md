@@ -96,6 +96,8 @@ The page shows:
 - evidence-backed entity-resolution suggestions in the human-review queue,
   including exact `identity_properties` matches and atomic dependent-fact
   rebinding after expert confirmation;
+- typed relationship-property values, their exact evidence spans, and visible
+  relationship-property and endpoint-cardinality T-Box contracts;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a
@@ -148,6 +150,9 @@ navigation context. The exact Chunk remains factual evidence. Review cards and
 the retrieval subgraph display the complete optional `literal_semantics`
 projection (raw and canonical forms); legacy records may legitimately return
 that projection as `null`.
+Relationship review cards and retrieved graph edges likewise show typed
+relationship-property values with exact supporting spans. Publication checks
+their property and endpoint cardinality against the complete final manifest.
 
 Local identities demonstrate separation of duties rather than giving every
 persona administrator access:

@@ -21,9 +21,15 @@ from graphrag_prod.domain.ids import (
     embedding_space_id,
     entity_id,
     mention_id,
+    relationship_property_value_id,
     version_id,
 )
-from graphrag_prod.domain.models import Assertion, DocumentVersion
+from graphrag_prod.domain.models import (
+    Assertion,
+    DocumentVersion,
+    RelationshipPropertyValue,
+    TypedLiteralValue,
+)
 from tests.fixtures.domain import authorized_principal, make_bundle
 
 
@@ -92,8 +98,72 @@ class StableIdentityTests(unittest.TestCase):
             bundle.embedding.embedding_id,
         )
 
+    def test_relationship_property_value_id_is_source_stable(self) -> None:
+        bundle = make_bundle()
+        literal = TypedLiteralValue(
+            datatype="STRING",
+            typed_value="offers",
+            raw_value="offers",
+            canonical_value="offers",
+        )
+        inputs = (
+            bundle.document.tenant_id,
+            "OFFERS",
+            "channel",
+            literal.identity_reference,
+            bundle.chunk.chunk_id,
+            6,
+            12,
+            bundle.assertion.extractor_version,
+            bundle.assertion.schema_version,
+        )
+        self.assertEqual(
+            relationship_property_value_id(*inputs),
+            relationship_property_value_id(*inputs),
+        )
+        changed = (*inputs[:6], 13, *inputs[7:])
+        self.assertNotEqual(
+            relationship_property_value_id(*inputs),
+            relationship_property_value_id(*changed),
+        )
+
 
 class DomainInvariantTests(unittest.TestCase):
+    @staticmethod
+    def _relationship_property(
+        *, evidence_text: str = "Apple offers"
+    ) -> RelationshipPropertyValue:
+        bundle = make_bundle()
+        literal = TypedLiteralValue(
+            datatype="STRING",
+            typed_value="offers",
+            raw_value="offers",
+            canonical_value="offers",
+        )
+        return RelationshipPropertyValue(
+            property_value_id=relationship_property_value_id(
+                bundle.document.tenant_id,
+                "OFFERS",
+                "channel",
+                literal.identity_reference,
+                bundle.chunk.chunk_id,
+                0,
+                12,
+                bundle.assertion.extractor_version,
+                bundle.assertion.schema_version,
+            ),
+            tenant_id=bundle.document.tenant_id,
+            relationship_type="OFFERS",
+            name="channel",
+            literal_semantics=literal,
+            evidence_chunk_id=bundle.chunk.chunk_id,
+            evidence_char_start=0,
+            evidence_char_end=12,
+            evidence_text=evidence_text,
+            extractor_version=bundle.assertion.extractor_version,
+            schema_version=bundle.assertion.schema_version,
+        )
+
     def test_complete_bundle_round_trip_invariants(self) -> None:
         bundle = make_bundle()
         self.assertEqual(
@@ -191,6 +261,66 @@ class DomainInvariantTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "literal assertion object is absent"):
             dataclasses.replace(bundle, assertion=assertion)
+
+    def test_relationship_property_has_exact_source_and_canonical_parent_id(self) -> None:
+        bundle = make_bundle()
+        property_value = self._relationship_property()
+        draft = dataclasses.replace(
+            bundle.assertion,
+            relationship_properties=(property_value,),
+        )
+        self.assertNotEqual(draft.object_reference, bundle.assertion.object_reference)
+        relationship = dataclasses.replace(
+            draft,
+            assertion_id=assertion_id(
+                draft.tenant_id,
+                draft.subject_entity_id,
+                draft.predicate,
+                "entity",
+                draft.object_reference,
+                draft.evidence_chunk_id,
+                draft.evidence_char_start,
+                draft.evidence_char_end,
+                draft.extractor_version,
+                draft.schema_version,
+            ),
+        )
+
+        rebuilt = dataclasses.replace(bundle, assertion=relationship)
+        self.assertEqual(
+            rebuilt.assertion.relationship_properties,
+            (property_value,),
+        )
+        self.assertEqual(
+            bundle.assertion.object_reference,
+            bundle.assertion.object_entity_id,
+        )
+
+        fabricated = self._relationship_property(evidence_text="Other offers")
+        fabricated_draft = dataclasses.replace(
+            bundle.assertion,
+            relationship_properties=(fabricated,),
+        )
+        fabricated_assertion = dataclasses.replace(
+            fabricated_draft,
+            assertion_id=assertion_id(
+                fabricated_draft.tenant_id,
+                fabricated_draft.subject_entity_id,
+                fabricated_draft.predicate,
+                "entity",
+                fabricated_draft.object_reference,
+                fabricated_draft.evidence_chunk_id,
+                fabricated_draft.evidence_char_start,
+                fabricated_draft.evidence_char_end,
+                fabricated_draft.extractor_version,
+                fabricated_draft.schema_version,
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "does not match source text"):
+            dataclasses.replace(bundle, assertion=fabricated_assertion)
+
+        with self.assertRaisesRegex(ValueError, "property_value_id"):
+            dataclasses.replace(property_value, property_value_id="forged")
 
     def test_embedding_profile_mismatch_is_rejected(self) -> None:
         bundle = make_bundle()

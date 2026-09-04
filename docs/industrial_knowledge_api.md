@@ -32,10 +32,15 @@ or extraction-character budget. Module ceilings prevent configuration above
 512 Chunks, 512 model calls, 5 MiB of extraction text, or a 900-second
 cooperative deadline. Provider calls must expose a smaller per-call timeout.
 
-T-Box contracts can carry typed relationship-property definitions, but the
-current A-Box API does not yet accept, extract, review, or publish those
-relationship-property values. They remain governance metadata until that
-evidence-backed instance path is implemented.
+T-Box relationship-property definitions are active A-Box contracts.
+Authoritative imports and review edits accept raw-only property inputs; the
+server generates stable value IDs and canonical datatype/unit/time values.
+Each value supplies its own exact evidence and inherits the parent assertion's
+tenant, document/version, Chunk, policy, and ACL. Extraction, review,
+publication, retrieval, and graph responses preserve both raw/canonical
+semantics and evidence. Publication also enforces relationship-property and
+closed-world source/target cardinality over the complete final manifest;
+bounded ACL-filtered retrieval views are intentionally not revalidated.
 
 Declared entity `identity_properties` are active resolution keys. The
 suggestion route reads the current candidate mention and its server-normalized

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import unittest
 
 from graphrag_prod.domain.access import Principal
-from graphrag_prod.domain.ids import content_checksum, entity_id
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.ids import (
+    content_checksum,
+    entity_id,
+    relationship_property_value_id,
+)
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.retrieval.models import VersionFilter
 from graphrag_prod.retrieval.subgraph import (
     EvidenceSubgraphLimits,
@@ -420,6 +425,64 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
             item for item in result.paths if item.literal_value is not None
         )
         self.assertEqual(literal_path.literal_semantics, semantics)
+
+    def test_relationship_properties_are_projected_with_exact_evidence(self) -> None:
+        literal = TypedLiteralValue(
+            datatype="STRING",
+            typed_value="owns",
+            raw_value="owns",
+            canonical_value="owns",
+        )
+        value = RelationshipPropertyValue(
+            property_value_id=relationship_property_value_id(
+                TENANT,
+                "OWNS",
+                "basis",
+                literal.identity_reference,
+                CHUNK_ID,
+                5,
+                9,
+                "EXPERT_IMPORT:reviewed",
+                "tbox-industrial-v1",
+            ),
+            tenant_id=TENANT,
+            relationship_type="OWNS",
+            name="basis",
+            literal_semantics=literal,
+            evidence_chunk_id=CHUNK_ID,
+            evidence_char_start=5,
+            evidence_char_end=9,
+            evidence_text="owns",
+            extractor_version="EXPERT_IMPORT:reviewed",
+            schema_version="tbox-industrial-v1",
+            confidence=0.99,
+        )
+        rows = list(_assertion_rows())
+        relation_row = dict(rows[0])
+        relation = dict(relation_row["assertion"])  # type: ignore[arg-type]
+        relation.update(
+            relationship_properties_format_version=1,
+            relationship_properties_json=json.dumps(
+                [value.to_mapping()],
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        relation_row["assertion"] = relation
+        rows[0] = relation_row
+
+        result = Neo4jEvidenceSubgraphProjector(
+            _Driver(_Session(assertion_rows=tuple(rows)))
+        ).project(_principal(), (CHUNK_ID,))
+
+        self.assertEqual(
+            result.relationship_assertions[0].relationship_properties,
+            (value,),
+        )
+        relationship_path = next(
+            item for item in result.paths if item.object_entity_id is not None
+        )
+        self.assertEqual(relationship_path.relationship_properties, (value,))
 
     def test_partial_typed_literal_storage_fails_closed(self) -> None:
         rows = list(_assertion_rows())

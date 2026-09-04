@@ -1128,6 +1128,20 @@
           : '';
       }
 
+      function relationshipPropertiesMarkup(item, graphEvidence = false) {
+        const values = Array.isArray(item?.relationship_properties) ? item.relationship_properties : [];
+        if (!values.length) return '';
+        return `<div class="exact-evidence"><strong>关系属性（强类型 + 独立证据）</strong>${values.map(value => {
+          const semantics = literalSemantics(value);
+          const normalized = `${semantics.canonical_value ?? semantics.raw_value ?? '—'}${semantics.canonical_unit ? ` ${semantics.canonical_unit}` : ''}`;
+          const evidence = value.evidence || {};
+          const evidenceMarkup = graphEvidence
+            ? graphEvidenceMarkup(evidence)
+            : `<div>Chunk ${escapeHtml(shortId(evidence.chunk_id))} · chars ${escapeHtml(evidence.char_start)}:${escapeHtml(evidence.char_end)} · ${escapeHtml(evidence.quoted_text)}</div>`;
+          return `<div style="margin-top:8px"><strong>${escapeHtml(value.name)} = ${escapeHtml(normalized)}</strong> · confidence ${escapeHtml(value.confidence)}${literalSemanticsMarkup(value)}${evidenceMarkup}</div>`;
+        }).join('')}</div>`;
+      }
+
       function graphMarkup() {
         const graph = state.retrieval?.graph;
         if (!graph) return '<div class="initial-state"><div class="initial-icon">KG</div><h3>当前检索没有可投影的治理图</h3><p>dev-corpus-v1 的旧 fixture 仍可用于检索测试；通过“知识构建”工作台审核并发布的新实例，才会按 active T-Box、publication 和 ACL 出现在这里。</p></div>';
@@ -1139,9 +1153,9 @@
           return '<div class="initial-state"><div class="initial-icon">0</div><h3>没有已发布且获授权的图实例</h3><p>子图投影不会显示候选、隔离或未发布知识，也不会泄漏其他租户和访问组的数据。</p></div>';
         }
         const entityRows = entities.map(entity => `<div class="graph-item"><strong>${escapeHtml(entity.canonical_name)} · ${escapeHtml(entity.entity_type)}</strong><p>${escapeHtml(entity.canonical_key)}<br>${escapeHtml(entity.entity_id)}</p>${(entity.evidence || []).map(graphEvidenceMarkup).join('')}</div>`).join('');
-        const relationshipRows = relationships.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(item.object_entity_id)}</strong><p>revision ${escapeHtml(item.revision_id)}</p>${graphEvidenceMarkup(item.evidence)}</div>`).join('');
+        const relationshipRows = relationships.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(item.object_entity_id)}</strong><p>revision ${escapeHtml(item.revision_id)}</p>${relationshipPropertiesMarkup(item, true)}${graphEvidenceMarkup(item.evidence)}</div>`).join('');
         const literalRows = literals.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} · ${escapeHtml(item.predicate)} = ${escapeHtml(item.literal_value)}</strong>${literalSemanticsMarkup(item)}${graphEvidenceMarkup(item.evidence)}</div>`).join('');
-        const pathRows = paths.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(item.object_entity_id ?? item.literal_value)}</strong>${item.object_entity_id == null ? literalSemanticsMarkup(item) : ''}${graphEvidenceMarkup(item.evidence)}</div>`).join('');
+        const pathRows = paths.map(item => `<div class="graph-item"><strong>${escapeHtml(item.subject_entity_id)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(item.object_entity_id ?? item.literal_value)}</strong>${item.object_entity_id == null ? literalSemanticsMarkup(item) : relationshipPropertiesMarkup(item, true)}${graphEvidenceMarkup(item.evidence)}</div>`).join('');
         return `<div class="graph-summary"><span class="graph-count">${entities.length} entities</span><span class="graph-count">${relationships.length} relationships</span><span class="graph-count">${literals.length} literal facts</span><span class="graph-count">${paths.length} one-hop paths</span><span class="graph-count">${escapeHtml(graph.trust_policy)}</span></div><div class="graph-grid"><section class="graph-card"><h3>实体</h3>${entityRows || '<p>—</p>'}</section><section class="graph-card"><h3>关系</h3>${relationshipRows || '<p>—</p>'}</section><section class="graph-card"><h3>字面量属性</h3>${literalRows || '<p>—</p>'}</section><section class="graph-card"><h3>一步路径</h3>${pathRows || '<p>—</p>'}</section></div>`;
       }
 
@@ -1225,7 +1239,11 @@
         elements.ontologyList.innerHTML = state.ontologies.map((item, index) => {
           const entityNames = (item.entity_types || []).map(value => value.name).join(', ');
           const relationNames = (item.relationship_types || []).map(value => value.name).join(', ');
-          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${item.status === 'DRAFT' ? `<div class="workbench-actions"><button class="button" type="button" data-publish-tbox="${index}">发布此版本</button></div>` : ''}</article>`;
+          const relationshipContracts = (item.relationship_types || []).map(value => {
+            const properties = (value.properties || []).map(property => `${escapeHtml(property.name)}:${escapeHtml(property.datatype)} ${escapeHtml(property.cardinality)}${property.unit ? ` [${escapeHtml(property.unit)}]` : ''}`).join(', ');
+            return `${escapeHtml(value.name)} · source ${escapeHtml(value.source_cardinality || 'ZERO_OR_MORE')} · target ${escapeHtml(value.target_cardinality || 'ZERO_OR_MORE')}${properties ? ` · properties ${properties}` : ''}`;
+          }).join('<br>');
+          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}<br>${relationshipContracts || 'Relationship contracts: —'}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${item.status === 'DRAFT' ? `<div class="workbench-actions"><button class="button" type="button" data-publish-tbox="${index}">发布此版本</button></div>` : ''}</article>`;
         }).join('');
         elements.ontologyList.querySelectorAll('[data-publish-tbox]').forEach(button => {
           button.addEventListener('click', () => publishOntology(Number(button.dataset.publishTbox)));
@@ -1363,6 +1381,14 @@
         if (item.object_entity) {
           edit.object_entity = item.object_entity;
           edit.object_mention_revision_id = item.object_mention_revision_id;
+          edit.relationship_properties = (item.relationship_properties || []).map(value => {
+            const semantics = literalSemantics(value);
+            const literal = {raw_literal: semantics.raw_value};
+            for (const field of ['raw_unit', 'raw_valid_from', 'raw_valid_to', 'raw_observed_at']) {
+              if (semantics[field] != null) literal[field] = semantics[field];
+            }
+            return {name: value.name, literal, evidence: value.evidence, confidence: value.confidence};
+          });
           return edit;
         }
         const semantics = literalSemantics(item);
@@ -1397,7 +1423,7 @@
         elements.reviewList.innerHTML = state.reviews.map((item, index) => {
           const entity = item.entity || item.subject || {};
           const object = item.object_entity?.canonical_name ?? item.literal_value ?? '';
-          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : ''}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div>${resolutionMarkup(item, index)}<label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : relationshipPropertiesMarkup(item)}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div>${resolutionMarkup(item, index)}<label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
         }).join('');
         elements.reviewList.querySelectorAll('[data-review-action]').forEach(button => {
           button.addEventListener('click', () => submitReviews(button.dataset.reviewAction, [Number(button.dataset.reviewIndex)]));

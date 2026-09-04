@@ -573,6 +573,25 @@ def _typed_literal_payload(value: Any) -> dict[str, object] | None:
     }
 
 
+def _graph_relationship_property_payload(
+    value: Any,
+    parent_evidence: Any,
+) -> dict[str, object]:
+    return {
+        "property_value_id": value.property_value_id,
+        "name": value.name,
+        "literal_semantics": _typed_literal_payload(value.literal_semantics),
+        "evidence": {
+            "citation": _graph_citation_payload(parent_evidence.citation),
+            "char_start": value.evidence_char_start,
+            "char_end": value.evidence_char_end,
+            "quoted_text": value.evidence_text,
+            "provenance": _graph_provenance_payload(parent_evidence.provenance),
+        },
+        "confidence": value.confidence,
+    }
+
+
 def _graph_assertion_payload(value: Any) -> dict[str, object]:
     return {
         "record_id": value.record_id,
@@ -585,6 +604,10 @@ def _graph_assertion_payload(value: Any) -> dict[str, object]:
         "object_mention_revision_id": value.object_mention_revision_id,
         "literal_value": value.literal_value,
         "literal_semantics": _typed_literal_payload(value.literal_semantics),
+        "relationship_properties": tuple(
+            _graph_relationship_property_payload(item, value.evidence)
+            for item in value.relationship_properties
+        ),
         "evidence": _graph_evidence_payload(value.evidence),
     }
 
@@ -622,6 +645,10 @@ def _subgraph_payload(value: EvidenceSubgraph) -> dict[str, object]:
                 "literal_value": item.literal_value,
                 "literal_semantics": _typed_literal_payload(
                     item.literal_semantics
+                ),
+                "relationship_properties": tuple(
+                    _graph_relationship_property_payload(value, item.evidence)
+                    for value in item.relationship_properties
                 ),
                 "evidence": _graph_evidence_payload(item.evidence),
             }
