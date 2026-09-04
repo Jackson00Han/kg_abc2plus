@@ -47,6 +47,12 @@
   exact T-Box binding, expose it through an independent `knowledge:quality`
   API/Playground card, and keep source text out of the response.
 
+- [x] Expose governed active-document inventory and logical retirement through
+  an independent `knowledge:lifecycle` API/Playground card. Retirement uses an
+  active-snapshot/source-generation CAS plus a stable operation key, blocks on
+  live knowledge or jobs, preserves immutable audit data, and refreshes the
+  active vector generation before the local API returns.
+
 - [x] Expose auditable active-publication record removal in the Playground,
   including removal-only change sets without directly deleting source data.
 

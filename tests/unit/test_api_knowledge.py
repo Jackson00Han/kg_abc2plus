@@ -16,6 +16,10 @@ from graphrag_prod.api.knowledge_contracts import (
     AuthoritativeImportRequest,
     ConstructionJobListRequest,
     ConstructionJobListResponse,
+    DocumentLifecycleListRequest,
+    DocumentLifecycleListResponse,
+    DocumentRetirementRequest,
+    DocumentRetirementResponse,
     KnowledgeConstructionRequest,
     OntologyImportRequest,
     OntologyListRequest,
@@ -59,6 +63,14 @@ from graphrag_prod.graph.published_quality import (
     PublishedGraphReviewSampleItem,
 )
 from graphrag_prod.graph.quality import IssueSeverity
+from graphrag_prod.ingestion.retirement import (
+    DocumentLifecycleView,
+    DocumentRetirementBackendUnavailable,
+    DocumentRetirementBlocked,
+    DocumentRetirementConflict,
+    DocumentRetirementResult,
+    DocumentRetirementUnavailable,
+)
 from graphrag_prod.knowledge import (
     AssertionRecord,
     EntityIdentity,
@@ -186,6 +198,40 @@ def _quality_report() -> PublishedGraphQualityReport:
     )
 
 
+def _lifecycle_view(*, tenant_id: str = "tenant-alpha") -> DocumentLifecycleView:
+    return DocumentLifecycleView(
+        tenant_id=tenant_id,
+        document_id="document-1",
+        title="Asset report",
+        source_name="controlled upload",
+        canonical_uri="https://example.test/asset.txt",
+        source_generation=3,
+        active_snapshot_id="snapshot-3",
+        active_version_id="version-3",
+        chunk_count=2,
+        access_policy_id="policy-engineering",
+        access_policy_version=4,
+        access_groups=("engineers",),
+        blocker_codes=(),
+    )
+
+
+def _retirement_result(
+    *, tenant_id: str = "tenant-alpha"
+) -> DocumentRetirementResult:
+    return DocumentRetirementResult(
+        retirement_id="retirement-1",
+        tenant_id=tenant_id,
+        document_id="document-1",
+        retired_snapshot_id="snapshot-3",
+        retired_version_id="version-3",
+        source_generation_before=3,
+        source_generation_after=4,
+        corpus_revision=8,
+        retired_at=NOW,
+    )
+
+
 def _construct_payload(**changes: object) -> dict[str, object]:
     value: dict[str, object] = {
         "operation_key": "construction-000001",
@@ -286,6 +332,70 @@ def _candidate_literal() -> AssertionRecord:
 
 
 class KnowledgeContractTests(unittest.TestCase):
+    def test_document_lifecycle_contracts_are_strict_metadata_only_and_bounded(
+        self,
+    ) -> None:
+        item = {
+            "document_id": "document-1",
+            "title": "Asset report",
+            "source_name": "controlled upload",
+            "canonical_uri": "https://example.test/asset.txt",
+            "source_generation": 3,
+            "active_snapshot_id": "snapshot-3",
+            "active_version_id": "version-3",
+            "chunk_count": 2,
+            "access_policy_id": "policy-engineering",
+            "access_policy_version": 4,
+            "access_groups": ["engineers"],
+            "blocked": True,
+            "blocker_codes": ["CURRENT_REVIEW"],
+        }
+        response = DocumentLifecycleListResponse.model_validate({"items": [item]})
+        self.assertTrue(response.items[0].blocked)
+        self.assertNotIn("tenant_id", response.model_dump(mode="json"))
+        self.assertNotIn("source_text", str(response.model_dump(mode="json")))
+        for invalid in (
+            {**item, "blocked": False},
+            {**item, "blocker_codes": ["UNSTABLE_INTERNAL_REASON"]},
+            {**item, "access_groups": ["engineers", "engineers"]},
+            {**item, "canonical_uri": "https://example.test/a?credential=secret"},
+            {**item, "source_text": "protected source"},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    DocumentLifecycleListResponse.model_validate({"items": [invalid]})
+        with self.assertRaises(ValidationError):
+            DocumentLifecycleListRequest(limit=101)
+        with self.assertRaises(ValidationError):
+            DocumentLifecycleListResponse.model_validate({"items": [item, item]})
+
+        request = DocumentRetirementRequest(
+            operation_key="retirement-operation-0001",
+            expected_active_snapshot_id="snapshot-3",
+            source_generation=3,
+        )
+        self.assertEqual(request.source_generation, 3)
+        result = DocumentRetirementResponse(
+            retirement_id="retirement-1",
+            document_id="document-1",
+            retired_snapshot_id="snapshot-3",
+            retired_version_id="version-3",
+            source_generation_before=3,
+            source_generation_after=4,
+            corpus_revision=8,
+            retired_at=NOW,
+            status="RETIRED",
+        )
+        self.assertEqual(result.status, "RETIRED")
+        with self.assertRaises(ValidationError):
+            DocumentRetirementRequest.model_validate(
+                {**request.model_dump(), "tenant_id": "tenant-victim"}
+            )
+        with self.assertRaises(ValidationError):
+            DocumentRetirementResponse.model_validate(
+                {**result.model_dump(), "source_generation_after": 5}
+            )
+
     def test_published_quality_response_is_bounded_and_has_no_source_text_shape(
         self,
     ) -> None:
@@ -440,6 +550,8 @@ class KnowledgeContractTests(unittest.TestCase):
             OperationKind.KNOWLEDGE_HISTORY: ("knowledge:publish", False),
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: ("knowledge:publish", False),
             OperationKind.KNOWLEDGE_QUALITY: ("knowledge:quality", False),
+            OperationKind.KNOWLEDGE_DOCUMENTS: ("knowledge:lifecycle", False),
+            OperationKind.KNOWLEDGE_DOCUMENT_RETIRE: ("knowledge:lifecycle", True),
         }
         for operation, (scope, write) in expected.items():
             with self.subTest(operation=operation):
@@ -477,6 +589,52 @@ class _Knowledge:
     review_queue = revision_history = review_batch = lambda *args: None
     resolution_suggestions = apply_resolution = lambda *args: None
     publish = rollback = history = publication_candidates = lambda *args: None
+
+    def documents(self, principal: Principal, _request: object) -> BackendResult:
+        self.principal = principal
+        view = _lifecycle_view()
+        return BackendResult(
+            DocumentLifecycleListResponse(
+                items=(
+                    {
+                        name: getattr(view, name)
+                        for name in (
+                            "document_id",
+                            "title",
+                            "source_name",
+                            "canonical_uri",
+                            "source_generation",
+                            "active_snapshot_id",
+                            "active_version_id",
+                            "chunk_count",
+                            "access_policy_id",
+                            "access_policy_version",
+                            "access_groups",
+                            "blocked",
+                            "blocker_codes",
+                        )
+                    },
+                )
+            )
+        )
+
+    def retire_document(
+        self, principal: Principal, document_id: str, _request: object
+    ) -> BackendResult:
+        self.principal = principal
+        return BackendResult(
+            DocumentRetirementResponse(
+                retirement_id="retirement-1",
+                document_id=document_id,
+                retired_snapshot_id="snapshot-3",
+                retired_version_id="version-3",
+                source_generation_before=3,
+                source_generation_after=4,
+                corpus_revision=8,
+                retired_at=NOW,
+                status="RETIRED",
+            )
+        )
 
     def quality(self, principal: Principal) -> BackendResult:
         self.principal = principal
@@ -603,6 +761,51 @@ class KnowledgeBackendTests(unittest.TestCase):
         self.assertTrue(result.payload.passed)
         assert knowledge.principal is not None
         self.assertEqual(knowledge.principal.capabilities, frozenset({"knowledge:quality"}))
+
+    def test_backend_routes_document_list_and_non_retrying_retirement(self) -> None:
+        knowledge = _Knowledge()
+        backend = GraphRAGApplicationBackend(
+            documents=_Documents(),
+            queries=_Queries(),
+            readiness=_Readiness(),
+            knowledge=knowledge,
+        )
+        common = {
+            "request_id": "request-1",
+            "trace_id": "trace-1",
+            "principal_id": "expert-1",
+            "tenant_id": "tenant-alpha",
+            "access_groups": frozenset({"engineers"}),
+            "scopes": frozenset({"knowledge:lifecycle"}),
+        }
+        listed = backend.execute(
+            OperationEnvelope(
+                operation=OperationKind.KNOWLEDGE_DOCUMENTS,
+                payload={"limit": 25},
+                **common,
+            )
+        )
+        retired = backend.execute(
+            OperationEnvelope(
+                operation=OperationKind.KNOWLEDGE_DOCUMENT_RETIRE,
+                payload={
+                    "document_id": "document-1",
+                    "request": {
+                        "operation_key": "retirement-operation-0001",
+                        "expected_active_snapshot_id": "snapshot-3",
+                        "source_generation": 3,
+                    },
+                },
+                **common,
+            )
+        )
+        self.assertEqual(listed.payload.items[0].document_id, "document-1")
+        self.assertEqual(retired.payload.status, "RETIRED")
+        assert knowledge.principal is not None
+        self.assertEqual(
+            knowledge.principal.capabilities,
+            frozenset({"knowledge:lifecycle"}),
+        )
 
 
 class _RowsSession:
@@ -910,6 +1113,36 @@ class _Quality:
         return self.value
 
 
+class _Retirement:
+    def __init__(
+        self,
+        *,
+        documents: tuple[object, ...] | None = None,
+        result: object | None = None,
+        list_failure: Exception | None = None,
+        retire_failure: Exception | None = None,
+    ) -> None:
+        self.document_values = documents or (_lifecycle_view(),)
+        self.result = _retirement_result() if result is None else result
+        self.list_failure = list_failure
+        self.retire_failure = retire_failure
+        self.calls: list[tuple[str, object]] = []
+
+    def list_active_documents(
+        self, principal: Principal, *, limit: int
+    ) -> tuple[object, ...]:
+        self.calls.append(("list", (principal, limit)))
+        if self.list_failure is not None:
+            raise self.list_failure
+        return self.document_values
+
+    def retire(self, principal: Principal, request: object) -> object:
+        self.calls.append(("retire", (principal, request)))
+        if self.retire_failure is not None:
+            raise self.retire_failure
+        return self.result
+
+
 class KnowledgeAdapterTests(unittest.TestCase):
     def _adapter(
         self,
@@ -922,6 +1155,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
         publications: object | None = None,
         construction_audit: object | None = None,
         quality_service: object | None = None,
+        retirement_service: object | None = None,
     ) -> Neo4jKnowledgeOperations:
         return Neo4jKnowledgeOperations(
             driver=driver,
@@ -932,6 +1166,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
             publications=publications or SimpleNamespace(),
             construction_audit=construction_audit,
             quality_service=quality_service,
+            retirement_service=retirement_service,
             clock=lambda: NOW,
         )
 
@@ -942,6 +1177,144 @@ class KnowledgeAdapterTests(unittest.TestCase):
                 _KnowledgeStore(),
                 quality_service=object(),
             )
+
+    def test_retirement_service_injection_requires_both_lifecycle_boundaries(
+        self,
+    ) -> None:
+        for value in (
+            object(),
+            SimpleNamespace(list_active_documents=lambda *_args, **_kwargs: ()),
+            SimpleNamespace(retire=lambda *_args, **_kwargs: None),
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    TypeError,
+                    "retirement_service must implement list_active_documents and retire",
+                ):
+                    self._adapter(
+                        _Driver(),
+                        _KnowledgeStore(),
+                        retirement_service=value,
+                    )
+
+    def test_document_lifecycle_adapter_is_metadata_only_and_tenant_closed(
+        self,
+    ) -> None:
+        retirement = _Retirement()
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:lifecycle"}),
+        )
+        adapter = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            retirement_service=retirement,
+        )
+        listed = adapter.documents(principal, DocumentLifecycleListRequest(limit=25))
+        retired = adapter.retire_document(
+            principal,
+            "document-1",
+            DocumentRetirementRequest(
+                operation_key="retirement-operation-0001",
+                expected_active_snapshot_id="snapshot-3",
+                source_generation=3,
+            ),
+        )
+        self.assertEqual(listed.payload.items[0].document_id, "document-1")
+        self.assertFalse(listed.payload.items[0].blocked)
+        self.assertEqual(retired.payload.corpus_revision, 8)
+        self.assertNotIn("tenant_id", listed.payload.model_dump(mode="json"))
+        self.assertNotIn("tenant_id", retired.payload.model_dump(mode="json"))
+        self.assertNotIn("source_text", str(listed.payload.model_dump(mode="json")))
+        self.assertEqual(retirement.calls[0], ("list", (principal, 25)))
+        domain_request = retirement.calls[1][1][1]
+        self.assertEqual(domain_request.document_id, "document-1")
+        self.assertEqual(domain_request.expected_active_snapshot_id, "snapshot-3")
+
+        foreign = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            retirement_service=_Retirement(documents=(_lifecycle_view(tenant_id="tenant-other"),)),
+        )
+        with self.assertRaises(DependencyUnavailableError):
+            foreign.documents(principal, DocumentLifecycleListRequest())
+        foreign_result = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            retirement_service=_Retirement(
+                result=_retirement_result(tenant_id="tenant-other")
+            ),
+        )
+        with self.assertRaises(DependencyUnavailableError):
+            foreign_result.retire_document(
+                principal,
+                "document-1",
+                DocumentRetirementRequest(
+                    operation_key="retirement-operation-0001",
+                    expected_active_snapshot_id="snapshot-3",
+                    source_generation=3,
+                ),
+            )
+
+    def test_document_lifecycle_errors_are_sanitized_and_non_enumerating(
+        self,
+    ) -> None:
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:lifecycle"}),
+        )
+        request = DocumentRetirementRequest(
+            operation_key="retirement-operation-0001",
+            expected_active_snapshot_id="snapshot-3",
+            source_generation=3,
+        )
+        for failure, expected in (
+            (DocumentRetirementUnavailable(), AuthorizationError),
+            (DocumentRetirementConflict(), ConflictError),
+            (DocumentRetirementBlocked(), ConflictError),
+            (TimeoutError("bolt://secret/source"), DependencyTimeoutError),
+            (DocumentRetirementBackendUnavailable(), DependencyUnavailableError),
+            (RuntimeError("protected source"), DependencyUnavailableError),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                retirement = _Retirement(retire_failure=failure)
+                with self.assertRaises(expected) as caught:
+                    self._adapter(
+                        _Driver(),
+                        _KnowledgeStore(),
+                        retirement_service=retirement,
+                    ).retire_document(principal, "unknown-or-foreign", request)
+                self.assertNotIn("protected", caught.exception.public_message)
+                self.assertNotIn("secret", caught.exception.public_message)
+
+        unavailable = _Retirement(list_failure=DocumentRetirementUnavailable())
+        with self.assertRaises(AuthorizationError):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                retirement_service=unavailable,
+            ).documents(principal, DocumentLifecycleListRequest())
+        conflicted = _Retirement(list_failure=DocumentRetirementConflict())
+        with self.assertRaises(ConflictError):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                retirement_service=conflicted,
+            ).documents(principal, DocumentLifecycleListRequest())
+        no_scope = dataclasses.replace(
+            principal,
+            capabilities=frozenset({"knowledge:review"}),
+        )
+        with self.assertRaises(AuthorizationError):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                retirement_service=_Retirement(),
+            ).documents(no_scope, DocumentLifecycleListRequest())
 
     def test_published_quality_adapter_is_dedicated_bounded_and_metadata_only(
         self,

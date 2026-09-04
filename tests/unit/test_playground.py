@@ -7,13 +7,14 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import jwt
 
 from graphrag_prod.api.knowledge_contracts import OntologyImportRequest
+from graphrag_prod.api.runtime import DependencyUnavailableError
 from graphrag_prod.domain.ids import embedding_space_id
 from graphrag_prod.playground import (
     PLAYGROUND_AUDIENCE,
@@ -88,6 +89,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
                 "ontology_governance": True,
                 "document_upload": True,
                 "published_graph_quality": True,
+                "document_retirement": True,
                 "answer_generation": True,
                 "extraction_provider": {
                     "protocol": "openai-compatible",
@@ -99,6 +101,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertEqual(governed["mode"], "retrieval-and-governance")
         self.assertTrue(governed["capabilities"]["document_upload"])
         self.assertTrue(governed["capabilities"]["published_graph_quality"])
+        self.assertTrue(governed["capabilities"]["document_retirement"])
         self.assertFalse(governed["capabilities"]["answer_generation"])
         self.assertNotIn("credential", governed["capabilities"]["extraction_provider"])
 
@@ -156,6 +159,18 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn(
             "knowledge:quality",
+            by_groups[frozenset({"alpha-legal"})].scopes,
+        )
+        self.assertIn(
+            "knowledge:lifecycle",
+            by_groups[frozenset({"alpha-finance", "alpha-legal"})].scopes,
+        )
+        self.assertNotIn(
+            "knowledge:lifecycle",
+            by_groups[frozenset({"alpha-finance"})].scopes,
+        )
+        self.assertNotIn(
+            "knowledge:lifecycle",
             by_groups[frozenset({"alpha-legal"})].scopes,
         )
         self.assertEqual(
@@ -364,6 +379,40 @@ class PlaygroundRuntimeTests(unittest.TestCase):
             "tenant-alpha"
         )
 
+    def test_governed_retirement_refreshes_generation_before_returning(self) -> None:
+        operations = _PlaygroundKnowledgeOperations(
+            driver=Mock(),
+            database="neo4j",
+            construction=SimpleNamespace(run=lambda *_args, **_kwargs: None),
+            embedder=SimpleNamespace(),
+        )
+        operations._refresh_embedding_generation = Mock()
+        principal = SimpleNamespace(tenant_id="tenant-alpha")
+        expected = object()
+
+        with patch(
+            "scripts.run_playground.Neo4jKnowledgeOperations.retire_document",
+            return_value=expected,
+        ) as retire:
+            actual = operations.retire_document(principal, "document-1", object())
+
+        self.assertIs(actual, expected)
+        retire.assert_called_once_with(principal, "document-1", ANY)
+        operations._refresh_embedding_generation.assert_called_once_with(
+            "tenant-alpha"
+        )
+
+        operations._refresh_embedding_generation.side_effect = RuntimeError(
+            "bolt://secret-source"
+        )
+        with patch(
+            "scripts.run_playground.Neo4jKnowledgeOperations.retire_document",
+            return_value=expected,
+        ):
+            with self.assertRaises(DependencyUnavailableError) as caught:
+                operations.retire_document(principal, "document-1", object())
+        self.assertNotIn("secret", caught.exception.public_message)
+
     def test_ui_exposes_bounded_retrieval_contract_and_discards_stale_results(
         self,
     ) -> None:
@@ -438,6 +487,17 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("/v1/knowledge/quality", page.text)
         self.assertIn("当前身份缺少 knowledge:quality", page.text)
         self.assertIn("绝不返回源文本", page.text)
+        self.assertIn('id="document-lifecycle-list"', page.text)
+        self.assertIn('id="document-lifecycle-refresh-button"', page.text)
+        self.assertIn("/v1/knowledge/documents?limit=100", page.text)
+        self.assertIn("/v1/knowledge/documents/${encodeURIComponent(item.document_id)}:retire", page.text)
+        self.assertIn("graphrag-document-retirement-operation", page.text)
+        self.assertIn("expected_active_snapshot_id: item.active_snapshot_id", page.text)
+        self.assertIn("source_generation: item.source_generation", page.text)
+        self.assertIn("if (!item || item.blocked || (item.blocker_codes || []).length)", page.text)
+        self.assertIn("window.confirm", page.text)
+        self.assertIn("不会物理删除 source、Chunk", page.text)
+        self.assertNotIn("/v1/documents/${encodeURIComponent(item.document_id)}", page.text)
         self.assertIn("graphrag-construction-operation", page.text)
         self.assertIn("constructionFingerprint(bytes", page.text)
         self.assertIn("globalThis.crypto.subtle.digest('SHA-256', bytes)", page.text)

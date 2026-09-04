@@ -20,6 +20,8 @@ from graphrag_prod.api.knowledge_contracts import (
     AuthoritativeImportResponse,
     ConstructionJobListResponse,
     ConstructionJobResponse,
+    DocumentLifecycleListResponse,
+    DocumentRetirementResponse,
     EntityResolutionApplyResponse,
     EntityResolutionResponse,
     KnowledgeConstructionResponse,
@@ -48,6 +50,7 @@ SCOPES = " ".join(
         "knowledge:review",
         "knowledge:publish",
         "knowledge:quality",
+        "knowledge:lifecycle",
     )
 )
 NOW = datetime(2026, 9, 4, 10, 0, tzinfo=UTC)
@@ -131,6 +134,42 @@ def _quality() -> PublishedGraphQualityResponse:
         issues=(),
         review_sample=(),
         passed=True,
+    )
+
+
+def _documents() -> DocumentLifecycleListResponse:
+    return DocumentLifecycleListResponse(
+        items=(
+            {
+                "document_id": "document-1",
+                "title": "Asset report",
+                "source_name": "controlled upload",
+                "canonical_uri": "https://example.test/asset.txt",
+                "source_generation": 3,
+                "active_snapshot_id": "snapshot-3",
+                "active_version_id": "version-3",
+                "chunk_count": 2,
+                "access_policy_id": "policy-engineering",
+                "access_policy_version": 4,
+                "access_groups": ("engineers",),
+                "blocked": False,
+                "blocker_codes": (),
+            },
+        )
+    )
+
+
+def _retirement() -> DocumentRetirementResponse:
+    return DocumentRetirementResponse(
+        retirement_id="retirement-1",
+        document_id="document-1",
+        retired_snapshot_id="snapshot-3",
+        retired_version_id="version-3",
+        source_generation_before=3,
+        source_generation_after=4,
+        corpus_revision=8,
+        retired_at=NOW,
+        status="RETIRED",
     )
 
 
@@ -372,6 +411,16 @@ class _Knowledge:
     def quality(self, principal: object) -> BackendResult:
         self._record("quality", principal, None)
         return BackendResult(_quality())
+
+    def documents(self, principal: object, request: object) -> BackendResult:
+        self._record("documents", principal, request)
+        return BackendResult(_documents())
+
+    def retire_document(
+        self, principal: object, document_id: str, request: object
+    ) -> BackendResult:
+        self._record("retire_document", principal, (document_id, request))
+        return BackendResult(_retirement())
 
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
@@ -711,10 +760,20 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 ),
                 client.get("/v1/knowledge/publications?limit=10", headers=auth),
                 client.get("/v1/knowledge/quality", headers=auth),
+                client.get("/v1/knowledge/documents?limit=10", headers=auth),
+                client.post(
+                    "/v1/knowledge/documents/document-1:retire",
+                    headers=auth,
+                    json={
+                        "operation_key": "retirement-operation-0001",
+                        "expected_active_snapshot_id": "snapshot-3",
+                        "source_generation": 3,
+                    },
+                ),
             )
 
         self.assertTrue(all(response.status_code == 200 for response in responses))
-        self.assertEqual(len(knowledge.calls), 16)
+        self.assertEqual(len(knowledge.calls), 18)
         self.assertEqual(
             [name for name, _, _ in knowledge.calls],
             [
@@ -734,6 +793,8 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 "rollback",
                 "history",
                 "quality",
+                "documents",
+                "retire_document",
             ],
         )
         for _, principal, _ in knowledge.calls:

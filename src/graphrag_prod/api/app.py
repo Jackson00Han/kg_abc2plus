@@ -46,6 +46,9 @@ from .knowledge_contracts import (
     AuthoritativeImportResponse,
     ConstructionJobListResponse,
     ConstructionJobResponse,
+    DocumentLifecycleListResponse,
+    DocumentRetirementRequest,
+    DocumentRetirementResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionResponse,
@@ -1015,6 +1018,42 @@ def create_app(
             identity,
             OperationKind.KNOWLEDGE_QUALITY,
             {},
+        )
+
+    @app.get(
+        "/v1/knowledge/documents",
+        response_model=DocumentLifecycleListResponse,
+    )
+    async def active_knowledge_documents(
+        request: Request,
+        identity: IdentityDependency,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_DOCUMENTS,
+            {"limit": limit},
+        )
+
+    @app.post(
+        "/v1/knowledge/documents/{document_id}:retire",
+        response_model=DocumentRetirementResponse,
+    )
+    async def retire_knowledge_document(
+        request: Request,
+        document_id: DocumentPath,
+        body: DocumentRetirementRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_DOCUMENT_RETIRE,
+            {
+                "document_id": document_id,
+                "request": body.model_dump(mode="python"),
+            },
         )
 
     @app.get(

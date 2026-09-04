@@ -40,7 +40,12 @@ from graphrag_prod.api import (
     create_app,
 )
 from graphrag_prod.api.contracts import ReadinessResponse
-from graphrag_prod.api.runtime import BackendResult, AuthorizationError, RuntimePolicy
+from graphrag_prod.api.runtime import (
+    AuthorizationError,
+    BackendResult,
+    DependencyUnavailableError,
+    RuntimePolicy,
+)
 from graphrag_prod.construction import (
     ConstructionConfig,
     ExtractionLimits,
@@ -158,6 +163,26 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
                     pass
                 raise
             self._refresh_embedding_generation(principal.tenant_id)
+            return result
+
+    def retire_document(
+        self,
+        principal: Principal,
+        document_id: str,
+        request: Any,
+    ) -> BackendResult:
+        # Retirement invalidates the active generation in the same database
+        # transaction. An exact request replay remains safe if provider-backed
+        # index rebuilding fails after the durable retirement commits.
+        with self._generation_lock:
+            result = super().retire_document(principal, document_id, request)
+            try:
+                self._refresh_embedding_generation(principal.tenant_id)
+            except Exception as error:
+                # Return no stale success while keeping provider/driver detail
+                # out of the public API. The UI retains the exact operation key
+                # so a replay can finish generation repair safely.
+                raise DependencyUnavailableError() from error
             return result
 
     def _refresh_embedding_generation(self, tenant_id: str) -> None:
@@ -498,6 +523,7 @@ def build_playground_app(
             "human_review": True,
             "knowledge_publication": True,
             "published_graph_quality": True,
+            "document_retirement": True,
             "evidence_subgraph": True,
             "extraction_provider": {
                 "protocol": "openai-compatible",

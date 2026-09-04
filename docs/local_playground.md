@@ -103,6 +103,10 @@ The page shows:
 - an independently authorized active-publication quality card showing the
   exact T-Box/publication binding, graph digest, bounded counts, pass state,
   issue metadata, and deterministic review sample Chunk IDs without source text;
+- an independently authorized active-document lifecycle card showing bounded
+  source metadata, ACL, Chunk count, active snapshot/generation CAS values, and
+  stable governance blocker codes, with explicit logical retirement only when
+  no blocker remains;
 - the unmodified retrieval JSON returned by the production API.
 
 Switching to an identity other than a question's recommended identity lets a
@@ -163,7 +167,15 @@ Use the **知识构建** view for the complete property-graph governance loop:
    `knowledge:quality` scope is required, complete publication ACL visibility is
    mandatory, and missing/conflicted active state is shown without leaking
    graph contents. The card contains only bounded metadata and Chunk IDs.
-7. Retrieve the uploaded content. Only records in the active publication that
+7. Refresh active documents as a full steward. The dedicated
+   `knowledge:lifecycle` scope is required. A document referenced by an active
+   publication, current review revision, or in-flight job shows a stable
+   blocker and no retirement button. After resolving blockers, explicit browser
+   confirmation submits the active snapshot, source generation, and a
+   same-input session operation key. Success rebuilds and activates the tenant's
+   vector generation before the API returns; immutable source and audit records
+   remain available for governance.
+8. Retrieve the uploaded content. Only records in the active publication that
    remain bound to current authorized evidence appear in **知识子图**.
 
 Expert imports are marked `AUTHORITATIVE`; LLM-extracted records are marked
@@ -184,8 +196,8 @@ persona administrator access:
 | `alpha-public`, `beta-public` | retrieval and ontology read |
 | `alpha-finance` | read plus knowledge construction |
 | `alpha-legal` | read plus knowledge review |
-| `alpha-finance + alpha-legal` | full local ontology/knowledge governance, including active graph quality |
-| any `beta-board` identity | full local ontology/knowledge governance, including active graph quality |
+| `alpha-finance + alpha-legal` | full local ontology/knowledge governance, including active graph quality and document lifecycle |
+| any `beta-board` identity | full local ontology/knowledge governance, including active graph quality and document lifecycle |
 
 The page shows the selected persona's scopes. A `403` is an expected,
 non-leaking result when a persona attempts a duty it does not hold.

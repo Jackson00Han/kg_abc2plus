@@ -32,6 +32,14 @@ from graphrag_prod.graph.published_quality import (
     PublishedGraphQualityUnavailable,
 )
 from graphrag_prod.ingestion import IngestionConflict
+from graphrag_prod.ingestion.retirement import (
+    DocumentRetirementBackendUnavailable,
+    DocumentRetirementBlocked,
+    DocumentRetirementConflict,
+    DocumentRetirementRequest as DomainDocumentRetirementRequest,
+    DocumentRetirementUnavailable,
+    Neo4jDocumentRetirementService,
+)
 from graphrag_prod.knowledge import (
     ABoxRecordBatch,
     AssertionRecord,
@@ -80,6 +88,10 @@ from .knowledge_contracts import (
     ConstructionJobListRequest,
     ConstructionJobListResponse,
     ConstructionJobResponse,
+    DocumentLifecycleListRequest,
+    DocumentLifecycleListResponse,
+    DocumentRetirementRequest,
+    DocumentRetirementResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
@@ -483,6 +495,7 @@ class Neo4jKnowledgeOperations:
         construction_audit: Any | None = None,
         resolution_source: Any | None = None,
         quality_service: Any | None = None,
+        retirement_service: Any | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if not callable(getattr(construction, "run", None)):
@@ -491,6 +504,13 @@ class Neo4jKnowledgeOperations:
             getattr(quality_service, "audit", None)
         ):
             raise TypeError("quality_service must implement audit")
+        if retirement_service is not None and any(
+            not callable(getattr(retirement_service, method, None))
+            for method in ("list_active_documents", "retire")
+        ):
+            raise TypeError(
+                "retirement_service must implement list_active_documents and retire"
+            )
         self.driver = driver
         self.database = database
         self.construction = construction
@@ -510,6 +530,9 @@ class Neo4jKnowledgeOperations:
             driver, database
         )
         self.quality_service = quality_service or Neo4jPublishedGraphQualityService(
+            driver, database
+        )
+        self.retirement_service = retirement_service or Neo4jDocumentRetirementService(
             driver, database
         )
         self.literal_normalizer = TBoxLiteralNormalizer()
@@ -1616,6 +1639,110 @@ class Neo4jKnowledgeOperations:
         except (AttributeError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(PublishedGraphQualityResponse, payload))
+
+    def documents(
+        self,
+        principal: Principal,
+        request: DocumentLifecycleListRequest,
+    ) -> BackendResult:
+        """List fully visible active sources as metadata-only lifecycle rows."""
+
+        _require_capability(principal, "knowledge:lifecycle")
+        try:
+            items = self.retirement_service.list_active_documents(
+                principal,
+                limit=request.limit,
+            )
+        except ApiRuntimeError:
+            raise
+        except DocumentRetirementUnavailable as error:
+            raise AuthorizationError() from error
+        except DocumentRetirementConflict as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except DocumentRetirementBackendUnavailable as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        try:
+            payload_items = tuple(
+                {
+                    "document_id": item.document_id,
+                    "title": item.title,
+                    "source_name": item.source_name,
+                    "canonical_uri": item.canonical_uri,
+                    "source_generation": item.source_generation,
+                    "active_snapshot_id": item.active_snapshot_id,
+                    "active_version_id": item.active_version_id,
+                    "chunk_count": item.chunk_count,
+                    "access_policy_id": item.access_policy_id,
+                    "access_policy_version": item.access_policy_version,
+                    "access_groups": item.access_groups,
+                    "blocked": item.blocked,
+                    "blocker_codes": item.blocker_codes,
+                }
+                for item in items
+                if item.tenant_id == principal.tenant_id
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise DependencyUnavailableError() from error
+        if len(payload_items) != len(items):
+            raise DependencyUnavailableError()
+        return BackendResult(
+            _outbound(DocumentLifecycleListResponse, {"items": payload_items})
+        )
+
+    def retire_document(
+        self,
+        principal: Principal,
+        document_id: str,
+        request: DocumentRetirementRequest,
+    ) -> BackendResult:
+        """Withdraw one active source while retaining its immutable audit graph."""
+
+        _require_capability(principal, "knowledge:lifecycle")
+        try:
+            result = self.retirement_service.retire(
+                principal,
+                DomainDocumentRetirementRequest(
+                    document_id=document_id,
+                    operation_key=request.operation_key,
+                    expected_active_snapshot_id=request.expected_active_snapshot_id,
+                    source_generation=request.source_generation,
+                ),
+            )
+        except ApiRuntimeError:
+            raise
+        except DocumentRetirementUnavailable as error:
+            # Missing, foreign-tenant and partially visible IDs deliberately
+            # collapse to the same non-enumerating public result.
+            raise AuthorizationError() from error
+        except (DocumentRetirementConflict, DocumentRetirementBlocked) as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except DocumentRetirementBackendUnavailable as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if (
+            result.tenant_id != principal.tenant_id
+            or result.document_id != document_id
+        ):
+            raise DependencyUnavailableError()
+        payload = {
+            "retirement_id": result.retirement_id,
+            "document_id": result.document_id,
+            "retired_snapshot_id": result.retired_snapshot_id,
+            "retired_version_id": result.retired_version_id,
+            "source_generation_before": result.source_generation_before,
+            "source_generation_after": result.source_generation_after,
+            "corpus_revision": result.corpus_revision,
+            "retired_at": result.retired_at,
+            "status": result.status,
+        }
+        return BackendResult(_outbound(DocumentRetirementResponse, payload))
 
 
 __all__ = ["Neo4jKnowledgeOperations"]

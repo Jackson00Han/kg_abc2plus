@@ -13,6 +13,8 @@ import jwt
 from graphrag_prod.api import JWTAuthConfig, JWTAuthenticator, create_app
 from graphrag_prod.api.knowledge_contracts import (
     ConstructionJobListResponse,
+    DocumentLifecycleListResponse,
+    DocumentRetirementResponse,
     KnowledgeConstructionResponse,
     OntologyListResponse,
     PublicationCandidatesResponse,
@@ -138,6 +140,42 @@ class _Backend:
                     passed=True,
                 )
             )
+        if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENTS:
+            return BackendResult(
+                DocumentLifecycleListResponse(
+                    items=(
+                        {
+                            "document_id": "document-1",
+                            "title": "Asset report",
+                            "source_name": "controlled upload",
+                            "canonical_uri": "urn:industrial:asset-report:1",
+                            "source_generation": 3,
+                            "active_snapshot_id": "snapshot-3",
+                            "active_version_id": "version-3",
+                            "chunk_count": 2,
+                            "access_policy_id": "policy-engineering",
+                            "access_policy_version": 4,
+                            "access_groups": ("engineers",),
+                            "blocked": False,
+                            "blocker_codes": (),
+                        },
+                    )
+                )
+            )
+        if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENT_RETIRE:
+            return BackendResult(
+                DocumentRetirementResponse(
+                    retirement_id="retirement-1",
+                    document_id="document-1",
+                    retired_snapshot_id="snapshot-3",
+                    retired_version_id="version-3",
+                    source_generation_before=3,
+                    source_generation_after=4,
+                    corpus_revision=8,
+                    retired_at=datetime.now(UTC),
+                    status="RETIRED",
+                )
+            )
         if envelope.operation is OperationKind.READINESS:
             return BackendResult({"status": "ready", "checks": {"backend": "ok"}})
         raise ResourceNotFoundError()
@@ -207,6 +245,137 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
         self.assertEqual(envelope.tenant_id, "tenant-alpha")
         self.assertEqual(envelope.access_groups, frozenset({"engineers", "public"}))
         self.assertEqual(envelope.payload, {})
+
+    def test_document_lifecycle_requires_dedicated_scope_and_is_metadata_only(
+        self,
+    ) -> None:
+        denied = self.client.get(
+            "/v1/knowledge/documents?limit=10",
+            headers=_headers(scope="knowledge:review"),
+        )
+        listed = self.client.get(
+            "/v1/knowledge/documents?limit=10",
+            headers=_headers(
+                tenant_id="tenant-alpha",
+                scope="knowledge:lifecycle",
+                groups=("engineers", "public"),
+            ),
+        )
+        retired = self.client.post(
+            "/v1/knowledge/documents/document-1:retire",
+            headers=_headers(
+                tenant_id="tenant-alpha",
+                scope="knowledge:lifecycle",
+                groups=("engineers", "public"),
+            ),
+            json={
+                "operation_key": "retirement-operation-0001",
+                "expected_active_snapshot_id": "snapshot-3",
+                "source_generation": 3,
+            },
+        )
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(retired.status_code, 200)
+        for response in (listed, retired):
+            self.assertNotIn("tenant_id", response.json())
+            self.assertNotIn("source_text", response.text)
+            self.assertNotIn("quoted_text", response.text)
+        self.assertEqual(len(self.backend.envelopes), 2)
+        list_envelope, retire_envelope = self.backend.envelopes
+        self.assertEqual(list_envelope.operation, OperationKind.KNOWLEDGE_DOCUMENTS)
+        self.assertEqual(list_envelope.payload, {"limit": 10})
+        self.assertEqual(
+            retire_envelope.operation,
+            OperationKind.KNOWLEDGE_DOCUMENT_RETIRE,
+        )
+        self.assertEqual(retire_envelope.tenant_id, "tenant-alpha")
+        self.assertNotIn("tenant_id", retire_envelope.payload)
+        self.assertNotIn("principal_id", retire_envelope.payload)
+        self.assertEqual(
+            retire_envelope.payload["request"]["expected_active_snapshot_id"],
+            "snapshot-3",
+        )
+
+    def test_document_retirement_missing_cross_tenant_and_partial_acl_are_one_error(
+        self,
+    ) -> None:
+        class _NonEnumeratingBackend(_Backend):
+            def execute(self, envelope: OperationEnvelope, /) -> BackendResult:
+                if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENT_RETIRE:
+                    raise AuthorizationError()
+                return super().execute(envelope)
+
+        backend = _NonEnumeratingBackend()
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=backend,
+        )
+        cases = (
+            ("tenant-alpha", ("engineers",), "missing-document"),
+            ("tenant-other", ("engineers",), "document-1"),
+            ("tenant-alpha", ("public",), "document-1"),
+        )
+        with TestClient(app) as client:
+            responses = tuple(
+                client.post(
+                    f"/v1/knowledge/documents/{document_id}:retire",
+                    headers=_headers(
+                        tenant_id=tenant_id,
+                        scope="knowledge:lifecycle",
+                        groups=groups,
+                    ),
+                    json={
+                        "operation_key": "retirement-operation-0001",
+                        "expected_active_snapshot_id": "snapshot-3",
+                        "source_generation": 3,
+                    },
+                )
+                for tenant_id, groups, document_id in cases
+            )
+        public = tuple(
+            (response.status_code, response.json()["code"], response.json()["message"])
+            for response in responses
+        )
+        self.assertEqual(len(set(public)), 1)
+        self.assertEqual(
+            public[0],
+            (403, "forbidden", "the operation is not permitted"),
+        )
+        self.assertNotIn("missing-document", "".join(response.text for response in responses))
+
+    def test_document_lifecycle_input_bounds_fail_before_backend(self) -> None:
+        invalid_list = self.client.get(
+            "/v1/knowledge/documents?limit=101",
+            headers=_headers(scope="knowledge:lifecycle"),
+        )
+        injected = self.client.post(
+            "/v1/knowledge/documents/document-1:retire",
+            headers=_headers(scope="knowledge:lifecycle"),
+            json={
+                "operation_key": "retirement-operation-0001",
+                "expected_active_snapshot_id": "snapshot-3",
+                "source_generation": 3,
+                "tenant_id": "tenant-victim",
+            },
+        )
+        malformed = self.client.post(
+            "/v1/knowledge/documents/document-1:retire",
+            headers=_headers(scope="knowledge:lifecycle"),
+            json={
+                "operation_key": "short",
+                "expected_active_snapshot_id": "snapshot-3",
+                "source_generation": 3,
+            },
+        )
+        self.assertEqual(
+            tuple(item.status_code for item in (invalid_list, injected, malformed)),
+            (422, 422, 422),
+        )
+        self.assertEqual(self.backend.envelopes, [])
 
     def test_partial_acl_quality_denial_is_generic_and_non_leaking(self) -> None:
         class _CompletePublicationBackend(_Backend):

@@ -41,6 +41,7 @@ MAX_REVIEW_RECORDS = 100
 MAX_PUBLICATION_RECORDS = 500
 MAX_PUBLISHED_QUALITY_ISSUES = 1_000
 MAX_PUBLISHED_QUALITY_SAMPLE = 20
+MAX_ACTIVE_DOCUMENTS = 100
 MAX_EVIDENCE_CHARS = 100_000
 MAX_BASE64_DOCUMENT_CHARS = 4 * ((MAX_DOCUMENT_BYTES + 2) // 3)
 
@@ -120,6 +121,31 @@ QualityObjectId = Annotated[
         min_length=1,
         max_length=1_024,
         pattern=r"^[^\x00-\x20\x7f]+$",
+    ),
+]
+DocumentRetirementBlocker = Literal[
+    "ACTIVE_KNOWLEDGE_PUBLICATION",
+    "CURRENT_REVIEW",
+    "ACTIVE_CONSTRUCTION_JOB",
+    "ACTIVE_INGESTION_JOB",
+]
+DocumentOperationKey = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    ),
+]
+DocumentCanonicalUri = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        strip_whitespace=True,
+        min_length=1,
+        max_length=2_048,
     ),
 ]
 
@@ -1072,6 +1098,104 @@ class PublicationCandidatesResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class DocumentLifecycleListRequest(StrictAPIModel):
+    """Bounded metadata-only active-document list request."""
+
+    limit: Annotated[int, Field(strict=True, ge=1, le=MAX_ACTIVE_DOCUMENTS)] = 50
+
+
+class DocumentLifecycleItemResponse(StrictAPIModel):
+    """One fully visible active source without tenant identity or source text."""
+
+    document_id: Identifier
+    title: ShortText
+    source_name: ShortText
+    canonical_uri: DocumentCanonicalUri
+    source_generation: Annotated[
+        int, Field(strict=True, ge=0, le=9_223_372_036_854_775_807)
+    ]
+    active_snapshot_id: Identifier
+    active_version_id: Identifier
+    chunk_count: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    access_policy_id: Identifier
+    access_policy_version: Annotated[
+        int, Field(strict=True, ge=1, le=2_147_483_647)
+    ]
+    access_groups: Annotated[
+        tuple[GroupName, ...], Field(min_length=1, max_length=MAX_GROUPS)
+    ]
+    blocked: bool
+    blocker_codes: Annotated[
+        tuple[DocumentRetirementBlocker, ...], Field(max_length=4)
+    ]
+
+    @field_validator("canonical_uri")
+    @classmethod
+    def validate_canonical_uri(cls, value: str) -> str:
+        return _canonical_source_uri(value)
+
+    @field_validator("access_groups", "blocker_codes", mode="before")
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def consistent_lifecycle_state(self) -> Self:
+        _unique(self.access_groups, "access_groups")
+        _unique(self.blocker_codes, "blocker_codes")
+        if self.blocked != bool(self.blocker_codes):
+            raise ValueError("blocked must match blocker_codes")
+        return self
+
+
+class DocumentLifecycleListResponse(StrictAPIModel):
+    items: Annotated[
+        tuple[DocumentLifecycleItemResponse, ...], Field(max_length=MAX_ACTIVE_DOCUMENTS)
+    ]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def unique_documents(self) -> Self:
+        _unique(tuple(item.document_id for item in self.items), "document IDs")
+        return self
+
+
+class DocumentRetirementRequest(StrictAPIModel):
+    operation_key: DocumentOperationKey
+    expected_active_snapshot_id: Identifier
+    source_generation: Annotated[
+        int, Field(strict=True, ge=0, le=9_223_372_036_854_775_806)
+    ]
+
+
+class DocumentRetirementResponse(StrictAPIModel):
+    retirement_id: Identifier
+    document_id: Identifier
+    retired_snapshot_id: Identifier
+    retired_version_id: Identifier
+    source_generation_before: Annotated[
+        int, Field(strict=True, ge=0, le=9_223_372_036_854_775_807)
+    ]
+    source_generation_after: Annotated[
+        int, Field(strict=True, ge=1, le=9_223_372_036_854_775_807)
+    ]
+    corpus_revision: Annotated[
+        int, Field(strict=True, ge=1, le=9_223_372_036_854_775_807)
+    ]
+    retired_at: AwareDatetime
+    status: Literal["RETIRED"]
+
+    @model_validator(mode="after")
+    def valid_generation_transition(self) -> Self:
+        if self.source_generation_after != self.source_generation_before + 1:
+            raise ValueError("retirement must advance source_generation exactly once")
+        return self
+
+
 class PublishedGraphQualityCountsResponse(StrictAPIModel):
     revisions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
     entity_mentions: Annotated[int, Field(strict=True, ge=0, le=50_000)]
@@ -1153,6 +1277,11 @@ __all__ = [
     "ConstructionJobListRequest",
     "ConstructionJobListResponse",
     "ConstructionJobResponse",
+    "DocumentLifecycleItemResponse",
+    "DocumentLifecycleListRequest",
+    "DocumentLifecycleListResponse",
+    "DocumentRetirementRequest",
+    "DocumentRetirementResponse",
     "EvidenceInput",
     "EntityResolutionApplyRequest",
     "EntityResolutionApplyResponse",

@@ -88,6 +88,8 @@ class OperationKind(str, Enum):
     KNOWLEDGE_HISTORY = "knowledge_history"
     KNOWLEDGE_PUBLICATION_CANDIDATES = "knowledge_publication_candidates"
     KNOWLEDGE_QUALITY = "knowledge_quality"
+    KNOWLEDGE_DOCUMENTS = "knowledge_documents"
+    KNOWLEDGE_DOCUMENT_RETIRE = "knowledge_document_retire"
 
     @property
     def is_write(self) -> bool:
@@ -102,6 +104,7 @@ class OperationKind(str, Enum):
             self.ENTITY_RESOLUTION_APPLY,
             self.KNOWLEDGE_PUBLISH,
             self.KNOWLEDGE_ROLLBACK,
+            self.KNOWLEDGE_DOCUMENT_RETIRE,
         }
 
     @property
@@ -120,6 +123,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_HISTORY,
             self.KNOWLEDGE_PUBLICATION_CANDIDATES,
             self.KNOWLEDGE_QUALITY,
+            self.KNOWLEDGE_DOCUMENTS,
         }
 
 
@@ -149,6 +153,8 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
         OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: "knowledge:publish",
         OperationKind.KNOWLEDGE_QUALITY: "knowledge:quality",
+        OperationKind.KNOWLEDGE_DOCUMENTS: "knowledge:lifecycle",
+        OperationKind.KNOWLEDGE_DOCUMENT_RETIRE: "knowledge:lifecycle",
     }
 )
 

@@ -61,6 +61,10 @@ from .knowledge_contracts import (
     ConstructionJobListRequest,
     ConstructionJobListResponse,
     ConstructionJobResponse,
+    DocumentLifecycleListRequest,
+    DocumentLifecycleListResponse,
+    DocumentRetirementRequest,
+    DocumentRetirementResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
@@ -315,6 +319,17 @@ class KnowledgeOperations(Protocol):
     ) -> BackendResult: ...
 
     def quality(self, principal: Principal) -> BackendResult: ...
+
+    def documents(
+        self, principal: Principal, request: DocumentLifecycleListRequest
+    ) -> BackendResult: ...
+
+    def retire_document(
+        self,
+        principal: Principal,
+        document_id: str,
+        request: DocumentRetirementRequest,
+    ) -> BackendResult: ...
 
 
 def _job_response_payload(job: JobView) -> dict[str, object]:
@@ -1036,6 +1051,8 @@ class GraphRAGApplicationBackend:
                 "history",
                 "publication_candidates",
                 "quality",
+                "documents",
+                "retire_document",
             )
             if any(not callable(getattr(knowledge, method, None)) for method in methods):
                 raise TypeError("knowledge does not implement its required operations")
@@ -1068,6 +1085,8 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_HISTORY,
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
             OperationKind.KNOWLEDGE_QUALITY,
+            OperationKind.KNOWLEDGE_DOCUMENTS,
+            OperationKind.KNOWLEDGE_DOCUMENT_RETIRE,
         }
         if envelope.operation in knowledge_operations:
             if self._knowledge is None:
@@ -1188,6 +1207,26 @@ class GraphRAGApplicationBackend:
                 return _response(
                     self._knowledge.quality(principal),
                     PublishedGraphQualityResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENTS:
+                request = _validated(DocumentLifecycleListRequest, envelope.payload)
+                return _response(
+                    self._knowledge.documents(principal, request),
+                    DocumentLifecycleListResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENT_RETIRE:
+                document_id = _internal_identifier(envelope.payload.get("document_id"))
+                request_payload = envelope.payload.get("request")
+                if not isinstance(request_payload, Mapping):
+                    raise RequestValidationError()
+                request = _validated(DocumentRetirementRequest, request_payload)
+                return _response(
+                    self._knowledge.retire_document(
+                        principal,
+                        document_id,
+                        request,
+                    ),
+                    DocumentRetirementResponse,
                 )
             request = _validated(PublicationHistoryRequest, envelope.payload)
             return _response(

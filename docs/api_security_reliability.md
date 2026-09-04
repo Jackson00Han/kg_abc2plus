@@ -18,6 +18,8 @@ assembly must inject those trusted resources into `create_app`.
 | `POST` | `/v1/knowledge:construct` | Upload one bounded source and create review-gated LLM extraction candidates | `200` |
 | `GET` | `/v1/knowledge/review-queue` | Read bounded candidate/quarantine revisions | `200` |
 | `POST` | `/v1/knowledge/reviews:batch` | Apply compare-and-swap expert review decisions and raw-source edits | `200` |
+| `GET` | `/v1/knowledge/documents` | List fully visible active source metadata and retirement blockers | `200` |
+| `POST` | `/v1/knowledge/documents/{document_id}:retire` | Logically withdraw one active source without deleting its audit graph | `200` |
 | `GET` | `/health/live` | Check only the local process boundary | `200` |
 | `GET` | `/health/ready` | Check bounded dependency readiness | `200` or `503` |
 | `GET` | `/v1/metrics` | Read aggregate operational metrics | `200` |
@@ -68,6 +70,18 @@ subset. Only the selected groups are placed on the Document, Chunks,
 construction outcomes, and governed evidence; a principal that also belongs
 to a broad group cannot accidentally widen a restricted upload to that group.
 Existing sources cannot have their ACL silently changed through this endpoint.
+
+Governed retirement has a separate `knowledge:lifecycle` scope. The client
+cannot submit tenant, principal, access groups, blocker state, or target
+version metadata beyond the required snapshot/source-generation CAS. The
+metadata list is capped at 100 and excludes tenant and source text. Both reads
+and writes require complete document/Chunk ACL visibility inside Neo4j;
+missing, foreign-tenant, and partially visible retirement targets intentionally
+collapse to the same `403 forbidden` response. A successful logical retirement
+preserves immutable evidence and review/publication history while removing
+active retrieval pointers and invalidating the vector generation. The write is
+non-retry-safe at the runner; clients resolve a timeout by replaying the exact
+same operation key and CAS payload.
 
 Every retrieval data path continues to apply the Stage 5 tenant, group,
 active-version, and optional version filters inside Neo4j.  The API does not

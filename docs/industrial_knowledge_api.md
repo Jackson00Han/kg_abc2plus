@@ -26,6 +26,8 @@ selected group must be a non-empty subset of the verified JWT groups.
 | Roll back a publication | `POST /v1/knowledge/publications/{id}:rollback` | `knowledge:publish` |
 | Read publication history | `GET /v1/knowledge/publications` | `knowledge:publish` |
 | Audit the complete active publication | `GET /v1/knowledge/quality` | `knowledge:quality` |
+| List fully visible active documents | `GET /v1/knowledge/documents` | `knowledge:lifecycle` |
+| Logically retire one active document | `POST /v1/knowledge/documents/{id}:retire` | `knowledge:lifecycle` |
 
 Upload content is canonical base64 and decodes to at most 5 MiB. Supported MIME
 types are `text/plain`, `text/markdown`, `text/csv`, and `application/json`.
@@ -113,3 +115,18 @@ generic forbidden response. Missing/ambiguous active publication, a broken
 exact T-Box binding, or a server audit-bound conflict returns the generic
 conflict response, while backend availability failures use the existing
 dependency taxonomy.
+
+Document lifecycle is independently authorized. The list returns at most 100
+fully visible, provenance-closed active documents and only metadata required
+for an explicit retirement decision: source identity, active version/snapshot,
+source generation, Chunk count, ACL policy/groups, and the stable blocker codes
+`ACTIVE_KNOWLEDGE_PUBLICATION`, `CURRENT_REVIEW`,
+`ACTIVE_CONSTRUCTION_JOB`, or `ACTIVE_INGESTION_JOB`. It does not return tenant
+identity or source/Chunk text. Retirement requires the exact active snapshot,
+source generation, and a stable operation key. Missing, cross-tenant, and
+partially visible targets all return the same generic forbidden response;
+stale CAS state and governed blockers return the generic conflict response.
+The operation invalidates active retrieval/vector state but preserves source,
+Chunk, revision, publication, and retirement audit records. It is distinct
+from the legacy physical document deletion route and is never retried
+automatically by the HTTP runner.

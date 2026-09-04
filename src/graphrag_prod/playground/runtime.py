@@ -37,6 +37,7 @@ PLAYGROUND_SCOPES = (
     "knowledge:review",
     "knowledge:publish",
     "knowledge:quality",
+    "knowledge:lifecycle",
 )
 PLAYGROUND_RETRIEVAL_LIMITS = RetrievalLimits(
     top_k=5,
