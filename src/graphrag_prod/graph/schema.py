@@ -440,6 +440,34 @@ EXPECTED_SCHEMA = (
         ("tenant_id", "job_id", "chunk_id"),
     ),
     SchemaExpectation(
+        "published_graph_quality_run_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "PublishedGraphQualityRun",
+        ("run_id",),
+    ),
+    SchemaExpectation(
+        "published_graph_quality_issue_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "PublishedGraphQualityIssue",
+        ("issue_id",),
+    ),
+    SchemaExpectation(
+        "published_graph_quality_sample_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "PublishedGraphQualityReviewSample",
+        ("sample_id",),
+    ),
+    SchemaExpectation(
+        "published_graph_quality_acl_requirement_id_unique",
+        "constraint",
+        "UNIQUENESS",
+        "PublishedGraphQualityAclRequirement",
+        ("requirement_id",),
+    ),
+    SchemaExpectation(
         "document_tenant_id",
         "index",
         "RANGE",
@@ -648,6 +676,13 @@ EXPECTED_SCHEMA = (
         "RANGE",
         "KnowledgeConstructionChunkOutcome",
         ("tenant_id", "chunk_id"),
+    ),
+    SchemaExpectation(
+        "published_graph_quality_run_lookup",
+        "index",
+        "RANGE",
+        "PublishedGraphQualityRun",
+        ("tenant_id", "publication_generation", "recorded_at"),
     ),
     SchemaExpectation(
         "graphrag_chunk_text_v1",

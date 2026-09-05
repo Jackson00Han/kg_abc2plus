@@ -52,6 +52,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 "009_knowledge_construction_schema.cypher",
                 "010_knowledge_publication_tbox_binding.cypher",
                 "011_relationship_property_value_schema.cypher",
+                "012_published_quality_history_schema.cypher",
             ],
         )
         statements = migration_statements()
