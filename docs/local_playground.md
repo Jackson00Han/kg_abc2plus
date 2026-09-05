@@ -65,19 +65,32 @@ Local construction is preflighted at four Chunks, four model calls, and 16,000
 extraction characters, then cooperatively capped at 90 seconds inside a
 105-second API deadline. Answer
 generation is deliberately unavailable. Extraction uses a separate no-retry
-provider client with a 30-second per-call timeout, a 2,048-token output cap,
-and provider-neutral response-format mode. The compact output shape remains in
-the prompt and the server strictly validates JSON, evidence, and the T-Box; a
-provider timeout is returned as a bounded dependency failure rather than
-silently retrying costly model calls.
+provider client with a 30-second per-call timeout and a 2,048-token output cap.
+The DashScope extraction profile explicitly sends `enable_thinking=false`:
+`qwen3.8-max` otherwise defaults to deep thinking, whose tokens are not capped
+by `max_tokens`. The configured model and credentials are unchanged. The page
+shows this execution policy. Provider-specific response-format enforcement
+remains disabled; the output schema stays in the prompt. A mechanically
+computed Unicode token-position lookup helps the model copy Chunk-relative
+offsets. It supplies no entity or relationship suggestions, and never repairs
+model output: JSON, exact evidence spans, endpoint containment and the T-Box
+are still strictly validated before creating any candidate.
 
-Model availability does not imply that extraction finishes within this local
-budget. The 2026-09-05 live `qwen3.8-max` single-Chunk acceptance timed out at
-30 seconds; its recoverable job and the downstream manual-governance checks
-are documented in
+Actual SDK timeouts return HTTP 504 (`code=dependency_timeout`); the recoverable
+construction job records the safe `MODEL_CALL_TIMEOUT` finding. Other model-call
+failures remain HTTP 503. Both leave a recoverable job, not
+approved knowledge, with no hidden model retries. A same-input/same-policy retry
+reuses completed Chunks. Changing model/request policy changes the extraction
+profile: use a new operation key; old audit data and outcomes are not rewritten
+or reused under the new policy.
+
+Model availability does not guarantee that every document finishes within this
+local budget. The original 2026-09-05 timeout and its independent manual checks
+are retained in
 [`validation/governance-workbench-completion.md`](validation/governance-workbench-completion.md).
-That report keeps real-provider limitations separate from passing deterministic
-regression tests.
+The diagnosed cause, controlled provider comparisons and corrected acceptance
+are recorded separately in
+[`validation/extraction-timeout-correction.md`](validation/extraction-timeout-correction.md).
 
 ## What the page exercises
 

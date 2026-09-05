@@ -72,6 +72,7 @@ from .extraction import (
     ExtractionRejected,
 )
 from .parser import BoundedDocumentParser, ParsedDocument
+from .provider_errors import RETRYABLE_PROVIDER_FINDING_CODES
 
 
 AUDIT_ARTIFACT_KIND = "ONTOLOGY_EXTRACTION_AUDIT"
@@ -1728,6 +1729,26 @@ class Neo4jKnowledgeConstructionWorkflow:
             )
         return timeout
 
+    def _bound_extractor_signature(self, extractor: OntologyExtractor) -> str:
+        """Bind actual request policy before job/outcome replay identity exists.
+
+        Legacy injected extractors do not advertise this optional contract and
+        retain their published identities. Policy-aware extractors must provide
+        the exact canonical digest; malformed metadata must not silently fall
+        back to a legacy identity.
+        """
+
+        policy_signature = getattr(extractor, "request_policy_signature", None)
+        if policy_signature is None:
+            return self.config.extractor_signature
+        if (
+            not isinstance(policy_signature, str)
+            or len(policy_signature) != 64
+            or any(character not in "0123456789abcdef" for character in policy_signature)
+        ):
+            raise ConstructionConflict("extractor request-policy signature is invalid")
+        return f"{self.config.extractor_signature}:request-policy:{policy_signature}"
+
     def run(
         self,
         principal: Principal,
@@ -1762,6 +1783,7 @@ class Neo4jKnowledgeConstructionWorkflow:
         if extractor.prompt_version != self.config.prompt_signature:
             raise ConstructionConflict("extractor prompt version differs from configuration")
         provider_timeout = self._provider_timeout(extractor)
+        extractor_signature = self._bound_extractor_signature(extractor)
         self._require_deadline(deadline)
 
         governance = tbox.compile_governance_policy()
@@ -1775,7 +1797,7 @@ class Neo4jKnowledgeConstructionWorkflow:
         )
         extraction_profile = _profile(
             splitter_signature=parsed.splitter_signature,
-            extractor_signature=self.config.extractor_signature,
+            extractor_signature=extractor_signature,
             prompt_signature=self.config.prompt_signature,
             schema_signature=governance.policy_id,
             code_signature=self.config.code_signature,
@@ -1997,7 +2019,10 @@ class Neo4jKnowledgeConstructionWorkflow:
                     profile=profile,
                 )
             except ExtractionRejected as exc:
-                if any(item.code == "MODEL_CALL_FAILED" for item in exc.findings):
+                if any(
+                    item.code in RETRYABLE_PROVIDER_FINDING_CODES
+                    for item in exc.findings
+                ):
                     self.audit_store.record_retryable_failure(
                         tenant_id=principal.tenant_id,
                         job_id=job.job_id,

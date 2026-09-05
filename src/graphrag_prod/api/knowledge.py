@@ -12,6 +12,7 @@ from graphrag_prod.construction import (
     LiteralNormalizationError,
     TBoxLiteralNormalizer,
 )
+from graphrag_prod.construction.provider_errors import MODEL_CALL_TIMEOUT
 from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
     ConstructionBudgetExceeded,
@@ -1159,6 +1160,8 @@ class Neo4jKnowledgeOperations:
         except TimeoutError as error:
             raise DependencyTimeoutError() from error
         except ExtractionRejected as error:
+            if any(item.code == MODEL_CALL_TIMEOUT for item in error.findings):
+                raise DependencyTimeoutError() from error
             raise DependencyUnavailableError() from error
         except Exception as error:
             raise DependencyUnavailableError() from error

@@ -4,7 +4,7 @@
 - Current baseline maintenance date: 2026-09-05
 - Acceptance contract: `contracts/acceptance.v1.json` version 1.0.1
 - Validation profile: `dev-mini` version 1.0.0
-- Reviewed regression baseline: `dev-mini.v1.json` version 1.3.0
+- Reviewed regression baseline: `dev-mini.v1.json` version 1.4.0
 - Unified gold: `evaluation/gold-v1/manifest.json` version 2.0.0
 - Representative corpus: `dev-corpus-v1` version 1.0.1
 - Answer gold: version 1.1.0
@@ -181,6 +181,16 @@ Stage 9 qualification. The live Qwen timeout, partial temporal retrieval,
 inventory defect/correction and unavailable browser are explicitly recorded in
 `governance-workbench-completion.md`; deterministic baseline success does not
 erase those observations.
+
+The subsequent extraction-timeout correction reviewed baseline version 1.4.0.
+All 824 tests passed: 649 unit, 15 HTTP E2E, 33 security, two regression and 125
+real-Neo4j integration tests, without skips. The complete unit suite was rerun
+after the final Unicode token-hint correction (165.170 seconds); integration
+took 765.834 seconds. Exact comparison against 1.3.0 found only 13 additional
+unit test IDs. No prior test IDs were removed or renamed, and all 160 case
+digests, 20 contract metrics, diagnostics and schema/quality identities stayed
+unchanged. See `extraction-timeout-correction.md` for the independently passing
+real-provider workflow and the limits of that small-source evidence.
 
 Across the historical completion and later maintenance captures,
 gold/corpus rebuilds, acceptance-profile validation, lock verification,

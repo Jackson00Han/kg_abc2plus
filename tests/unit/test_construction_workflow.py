@@ -954,21 +954,63 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         self.assertEqual(len(audit.artifacts), 1)
 
     def test_provider_failure_remains_retryable_and_is_not_cached_as_rejection(self) -> None:
-        finding = ExtractionFinding(
-            "MODEL_CALL_FAILED",
-            "REJECT",
-            "$",
-            "timeout",
-        )
-        extractor = _Extractor(_tbox(), reject=(finding,))
-        workflow, audit, knowledge, _pipeline = _workflow(extractor=extractor)
+        for code in ("MODEL_CALL_FAILED", "MODEL_CALL_TIMEOUT"):
+            with self.subTest(code=code):
+                finding = ExtractionFinding(code, "REJECT", "$", "provider failure")
+                extractor = _Extractor(_tbox(), reject=(finding,))
+                workflow, audit, knowledge, _pipeline = _workflow(extractor=extractor)
 
+                with self.assertRaises(ExtractionRejected):
+                    workflow.run(self.principal, SOURCE, _metadata())
+                self.assertEqual(len(audit.failed), 1)
+                self.assertEqual(audit.failed[0][1], (code,))
+                self.assertEqual(audit.artifacts, {})
+                self.assertEqual(audit.outcomes, {})
+                self.assertEqual(knowledge.candidate_writes, 0)
+
+                extractor.reject = None
+                recovered = workflow.run(self.principal, SOURCE, _metadata())
+                self.assertEqual(extractor.calls, 2)
+                self.assertEqual(recovered.chunks[0].status, "CANDIDATE")
+                self.assertEqual(knowledge.candidate_writes, 1)
+                replayed = workflow.run(self.principal, SOURCE, _metadata())
+                self.assertTrue(replayed.chunks[0].replayed)
+                self.assertEqual(extractor.calls, 2)
+                self.assertEqual(knowledge.candidate_writes, 1)
+
+    def test_timeout_resume_skips_previously_completed_chunks(self) -> None:
+        finding = ExtractionFinding("MODEL_CALL_TIMEOUT", "REJECT", "$", "timeout")
+        extractor = _Extractor(_tbox())
+
+        def fail_second_call(calls: int) -> None:
+            if calls == 2:
+                extractor.reject = (finding,)
+
+        extractor.on_call = fail_second_call
+        parser = BoundedDocumentParser(
+            chunking=ChunkingConfig(
+                max_chars=len(SOURCE), minimum_boundary_ratio=1.0
+            )
+        )
+        workflow, audit, knowledge, _pipeline = _workflow(
+            extractor=extractor, parser=parser
+        )
         with self.assertRaises(ExtractionRejected):
-            workflow.run(self.principal, SOURCE, _metadata())
-        self.assertEqual(len(audit.failed), 1)
-        self.assertEqual(audit.artifacts, {})
-        self.assertEqual(audit.outcomes, {})
-        self.assertEqual(knowledge.candidate_writes, 0)
+            workflow.run(self.principal, SOURCE * 2, _metadata())
+        self.assertEqual(extractor.calls, 2)
+        self.assertEqual(len(audit.outcomes), 1)
+        self.assertEqual(len(audit.artifacts), 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertEqual(audit.completed_jobs, [])
+
+        extractor.reject = None
+        recovered = workflow.run(self.principal, SOURCE * 2, _metadata())
+        self.assertEqual(extractor.calls, 3)
+        self.assertTrue(recovered.chunks[0].replayed)
+        self.assertFalse(recovered.chunks[1].replayed)
+        self.assertEqual(knowledge.candidate_writes, 2)
+        self.assertEqual(len(audit.outcomes), 2)
+        self.assertEqual(audit.completed_jobs, [recovered.job_id])
 
     def test_same_operation_key_with_changed_payload_is_rejected(self) -> None:
         extractor = _Extractor(_tbox())
@@ -978,6 +1020,74 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ConstructionConflict, "idempotency"):
             workflow.run(self.principal, b"Acme owns Pump-8.", _metadata())
         self.assertEqual(knowledge.candidate_writes, 1)
+
+    def test_request_policy_is_stable_and_changes_cannot_replay_completed_outcomes(self) -> None:
+        extractor = _Extractor(_tbox())
+        extractor.request_policy_signature = "a" * 64
+        workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+        first = workflow.run(self.principal, SOURCE, _metadata())
+        original_fingerprint = audit.jobs[first.job_id].request_fingerprint
+        original_artifact_ids = set(audit.artifacts)
+        replay = workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(first.job_id, replay.job_id)
+        self.assertTrue(replay.chunks[0].replayed)
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+
+        extractor.request_policy_signature = "b" * 64
+        with self.assertRaisesRegex(ConstructionConflict, "idempotency"):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertEqual(len(pipeline.requests), 2)
+        self.assertEqual(set(audit.artifacts), original_artifact_ids)
+        self.assertEqual(
+            audit.jobs[first.job_id].request_fingerprint, original_fingerprint
+        )
+
+        changed = workflow.run(
+            self.principal, SOURCE, _metadata(operation_key="policy-upgrade")
+        )
+        self.assertNotEqual(changed.job_id, first.job_id)
+        self.assertNotEqual(changed.chunks[0].artifact_id, first.chunks[0].artifact_id)
+        self.assertFalse(changed.chunks[0].replayed)
+        self.assertEqual(extractor.calls, 2)
+        self.assertEqual(knowledge.candidate_writes, 2)
+        # Runtime policy affects the derived graph, not immutable source identity.
+        self.assertEqual(changed.document_id, first.document_id)
+        self.assertEqual(changed.version_id, first.version_id)
+        self.assertEqual(changed.snapshot_id, first.snapshot_id)
+        self.assertEqual(pipeline.requests[0].profile, pipeline.requests[-1].profile)
+        self.assertTrue(original_artifact_ids <= set(audit.artifacts))
+
+    def test_introducing_request_policy_does_not_reuse_legacy_completed_outcome(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+        legacy = workflow.run(self.principal, SOURCE, _metadata())
+        legacy_artifact = audit.artifacts[legacy.chunks[0].artifact_id]
+        self.assertEqual(legacy_artifact["extractor_version"], "qwen-ontology:v1")
+
+        extractor.request_policy_signature = "a" * 64
+        with self.assertRaisesRegex(ConstructionConflict, "idempotency"):
+            workflow.run(self.principal, SOURCE, _metadata())
+        self.assertEqual(extractor.calls, 1)
+        self.assertEqual(knowledge.candidate_writes, 1)
+        self.assertEqual(len(pipeline.requests), 1)
+        self.assertEqual(legacy_artifact["extractor_version"], "qwen-ontology:v1")
+
+    def test_malformed_request_policy_signature_fails_before_source_writes(self) -> None:
+        for signature in (True, 123, [], {}, "", "sha256:a", "A" * 64, "g" * 64):
+            with self.subTest(signature=repr(signature)):
+                extractor = _Extractor(_tbox())
+                extractor.request_policy_signature = signature
+                workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+                with self.assertRaisesRegex(ConstructionConflict, "request-policy"):
+                    workflow.run(self.principal, SOURCE, _metadata())
+                self.assertEqual(extractor.calls, 0)
+                self.assertEqual(audit.jobs, {})
+                self.assertEqual(audit.observed_principals, [])
+                self.assertEqual(knowledge.candidate_writes, 0)
+                self.assertEqual(pipeline.requests, [])
 
     def test_missing_or_cross_tenant_tbox_stops_before_ingestion(self) -> None:
         extractor = _Extractor(_tbox())

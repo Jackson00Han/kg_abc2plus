@@ -90,6 +90,26 @@ _PLAYGROUND_CONSTRUCTION_LIMITS = {
     "per_model_call_timeout_seconds": 30.0,
     "max_model_output_tokens": 2_048,
 }
+_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v2-token-spans"
+
+
+def _build_playground_extractor(client, model, tbox):
+    """DashScope extraction is bounded structured work, not deep reasoning."""
+    return OpenAICompatibleOntologyExtractor(
+        client=client.with_options(max_retries=0, timeout=30.0),
+        model=model,
+        active_tbox=tbox,
+        prompt_version=_PLAYGROUND_EXTRACTION_PROMPT,
+        response_format_mode="none",
+        seed=None,
+        enable_thinking=False,
+        include_span_hints=True,
+        limits=ExtractionLimits(
+            max_response_chars=16_384,
+            max_output_tokens=2_048,
+            timeout_seconds=30.0,
+        ),
+    )
 
 
 class _ReadOnlyDocuments:
@@ -655,6 +675,8 @@ def build_playground_app(
                 "protocol": "openai-compatible",
                 "model": extraction_model,
                 "purpose": "ontology-constrained extraction only",
+                "enable_thinking": False,
+                "span_hints": "unicode-token-spans-v1",
             },
             "construction_limits": dict(_PLAYGROUND_CONSTRUCTION_LIMITS),
         },
@@ -671,7 +693,7 @@ def build_playground_app(
         GroundedGenerationService(_DisabledAnswerModel()),
         subgraph_projector=Neo4jEvidenceSubgraphProjector(driver, database),
     )
-    prompt_signature = "industrial-property-graph-extraction:v1"
+    prompt_signature = _PLAYGROUND_EXTRACTION_PROMPT
     construction = Neo4jKnowledgeConstructionWorkflow(
         driver=driver,
         database=database,
@@ -688,26 +710,11 @@ def build_playground_app(
             embedder.dimensions,
             embedder.normalization,
         ),
-        extractor_factory=lambda tbox: OpenAICompatibleOntologyExtractor(
-            # Embedding startup may retry transient provider errors, but one
-            # governed extraction call must fit inside its own explicit budget.
-            client=embedder.client.with_options(max_retries=0, timeout=30.0),
-            model=extraction_model,
-            active_tbox=tbox,
-            prompt_version=prompt_signature,
-            # DashScope receives a compact response shape in the prompt, while
-            # provider-specific response_format handling stays disabled. The
-            # server still strictly validates JSON, evidence, and the T-Box.
-            response_format_mode="none",
-            seed=None,
-            limits=ExtractionLimits(
-                max_response_chars=16_384,
-                max_output_tokens=2_048,
-                timeout_seconds=30.0,
-            ),
+        extractor_factory=lambda tbox: _build_playground_extractor(
+            embedder.client, extraction_model, tbox,
         ),
         config=ConstructionConfig(
-            extractor_signature=f"openai-compatible:{extraction_model}:v1",
+            extractor_signature=f"openai-compatible:{extraction_model}:v2",
             prompt_signature=prompt_signature,
             max_chunks=_PLAYGROUND_CONSTRUCTION_LIMITS["max_chunks"],
             max_model_calls=_PLAYGROUND_CONSTRUCTION_LIMITS["max_model_calls"],

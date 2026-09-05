@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 from graphrag_prod.domain.ids import (
@@ -42,6 +42,7 @@ from graphrag_prod.knowledge.trust import (
 from graphrag_prod.ontology.models import Cardinality, TBoxStatus, TBoxVersion
 
 from .literals import LiteralNormalizationError, TBoxLiteralNormalizer
+from .provider_errors import provider_failure_code
 
 
 _LOCAL_REFERENCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -420,6 +421,8 @@ class OpenAICompatibleOntologyExtractor:
         provisional_namespace: str = SYSTEM_PROVISIONAL_NAMESPACE,
         response_format_mode: ResponseFormatMode = "schema",
         seed: int | None = 0,
+        enable_thinking: bool | None = None,
+        include_span_hints: bool = False,
     ) -> None:
         if client is None:
             raise ValueError("client must be injected")
@@ -453,6 +456,10 @@ class OpenAICompatibleOntologyExtractor:
             )
         if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
             raise ValueError("seed must be an integer or None")
+        if enable_thinking is not None and not isinstance(enable_thinking, bool):
+            raise ValueError("enable_thinking must be a boolean or None")
+        if not isinstance(include_span_hints, bool):
+            raise ValueError("include_span_hints must be a boolean")
         self.client = client
         self.model = model.strip()
         self.active_tbox = active_tbox
@@ -461,6 +468,8 @@ class OpenAICompatibleOntologyExtractor:
         self.provisional_namespace = provisional_namespace
         self.response_format_mode: ResponseFormatMode = response_format_mode
         self.seed = seed
+        self.enable_thinking = enable_thinking
+        self.include_span_hints = include_span_hints
         self._literal_normalizer = TBoxLiteralNormalizer()
         for entity_type in self.active_tbox.entity_types:
             for definition in entity_type.properties:
@@ -481,6 +490,25 @@ class OpenAICompatibleOntologyExtractor:
                         f"{relationship_type.name}.{definition.name} has an invalid "
                         f"canonical unit: {exc.detail}"
                     ) from exc
+
+    @property
+    def request_policy_signature(self) -> str:
+        """Bind reusable artifacts/jobs to the actual secret-free call policy."""
+        policy = {
+            "version": "ontology-extraction-request-v1",
+            "model": self.model,
+            "prompt_version": self.prompt_version,
+            "limits": asdict(self.limits),
+            "provisional_namespace": self.provisional_namespace,
+            "response_format_mode": self.response_format_mode,
+            "seed": self.seed,
+            "enable_thinking": self.enable_thinking,
+            "span_hints": "unicode-token-spans-v1" if self.include_span_hints else None,
+            "temperature": 0,
+        }
+        return hashlib.sha256(
+            json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
     def __call__(
         self,
@@ -525,6 +553,8 @@ class OpenAICompatibleOntologyExtractor:
         }
         if self.seed is not None:
             request["seed"] = self.seed
+        if self.enable_thinking is not None:
+            request["extra_body"] = {"enable_thinking": self.enable_thinking}
         if self.response_format_mode == "schema":
             request["response_format"] = {
                 "type": "json_schema",
@@ -544,7 +574,7 @@ class OpenAICompatibleOntologyExtractor:
             raise
         except Exception as exc:
             finding = ExtractionFinding(
-                "MODEL_CALL_FAILED",
+                provider_failure_code(exc),
                 "REJECT",
                 "$",
                 f"model call or response envelope failed: {type(exc).__name__}",
@@ -928,11 +958,27 @@ class OpenAICompatibleOntologyExtractor:
                 sort_keys=True,
                 separators=(",", ":"),
             )
+        source_data: dict[str, Any] = {
+            "chunk_text": chunk.text,
+            "document_relative_chunk_start": chunk.char_start,
+        }
+        if self.include_span_hints:
+            # A mechanical, lossless coordinate lookup, never entity/relationship
+            # proposals. Work and size are linear in the already bounded Chunk.
+            # Keep the exact-span validator unchanged, including ambiguous repeats.
+            source_data["chunk_token_spans"] = [
+                {"text": match.group(), "start": match.start(), "end": match.end()}
+                for match in re.finditer(r"[A-Za-z0-9_]+|[^\s]", chunk.text)
+            ]
+            instructions += (
+                "\nUse chunk_token_spans as a mechanical offset lookup, not as facts "
+                "or entity suggestions. Use the listed start/end boundaries when "
+                "they match the exact mention/evidence; these hints do not restrict "
+                "valid spans inside a token. Evidence may enclose multiple tokens. "
+                "The lookup is zero-based and chunk-relative."
+            )
         source = json.dumps(
-            {
-                "chunk_text": chunk.text,
-                "document_relative_chunk_start": chunk.char_start,
-            },
+            source_data,
             ensure_ascii=False,
             sort_keys=True,
         )

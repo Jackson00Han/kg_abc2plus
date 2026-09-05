@@ -52,6 +52,8 @@ from graphrag_prod.construction import (
     ConstructionBudgetExceeded,
     ConstructionJobView,
     DocumentParseError,
+    ExtractionFinding,
+    ExtractionRejected,
 )
 from graphrag_prod.domain import Principal, TypedLiteralValue
 from graphrag_prod.domain.ids import entity_id as make_entity_id
@@ -2236,6 +2238,18 @@ class KnowledgeAdapterTests(unittest.TestCase):
         request = KnowledgeConstructionRequest.model_validate(_construct_payload())
         cases = (
             (TimeoutError("provider timeout detail"), DependencyTimeoutError),
+            (
+                ExtractionRejected(
+                    (ExtractionFinding("MODEL_CALL_TIMEOUT", "REJECT", "$", "private"),)
+                ),
+                DependencyTimeoutError,
+            ),
+            (
+                ExtractionRejected(
+                    (ExtractionFinding("MODEL_CALL_FAILED", "REJECT", "$", "private"),)
+                ),
+                DependencyUnavailableError,
+            ),
             (RuntimeError("provider failure detail"), DependencyUnavailableError),
             (ValueError("malformed provider output"), DependencyUnavailableError),
             (DocumentParseError("invalid uploaded JSON"), RequestValidationError),
@@ -2249,8 +2263,9 @@ class KnowledgeAdapterTests(unittest.TestCase):
                     _KnowledgeStore(),
                     construction=_FailingConstruction(failure),
                 )
-                with self.assertRaises(expected):
+                with self.assertRaises(expected) as captured:
                     adapter.construct(principal, request)
+                self.assertNotIn("private", str(captured.exception))
 
     def test_construct_acl_must_be_a_nonempty_principal_group_subset(self) -> None:
         construction = _Construction()

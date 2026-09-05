@@ -42,15 +42,18 @@
   creates immutable revisions and atomically rebinds dependent candidate
   assertions without approving those assertions.
 
-## Open live-acceptance checks
+## Live-acceptance checks
 
-- [ ] Repeat provider-backed upload/extraction/review/publication acceptance
-  after deciding the call budget for the configured `qwen3.8-max`. The
-  2026-09-05 single-Chunk attempt and same-operation recovery both returned
-  503; a separate diagnostic confirmed `APITimeoutError` at the unchanged
-  30-second provider bound. No LLM candidates were fabricated or approved.
-  Manual authoritative import, publication, graph retrieval and immutable
-  quality history passed independently; they do not close this model gate.
+- [x] Diagnose and correct provider-backed upload/extraction/review/publication
+  acceptance for `qwen3.8-max`. Default deep thinking exhausted the unchanged
+  30-second provider bound. Explicit non-thinking execution and mechanical
+  source-position hints passed a fresh real-model workflow: three entities,
+  five mentions, two relationships and one typed property; 22 checks cover
+  exact evidence, review/publication isolation, preserved SECONDARY authority,
+  source-linked retrieval and tenant isolation. No model/key change, timeout
+  extension, fabricated candidates or expert-import substitution was used.
+  See `docs/validation/extraction-timeout-correction.md`; the earlier failed
+  attempt remains historical evidence, not silently relabelled as a pass.
 
 - [ ] Complete an actual browser visual/click acceptance pass when a browser
   runtime is available. Executable Node VM interaction tests and real HTTP

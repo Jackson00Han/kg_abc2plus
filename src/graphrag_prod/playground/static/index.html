@@ -2330,8 +2330,10 @@
             .filter(([key]) => capabilities[key])
             .map(([key, label]) => `<span class="capability">${escapeHtml(label)}</span>`).join('');
           const provider = capabilities.extraction_provider || {};
+          const thinkingPolicy = provider.enable_thinking === false
+            ? ' · 深度思考关闭（结构化抽取）' : '';
           $('provider-note').textContent = provider.model
-            ? `抽取模型：${provider.model} · ${provider.protocol} · ${provider.purpose}。凭证只存在于服务端环境。`
+            ? `抽取模型：${provider.model} · ${provider.protocol} · ${provider.purpose}${thinkingPolicy}。凭证只存在于服务端环境。`
             : '当前运行没有配置自动抽取 provider。';
           const constructionLimits = capabilities.construction_limits || {};
           const limitLabels = {

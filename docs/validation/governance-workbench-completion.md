@@ -133,6 +133,12 @@ temporal interpretation or a fix to the original unfiltered query.
 
 ## Live construction and governance observations
 
+Historical attempt below: the timeout was subsequently diagnosed and corrected
+without changing the configured model/key or extending the 30-second budget.
+A separate fresh real-provider workflow passed; see
+[`extraction-timeout-correction.md`](extraction-timeout-correction.md).
+The original failure is retained rather than retroactively relabelled.
+
 The configured extraction model was `qwen3.8-max`, not the launcher's fallback
 model name. A newly imported and published T-Box constrained this synthetic
 single-Chunk source:

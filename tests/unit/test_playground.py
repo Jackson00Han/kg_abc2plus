@@ -35,6 +35,7 @@ from scripts.run_playground import (
     _Neo4jReadiness,
     _OpenAICompatibleEmbedder,
     _PlaygroundKnowledgeOperations,
+    _build_playground_extractor,
 )
 
 
@@ -408,13 +409,21 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertTrue(all(call["dimensions"] == 64 for call in calls))
 
     def test_playground_source_bounds_extraction_provider_calls(self) -> None:
-        source = (Path(__file__).parents[2] / "scripts" / "run_playground.py").read_text()
+        from tests.unit.test_construction_extraction import _tbox
 
-        self.assertIn("with_options(max_retries=0, timeout=30.0)", source)
-        self.assertIn('response_format_mode="none"', source)
-        self.assertIn("max_output_tokens=2_048", source)
-        self.assertIn("max_response_chars=16_384", source)
-        self.assertIn("timeout_seconds=30.0", source)
+        client = Mock()
+        extractor = _build_playground_extractor(client, "qwen3.8-max", _tbox())
+        client.with_options.assert_called_once_with(max_retries=0, timeout=30.0)
+        self.assertIs(extractor.client, client.with_options.return_value)
+        self.assertEqual(extractor.model, "qwen3.8-max")
+        self.assertFalse(extractor.enable_thinking)
+        self.assertTrue(extractor.include_span_hints)
+        self.assertEqual(extractor.response_format_mode, "none")
+        self.assertEqual(extractor.limits.max_output_tokens, 2048)
+        self.assertEqual(extractor.limits.max_response_chars, 16384)
+        self.assertEqual(extractor.limits.timeout_seconds, 30.0)
+        self.assertIsNone(extractor.seed)
+        source = (Path(__file__).parents[2] / "scripts" / "run_playground.py").read_text()
         self.assertIn('"max_chunks": 4', source)
         self.assertIn('"max_model_calls": 4', source)
         self.assertIn('"deadline_seconds": 90.0', source)

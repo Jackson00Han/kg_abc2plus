@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 import unittest
@@ -224,6 +225,8 @@ def _extractor(
     *,
     limits: ExtractionLimits | None = None,
     response_format_mode: str = "schema",
+    enable_thinking: bool | None = None,
+    include_span_hints: bool = False,
 ) -> tuple[OpenAICompatibleOntologyExtractor, FakeCompletions]:
     completions = FakeCompletions(payload)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
@@ -234,11 +237,100 @@ def _extractor(
         prompt_version="industrial-extraction-prompt:v1",
         limits=limits,
         response_format_mode=response_format_mode,  # type: ignore[arg-type]
+        enable_thinking=enable_thinking,
+        include_span_hints=include_span_hints,
     )
     return extractor, completions
 
 
 class ConstructionExtractionTests(unittest.TestCase):
+    def test_thinking_control_is_explicit_and_provider_neutral_by_default(self) -> None:
+        for thinking in (None, False, True):
+            with self.subTest(thinking=thinking):
+                extractor, calls = _extractor(_valid_payload(), enable_thinking=thinking)
+                extractor(artifact_id="a", input_hash="i", chunk=_chunk(), profile=_profile())
+                request = calls.calls[0]
+                if thinking is None:
+                    self.assertNotIn("extra_body", request)
+                else:
+                    self.assertEqual(request["extra_body"], {"enable_thinking": thinking})
+                self.assertNotIn("api_key", request)
+
+    def test_runtime_policy_options_require_actual_booleans(self) -> None:
+        for option, invalids in (
+            ("enable_thinking", (0, 1, "false", {})),
+            ("include_span_hints", (None, 0, 1, "true", {})),
+        ):
+            for invalid in invalids:
+                with self.subTest(option=option, invalid=invalid):
+                    with self.assertRaisesRegex(ValueError, option):
+                        _extractor(_valid_payload(), **{option: invalid})
+
+    def test_request_policy_signature_is_stable_complete_and_secret_free(self) -> None:
+        first, _ = _extractor(_valid_payload())
+        same, _ = _extractor(_valid_payload())
+        self.assertEqual(first.request_policy_signature, same.request_policy_signature)
+        self.assertRegex(first.request_policy_signature, r"^[0-9a-f]{64}$")
+        for option, value in (
+            ("model", "qwen3.8-max"), ("prompt_version", "next"),
+            ("seed", None), ("response_format_mode", "none"),
+            ("enable_thinking", False), ("include_span_hints", True),
+            ("limits", ExtractionLimits(max_output_tokens=2048)),
+        ):
+            changed, _ = _extractor(_valid_payload())
+            setattr(changed, option, value)
+            self.assertNotEqual(first.request_policy_signature, changed.request_policy_signature)
+
+    def test_span_hints_are_exact_chunk_relative_unicode_coordinates(self) -> None:
+        text = "泵-7 🏭\nPump-7 and Pump-7."
+        chunk = replace(_chunk(), text=text, char_end=100 + len(text), checksum=content_checksum(text))
+        extractor, _ = _extractor(_valid_payload(), include_span_hints=True)
+        source = json.loads(extractor._messages(chunk, response_schema=extractor.response_schema())[1]["content"])
+        self.assertEqual(source["chunk_text"], text)
+        spans = source["chunk_token_spans"]
+        self.assertLessEqual(len(spans), len(text))
+        for span in spans:
+            self.assertEqual(set(span), {"text", "start", "end"})
+            self.assertEqual(span["text"], text[span["start"]:span["end"]])
+        self.assertEqual([s["start"] for s in spans if s["text"] == "Pump"], [6, 17])
+        self.assertEqual("".join(s["text"] for s in spans), "".join(text.split()))
+        # Continuous CJK text must not hide an equipment ID or place boundary
+        # inside one giant Unicode-word token.
+        chinese = "设备ZX58安装于上海工厂，额定功率为13kW。"
+        chunk = replace(chunk, text=chinese, char_end=100 + len(chinese), checksum=content_checksum(chinese))
+        messages = extractor._messages(chunk, response_schema=extractor.response_schema())
+        spans = json.loads(messages[1]["content"])["chunk_token_spans"]
+        self.assertIn({"text": "ZX58", "start": 2, "end": 6}, spans)
+        starts, ends = {s["start"] for s in spans}, {s["end"] for s in spans}
+        for term in ("上海工厂", "额定功率", "13kW"):
+            start = chinese.index(term)
+            self.assertIn(start, starts)
+            self.assertIn(start + len(term), ends)
+        self.assertIn("do not restrict valid spans inside a token", messages[0]["content"])
+
+    def test_span_hints_do_not_repair_or_accept_wrong_model_evidence(self) -> None:
+        payload = _valid_payload()
+        payload["entities"][0]["mentions"][0]["start"] = 1
+        extractor, _ = _extractor(payload, enable_thinking=False, include_span_hints=True)
+        with self.assertRaises(ExtractionRejected) as captured:
+            extractor(artifact_id="a", input_hash="i", chunk=_chunk(), profile=_profile())
+        self.assertIn("MENTION_SPAN_MISMATCH", {f.code for f in captured.exception.findings})
+
+    def test_real_sdk_timeout_has_distinct_redacted_finding(self) -> None:
+        import httpx
+        from openai import APITimeoutError
+        from unittest.mock import Mock
+
+        extractor, _ = _extractor(_valid_payload())
+        extractor.client = Mock()
+        extractor.client.chat.completions.create.side_effect = APITimeoutError(
+            request=httpx.Request("POST", "https://example.invalid/private-document")
+        )
+        with self.assertRaises(ExtractionRejected) as captured:
+            extractor(artifact_id="a", input_hash="i", chunk=_chunk(), profile=_profile())
+        self.assertEqual([f.code for f in captured.exception.findings], ["MODEL_CALL_TIMEOUT"])
+        self.assertNotIn("private-document", str(captured.exception.findings))
+
     def test_valid_response_becomes_secondary_candidate_with_server_ids(self) -> None:
         extractor, completions = _extractor(_valid_payload())
         result = extractor.extract_audited(
