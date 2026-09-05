@@ -28,7 +28,9 @@ The service requires a principal with `knowledge:quality` or
    active `KnowledgeSnapshot`, with matching ACL metadata and source text;
 6. every active navigation materialization and snapshot membership agrees with
    its immutable governed revision; and
-7. every linked canonical entity is tenant-local and agrees with the revision.
+7. every linked canonical entity is tenant-local and agrees with the revision;
+8. relationship-property JSON agrees with every materialized value's stable
+   ID, typed fields, ordered assertion edge, and exact evidence Chunk/range.
 
 The quality audit and inventory projection use separate read transactions, so
 the projection transaction deliberately reloads and validates the complete
@@ -58,11 +60,20 @@ Each item contains:
 - logical record ID, revision ID, record kind, governance status;
 - origin, authority level, confidence, and exact ontology type or predicate;
 - document/version/Chunk IDs and exact character start/end;
+- the source Chunk ordinal for direct evidence navigation;
 - for a mention: canonical entity ID, type, canonical key, and display name;
 - for an assertion: a canonical subject plus either a canonical entity object
   or a structured literal value; and
 - for typed literals: datatype, typed/canonical value, canonical unit, and
-  normalized temporal bounds when present.
+  normalized temporal bounds when present; and
+- for relationship properties: stable value ID, property name, confidence,
+  literal semantics, and its own exact evidence location.
+
+The HTTP projection is `GET /v1/knowledge/publication-inventory`, with optional
+`document_id` and `limit` (default 100, maximum 500). It requires the independent
+`knowledge:quality` JWT scope even though the core service also accepts the
+review capability. The response intentionally omits its internal tenant field.
+It is read-only and retry-safe in the common bounded HTTP worker runtime.
 
 Literal fact values are graph facts, not source passages. Raw evidence strings,
 review notes, aliases, prompts, and source text are intentionally omitted.
@@ -82,6 +93,8 @@ Repeatable focused checks:
 
 ```sh
 .venv/bin/python -m unittest tests.unit.test_published_inventory -v
+.venv/bin/python -m unittest tests.unit.test_api_knowledge \
+  tests.e2e.test_knowledge_api tests.security.test_knowledge_api_security -q
 
 TEST_NEO4J_URI=bolt://127.0.0.1:17699 \
 TEST_NEO4J_USER=neo4j \

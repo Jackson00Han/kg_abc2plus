@@ -9,6 +9,7 @@ locations.  Source/evidence text is deliberately never returned.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
@@ -16,6 +17,7 @@ from typing import Any, Protocol
 from neo4j import unit_of_work
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.models import RelationshipPropertyValue
 
 from .published_quality import (
     PUBLISHED_QUALITY_CAPABILITIES,
@@ -105,12 +107,25 @@ class InventoryLiteralSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class InventoryRelationshipPropertySummary:
+    property_value_id: str
+    name: str
+    confidence: float
+    literal: InventoryLiteralSummary
+    evidence_chunk_id: str
+    evidence_chunk_ordinal: int
+    evidence_char_start: int
+    evidence_char_end: int
+
+
+@dataclass(frozen=True, slots=True)
 class InventoryAssertionSummary:
     subject: InventoryEntitySummary
     predicate: str
     object_kind: str
     object_entity: InventoryEntitySummary | None = None
     literal: InventoryLiteralSummary | None = None
+    relationship_properties: tuple[InventoryRelationshipPropertySummary, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +141,7 @@ class ActivePublicationInventoryItem:
     document_id: str
     version_id: str
     chunk_id: str
+    evidence_chunk_ordinal: int
     evidence_char_start: int
     evidence_char_end: int
     entity: InventoryEntitySummary | None = None
@@ -278,7 +294,8 @@ CALL (publication, revision) {
     RETURN count(DISTINCT evidence) AS evidence_link_count,
            count(DISTINCT chunk) AS evidence_chunk_count,
            count(DISTINCT document) AS evidence_document_count,
-           sum(valid_path) AS valid_evidence_path_count
+           sum(valid_path) AS valid_evidence_path_count,
+           min(chunk.ordinal) AS evidence_chunk_ordinal
 }
 CALL (revision) {
     OPTIONAL MATCH (revision)-[:REFERS_TO]->(entity:Entity)
@@ -452,7 +469,9 @@ RETURN revision {
            .governance_status, .origin, .authority_level, .confidence,
            .ontology_version_id,
            .document_id, .version_id, .chunk_id,
+           .access_policy_id, .access_policy_version, .access_groups,
            .evidence_char_start, .evidence_char_end,
+           .extractor_version,
            .entity_id, .entity_type, .canonical_key, .canonical_name,
            .subject_entity_id, .subject_entity_type,
            .subject_canonical_key, .subject_canonical_name,
@@ -461,7 +480,9 @@ RETURN revision {
            .object_canonical_key, .object_canonical_name,
            .literal_value, .literal_datatype, .literal_typed_value,
            .literal_canonical_value, .literal_canonical_unit,
-           .literal_valid_from, .literal_valid_to, .literal_observed_at
+           .literal_valid_from, .literal_valid_to, .literal_observed_at,
+           .relationship_properties_format_version,
+           .relationship_properties_json
        } AS revision,
        revision_labels,
        published.record_kind AS publication_record_kind,
@@ -475,6 +496,7 @@ RETURN revision {
        evidence_chunk_count,
        evidence_document_count,
        valid_evidence_path_count,
+       evidence_chunk_ordinal,
        mention_entity_link_count,
        mention_entity,
        subject_link_count,
@@ -487,6 +509,73 @@ RETURN revision {
        navigation_assertion_count,
        assertion_membership_count,
        valid_assertion_projection_count
+"""
+
+
+_PROPERTY_VALUES_QUERY = """
+// active-publication-inventory:relationship-properties
+UNWIND $assertion_revision_ids AS revision_id
+MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->
+      (publication:KnowledgePublication {
+          tenant_id: $tenant_id,
+          publication_id: $publication_id,
+          generation: $publication_generation,
+          manifest_hash: $manifest_hash,
+          ontology_version_id: $ontology_version_id,
+          status: 'ACTIVE'
+      })
+MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
+      (revision:GovernedAssertionRevision {
+          tenant_id: $tenant_id,
+          revision_id: revision_id,
+          governance_status: 'PUBLISHED'
+      })
+OPTIONAL MATCH (navigation:Assertion {
+    tenant_id: $tenant_id,
+    governed_publication_id: publication.publication_id,
+    governed_revision_id: revision.revision_id
+})
+CALL (navigation) {
+    OPTIONAL MATCH (navigation)-[property_link:HAS_RELATIONSHIP_PROPERTY]->
+          (value:RelationshipPropertyValue)
+    OPTIONAL MATCH (value)-[evidence:EVIDENCED_BY]->(chunk:Chunk)
+    WITH property_link, value,
+         count(evidence) AS evidence_link_count,
+         count(DISTINCT chunk) AS evidence_chunk_count,
+         collect(DISTINCT CASE WHEN chunk IS NULL THEN NULL ELSE chunk {
+             .tenant_id, .chunk_id, .ordinal, .char_start, .char_end
+         } END) AS evidence_chunks,
+         CASE WHEN count(evidence) = 1
+                   AND count(DISTINCT chunk) = 1
+                   AND value IS NOT NULL
+                   AND value.evidence_char_start >= min(chunk.char_start)
+                   AND value.evidence_char_start < value.evidence_char_end
+                   AND value.evidence_char_end <= max(chunk.char_end)
+                   AND substring(
+                       head(collect(chunk.text)),
+                       value.evidence_char_start - min(chunk.char_start),
+                       value.evidence_char_end - value.evidence_char_start
+                   ) = value.evidence_text
+              THEN true ELSE false END AS exact_evidence
+    ORDER BY property_link.ordinal, value.property_value_id
+    RETURN count(property_link) AS property_link_count,
+           count(DISTINCT value) AS property_node_count,
+           collect(CASE WHEN value IS NULL THEN NULL ELSE {
+               ordinal: property_link.ordinal,
+               node_properties: properties(value),
+               evidence_link_count: evidence_link_count,
+               evidence_chunk_count: evidence_chunk_count,
+               evidence_chunks: evidence_chunks,
+               exact_evidence: exact_evidence
+           } END) AS property_values
+}
+RETURN revision.revision_id AS revision_id,
+       navigation.assertion_id AS navigation_assertion_id,
+       property_link_count,
+       property_node_count,
+       property_values
+ORDER BY revision.revision_id, navigation.assertion_id
 """
 
 
@@ -520,6 +609,223 @@ def _limit(value: object) -> int:
             f"{MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS}"
         )
     return value
+
+
+@dataclass(frozen=True, slots=True)
+class _PropertyExpectation:
+    ordinal: int
+    node_properties: dict[str, Any]
+    evidence_chunk_id: str
+    evidence_chunk_ordinal: int
+    summary: InventoryRelationshipPropertySummary
+
+
+def _relationship_property_expectations(
+    row: dict[str, Any],
+) -> tuple[_PropertyExpectation, ...]:
+    """Decode immutable revision JSON and bind it to the parent evidence scope."""
+
+    revision_value = row.get("revision")
+    revision = dict(revision_value) if revision_value is not None else {}
+    version = revision.get("relationship_properties_format_version")
+    payload = revision.get("relationship_properties_json")
+    if version is None and payload is None:
+        values: tuple[RelationshipPropertyValue, ...] = ()
+    elif version == 1 and isinstance(payload, str):
+        try:
+            decoded = json.loads(payload)
+            if not isinstance(decoded, list):
+                raise TypeError("relationship-property payload must be an array")
+            values = tuple(
+                RelationshipPropertyValue.from_mapping(value) for value in decoded
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ActivePublicationInventoryConflict() from exc
+    else:
+        raise ActivePublicationInventoryConflict()
+
+    ordered = tuple(
+        sorted(
+            values,
+            key=lambda item: (
+                item.name,
+                item.literal_semantics.identity_reference,
+                item.evidence_chunk_id,
+                item.evidence_char_start,
+                item.evidence_char_end,
+                item.property_value_id,
+            ),
+        )
+    )
+    if ordered != values or len({item.property_value_id for item in values}) != len(
+        values
+    ):
+        raise ActivePublicationInventoryConflict()
+    if values and revision.get("object_kind") != "entity":
+        raise ActivePublicationInventoryConflict()
+
+    tenant_id = _required_text(revision.get("tenant_id"))
+    predicate = _required_text(revision.get("predicate"))
+    document_id = _required_text(revision.get("document_id"))
+    version_id = _required_text(revision.get("version_id"))
+    chunk_id = _required_text(revision.get("chunk_id"))
+    schema_version = _required_text(revision.get("ontology_version_id"))
+    extractor = revision.get("extractor_version")
+    if extractor is None:
+        extractor = f"{_required_text(revision.get('origin'))}:reviewed"
+    extractor = _required_text(extractor)
+    access_policy_id = _required_text(revision.get("access_policy_id"))
+    access_policy_version = _count(revision, "access_policy_version")
+    if access_policy_version < 1:
+        raise ActivePublicationInventoryConflict()
+    access_groups_value = revision.get("access_groups")
+    if not isinstance(access_groups_value, (list, tuple)):
+        raise ActivePublicationInventoryConflict()
+    access_groups = tuple(
+        _required_text(value) for value in access_groups_value
+    )
+    if not access_groups or len(access_groups) != len(set(access_groups)):
+        raise ActivePublicationInventoryConflict()
+    chunk_ordinal = _count(row, "evidence_chunk_ordinal")
+    parent_start = _count(revision, "evidence_char_start")
+    parent_end = _count(revision, "evidence_char_end")
+    if parent_end <= parent_start:
+        raise ActivePublicationInventoryConflict()
+
+    expectations: list[_PropertyExpectation] = []
+    for ordinal, value in enumerate(values):
+        if not (
+            value.tenant_id == tenant_id
+            and value.relationship_type == predicate
+            and value.evidence_chunk_id == chunk_id
+            and parent_start
+            <= value.evidence_char_start
+            < value.evidence_char_end
+            <= parent_end
+            and value.extractor_version == extractor
+            and value.schema_version == schema_version
+        ):
+            raise ActivePublicationInventoryConflict()
+        expectations.append(
+            _PropertyExpectation(
+                ordinal=ordinal,
+                node_properties={
+                    "property_value_id": value.property_value_id,
+                    "tenant_id": value.tenant_id,
+                    "relationship_type": value.relationship_type,
+                    "name": value.name,
+                    "evidence_chunk_id": value.evidence_chunk_id,
+                    "evidence_char_start": value.evidence_char_start,
+                    "evidence_char_end": value.evidence_char_end,
+                    "evidence_text": value.evidence_text,
+                    "extractor_version": value.extractor_version,
+                    "schema_version": value.schema_version,
+                    "confidence": value.confidence,
+                    "document_id": document_id,
+                    "version_id": version_id,
+                    "access_policy_id": access_policy_id,
+                    "access_policy_version": access_policy_version,
+                    "access_groups": list(access_groups),
+                    **value.literal_semantics.to_flat_properties(),
+                },
+                evidence_chunk_id=chunk_id,
+                evidence_chunk_ordinal=chunk_ordinal,
+                summary=InventoryRelationshipPropertySummary(
+                    property_value_id=value.property_value_id,
+                    name=value.name,
+                    confidence=value.confidence,
+                    literal=InventoryLiteralSummary(
+                        value=value.literal_semantics.raw_value,
+                        datatype=value.literal_semantics.datatype,
+                        typed_value=value.literal_semantics.typed_value,
+                        canonical_value=value.literal_semantics.canonical_value,
+                        canonical_unit=value.literal_semantics.canonical_unit,
+                        valid_from=value.literal_semantics.to_mapping()["valid_from"],  # type: ignore[arg-type]
+                        valid_to=value.literal_semantics.to_mapping()["valid_to"],  # type: ignore[arg-type]
+                        observed_at=value.literal_semantics.to_mapping()["observed_at"],  # type: ignore[arg-type]
+                    ),
+                    evidence_chunk_id=chunk_id,
+                    evidence_chunk_ordinal=chunk_ordinal,
+                    evidence_char_start=value.evidence_char_start,
+                    evidence_char_end=value.evidence_char_end,
+                ),
+            )
+        )
+    return tuple(expectations)
+
+
+def _validate_relationship_property_materializations(
+    tx: Any,
+    *,
+    parameters: dict[str, Any],
+    item_rows: tuple[dict[str, Any], ...],
+) -> dict[str, tuple[InventoryRelationshipPropertySummary, ...]]:
+    expected: dict[str, tuple[_PropertyExpectation, ...]] = {}
+    for row in item_rows:
+        labels = row.get("revision_labels")
+        if not isinstance(labels, (list, tuple)):
+            raise ActivePublicationInventoryConflict()
+        if "GovernedAssertionRevision" not in labels:
+            continue
+        revision = dict(row.get("revision") or {})
+        revision_id = _required_text(revision.get("revision_id"))
+        if revision_id in expected:
+            raise ActivePublicationInventoryConflict()
+        expected[revision_id] = _relationship_property_expectations(row)
+
+    if not expected:
+        return {}
+    result = tx.run(
+        _PROPERTY_VALUES_QUERY,
+        **parameters,
+        assertion_revision_ids=sorted(expected),
+    )
+    rows = tuple(dict(row) for row in result)
+    if len(rows) != len(expected):
+        raise ActivePublicationInventoryConflict()
+    seen: set[str] = set()
+    for row in rows:
+        revision_id = _required_text(row.get("revision_id"))
+        if revision_id in seen or revision_id not in expected:
+            raise ActivePublicationInventoryConflict()
+        seen.add(revision_id)
+        values = expected[revision_id]
+        actual_values = row.get("property_values")
+        if not isinstance(actual_values, (list, tuple)):
+            raise ActivePublicationInventoryConflict()
+        if not (
+            _required_text(row.get("navigation_assertion_id"))
+            and _count(row, "property_link_count") == len(values)
+            and _count(row, "property_node_count") == len(values)
+            and len(actual_values) == len(values)
+        ):
+            raise ActivePublicationInventoryConflict()
+        for expected_value, actual_value in zip(values, actual_values, strict=True):
+            actual = dict(actual_value) if actual_value is not None else {}
+            node_value = actual.get("node_properties")
+            node_properties = dict(node_value) if node_value is not None else {}
+            chunks = actual.get("evidence_chunks")
+            if not isinstance(chunks, (list, tuple)) or len(chunks) != 1:
+                raise ActivePublicationInventoryConflict()
+            chunk = dict(chunks[0]) if chunks[0] is not None else {}
+            if not (
+                _count(actual, "ordinal") == expected_value.ordinal
+                and node_properties == expected_value.node_properties
+                and _count(actual, "evidence_link_count") == 1
+                and _count(actual, "evidence_chunk_count") == 1
+                and actual.get("exact_evidence") is True
+                and chunk.get("tenant_id") == parameters["tenant_id"]
+                and chunk.get("chunk_id") == expected_value.evidence_chunk_id
+                and _count(chunk, "ordinal")
+                == expected_value.evidence_chunk_ordinal
+            ):
+                raise ActivePublicationInventoryConflict()
+    if seen != set(expected):
+        raise ActivePublicationInventoryConflict()
+    return {
+        revision_id: tuple(value.summary for value in values)
+        for revision_id, values in expected.items()
+    }
 
 
 def _count(row: dict[str, Any], key: str) -> int:
@@ -587,7 +893,11 @@ def _literal_summary(revision: dict[str, Any]) -> InventoryLiteralSummary:
     )
 
 
-def _decode_item(row_value: object, tenant_id: str) -> ActivePublicationInventoryItem:
+def _decode_item(
+    row_value: object,
+    tenant_id: str,
+    relationship_properties: tuple[InventoryRelationshipPropertySummary, ...] = (),
+) -> ActivePublicationInventoryItem:
     row = dict(row_value) if row_value is not None else {}
     revision_value = row.get("revision")
     revision = dict(revision_value) if revision_value is not None else {}
@@ -693,6 +1003,7 @@ def _decode_item(row_value: object, tenant_id: str) -> ActivePublicationInventor
                 predicate=predicate,
                 object_kind="entity",
                 object_entity=object_entity,
+                relationship_properties=relationship_properties,
             )
         elif object_kind == "literal":
             if _count(row, "object_link_count") != 0:
@@ -702,6 +1013,7 @@ def _decode_item(row_value: object, tenant_id: str) -> ActivePublicationInventor
                 predicate=predicate,
                 object_kind="literal",
                 literal=_literal_summary(revision),
+                relationship_properties=relationship_properties,
             )
         else:
             raise ActivePublicationInventoryConflict()
@@ -723,6 +1035,7 @@ def _decode_item(row_value: object, tenant_id: str) -> ActivePublicationInventor
         document_id=_required_text(revision.get("document_id")),
         version_id=_required_text(revision.get("version_id")),
         chunk_id=_required_text(revision.get("chunk_id")),
+        evidence_chunk_ordinal=_count(row, "evidence_chunk_ordinal"),
         evidence_char_start=start,
         evidence_char_end=end,
         entity=entity,
@@ -861,8 +1174,27 @@ class Neo4jActivePublicationInventoryService:
             **parameters,
             row_limit=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS + 1,
         )
+        item_rows = tuple(dict(row) for row in rows)
+        property_summaries = _validate_relationship_property_materializations(
+            tx,
+            parameters=parameters,
+            item_rows=item_rows,
+        )
+        if (
+            sum(len(values) for values in property_summaries.values())
+            > MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS
+        ):
+            raise ActivePublicationInventoryLimitExceeded()
         decoded = tuple(
-            _decode_item(row, principal.tenant_id) for row in rows
+            _decode_item(
+                row,
+                principal.tenant_id,
+                property_summaries.get(
+                    _required_text(dict(row.get("revision") or {}).get("revision_id")),
+                    (),
+                ),
+            )
+            for row in item_rows
         )
         if len(decoded) != membership_count:
             raise ActivePublicationInventoryConflict()

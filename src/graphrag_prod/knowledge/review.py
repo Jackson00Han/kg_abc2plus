@@ -3326,6 +3326,7 @@ class Neo4jKnowledgePublicationService:
         if assertion.relationship_properties:
             property_rows = tuple(
                 {
+                    "ordinal": ordinal,
                     "property_value_id": item.property_value_id,
                     "properties": {
                         "property_value_id": item.property_value_id,
@@ -3349,7 +3350,7 @@ class Neo4jKnowledgePublicationService:
                         **item.literal_semantics.to_flat_properties(),
                     },
                 }
-                for item in assertion.relationship_properties
+                for ordinal, item in enumerate(assertion.relationship_properties)
             )
             property_result = tx.run(
                 """
@@ -3387,8 +3388,11 @@ class Neo4jKnowledgePublicationService:
                   AND value.access_policy_id = assertion.access_policy_id
                   AND value.access_policy_version = assertion.access_policy_version
                   AND value.access_groups = assertion.access_groups
-                MERGE (assertion)-[:HAS_RELATIONSHIP_PROPERTY]->(value)
+                MERGE (assertion)-[property_link:HAS_RELATIONSHIP_PROPERTY]->(value)
+                ON CREATE SET property_link.ordinal = row.ordinal
                 MERGE (value)-[:EVIDENCED_BY]->(chunk)
+                WITH value, property_link, row
+                WHERE property_link.ordinal = row.ordinal
                 RETURN count(value) AS count
                 """,
                 tenant_id=assertion.tenant_id,

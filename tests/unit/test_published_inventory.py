@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import unittest
 from dataclasses import replace
 from typing import Any, Self
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import relationship_property_value_id
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.graph.published_inventory import (
     _ITEMS_QUERY,
     _MANIFEST_QUERY,
@@ -102,8 +106,14 @@ def _common_row(
             "document_id": document_id,
             "version_id": "version-1",
             "chunk_id": "chunk-1",
+            "access_policy_id": "policy-1",
+            "access_policy_version": 1,
+            "access_groups": ["industrial-readers", "public"],
             "evidence_char_start": 21,
             "evidence_char_end": 42,
+            "extractor_version": "dashscope-extractor:v1",
+            "relationship_properties_format_version": 1,
+            "relationship_properties_json": "[]",
         },
         "revision_labels": [
             "GovernedEntityMentionRevision"
@@ -121,6 +131,7 @@ def _common_row(
         "evidence_chunk_count": 1,
         "evidence_document_count": 1,
         "valid_evidence_path_count": 1,
+        "evidence_chunk_ordinal": 4,
         "mention_entity_link_count": 0,
         "mention_entity": None,
         "subject_link_count": 0,
@@ -237,6 +248,103 @@ def _manifest() -> dict[str, Any]:
     }
 
 
+def _property_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "revision_id": revision_id,
+            "navigation_assertion_id": f"navigation-{revision_id}",
+            "property_link_count": 0,
+            "property_node_count": 0,
+            "property_values": [],
+        }
+        for revision_id in ("revision-assertion-a", "revision-assertion-b")
+    ]
+
+
+def _entity_assertion_with_property() -> tuple[dict[str, Any], dict[str, Any]]:
+    row = _entity_assertion()
+    literal = TypedLiteralValue(
+        datatype="STRING",
+        typed_value="offers",
+        raw_value="offers",
+        canonical_value="offers",
+    )
+    value = RelationshipPropertyValue(
+        property_value_id=relationship_property_value_id(
+            TENANT,
+            "INSTALLED_AT",
+            "BASIS",
+            literal.identity_reference,
+            "chunk-1",
+            21,
+            27,
+            "dashscope-extractor:v1",
+            TBOX_ID,
+        ),
+        tenant_id=TENANT,
+        relationship_type="INSTALLED_AT",
+        name="BASIS",
+        literal_semantics=literal,
+        evidence_chunk_id="chunk-1",
+        evidence_char_start=21,
+        evidence_char_end=27,
+        evidence_text="offers",
+        extractor_version="dashscope-extractor:v1",
+        schema_version=TBOX_ID,
+        confidence=0.91,
+    )
+    row["revision"]["relationship_properties_json"] = json.dumps(
+        [value.to_mapping()],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    node_properties = {
+        "property_value_id": value.property_value_id,
+        "tenant_id": TENANT,
+        "relationship_type": "INSTALLED_AT",
+        "name": "BASIS",
+        "evidence_chunk_id": "chunk-1",
+        "evidence_char_start": 21,
+        "evidence_char_end": 27,
+        "evidence_text": "offers",
+        "extractor_version": "dashscope-extractor:v1",
+        "schema_version": TBOX_ID,
+        "confidence": 0.91,
+        "document_id": "document-1",
+        "version_id": "version-1",
+        "access_policy_id": "policy-1",
+        "access_policy_version": 1,
+        "access_groups": ["industrial-readers", "public"],
+        **literal.to_flat_properties(),
+    }
+    property_row = {
+        "revision_id": "revision-assertion-a",
+        "navigation_assertion_id": "navigation-revision-assertion-a",
+        "property_link_count": 1,
+        "property_node_count": 1,
+        "property_values": [
+            {
+                "ordinal": 0,
+                "node_properties": node_properties,
+                "evidence_link_count": 1,
+                "evidence_chunk_count": 1,
+                "evidence_chunks": [
+                    {
+                        "tenant_id": TENANT,
+                        "chunk_id": "chunk-1",
+                        "ordinal": 4,
+                        "char_start": 0,
+                        "char_end": 100,
+                    }
+                ],
+                "exact_evidence": True,
+            }
+        ],
+    }
+    return row, property_row
+
+
 class _Result:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
@@ -250,8 +358,9 @@ class _Tx:
         self,
         manifest: dict[str, Any],
         items: list[dict[str, Any]],
+        property_rows: list[dict[str, Any]],
     ) -> None:
-        self.responses = [_Result([manifest]), _Result(items)]
+        self.responses = [_Result([manifest]), _Result(items), _Result(property_rows)]
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def run(self, query: str, **parameters: Any) -> _Result:
@@ -284,6 +393,7 @@ class _Driver:
         self,
         manifest: dict[str, Any] | None = None,
         items: list[dict[str, Any]] | None = None,
+        property_rows: list[dict[str, Any]] | None = None,
         *,
         error: BaseException | None = None,
     ) -> None:
@@ -292,6 +402,7 @@ class _Driver:
             [_entity_assertion(), _literal_assertion(), _mention()]
             if items is None
             else items,
+            _property_rows() if property_rows is None else property_rows,
         )
         self.error = error
         self.databases: list[str] = []
@@ -366,6 +477,10 @@ class PublishedInventoryTests(unittest.TestCase):
         self.assertIn("active-publication-inventory:manifest", driver.tx.calls[0][0])
         self.assertIn("active-publication-inventory:items", driver.tx.calls[1][0])
         self.assertEqual(driver.tx.calls[1][1]["row_limit"], 501)
+        self.assertIn(
+            "active-publication-inventory:relationship-properties",
+            driver.tx.calls[2][0],
+        )
 
     def test_document_filter_runs_only_after_complete_quality_audit(self) -> None:
         driver = _Driver()
@@ -465,6 +580,61 @@ class PublishedInventoryTests(unittest.TestCase):
                 ),
                 quality_service=_Quality(),
             ).list_active(_principal(), document_id="document-1")
+
+    def test_relationship_property_json_and_materialization_are_rechecked_in_tx(
+        self,
+    ) -> None:
+        assertion, property_row = _entity_assertion_with_property()
+        property_rows = [property_row, _property_rows()[1]]
+        service = Neo4jActivePublicationInventoryService(
+            _Driver(
+                items=[assertion, _literal_assertion(), _mention()],
+                property_rows=property_rows,
+            ),
+            quality_service=_Quality(),
+        )
+        clean = service.list_active(_principal())
+        relationship_properties = clean.items[0].assertion.relationship_properties  # type: ignore[union-attr]
+        self.assertEqual(len(relationship_properties), 1)
+        self.assertEqual(relationship_properties[0].name, "BASIS")
+        self.assertEqual(relationship_properties[0].evidence_chunk_ordinal, 4)
+        self.assertNotIn("evidence_text", repr(clean.to_dict()))
+
+        corruptions = (
+            ("ordinal", lambda value: value.update(ordinal=9)),
+            (
+                "stable-id",
+                lambda value: value["node_properties"].update(
+                    property_value_id="forged-property-value"
+                ),
+            ),
+            (
+                "typed-field",
+                lambda value: value["node_properties"].update(
+                    literal_canonical_value="forged"
+                ),
+            ),
+            ("evidence", lambda value: value.update(exact_evidence=False)),
+            (
+                "chunk-ordinal",
+                lambda value: value["evidence_chunks"][0].update(ordinal=5),
+            ),
+        )
+        for label, mutate in corruptions:
+            with self.subTest(label=label):
+                changed = copy.deepcopy(property_row)
+                mutate(changed["property_values"][0])
+                with self.assertRaises(ActivePublicationInventoryConflict):
+                    Neo4jActivePublicationInventoryService(
+                        _Driver(
+                            items=[assertion, _literal_assertion(), _mention()],
+                            property_rows=[changed, _property_rows()[1]],
+                        ),
+                        quality_service=_Quality(),
+                    ).list_active(
+                        _principal(),
+                        document_id="document-absent",
+                    )
 
     def test_complete_manifest_hard_cap_is_enforced_before_item_read(self) -> None:
         ids = [f"revision-{index:04d}" for index in range(501)]

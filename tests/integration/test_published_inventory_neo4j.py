@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import neo4j
 
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import relationship_property_value_id
+from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore
 from graphrag_prod.graph.published_inventory import (
     ActivePublicationInventoryAuthorizationError,
@@ -32,8 +34,11 @@ from graphrag_prod.knowledge.review import (
 from graphrag_prod.knowledge.store import Neo4jKnowledgeStore
 from graphrag_prod.knowledge.trust import GovernanceStatus
 from graphrag_prod.ontology import (
+    Cardinality,
     EntityTypeDefinition,
     Neo4jTBoxStore,
+    PropertyDataType,
+    PropertyDefinition,
     RelationshipTypeDefinition,
     TBoxStatus,
     TBoxVersion,
@@ -109,7 +114,19 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
                 EntityTypeDefinition("Product", ("apple-product", "llm-candidate")),
             ),
             relationship_types=(
-                RelationshipTypeDefinition("OFFERS", ("Company",), ("Product",)),
+                RelationshipTypeDefinition(
+                    "OFFERS",
+                    ("Company",),
+                    ("Product",),
+                    properties=(
+                        PropertyDefinition(
+                            "BASIS",
+                            PropertyDataType.STRING,
+                            False,
+                            Cardinality.ZERO_OR_ONE,
+                        ),
+                    ),
+                ),
             ),
         )
         tbox_store = Neo4jTBoxStore(self.driver, self.database)
@@ -212,6 +229,42 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
         )
         candidate = self.candidates.assertions[0]
         authoritative = self.authoritative.assertions[0]
+        property_text = "offers"
+        property_start = candidate.evidence.char_start + candidate.evidence.quoted_text.index(
+            property_text
+        )
+        property_end = property_start + len(property_text)
+        property_literal = TypedLiteralValue(
+            datatype="STRING",
+            typed_value=property_text,
+            raw_value=property_text,
+            canonical_value=property_text,
+        )
+        extractor = candidate.trust.extractor_version or ""
+        relationship_property = RelationshipPropertyValue(
+            property_value_id=relationship_property_value_id(
+                self.tenant_id,
+                "OFFERS",
+                "BASIS",
+                property_literal.identity_reference,
+                candidate.evidence.chunk_id,
+                property_start,
+                property_end,
+                extractor,
+                self.tbox.tbox_id,
+            ),
+            tenant_id=self.tenant_id,
+            relationship_type="OFFERS",
+            name="BASIS",
+            literal_semantics=property_literal,
+            evidence_chunk_id=candidate.evidence.chunk_id,
+            evidence_char_start=property_start,
+            evidence_char_end=property_end,
+            evidence_text=property_text,
+            extractor_version=extractor,
+            schema_version=self.tbox.tbox_id,
+            confidence=0.97,
+        )
         assertion_request = ReviewRequest(
             ReviewRecordKind.ASSERTION,
             candidate.record_id,
@@ -226,6 +279,7 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
                 candidate.confidence,
                 object_entity=authoritative.object_entity,
                 object_mention_revision_id=candidate.object_mention_revision_id,
+                relationship_properties=(relationship_property,),
             ),
         )
         outcomes = self.review.review_batch(
@@ -261,6 +315,13 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
         self.assertEqual(
             assertion.assertion.object_entity.display_name,  # type: ignore[union-attr]
             "iPhone",
+        )
+        relationship_properties = assertion.assertion.relationship_properties  # type: ignore[union-attr]
+        self.assertEqual(len(relationship_properties), 1)
+        self.assertEqual(relationship_properties[0].name, "BASIS")
+        self.assertEqual(
+            relationship_properties[0].evidence_chunk_ordinal,
+            self.bundle.chunk.ordinal,
         )
         serialized = repr(result.to_dict())
         self.assertNotIn(self.bundle.chunk.text, serialized)
@@ -303,6 +364,64 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
         with self.assertRaises(ActivePublicationInventoryConflict) as raised:
             self.inventory.list_active(self.principal)
         self.assertNotIn("tampered-source-fragment", str(raised.exception))
+
+    def test_property_tampering_after_quality_audit_still_fails_closed(self) -> None:
+        publication = self._publish()
+        frozen_report = self.inventory.quality_service.audit(self.principal)
+
+        class _FrozenQuality:
+            @staticmethod
+            def audit(_principal: Principal):  # type: ignore[no-untyped-def]
+                return frozen_report
+
+        inventory = Neo4jActivePublicationInventoryService(
+            self.driver,
+            self.database,
+            quality_service=_FrozenQuality(),
+        )
+        mutations = (
+            (
+                "ordinal",
+                "SET property_link.ordinal = 7",
+                "SET property_link.ordinal = 0",
+            ),
+            (
+                "stable-id",
+                "SET value.property_value_id = 'forged-property-value'",
+                None,
+            ),
+        )
+        for label, mutation, restore in mutations:
+            with self.subTest(label=label):
+                self.driver.execute_query(
+                    f"""
+                    MATCH (assertion:Assertion {{
+                        tenant_id: $tenant_id,
+                        governed_publication_id: $publication_id
+                    }})-[property_link:HAS_RELATIONSHIP_PROPERTY]->
+                          (value:RelationshipPropertyValue)
+                    {mutation}
+                    """,
+                    tenant_id=self.tenant_id,
+                    publication_id=publication.publication_id,
+                    database_=self.database,
+                )
+                with self.assertRaises(ActivePublicationInventoryConflict):
+                    inventory.list_active(self.principal)
+                if restore is not None:
+                    self.driver.execute_query(
+                        f"""
+                        MATCH (assertion:Assertion {{
+                            tenant_id: $tenant_id,
+                            governed_publication_id: $publication_id
+                        }})-[property_link:HAS_RELATIONSHIP_PROPERTY]->
+                              (value:RelationshipPropertyValue)
+                        {restore}
+                        """,
+                        tenant_id=self.tenant_id,
+                        publication_id=publication.publication_id,
+                        database_=self.database,
+                    )
 
 
 if __name__ == "__main__":
