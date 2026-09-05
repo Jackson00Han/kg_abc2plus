@@ -1,0 +1,89 @@
+{
+  "schema": "graphrag-industrial-demo-kit-v1",
+  "kit_id": "industrial-demo-v1",
+  "title": "循环水泵知识构建体验包",
+  "description": "本项目虚构的工业示例，约定台账和配套实例为演示中的专家权威基准；不代表外部行业认证。先发布本体，再仅入库权威来源、导入并发布专家实例，最后抽取普通检修报告。",
+  "placeholders": {
+    "ontology_version_id": "__PUBLISHED_TBOX_ID__",
+    "document_id": "__SOURCE_DOCUMENT_ID__",
+    "version_id": "__SOURCE_VERSION_ID__",
+    "chunk_id": "__SOURCE_CHUNK_ID__"
+  },
+  "files": [
+    {
+      "id": "authoritative_source",
+      "filename": "authoritative_source.txt",
+      "label": "权威来源文档",
+      "mime_type": "text/plain",
+      "sha256": "33d43135ca3f1bf81e57097bfeecb4f6d014c1c9807bced5d876d113395f6422",
+      "characters": 309,
+      "expected_chunks": 1,
+      "construction_mode": "SOURCE_ONLY",
+      "metadata": {
+        "title": "北辰循环水泵设备台账与专家确认记录 v1",
+        "canonical_uri": "https://example.test/industrial-demo-v1/authoritative_source.txt",
+        "source_name": "工业循环水泵演示资料 v1",
+        "language": "zh"
+      }
+    },
+    {
+      "id": "maintenance_report",
+      "filename": "maintenance_report.txt",
+      "label": "普通检修报告",
+      "mime_type": "text/plain",
+      "sha256": "84a62a94a14c7121bf86c5f2178ef499c132e12202a818a9c6e2f2ea83123ab8",
+      "characters": 153,
+      "expected_chunks": 1,
+      "construction_mode": "LLM",
+      "metadata": {
+        "title": "循环水泵检修记录 2026-09-06",
+        "canonical_uri": "https://example.test/industrial-demo-v1/maintenance_report.txt",
+        "source_name": "工业循环水泵演示资料 v1",
+        "language": "zh"
+      }
+    },
+    {
+      "id": "homonym_report",
+      "filename": "homonym_report.txt",
+      "label": "可选：同名设备反例",
+      "mime_type": "text/plain",
+      "sha256": "1c5f55a4bcb90fd86bc37227eb30c896fdfb5faace3404c52f474102cd39c782",
+      "characters": 151,
+      "expected_chunks": 1,
+      "construction_mode": "LLM",
+      "metadata": {
+        "title": "同名设备登记记录 2026-09-06",
+        "canonical_uri": "https://example.test/industrial-demo-v1/homonym_report.txt",
+        "source_name": "工业循环水泵演示资料 v1",
+        "language": "zh"
+      }
+    }
+  ],
+  "expected_authority": {
+    "mentions": 3,
+    "assertions": 4,
+    "relationships": 2,
+    "literal_assertions": 2
+  },
+  "expected_maintenance": {
+    "entity_types": [
+      "Equipment",
+      "Component",
+      "Risk"
+    ],
+    "relationships": [
+      "CONTAINS",
+      "EXPOSED_TO"
+    ],
+    "identity_property": {
+      "name": "EquipmentCode",
+      "raw_literal": "BC-P-101"
+    },
+    "new_risk": "机械密封渗漏风险"
+  },
+  "retrieval_questions": [
+    "北辰一号循环水泵的额定功率是多少？",
+    "北辰一号循环水泵安装在哪里？",
+    "北辰一号循环水泵存在什么风险？"
+  ]
+}

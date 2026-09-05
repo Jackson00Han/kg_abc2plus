@@ -58,6 +58,11 @@ trust-aware evidence subgraphs—is documented in
 [`docs/industrial_knowledge_governance.md`](docs/industrial_knowledge_governance.md),
 with its authenticated routes and request boundaries in
 [`docs/industrial_knowledge_api.md`](docs/industrial_knowledge_api.md).
+For a guided browser exercise, use the bundled pump-maintenance source files,
+expert instances, and [Chinese construction walkthrough](docs/industrial_demo_walkthrough.md).
+The workbench can ingest an expert source without LLM extraction and computes
+entity-resolution suggestions automatically while retaining explicit review
+and publication.
 The complete active-publication integrity audit and its source-text-free output
 boundary are documented in
 [`docs/published_graph_quality.md`](docs/published_graph_quality.md).

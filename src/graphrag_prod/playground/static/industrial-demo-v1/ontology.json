@@ -1,0 +1,109 @@
+{
+  "key": "pump-maintenance-demo",
+  "version": 1,
+  "description": "工业循环水泵知识构建演示本体 v1：以 EquipmentCode 区分同名设备；本项目内约定的专家基准。",
+  "entity_types": [
+    {
+      "name": "Site",
+      "canonical_key_namespaces": [
+        "site-id",
+        "llm-candidate"
+      ],
+      "properties": [],
+      "identity_properties": [],
+      "description": "Physical plant, facility, line, or operating location"
+    },
+    {
+      "name": "Equipment",
+      "canonical_key_namespaces": [
+        "equipment-id",
+        "llm-candidate"
+      ],
+      "properties": [
+        {
+          "name": "EquipmentCode",
+          "datatype": "STRING",
+          "required": true,
+          "cardinality": "ONE",
+          "description": "设备台账中的唯一设备编码，必须逐字保留，例如 BC-P-101；同名而编码不同的设备不得合并。"
+        },
+        {
+          "name": "RatedPower",
+          "datatype": "DECIMAL",
+          "required": false,
+          "cardinality": "ZERO_OR_ONE",
+          "unit": "kW",
+          "description": "铭牌额定功率，保留原始数值和 kW 单位。"
+        }
+      ],
+      "identity_properties": [
+        "EquipmentCode"
+      ],
+      "description": "Maintainable industrial equipment or machine"
+    },
+    {
+      "name": "Component",
+      "canonical_key_namespaces": [
+        "component-id",
+        "llm-candidate"
+      ],
+      "properties": [],
+      "identity_properties": [],
+      "description": "Replaceable component belonging to equipment"
+    },
+    {
+      "name": "Risk",
+      "canonical_key_namespaces": [
+        "risk-id",
+        "llm-candidate"
+      ],
+      "properties": [],
+      "identity_properties": [],
+      "description": "Operational, safety, supply, or reliability risk"
+    }
+  ],
+  "relationship_types": [
+    {
+      "name": "INSTALLED_AT",
+      "source_types": [
+        "Equipment",
+        "Component"
+      ],
+      "target_types": [
+        "Site"
+      ],
+      "properties": [],
+      "source_cardinality": "ZERO_OR_ONE",
+      "target_cardinality": "ZERO_OR_MORE",
+      "description": "Asset is installed at a governed site"
+    },
+    {
+      "name": "CONTAINS",
+      "source_types": [
+        "Equipment"
+      ],
+      "target_types": [
+        "Component"
+      ],
+      "properties": [],
+      "source_cardinality": "ZERO_OR_MORE",
+      "target_cardinality": "ZERO_OR_ONE",
+      "description": "Equipment contains a component"
+    },
+    {
+      "name": "EXPOSED_TO",
+      "source_types": [
+        "Site",
+        "Equipment",
+        "Component"
+      ],
+      "target_types": [
+        "Risk"
+      ],
+      "properties": [],
+      "source_cardinality": "ZERO_OR_MORE",
+      "target_cardinality": "ZERO_OR_MORE",
+      "description": "Industrial subject is exposed to a stated risk"
+    }
+  ]
+}

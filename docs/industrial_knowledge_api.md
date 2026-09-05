@@ -35,6 +35,28 @@ selected group must be a non-empty subset of the verified JWT groups.
 
 Upload content is canonical base64 and decodes to at most 5 MiB. Supported MIME
 types are `text/plain`, `text/markdown`, `text/csv`, and `application/json`.
+`extraction_mode` is `LLM` by default or `SOURCE_ONLY` for expert-source
+initialization. SOURCE_ONLY preserves authorization, active T-Box validation,
+bounded parsing, chunking, embeddings, source lifecycle and durable job audit,
+but never initializes the extractor or writes model proposals. Its response
+and job reads report `extraction_mode: SOURCE_ONLY`; every completed Chunk has
+status `SOURCE_ONLY` and empty mention/assertion/finding lists. Source-only
+mode does not grant authoritative status: the existing import and publication
+endpoints must still be called explicitly. Existing LLM operation identities
+remain replayable; switching modes with one operation key conflicts. A new
+LLM operation may reuse the same source snapshot and embeddings.
+
+Chunk outcomes also expose `validation_attempts`: safe summaries containing
+`attempt`, `status`, `finding_codes` and `response_checksum`. SOURCE_ONLY and
+legacy outcomes use an empty list. Raw provider output is not returned by the
+API. When the configured extractor permits two validation attempts, one
+correction may follow a JSON/structural/evidence rejection; each actual call
+reserves the existing request call/time budget. Provider errors or timeouts
+remain recoverable dependency failures, not automatic model retries. Identical
+terminal rejected inputs within the same operation/job replay their audited
+outcome. Feedback artifacts are job-bound. Summaries cover the terminal run;
+audits from earlier dependency-failure runs remain immutable server-side.
+
 The construction workflow persists only the caller's selected group subset and
 requires an exact ACL match on later updates; it never widens a source to all
 groups held by a multi-group principal. Before embedding, ingestion, or LLM

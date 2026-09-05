@@ -65,6 +65,14 @@ unverifiable property bag on a canonical Entity.
 
 ## Document and extraction boundary
 
+Expert initialization may use the governed construction API in `SOURCE_ONLY`
+mode. This creates the traceable source and vector representation without LLM
+extraction; expert instances must then be explicitly imported and published.
+The source-only audit has its own profile and operation identity, preserving
+the same immutable source/Chunk identities and all normal authorization,
+lifecycle, resource and recovery checks. It does not create authoritative
+facts just because the document has been described as authoritative.
+
 The construction layer accepts bytes, not filesystem paths. Its built-in
 allowlist covers UTF-8 plain text, Markdown, CSV, and JSON with pre- and
 post-parse resource bounds. Format selection is by registered MIME type only.
@@ -167,7 +175,13 @@ and per-Chunk outcomes. The ordinary ingestion pipeline receives a canonical
 empty graph extraction, so it can publish only the Document, immutable Version,
 Chunk, and Embedding. Separately cached ontology extraction artifacts are then
 converted into governed candidate revisions. Provider failures remain
-retryable; structural model failures are recorded as rejected outcomes.
+retryable. The extractor defaults to one validation attempt, preserving the
+legacy policy signature. The Playground explicitly enables two attempts:
+bounded structural/evidence failures receive one model correction with the
+specific findings, while every response and failure remains in immutable
+source/tenant/ACL/policy-bound audit artifacts. Final structural failures are
+recorded as rejected outcomes. Provider failures, timeouts and oversized
+responses do not trigger correction; raw oversized responses are not retained.
 
 Parsed uploads are rejected before embedding, ingestion, or extraction if they
 exceed the configured Chunk count, potential model-call count, or total

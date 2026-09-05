@@ -203,6 +203,61 @@ def _valid_payload() -> dict[str, object]:
     }
 
 
+def _repeated_entity_case() -> tuple[Chunk, dict[str, object]]:
+    sentences = (
+        "Acme owns Pump-7.",
+        "Acme owns Pump-7 under warranty.",
+        "Pump-7; pressure is 100 kPa; serial number is P7-42.",
+    )
+    text = " ".join(sentences)
+    starts = (0, len(sentences[0]) + 1, len(sentences[0]) + len(sentences[1]) + 2)
+    chunk = replace(
+        _chunk(), text=text, checksum=content_checksum(text), char_end=100 + len(text)
+    )
+
+    def mention(name: str, sentence: int) -> dict[str, object]:
+        start = starts[sentence] + sentences[sentence].index(name)
+        return {"text": name, "start": start, "end": start + len(name), "confidence": 0.99}
+
+    def evidence(sentence: int) -> dict[str, object]:
+        return {
+            "text": sentences[sentence],
+            "start": starts[sentence],
+            "end": starts[sentence] + len(sentences[sentence]),
+        }
+
+    return chunk, {
+        "entities": [
+            {"ref": "company", "type": "Company", "mentions": [mention("Acme", 0), mention("Acme", 1)]},
+            {"ref": "asset", "type": "Asset", "mentions": [mention("Pump-7", index) for index in range(3)]},
+        ],
+        "relationships": [
+            {
+                "type": "OWNS",
+                "source_ref": "company",
+                "target_ref": "asset",
+                "evidence": evidence(index),
+                "confidence": 0.99,
+            }
+            for index in range(2)
+        ],
+        "property_facts": [
+            {
+                "entity_ref": "asset",
+                "property": name,
+                "raw_literal": value,
+                "unit": unit,
+                "valid_from": None,
+                "valid_to": None,
+                "observed_at": None,
+                "evidence": evidence(2),
+                "confidence": 0.99,
+            }
+            for name, value, unit in (("pressure", "100", "kPa"), ("serialNumber", "P7-42", None))
+        ],
+    }
+
+
 class FakeCompletions:
     def __init__(self, payload: object) -> None:
         self.payload = payload
@@ -521,6 +576,87 @@ class ConstructionExtractionTests(unittest.TestCase):
                 profile=_profile(),
             )
         self.assertIn("ENDPOINT_OUTSIDE_EVIDENCE", {item.code for item in captured.exception.findings})
+
+    def test_repeated_entity_occurrences_ground_each_relation_and_property_fact(self) -> None:
+        chunk, payload = _repeated_entity_case()
+        extractor, _ = _extractor(payload, include_span_hints=True, enable_thinking=False)
+        result = extractor.extract_audited(
+            artifact_id="repeated-occurrences", input_hash="input", chunk=chunk, profile=_profile()
+        )
+        self.assertEqual(result.status, GovernanceStatus.CANDIDATE)
+        self.assertEqual(len(result.output.entities), 2)
+        self.assertEqual(len(result.output.mentions), 5)
+        self.assertEqual(len(result.output.assertions), 4)
+        by_entity = {}
+        for mention in result.output.mentions:
+            by_entity.setdefault(mention.entity_id, []).append(mention)
+            self.assertEqual(
+                chunk.text[mention.char_start - chunk.char_start:mention.char_end - chunk.char_start],
+                mention.surface,
+            )
+        for assertion in result.output.assertions:
+            endpoints = [assertion.subject_entity_id]
+            if assertion.object_entity_id is not None:
+                endpoints.append(assertion.object_entity_id)
+            for endpoint in endpoints:
+                self.assertTrue(any(
+                    assertion.evidence_char_start <= mention.char_start
+                    and mention.char_end <= assertion.evidence_char_end
+                    for mention in by_entity[endpoint]
+                ))
+
+    def test_repeated_name_without_declared_occurrence_is_rejected_for_each_endpoint(self) -> None:
+        cases = ((0, 1, "$.relationships[1]"), (1, 1, "$.relationships[1]"),
+                 (1, 2, "$.property_facts[0]"))
+        for entity_index, mention_index, path in cases:
+            with self.subTest(entity=entity_index, mention=mention_index):
+                chunk, payload = _repeated_entity_case()
+                payload["entities"][entity_index]["mentions"].pop(mention_index)
+                extractor, _ = _extractor(payload, include_span_hints=True, enable_thinking=False)
+                with self.assertRaises(ExtractionRejected) as captured:
+                    extractor(
+                        artifact_id="missing-occurrence", input_hash="input",
+                        chunk=chunk, profile=_profile(),
+                    )
+                self.assertTrue(any(
+                    item.code == "ENDPOINT_OUTSIDE_EVIDENCE" and item.path.startswith(path)
+                    for item in captured.exception.findings
+                ))
+
+    def test_contiguous_evidence_can_enclose_previously_declared_entity_mentions(self) -> None:
+        chunk, payload = _repeated_entity_case()
+        for entity in payload["entities"]:
+            entity["mentions"] = entity["mentions"][:1]
+        for fact in (*payload["relationships"], *payload["property_facts"]):
+            end = fact["evidence"]["end"]
+            fact["evidence"] = {"text": chunk.text[:end], "start": 0, "end": end}
+        extractor, _ = _extractor(payload)
+        result = extractor.extract_audited(
+            artifact_id="contiguous-evidence", input_hash="input", chunk=chunk, profile=_profile()
+        )
+        self.assertEqual(result.status, GovernanceStatus.CANDIDATE)
+        self.assertEqual(len(result.output.mentions), 2)
+        self.assertEqual(len(result.output.assertions), 4)
+
+    def test_attribute_phrase_after_semicolon_must_still_enclose_declared_subject(self) -> None:
+        for fact_index, phrase in ((0, "pressure is 100 kPa"), (1, "serial number is P7-42")):
+            with self.subTest(property=fact_index):
+                chunk, payload = _repeated_entity_case()
+                start = chunk.text.index(phrase)
+                payload["property_facts"][fact_index]["evidence"] = {
+                    "text": phrase, "start": start, "end": start + len(phrase)
+                }
+                extractor, _ = _extractor(payload, include_span_hints=True)
+                with self.assertRaises(ExtractionRejected) as captured:
+                    extractor(
+                        artifact_id="subject-omitted", input_hash="input",
+                        chunk=chunk, profile=_profile(),
+                    )
+                self.assertTrue(any(
+                    item.code == "ENDPOINT_OUTSIDE_EVIDENCE"
+                    and item.path == f"$.property_facts[{fact_index}].entity_ref"
+                    for item in captured.exception.findings
+                ))
 
     def test_unknown_types_predicates_and_wrong_direction_are_rejected(self) -> None:
         bad_type = _valid_payload()

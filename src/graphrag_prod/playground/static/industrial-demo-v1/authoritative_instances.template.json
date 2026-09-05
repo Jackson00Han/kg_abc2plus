@@ -1,0 +1,140 @@
+{
+  "ontology_version_id": "__PUBLISHED_TBOX_ID__",
+  "mentions": [
+    {
+      "source_key": "industrial-demo-v1:expert:site:bc-pump-station-1",
+      "expected_previous_revision": 0,
+      "entity": {
+        "entity_type": "Site",
+        "canonical_key": "site-id:bc-pump-station-1",
+        "canonical_name": "北辰水处理一号泵站",
+        "aliases": [
+          "北辰一号泵站"
+        ]
+      },
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 87,
+        "char_end": 114,
+        "quoted_text": "场所：北辰水处理一号泵站，唯一别名为“北辰一号泵站”。"
+      },
+      "confidence": 1.0
+    },
+    {
+      "source_key": "industrial-demo-v1:expert:equipment:bc-p-101",
+      "expected_previous_revision": 0,
+      "entity": {
+        "entity_type": "Equipment",
+        "canonical_key": "equipment-id:bc-p-101",
+        "canonical_name": "循环水泵",
+        "aliases": [
+          "北辰一号循环水泵"
+        ]
+      },
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 115,
+        "char_end": 195,
+        "quoted_text": "设备：循环水泵，唯一别名为“北辰一号循环水泵”；设备编码（EquipmentCode）为 BC-P-101，额定功率（RatedPower）为 37.5 kW。"
+      },
+      "confidence": 1.0
+    },
+    {
+      "source_key": "industrial-demo-v1:expert:component:bc-p-101-seal",
+      "expected_previous_revision": 0,
+      "entity": {
+        "entity_type": "Component",
+        "canonical_key": "component-id:bc-p-101-seal",
+        "canonical_name": "机械密封",
+        "aliases": [
+          "BC-P-101机械密封"
+        ]
+      },
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 196,
+        "char_end": 224,
+        "quoted_text": "部件：机械密封，唯一别名为“BC-P-101机械密封”。"
+      },
+      "confidence": 1.0
+    }
+  ],
+  "assertions": [
+    {
+      "source_key": "industrial-demo-v1:expert:assertion:equipment-code",
+      "expected_previous_revision": 0,
+      "subject_mention_source_key": "industrial-demo-v1:expert:equipment:bc-p-101",
+      "predicate": "EquipmentCode",
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 115,
+        "char_end": 195,
+        "quoted_text": "设备：循环水泵，唯一别名为“北辰一号循环水泵”；设备编码（EquipmentCode）为 BC-P-101，额定功率（RatedPower）为 37.5 kW。"
+      },
+      "confidence": 1.0,
+      "literal": {
+        "raw_literal": "BC-P-101"
+      }
+    },
+    {
+      "source_key": "industrial-demo-v1:expert:assertion:rated-power",
+      "expected_previous_revision": 0,
+      "subject_mention_source_key": "industrial-demo-v1:expert:equipment:bc-p-101",
+      "predicate": "RatedPower",
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 115,
+        "char_end": 195,
+        "quoted_text": "设备：循环水泵，唯一别名为“北辰一号循环水泵”；设备编码（EquipmentCode）为 BC-P-101，额定功率（RatedPower）为 37.5 kW。"
+      },
+      "confidence": 1.0,
+      "literal": {
+        "raw_literal": "37.5",
+        "raw_unit": "kW"
+      }
+    },
+    {
+      "source_key": "industrial-demo-v1:expert:assertion:installed-at",
+      "expected_previous_revision": 0,
+      "subject_mention_source_key": "industrial-demo-v1:expert:equipment:bc-p-101",
+      "predicate": "INSTALLED_AT",
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 87,
+        "char_end": 247,
+        "quoted_text": "场所：北辰水处理一号泵站，唯一别名为“北辰一号泵站”。\n设备：循环水泵，唯一别名为“北辰一号循环水泵”；设备编码（EquipmentCode）为 BC-P-101，额定功率（RatedPower）为 37.5 kW。\n部件：机械密封，唯一别名为“BC-P-101机械密封”。\n安装关系：循环水泵安装在北辰水处理一号泵站。"
+      },
+      "confidence": 1.0,
+      "object_mention_source_key": "industrial-demo-v1:expert:site:bc-pump-station-1"
+    },
+    {
+      "source_key": "industrial-demo-v1:expert:assertion:contains",
+      "expected_previous_revision": 0,
+      "subject_mention_source_key": "industrial-demo-v1:expert:equipment:bc-p-101",
+      "predicate": "CONTAINS",
+      "evidence": {
+        "document_id": "__SOURCE_DOCUMENT_ID__",
+        "version_id": "__SOURCE_VERSION_ID__",
+        "chunk_id": "__SOURCE_CHUNK_ID__",
+        "char_start": 115,
+        "char_end": 264,
+        "quoted_text": "设备：循环水泵，唯一别名为“北辰一号循环水泵”；设备编码（EquipmentCode）为 BC-P-101，额定功率（RatedPower）为 37.5 kW。\n部件：机械密封，唯一别名为“BC-P-101机械密封”。\n安装关系：循环水泵安装在北辰水处理一号泵站。\n组成关系：循环水泵包含机械密封。"
+      },
+      "confidence": 1.0,
+      "object_mention_source_key": "industrial-demo-v1:expert:component:bc-p-101-seal"
+    }
+  ],
+  "review_notes": "项目约定的专家权威实例；逐条引用 industrial-demo-v1 权威台账原文；需人工导入并明确发布。"
+}

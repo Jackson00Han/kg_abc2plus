@@ -372,11 +372,13 @@ MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
           tenant_id: $tenant_id,
           entity_type: $entity_type
       })
+WITH DISTINCT state, publication, mention, entity
 MATCH (head:KnowledgeRecordHead {
           tenant_id: $tenant_id,
           record_kind: 'ENTITY_MENTION'
       })-[:CURRENT_REVISION]->(mention)
 MATCH (mention)-[:IN_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
+WITH DISTINCT state, publication, mention, entity, head, chunk
 MATCH (document:Document {tenant_id: $tenant_id})
       -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
           tenant_id: $tenant_id,
@@ -387,6 +389,8 @@ MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
+WITH DISTINCT state, publication, mention, entity, head, chunk,
+     document, snapshot, version
 MATCH (:TBoxCatalog {tenant_id: $tenant_id})-[:ACTIVE_TBOX_VERSION]->
       (tbox:TBoxVersion {
           tenant_id: $tenant_id,
@@ -431,11 +435,17 @@ _EVIDENCE_PROJECTION = """{
 
 
 def _exact_authority_queries(predicate: str, matched_value: str) -> tuple[str, str]:
-    """Build count/fetch statements guarded by one activation generation."""
+    """Count/fetch within one generation using explicit planning boundaries.
+
+    DISTINCT query parts retain the complete authority/source bindings while
+    keeping the correlated identity-property predicate out of the planner's
+    source-pattern join search. They never limit the global candidate count.
+    """
 
     count_query = f"""
 {_ACTIVE_AUTHORITY_MATCH}
-  AND {predicate}
+WITH DISTINCT state, publication, mention, entity, tbox, document, version, chunk
+WHERE {predicate}
 RETURN count(DISTINCT entity) AS match_count,
        min(entity.entity_id) AS only_entity_id,
        min(publication.publication_id) AS publication_id,
@@ -444,7 +454,8 @@ RETURN count(DISTINCT entity) AS match_count,
 """
     target_query = f"""
 {_ACTIVE_AUTHORITY_MATCH}
-  AND state.activation_generation = $activation_generation
+WITH DISTINCT state, publication, mention, entity, tbox, document, version, chunk
+WHERE state.activation_generation = $activation_generation
   AND publication.publication_id = $publication_id
   AND entity.entity_id = $only_entity_id
   AND {predicate}
@@ -504,6 +515,7 @@ _IDENTITY_PROPERTY_PREDICATE = """all(
                   governance_status: 'PUBLISHED'
               })
         MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->(fact_subject)
+        WITH DISTINCT publication, entity, identity, fact, fact_chunk, fact_subject
         MATCH (fact_head:KnowledgeRecordHead {
                   tenant_id: $tenant_id,
                   record_kind: 'ASSERTION'

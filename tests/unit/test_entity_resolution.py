@@ -675,6 +675,35 @@ class Neo4jAuthoritativeEntitySourceTests(unittest.TestCase):
                 }
             ],
         )
+        self.assertEqual(len(session.calls), 2)
+        fetch_query, fetch_parameters = session.calls[1]
+        self.assertEqual(fetch_parameters["identity_properties"], parameters["identity_properties"])
+        self.assertEqual(fetch_parameters["publication_id"], "publication-1")
+        self.assertEqual(fetch_parameters["activation_generation"], 2)
+        self.assertEqual(fetch_parameters["only_entity_id"], identity.entity_id)
+        self.assertIn("state.activation_generation = $activation_generation", fetch_query)
+        self.assertIn("fact.literal_canonical_value = identity.canonical_value", fetch_query)
+
+    def test_identity_property_conflict_counts_every_match_without_fetching_target(self) -> None:
+        session = _Session(({
+            "match_count": 2,
+            "only_entity_id": "not-a-unique-target",
+            "publication_id": "publication-1",
+            "activation_generation": 2,
+            "publication_count": 1,
+        },))
+        source = Neo4jAuthoritativeEntitySource(_Driver(session))
+        result = source.find_exact_identity_properties(
+            _principal(),
+            ontology_version_id=_tbox().tbox_id,
+            entity_type="Asset",
+            identity_properties=(IdentityPropertyValue("serial_number", "STRING", "SN-77"),),
+        )
+        self.assertEqual(result.match_count, 2)
+        self.assertIsNone(result.target)
+        self.assertEqual(len(session.calls), 1)
+        self.assertNotIn("LIMIT", session.calls[0][0])
+
     def test_query_and_mapping_are_tenant_acl_tbox_and_authority_bounded(self) -> None:
         identity = _identity("asset-id:P-7", "Primary Pump", aliases=("Pump 7",))
         row = {

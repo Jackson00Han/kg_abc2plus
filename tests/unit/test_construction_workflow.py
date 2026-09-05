@@ -540,6 +540,137 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(len(audit.completed_jobs), 1)
 
+    def test_source_only_ingestion_audits_without_constructing_a_model_or_abox(self) -> None:
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+
+        def forbidden_factory(_tbox_value: TBoxVersion) -> None:
+            self.fail("SOURCE_ONLY must never construct the LLM extractor")
+
+        workflow.extractor_factory = forbidden_factory
+        metadata = replace(_metadata(), extraction_mode="SOURCE_ONLY")
+        first = workflow.run(self.principal, SOURCE, metadata)
+        replay = workflow.run(self.principal, SOURCE, metadata)
+        self.assertEqual(first.extraction_mode, "SOURCE_ONLY")
+        self.assertEqual(first.chunks[0].status, "SOURCE_ONLY")
+        self.assertEqual(first.chunks[0].mention_record_ids, ())
+        self.assertEqual(first.chunks[0].assertion_record_ids, ())
+        self.assertEqual(first.chunks[0].finding_codes, ())
+        self.assertTrue(replay.chunks[0].replayed)
+        self.assertEqual(audit.jobs[first.job_id].extraction_mode, "SOURCE_ONLY")
+        self.assertEqual(len(audit.artifacts), 1)
+        self.assertEqual(audit.artifacts[first.chunks[0].artifact_id]["model_calls"], 0)
+        self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(knowledge.quarantine_writes, 0)
+        self.assertEqual(extractor.calls, 0)
+        request = pipeline.requests[0]
+        self.assertEqual(request.access_groups, metadata.access_groups)
+        self.assertTrue(all(output == ExtractionOutput((), (), ()) for output in pipeline.canonical_outputs))
+        document, version, chunks = request.domain_inputs()
+        self.assertEqual(document.document_id, first.document_id)
+        self.assertEqual(version.version_id, first.version_id)
+        self.assertEqual(chunks[0].text, SOURCE.decode())
+
+    def test_source_only_artifact_resume_repairs_an_interrupted_outcome(self) -> None:
+        workflow, audit, knowledge, _pipeline = _workflow(extractor=_Extractor(_tbox()))
+        metadata = replace(_metadata(), extraction_mode="SOURCE_ONLY")
+        first = workflow.run(self.principal, SOURCE, metadata)
+        artifact = dict(audit.artifacts[first.chunks[0].artifact_id])
+        audit.outcomes.clear()
+        replay = workflow.run(self.principal, SOURCE, metadata)
+        self.assertFalse(replay.chunks[0].replayed)
+        self.assertEqual(replay.chunks[0].artifact_id, first.chunks[0].artifact_id)
+        self.assertEqual(audit.artifacts[first.chunks[0].artifact_id], artifact)
+        self.assertEqual(knowledge.candidate_writes, 0)
+        self.assertEqual(len(audit.outcomes), 1)
+
+    def test_extraction_mode_changes_conflict_without_reusing_model_outcomes(self) -> None:
+        for initial_mode in ("LLM", "SOURCE_ONLY"):
+            with self.subTest(initial_mode=initial_mode):
+                extractor = _Extractor(_tbox())
+                workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+                first = workflow.run(
+                    self.principal, SOURCE, replace(_metadata(), extraction_mode=initial_mode)
+                )
+                calls = extractor.calls
+                writes = knowledge.candidate_writes
+                other_mode = "LLM" if initial_mode == "SOURCE_ONLY" else "SOURCE_ONLY"
+                with self.assertRaisesRegex(ConstructionConflict, "idempotency"):
+                    workflow.run(
+                        self.principal, SOURCE, replace(_metadata(), extraction_mode=other_mode)
+                    )
+                self.assertEqual(len(pipeline.requests), 1)
+                self.assertEqual(extractor.calls, calls)
+                self.assertEqual(knowledge.candidate_writes, writes)
+                changed = workflow.run(
+                    self.principal,
+                    SOURCE,
+                    replace(_metadata(operation_key="other-mode"), extraction_mode=other_mode),
+                )
+                self.assertEqual(changed.document_id, first.document_id)
+                self.assertEqual(changed.version_id, first.version_id)
+                self.assertEqual(changed.snapshot_id, first.snapshot_id)
+                self.assertNotEqual(changed.chunks[0].artifact_id, first.chunks[0].artifact_id)
+
+    def test_source_only_still_requires_capability_acl_active_tbox_and_budgets(self) -> None:
+        metadata = replace(_metadata(), extraction_mode="SOURCE_ONLY")
+        cases = (
+            (replace(self.principal, capabilities=frozenset()), metadata, _tbox(),
+             ConstructionConfig("extractor", "prompt"), ConstructionAuthorizationError),
+            (self.principal, replace(metadata, access_groups=frozenset({"private"})),
+             _tbox(), ConstructionConfig("extractor", "prompt"), ConstructionAuthorizationError),
+            (self.principal, metadata, None,
+             ConstructionConfig("extractor", "prompt"), ConstructionConflict),
+            (self.principal, metadata, _tbox("tenant-other"),
+             ConstructionConfig("extractor", "prompt"), ConstructionConflict),
+            (self.principal, metadata, _tbox(),
+             ConstructionConfig("extractor", "prompt", max_total_extraction_chars=5),
+             ConstructionBudgetExceeded),
+            (self.principal, metadata, _tbox(),
+             ConstructionConfig("extractor", "prompt", max_chunks=1),
+             ConstructionBudgetExceeded),
+        )
+        for principal, selected_metadata, tbox, config, error in cases:
+            with self.subTest(error=error, config=config, tbox=tbox):
+                workflow, audit, knowledge, pipeline = _workflow(
+                    extractor=_Extractor(_tbox()),
+                    tbox_store=_TBoxStore(tbox),
+                    config=config,
+                    parser=BoundedDocumentParser(
+                        chunking=ChunkingConfig(max_chars=8, minimum_boundary_ratio=1.0)
+                    ),
+                )
+                with self.assertRaises(error):
+                    workflow.run(principal, SOURCE, selected_metadata)
+                self.assertEqual(pipeline.requests, [])
+                self.assertEqual(audit.jobs, {})
+                self.assertEqual(knowledge.candidate_writes, 0)
+
+    def test_source_only_spends_no_model_budget_and_remains_deadline_bounded(self) -> None:
+        workflow, _audit, _knowledge, _pipeline = _workflow(
+            extractor=_Extractor(_tbox()),
+            config=ConstructionConfig("extractor", "prompt", max_chunks=4, max_model_calls=1),
+            parser=BoundedDocumentParser(
+                chunking=ChunkingConfig(max_chars=8, minimum_boundary_ratio=1.0)
+            ),
+        )
+        result = workflow.run(
+            self.principal, SOURCE, replace(_metadata(), extraction_mode="SOURCE_ONLY")
+        )
+        self.assertEqual(len(result.chunks), 3)
+        ticks = iter((0.0, 0.0, 151.0))
+        workflow.monotonic = lambda: next(ticks)
+        with self.assertRaises(ConstructionDeadlineExceeded):
+            workflow.run(
+                self.principal, SOURCE, replace(_metadata(), extraction_mode="SOURCE_ONLY")
+            )
+
+    def test_extraction_mode_is_closed_and_defaults_to_llm(self) -> None:
+        self.assertEqual(_metadata().extraction_mode, "LLM")
+        for value in (None, True, 1, "", "llm", "SKIP", []):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                replace(_metadata(), extraction_mode=value)
+
     def test_outcome_identity_conflict_raises_inside_transaction_for_rollback(self) -> None:
         driver = _RollbackAwareDriver()
         store = Neo4jConstructionAuditStore(driver)

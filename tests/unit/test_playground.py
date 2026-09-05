@@ -755,7 +755,7 @@ const context = vm.createContext({state, elements, requests, apiRequest, snapsho
   shortId: String, output() {}, activePublication: () => state.publications[0],
   loadPublicationCandidates: async () => {}, loadHistory: async () => {},
   loadQuality: async () => {}, loadActiveDocuments: async () => {},
-  loadQualityHistory: async () => {},
+  loadQualityHistory: async () => {}, refreshReviewResolutions() {},
 });
 vm.runInContext(input.source, context);
 const watchdog = setTimeout(() => { console.error('UI scenario did not finish'); process.exit(1); }, 5000);

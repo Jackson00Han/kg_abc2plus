@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 
 EVALUATION_BASELINE_SCHEMA_VERSION = "evaluation-baseline-v1"
-EVALUATION_BASELINE_VERSION = "1.4.0"
+EVALUATION_BASELINE_VERSION = "1.5.0"
 
 
 def compare(operator: str, observed: int | float, target: int | float) -> bool:

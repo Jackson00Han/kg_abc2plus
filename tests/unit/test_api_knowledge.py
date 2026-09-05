@@ -23,6 +23,7 @@ from graphrag_prod.api.knowledge_contracts import (
     DocumentRetirementRequest,
     DocumentRetirementResponse,
     KnowledgeConstructionRequest,
+    KnowledgeConstructionResponse,
     OntologyImportRequest,
     OntologyListRequest,
     OntologyListResponse,
@@ -1000,6 +1001,7 @@ class _Construction:
         self.call = _args
         return SimpleNamespace(
             job_id="job-1",
+            extraction_mode=_args[2].extraction_mode,
             document_id="document-1",
             version_id="version-1",
             snapshot_id="snapshot-1",
@@ -1011,7 +1013,7 @@ class _Construction:
                     status=self.status,
                     finding_codes=(),
                     mention_record_ids=(
-                        () if self.status == "EMPTY" else ("mention-1",)
+                        () if self.status in {"EMPTY", "SOURCE_ONLY"} else ("mention-1",)
                     ),
                     assertion_record_ids=(),
                     replayed=False,
@@ -2190,6 +2192,42 @@ class KnowledgeAdapterTests(unittest.TestCase):
 
         with self.assertRaises(ResourceNotFoundError):
             adapter.construction_job(principal, "missing-job")
+
+    def test_construct_source_only_contract_and_adapter_preserve_selected_mode(self) -> None:
+        construction = _Construction(status="SOURCE_ONLY")
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:construct"}),
+        )
+        request = KnowledgeConstructionRequest.model_validate(
+            _construct_payload(extraction_mode="SOURCE_ONLY")
+        )
+        result = self._adapter(
+            _Driver(), _KnowledgeStore(), construction=construction
+        ).construct(principal, request)
+        self.assertEqual(construction.call[2].extraction_mode, "SOURCE_ONLY")
+        self.assertEqual(result.payload.extraction_mode, "SOURCE_ONLY")
+        self.assertEqual(result.payload.chunks[0].status, "SOURCE_ONLY")
+        self.assertEqual(result.payload.chunks[0].mention_record_ids, ())
+        for mode in (None, "", "SKIP", "source_only", True, []):
+            with self.subTest(mode=mode), self.assertRaises(ValidationError):
+                KnowledgeConstructionRequest.model_validate(
+                    _construct_payload(extraction_mode=mode)
+                )
+        self.assertEqual(
+            KnowledgeConstructionRequest.model_validate(_construct_payload()).extraction_mode,
+            "LLM",
+        )
+        payload = result.payload.model_dump(mode="json")
+        for mutation in (
+            {"extraction_mode": "LLM"},
+            {"chunks": [{**payload["chunks"][0], "mention_record_ids": ["mention-1"]}]},
+            {"chunks": [{**payload["chunks"][0], "status": "EMPTY"}]},
+        ):
+            with self.subTest(mutation=mutation), self.assertRaises(ValidationError):
+                KnowledgeConstructionResponse.model_validate({**payload, **mutation})
 
     def test_construct_returns_empty_for_a_valid_no_fact_extraction(self) -> None:
         principal = Principal(

@@ -61,8 +61,9 @@ and governed extraction. Retrieval transactions remain bounded at 30 seconds.
 During startup warm-up only, a retrieval-store timeout permits one retry of the
 same read with the same vector and authorization. Embedding is not repeated;
 a second timeout or any other error still prevents the service from starting.
-Local construction is preflighted at four Chunks, four model calls, and 16,000
-extraction characters, then cooperatively capped at 90 seconds inside a
+Local construction is preflighted at four source-only Chunks or two LLM Chunks,
+four model calls per construction request, and 16,000 extraction characters,
+then cooperatively capped at 90 seconds inside a
 105-second API deadline. Answer
 generation is deliberately unavailable. Extraction uses a separate no-retry
 provider client with a 30-second per-call timeout and a 2,048-token output cap.
@@ -76,13 +77,35 @@ offsets. It supplies no entity or relationship suggestions, and never repairs
 model output: JSON, exact evidence spans, endpoint containment and the T-Box
 are still strictly validated before creating any candidate.
 
+The current `v4-validation-feedback` extraction prompt also makes explicit that
+every relationship endpoint and property subject must have an actually
+declared mention inside its evidence span. Numeric/code evidence must include
+the subject as well as the value/unit. The clarification and its observed
+limits are recorded in
+[`validation/industrial-demo-workbench.md`](validation/industrial-demo-workbench.md).
+
+Each Chunk may receive one validation-feedback correction after a bounded
+JSON, structural or evidence rejection. The second call receives the prior
+output and specific validation findings; it must pass the same validators.
+There is no mechanical span repair or authority promotion. Every attempt has
+an immutable, source/ACL/policy-bound audit, and the UI displays safe summaries
+without exposing raw model output. Oversized output is not retried or stored
+verbatim. Every actual call reserves the request's call and remaining-time
+budget; provider errors and timeouts never trigger automatic correction.
+
 Actual SDK timeouts return HTTP 504 (`code=dependency_timeout`); the recoverable
 construction job records the safe `MODEL_CALL_TIMEOUT` finding. Other model-call
 failures remain HTTP 503. Both leave a recoverable job, not
-approved knowledge, with no hidden model retries. A same-input/same-policy retry
+approved knowledge, with no automatic provider-error retries. A same-input/same-policy retry
 reuses completed Chunks. Changing model/request policy changes the extraction
 profile: use a new operation key; old audit data and outcomes are not rewritten
 or reused under the new policy.
+Explicit recovery starts a new bounded construction request; the four-call cap
+is per request, not a lifetime cap over user-initiated recovery requests. A
+terminal validation rejection is replayed for the same operation/job. Feedback
+artifacts are job-bound; a new operation key explicitly starts a new bounded
+job. Attempt summaries describe the terminal run, while interrupted-run audits
+remain immutable server-side records.
 
 Model availability does not guarantee that every document finishes within this
 local budget. The original 2026-09-05 timeout and its independent manual checks
@@ -151,6 +174,15 @@ import or extraction, review, and publication flow.
 
 ## Knowledge-construction workbench
 
+The [pump-maintenance walkthrough](industrial_demo_walkthrough.md) provides
+three downloadable, checksum-bound source files, a matching T-Box, and expert
+instances. The page's demo kit only downloads materials and prefills forms.
+Its authoritative source uses `SOURCE_ONLY`: parse/chunk/embed and source
+audit, without constructing an extractor, calling the extraction LLM, or
+creating candidates. The exact original file plus the successful runtime IDs
+fill an editable A-Box draft; importing and publishing remain explicit actions.
+These files are a fictional, agreed expert baseline for this project.
+
 Use the **知识构建** view for the complete property-graph governance loop:
 
 1. Edit and import the visible default industrial T-Box JSON. This creates a
@@ -173,7 +205,14 @@ Use the **知识构建** view for the complete property-graph governance loop:
    published T-Box key, and run construction. The UI defaults to one narrow
    group rather than silently broadening document visibility. The server parses
    and chunks the document, embeds each Chunk in the configured vector space,
-   and asks the configured LLM for T-Box-constrained proposals. The page shows
+   and, in the default `LLM` mode, asks the configured LLM for T-Box-constrained
+   proposals. `SOURCE_ONLY` ends after evidence ingestion and its audit so an
+   expert can import source-backed instances separately. It retains the character
+   and deadline bounds and permits four Chunks; LLM mode permits two to reserve
+   correction capacity. Embedding provider usage still applies.
+   Mode belongs to operation identity; changing it needs a new operation key.
+   A later LLM operation can reuse the same source, Chunks and embeddings.
+   The page shows
    the server-advertised Chunk/model-call/deadline cost boundaries when present.
    The 5 MiB transport limit is not a promise that a large file will pass these
    tighter local construction budgets; oversize parsed workloads are rejected
@@ -187,6 +226,13 @@ Use the **知识构建** view for the complete property-graph governance loop:
    may approve, reject, quarantine, or submit a strict JSON edit, individually
    or in a batch. Each card can also load the stable record's immutable revision
    history, including review status, actor, time, and notes where present.
+   Entity-resolution suggestions start automatically with at most two in-flight
+   reads. Results are scoped to identity, queue and revision; matching updates
+   only each suggestion panel so edits, selection and focus remain intact.
+   Manual refresh and authority/T-Box publication changes invalidate matching
+   context. Matching never applies a link, approves a record or publishes.
+   The explicit link action still requires reviewer confirmation and only
+   rebinds dependent facts, leaving those facts for separate review.
 5. Refresh recoverable publication candidates and select current approved or
    previously published-but-inactive revisions. Replacement candidates are
    identified and sent with the required logical record IDs. Manual revision
@@ -290,8 +336,9 @@ usable; it is not a live production deployment or a general-purpose chatbot.
 - It does not generate final answers.
 - It calls the configured embedding provider during startup and for each query,
   so provider availability, quota, latency, data handling, and cost apply.
-- It uses synthetic filing-like data only. The short-lived local JWTs grant
-  access solely to that disposable database.
+- Its startup corpus contains synthetic filing-like data. The industrial
+  exercise is also synthetic; other uploaded materials are caller-provided.
+  The short-lived local JWTs grant access solely to that disposable database.
 
 ## Focused checks
 

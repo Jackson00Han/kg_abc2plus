@@ -1,10 +1,10 @@
 # Stage 8 Validation Record
 
 - Original completion date: 2026-09-02
-- Current baseline maintenance date: 2026-09-05
+- Current baseline maintenance date: 2026-09-06
 - Acceptance contract: `contracts/acceptance.v1.json` version 1.0.1
 - Validation profile: `dev-mini` version 1.0.0
-- Reviewed regression baseline: `dev-mini.v1.json` version 1.4.0
+- Reviewed regression baseline: `dev-mini.v1.json` version 1.5.0
 - Unified gold: `evaluation/gold-v1/manifest.json` version 2.0.0
 - Representative corpus: `dev-corpus-v1` version 1.0.1
 - Answer gold: version 1.1.0
@@ -191,6 +191,23 @@ unit test IDs. No prior test IDs were removed or renamed, and all 160 case
 digests, 20 contract metrics, diagnostics and schema/quality identities stayed
 unchanged. See `extraction-timeout-correction.md` for the independently passing
 real-provider workflow and the limits of that small-source evidence.
+
+The 2026-09-06 industrial-demo workbench maintenance reviewed baseline version
+1.5.0. All 890 tests passed in one complete final-code development cycle: 707
+unit, 15 HTTP E2E, 33 security, two regression and 133 real-Neo4j tests, without
+skips. The revision adds source-only initialization, the versioned industrial
+kit, bounded model validation feedback, automatic resolution suggestions and
+an identity-query planning correction. Independent baseline comparison found
+exactly 58 additional unit and eight additional integration tests. No prior
+IDs were removed or renamed; all 160 case digests, 20 contract metrics,
+diagnostics and schema/quality identities stayed unchanged. The final
+semantic digest is
+`692c8b935cacd0e3370d172651c76d88f569b9a2023fc65301dfc9d1c6860fae`.
+Two report replays verify this same final evidence; they are not two full
+suite executions. See `industrial-demo-workbench.md` for browser checks, the
+real-provider construction/retrieval/retirement workflow, conservative
+multi-mention behavior and other remaining limits. This maintenance does not
+renew the historical Stage 9 qualification.
 
 Across the historical completion and later maintenance captures,
 gold/corpus rebuilds, acceptance-profile validation, lock verification,

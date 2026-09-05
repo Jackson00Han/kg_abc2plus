@@ -84,13 +84,15 @@ from tests.fixtures.dev_corpus import load_dev_corpus_fixture
 _PLAYGROUND_CONSTRUCTION_LIMITS = {
     "max_document_bytes": 5 * 1024 * 1024,
     "max_chunks": 4,
+    "max_llm_chunks": 2,
+    "max_validation_attempts": 2,
     "max_model_calls": 4,
     "max_total_extraction_chars": 16_000,
     "deadline_seconds": 90.0,
     "per_model_call_timeout_seconds": 30.0,
     "max_model_output_tokens": 2_048,
 }
-_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v2-token-spans"
+_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v4-validation-feedback"
 
 
 def _build_playground_extractor(client, model, tbox):
@@ -104,6 +106,7 @@ def _build_playground_extractor(client, model, tbox):
         seed=None,
         enable_thinking=False,
         include_span_hints=True,
+        max_validation_attempts=_PLAYGROUND_CONSTRUCTION_LIMITS["max_validation_attempts"],
         limits=ExtractionLimits(
             max_response_chars=16_384,
             max_output_tokens=2_048,
@@ -663,6 +666,7 @@ def build_playground_app(
         },
         capabilities={
             "document_upload": True,
+            "source_only_upload": True,
             "ontology_governance": True,
             "human_review": True,
             "knowledge_publication": True,

@@ -3,16 +3,18 @@
 The workflow intentionally publishes only source Documents, immutable Versions,
 Chunks, and Embeddings through the canonical ingestion pipeline.  Ontology-
 constrained model output is persisted separately as append-only CANDIDATE or
-QUARANTINED A-Box records, ready for explicit human review.
+QUARANTINED A-Box records, ready for explicit human review. SOURCE_ONLY uploads
+stop at audited source evidence, ready for a separate expert-instance import.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import json
 import math
 import time
+from uuid import uuid4
 from typing import Any, Callable, Protocol
 
 from graphrag_prod.domain.access import Principal
@@ -70,6 +72,7 @@ from .extraction import (
     ExtractionFinding,
     ExtractionLimits,
     ExtractionRejected,
+    ExtractionValidationAttempt,
 )
 from .parser import BoundedDocumentParser, ParsedDocument
 from .provider_errors import RETRYABLE_PROVIDER_FINDING_CODES
@@ -79,6 +82,7 @@ AUDIT_ARTIFACT_KIND = "ONTOLOGY_EXTRACTION_AUDIT"
 KNOWLEDGE_CONSTRUCTION_CAPABILITY = "knowledge:construct"
 CANONICAL_EMPTY_EXTRACTOR_SIGNATURE = "canonical-empty-extraction:v1"
 CANONICAL_EMPTY_PROMPT_SIGNATURE = "no-model-prompt:v1"
+SOURCE_ONLY_AUDIT_SIGNATURE = "source-only-evidence:v1"
 MAX_CONSTRUCTION_CHUNKS = 512
 MAX_CONSTRUCTION_MODEL_CALLS = 512
 MAX_CONSTRUCTION_EXTRACTION_CHARS = 5 * 1024 * 1024
@@ -98,6 +102,12 @@ def _aware(value: datetime | None, name: str) -> datetime | None:
     if value is not None and (value.tzinfo is None or value.utcoffset() is None):
         raise ValueError(f"{name} must be timezone-aware")
     return value
+
+
+def _extraction_mode(value: object) -> str:
+    if value not in ("LLM", "SOURCE_ONLY"):
+        raise ValueError("extraction_mode must be LLM or SOURCE_ONLY")
+    return str(value)
 
 
 def _require_construction_capability(principal: Principal) -> None:
@@ -141,6 +151,7 @@ class ConstructionMetadata:
     access_groups: frozenset[str]
     published_at: datetime | None = None
     max_attempts: int = 3
+    extraction_mode: str = "LLM"
 
     def __post_init__(self) -> None:
         for name in (
@@ -160,6 +171,7 @@ class ConstructionMetadata:
             raise ValueError("access_groups must not be empty")
         object.__setattr__(self, "access_groups", groups)
         _aware(self.published_at, "published_at")
+        _extraction_mode(self.extraction_mode)
         if (
             isinstance(self.max_attempts, bool)
             or not isinstance(self.max_attempts, int)
@@ -261,6 +273,7 @@ class ConstructionJobState:
     access_policy_version: int
     access_groups: frozenset[str]
     created_at: datetime
+    extraction_mode: str = "LLM"
 
     def __post_init__(self) -> None:
         for name in (
@@ -282,6 +295,15 @@ class ConstructionJobState:
         if not self.access_groups:
             raise ValueError("access_groups must not be empty")
         _aware(self.created_at, "created_at")
+        _extraction_mode(self.extraction_mode)
+
+
+@dataclass(frozen=True, slots=True)
+class ConstructionValidationAttempt:
+    attempt: int
+    status: str
+    finding_codes: tuple[str, ...]
+    response_checksum: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +315,7 @@ class ConstructionChunkResult:
     mention_record_ids: tuple[str, ...]
     assertion_record_ids: tuple[str, ...]
     replayed: bool = False
+    validation_attempts: tuple[ConstructionValidationAttempt, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +328,7 @@ class KnowledgeConstructionResult:
     tbox_id: str
     ingestion: IngestionResult
     chunks: tuple[ConstructionChunkResult, ...]
+    extraction_mode: str = "LLM"
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +350,7 @@ class ConstructionJobView:
     failed_chunk_id: str | None = None
     last_finding_codes: tuple[str, ...] = ()
     chunks: tuple[ConstructionChunkResult, ...] = ()
+    extraction_mode: str = "LLM"
 
     def __post_init__(self) -> None:
         for name in (
@@ -355,6 +380,7 @@ class ConstructionJobView:
         _aware(self.created_at, "created_at")
         _aware(self.updated_at, "updated_at")
         _aware(self.completed_at, "completed_at")
+        _extraction_mode(self.extraction_mode)
 
 
 class ConstructionConflict(RuntimeError):
@@ -755,6 +781,7 @@ class Neo4jConstructionAuditStore:
             "snapshot_id": state.snapshot_id,
             "tbox_id": state.tbox_id,
             "expected_chunks": expected_chunks,
+            "extraction_mode": state.extraction_mode,
         }
         captured_lifecycle = {
             "expected_active_snapshot_id": state.expected_active_snapshot_id or "",
@@ -790,6 +817,7 @@ class Neo4jConstructionAuditStore:
             access_policy_version=int(stored["access_policy_version"]),
             access_groups=frozenset(stored["access_groups"]),
             created_at=_native_datetime(stored["created_at"], "created_at"),
+            extraction_mode=stored.get("extraction_mode", "LLM"),
         )
 
     @staticmethod
@@ -810,7 +838,9 @@ class Neo4jConstructionAuditStore:
                           job.updated_at = $created_at
             RETURN all(
                        key IN keys($identity)
-                       WHERE job[key] = $identity[key]
+                       WHERE CASE WHEN key = 'extraction_mode'
+                           THEN coalesce(job[key], 'LLM') ELSE job[key]
+                           END = $identity[key]
                    ) AS compatible,
                    job{.*} AS job
             """,
@@ -1198,6 +1228,7 @@ def _construction_job_view(row: Any) -> ConstructionJobView:
             failed_chunk_id=properties.get("failed_chunk_id"),
             last_finding_codes=tuple(properties.get("last_finding_codes") or ()),
             chunks=tuple(sorted(chunks, key=lambda item: item.chunk_id)),
+            extraction_mode=properties.get("extraction_mode", "LLM"),
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ConstructionConflict("stored construction job is invalid") from exc
@@ -1212,6 +1243,7 @@ def _chunk_result_payload(result: ConstructionChunkResult) -> dict[str, object]:
         "finding_codes": list(result.finding_codes),
         "mention_record_ids": list(result.mention_record_ids),
         "assertion_record_ids": list(result.assertion_record_ids),
+        "validation_attempts": [asdict(item) for item in result.validation_attempts],
     }
 
 
@@ -1234,7 +1266,38 @@ def _chunk_result_from_payload(
             _required(item, "assertion record ID") for item in payload["assertion_record_ids"]
         ),
         replayed=replayed,
+        validation_attempts=_validation_attempt_summaries(payload),
     )
+
+
+def _validation_attempt_summaries(
+    payload: dict[str, Any],
+) -> tuple[ConstructionValidationAttempt, ...]:
+    values = payload.get("validation_attempts", [])
+    if not isinstance(values, (tuple, list)) or len(values) > 2:
+        raise ConstructionConflict("invalid validation attempt summaries")
+    results = []
+    for number, value in enumerate(values, 1):
+        checksum = value.get("response_checksum")
+        if (
+            value.get("attempt") != number
+            or isinstance(value.get("attempt"), bool)
+            or value.get("status") not in {
+                "CANDIDATE", "QUARANTINED", "REJECTED", "PROVIDER_ERROR",
+            }
+            or (checksum is not None and (
+                not isinstance(checksum, str) or len(checksum) != 64
+                or any(c not in "0123456789abcdef" for c in checksum)
+            ))
+        ):
+            raise ConstructionConflict("invalid validation attempt summary")
+        results.append(ConstructionValidationAttempt(
+            attempt=number,
+            status=value["status"],
+            finding_codes=tuple(_required(code, "finding code") for code in value["finding_codes"]),
+            response_checksum=checksum,
+        ))
+    return tuple(results)
 
 
 def _audit_input_hash(
@@ -1694,12 +1757,12 @@ class Neo4jKnowledgeConstructionWorkflow:
                 "knowledge construction reached its cooperative deadline"
             )
 
-    def _preflight_budget(self, parsed: ParsedDocument) -> None:
+    def _preflight_budget(self, parsed: ParsedDocument, *, extraction_mode: str) -> None:
         chunk_count = len(parsed.chunks)
         total_chars = sum(len(chunk.text) for chunk in parsed.chunks)
         if chunk_count > self.config.max_chunks:
             raise ConstructionBudgetExceeded("source exceeds the configured Chunk budget")
-        if chunk_count > self.config.max_model_calls:
+        if extraction_mode == "LLM" and chunk_count > self.config.max_model_calls:
             raise ConstructionBudgetExceeded(
                 "source exceeds the configured model-call budget"
             )
@@ -1740,6 +1803,8 @@ class Neo4jKnowledgeConstructionWorkflow:
 
         policy_signature = getattr(extractor, "request_policy_signature", None)
         if policy_signature is None:
+            if getattr(extractor, "max_validation_attempts", 1) > 1:
+                raise ConstructionConflict("corrective extraction requires a request-policy signature")
             return self.config.extractor_signature
         if (
             not isinstance(policy_signature, str)
@@ -1767,23 +1832,49 @@ class Neo4jKnowledgeConstructionWorkflow:
         deadline = self._monotonic_now() + self.config.deadline_seconds
         self._require_deadline(deadline)
         parsed = self.parser.parse(payload, mime_type=metadata.mime_type)
-        self._preflight_budget(parsed)
+        self._preflight_budget(parsed, extraction_mode=metadata.extraction_mode)
         self._require_deadline(deadline)
         tbox = self.tbox_store.active(principal.tenant_id, metadata.tbox_key)
-        if tbox is None or tbox.status is not TBoxStatus.PUBLISHED:
+        if (
+            tbox is None
+            or tbox.status is not TBoxStatus.PUBLISHED
+            or tbox.tenant_id != principal.tenant_id
+            or tbox.key != metadata.tbox_key
+        ):
             raise ConstructionConflict("tenant has no active PUBLISHED T-Box for this key")
         self._require_deadline(deadline)
-        extractor = self.extractor_factory(tbox)
-        if (
-            extractor.active_tbox.tenant_id != principal.tenant_id
-            or extractor.active_tbox.tbox_id != tbox.tbox_id
-            or extractor.active_tbox.checksum != tbox.checksum
-        ):
-            raise ConstructionConflict("extractor is not pinned to the active tenant T-Box")
-        if extractor.prompt_version != self.config.prompt_signature:
-            raise ConstructionConflict("extractor prompt version differs from configuration")
-        provider_timeout = self._provider_timeout(extractor)
-        extractor_signature = self._bound_extractor_signature(extractor)
+        extractor = None
+        provider_timeout = 0.0
+        extractor_signature = SOURCE_ONLY_AUDIT_SIGNATURE
+        prompt_signature = CANONICAL_EMPTY_PROMPT_SIGNATURE
+        if metadata.extraction_mode == "LLM":
+            extractor = self.extractor_factory(tbox)
+            if (
+                extractor.active_tbox.tenant_id != principal.tenant_id
+                or extractor.active_tbox.tbox_id != tbox.tbox_id
+                or extractor.active_tbox.checksum != tbox.checksum
+            ):
+                raise ConstructionConflict("extractor is not pinned to the active tenant T-Box")
+            if extractor.prompt_version != self.config.prompt_signature:
+                raise ConstructionConflict("extractor prompt version differs from configuration")
+            provider_timeout = self._provider_timeout(extractor)
+            validation_attempts = getattr(extractor, "max_validation_attempts", 1)
+            if (
+                isinstance(validation_attempts, bool)
+                or not isinstance(validation_attempts, int)
+                or validation_attempts not in (1, 2)
+            ):
+                raise ConstructionConflict("extractor validation-attempt bound is invalid")
+            if len(parsed.chunks) * validation_attempts > self.config.max_model_calls:
+                raise ConstructionBudgetExceeded(
+                    "source exceeds the model-call budget including validation correction"
+                )
+            if validation_attempts > 1 and not callable(
+                getattr(extractor, "extract_audited_bounded", None)
+            ):
+                raise ConstructionConflict("corrective extraction requires bounded call hooks")
+            extractor_signature = self._bound_extractor_signature(extractor)
+            prompt_signature = self.config.prompt_signature
         self._require_deadline(deadline)
 
         governance = tbox.compile_governance_policy()
@@ -1798,7 +1889,7 @@ class Neo4jKnowledgeConstructionWorkflow:
         extraction_profile = _profile(
             splitter_signature=parsed.splitter_signature,
             extractor_signature=extractor_signature,
-            prompt_signature=self.config.prompt_signature,
+            prompt_signature=prompt_signature,
             schema_signature=governance.policy_id,
             code_signature=self.config.code_signature,
             normalizer_signature=self.config.normalizer_signature,
@@ -1845,6 +1936,12 @@ class Neo4jKnowledgeConstructionWorkflow:
                     "ingestion_profile_id": ingestion_profile.profile_id,
                     "extraction_profile_id": extraction_profile.profile_id,
                     "access_groups": sorted(metadata.access_groups),
+                    # Keep already-published LLM request identities replayable.
+                    **(
+                        {"extraction_mode": "SOURCE_ONLY"}
+                        if metadata.extraction_mode == "SOURCE_ONLY"
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -1875,6 +1972,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                 access_policy_version=observed.access_policy_version,
                 access_groups=observed.access_groups,
                 created_at=now,
+                extraction_mode=metadata.extraction_mode,
             ),
             expected_chunks=len(parsed.chunks),
         )
@@ -1905,6 +2003,18 @@ class Neo4jKnowledgeConstructionWorkflow:
 
         for chunk in chunks:
             self._require_deadline(deadline)
+            if metadata.extraction_mode == "SOURCE_ONLY":
+                results.append(
+                    self._process_source_chunk(
+                        principal=principal,
+                        job=job,
+                        tbox=tbox,
+                        profile=extraction_profile,
+                        chunk=chunk,
+                    )
+                )
+                continue
+            assert extractor is not None
             results.append(
                 self._process_chunk(
                     principal=principal,
@@ -1935,7 +2045,87 @@ class Neo4jKnowledgeConstructionWorkflow:
             tbox_id=tbox.tbox_id,
             ingestion=ingestion,
             chunks=tuple(results),
+            extraction_mode=metadata.extraction_mode,
         )
+
+    def _process_source_chunk(
+        self,
+        *,
+        principal: Principal,
+        job: ConstructionJobState,
+        tbox: TBoxVersion,
+        profile: GraphPipelineProfile,
+        chunk: Chunk,
+    ) -> ConstructionChunkResult:
+        """Audit deliberate model omission without manufacturing knowledge records."""
+
+        completed = self.audit_store.read_outcome(
+            principal, job_id=job.job_id, chunk_id=chunk.chunk_id
+        )
+        if completed is not None:
+            if (
+                completed.status != "SOURCE_ONLY"
+                or completed.mention_record_ids
+                or completed.assertion_record_ids
+                or completed.finding_codes
+            ):
+                raise ConstructionConflict("source-only outcome contains extracted knowledge")
+            return completed
+        payload = {
+            "format_version": 1,
+            "extraction_mode": "SOURCE_ONLY",
+            "status": "SOURCE_ONLY",
+            "chunk_id": chunk.chunk_id,
+            "chunk_checksum": chunk.checksum,
+            "char_start": chunk.char_start,
+            "char_end": chunk.char_end,
+            "document_id": job.document_id,
+            "version_id": job.version_id,
+            "ontology_version_id": tbox.tbox_id,
+            "ontology_checksum": tbox.checksum,
+            "extractor_version": profile.extractor_signature,
+            "prompt_version": profile.prompt_signature,
+            "model_calls": 0,
+        }
+        input_hash = _fingerprint(payload)
+        artifact_id = derivation_artifact_id(
+            principal.tenant_id, AUDIT_ARTIFACT_KIND, input_hash, profile.profile_id
+        )
+        stored = self.audit_store.read_artifact(
+            tenant_id=principal.tenant_id,
+            artifact_id=artifact_id,
+            input_hash=input_hash,
+            profile_id=profile.profile_id,
+        )
+        if stored is None:
+            self.audit_store.persist_artifact(
+                tenant_id=principal.tenant_id,
+                artifact_id=artifact_id,
+                input_hash=input_hash,
+                profile_id=profile.profile_id,
+                payload=payload,
+                created_at=self.clock(),
+            )
+        elif stored != payload:
+            raise ConstructionConflict("source-only audit metadata conflicts")
+        result = ConstructionChunkResult(
+            chunk_id=chunk.chunk_id,
+            artifact_id=artifact_id,
+            status="SOURCE_ONLY",
+            finding_codes=(),
+            mention_record_ids=(),
+            assertion_record_ids=(),
+        )
+        self.audit_store.persist_outcome(
+            principal,
+            job_id=job.job_id,
+            result=result,
+            access_groups=chunk.access_groups,
+            artifact_input_hash=input_hash,
+            artifact_profile_id=profile.profile_id,
+            completed_at=self.clock(),
+        )
+        return result
 
     def _ingestion_request(
         self,
@@ -1989,9 +2179,12 @@ class Neo4jKnowledgeConstructionWorkflow:
             job_id=job.job_id,
             chunk_id=chunk.chunk_id,
         )
-        if completed is not None:
+        uses_feedback = getattr(extractor, "max_validation_attempts", 1) > 1
+        if completed is not None and not uses_feedback:
             return completed
         input_hash = _audit_input_hash(chunk, tbox, extractor, profile)
+        if uses_feedback:
+            input_hash = _fingerprint({"input_hash": input_hash, "job_id": job.job_id})
         artifact_id = derivation_artifact_id(
             principal.tenant_id,
             AUDIT_ARTIFACT_KIND,
@@ -2005,19 +2198,87 @@ class Neo4jKnowledgeConstructionWorkflow:
             profile_id=profile.profile_id,
         )
         if payload is None:
-            self._require_deadline(
-                deadline,
-                minimum_remaining=provider_timeout,
-            )
-            reserve_model_call()
+            if completed is not None:
+                raise ConstructionConflict("completed validation audit is missing")
             extracted_at = self.clock()
-            try:
-                audited = extractor.extract_audited(
-                    artifact_id=artifact_id,
-                    input_hash=input_hash,
-                    chunk=chunk,
-                    profile=profile,
+            attempt_refs: list[dict[str, Any]] = []
+            # A manual dependency recovery starts a new bounded run, retaining
+            # the immutable attempts from the interrupted run under this job.
+            validation_run_id = uuid4().hex
+            scope = {
+                "tenant_id": principal.tenant_id,
+                "job_id": job.job_id,
+                "document_id": chunk.document_id,
+                "version_id": chunk.version_id,
+                "chunk_id": chunk.chunk_id,
+                "chunk_checksum": chunk.checksum,
+                "access_policy_id": chunk.access_policy_id,
+                "access_policy_version": chunk.access_policy_version,
+                "access_groups": sorted(chunk.access_groups),
+                "ontology_version_id": tbox.tbox_id,
+                "ontology_checksum": tbox.checksum,
+                "profile_id": profile.profile_id,
+                "extractor_version": profile.extractor_signature,
+                "prompt_version": profile.prompt_signature,
+                "model": extractor.model,
+                "parent_artifact_id": artifact_id,
+            }
+
+            def before_model_call() -> None:
+                self._require_deadline(deadline, minimum_remaining=provider_timeout)
+                reserve_model_call()
+
+            def retain_attempt(attempt: ExtractionValidationAttempt) -> None:
+                summary = {
+                    "attempt": attempt.attempt,
+                    "status": attempt.status,
+                    "finding_codes": [item.code for item in attempt.findings],
+                    "response_checksum": attempt.response_checksum,
+                }
+                attempt_payload = {
+                    "format_version": 1,
+                    "audit_type": "VALIDATION_ATTEMPT",
+                    **scope,
+                    **summary,
+                    "validation_run_id": validation_run_id,
+                    "previous_attempt_artifact_id": (
+                        attempt_refs[-1]["artifact_id"] if attempt_refs else None
+                    ),
+                    "response": attempt.response,
+                    "response_chars": attempt.response_chars,
+                    "provider_seconds": attempt.provider_seconds,
+                    "findings": [asdict(item) for item in attempt.findings],
+                    "recorded_at": self.clock().isoformat(),
+                }
+                attempt_hash = _fingerprint(attempt_payload)
+                attempt_id = derivation_artifact_id(
+                    principal.tenant_id, AUDIT_ARTIFACT_KIND,
+                    attempt_hash, profile.profile_id,
                 )
+                self.audit_store.persist_artifact(
+                    tenant_id=principal.tenant_id, artifact_id=attempt_id,
+                    input_hash=attempt_hash, profile_id=profile.profile_id,
+                    payload=attempt_payload, created_at=self.clock(),
+                )
+                attempt_refs.append({
+                    "artifact_id": attempt_id, "input_hash": attempt_hash,
+                    "summary": summary,
+                })
+
+            try:
+                if uses_feedback:
+                    audited = extractor.extract_audited_bounded(  # type: ignore[attr-defined]
+                        artifact_id=artifact_id, input_hash=input_hash,
+                        chunk=chunk, profile=profile,
+                        before_model_call=before_model_call,
+                        on_validation_attempt=retain_attempt,
+                    )
+                else:
+                    before_model_call()
+                    audited = extractor.extract_audited(
+                        artifact_id=artifact_id, input_hash=input_hash,
+                        chunk=chunk, profile=profile,
+                    )
             except ExtractionRejected as exc:
                 if any(
                     item.code in RETRYABLE_PROVIDER_FINDING_CODES
@@ -2046,6 +2307,9 @@ class Neo4jKnowledgeConstructionWorkflow:
                     chunk=chunk,
                     extracted_at=extracted_at,
                 )
+            if uses_feedback:
+                payload["validation_attempts"] = [item["summary"] for item in attempt_refs]
+                payload["validation_attempt_artifacts"] = attempt_refs
             self.audit_store.persist_artifact(
                 tenant_id=principal.tenant_id,
                 artifact_id=artifact_id,
@@ -2053,6 +2317,12 @@ class Neo4jKnowledgeConstructionWorkflow:
                 profile_id=profile.profile_id,
                 payload=payload,
                 created_at=extracted_at,
+            )
+        validation_attempts = _validation_attempt_summaries(payload)
+        if uses_feedback:
+            self._verify_validation_attempts(
+                payload=payload, job=job, chunk=chunk, profile=profile,
+                artifact_id=artifact_id,
             )
         audited, findings, extracted_at = _decode_audited_payload(
             payload,
@@ -2066,6 +2336,26 @@ class Neo4jKnowledgeConstructionWorkflow:
             if audited is None
             else _to_abox_batch(audited, chunk=chunk, extracted_at=extracted_at)
         )
+        status = (
+            GovernanceStatus.REJECTED.value
+            if audited is None
+            else ("EMPTY" if batch is None else audited.status.value)
+        )
+        if completed is not None:
+            if (
+                completed.validation_attempts != validation_attempts
+                or completed.finding_codes != tuple(item.code for item in findings)
+                or completed.status != status
+                or completed.artifact_id != artifact_id
+                or completed.mention_record_ids != (
+                    () if batch is None else tuple(item.record_id for item in batch.mentions)
+                )
+                or completed.assertion_record_ids != (
+                    () if batch is None else tuple(item.record_id for item in batch.assertions)
+                )
+            ):
+                raise ConstructionConflict("completed validation outcome conflicts")
+            return completed
         if batch is not None and not _batch_is_already_persisted(
             self.knowledge_store,
             principal,
@@ -2077,15 +2367,6 @@ class Neo4jKnowledgeConstructionWorkflow:
                 self.knowledge_store.persist_llm_quarantined(batch)
             else:
                 raise ConstructionConflict("invalid A-Box persistence lane")
-        status = (
-            GovernanceStatus.REJECTED.value
-            if audited is None
-            else (
-                "EMPTY"
-                if batch is None
-                else audited.status.value
-            )
-        )
         result = ConstructionChunkResult(
             chunk_id=chunk.chunk_id,
             artifact_id=artifact_id,
@@ -2097,6 +2378,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             assertion_record_ids=(
                 () if batch is None else tuple(item.record_id for item in batch.assertions)
             ),
+            validation_attempts=validation_attempts,
         )
         self.audit_store.persist_outcome(
             principal,
@@ -2108,6 +2390,62 @@ class Neo4jKnowledgeConstructionWorkflow:
             completed_at=self.clock(),
         )
         return result
+
+
+    def _verify_validation_attempts(
+        self, *, payload: dict[str, Any], job: ConstructionJobState,
+        chunk: Chunk, profile: GraphPipelineProfile, artifact_id: str,
+    ) -> None:
+        """Fail closed if a recovered final audit has lost or changed its chain."""
+        summaries = payload.get("validation_attempts", [])
+        refs = payload.get("validation_attempt_artifacts", [])
+        if not 1 <= len(refs) <= 2 or len(refs) != len(summaries):
+            raise ConstructionConflict("validation attempt audit chain is missing")
+        previous_id = None
+        run_id = None
+        for number, (reference, summary) in enumerate(zip(refs, summaries, strict=True), 1):
+            attempt = self.audit_store.read_artifact(
+                tenant_id=chunk.tenant_id, artifact_id=reference["artifact_id"],
+                input_hash=reference["input_hash"], profile_id=profile.profile_id,
+            )
+            if attempt is None or _fingerprint(attempt) != reference["input_hash"]:
+                raise ConstructionConflict("validation attempt artifact conflicts")
+            expected_scope = {
+                "audit_type": "VALIDATION_ATTEMPT", "tenant_id": chunk.tenant_id,
+                "job_id": job.job_id, "document_id": chunk.document_id,
+                "version_id": chunk.version_id, "chunk_id": chunk.chunk_id,
+                "chunk_checksum": chunk.checksum,
+                "access_policy_id": chunk.access_policy_id,
+                "access_policy_version": chunk.access_policy_version,
+                "access_groups": sorted(chunk.access_groups),
+                "ontology_version_id": payload["ontology_version_id"],
+                "ontology_checksum": payload["ontology_checksum"],
+                "extractor_version": profile.extractor_signature,
+                "prompt_version": profile.prompt_signature,
+                "model": payload["model"], "profile_id": profile.profile_id,
+                "parent_artifact_id": artifact_id,
+                "previous_attempt_artifact_id": previous_id,
+                **summary,
+            }
+            if any(attempt.get(key) != value for key, value in expected_scope.items()):
+                raise ConstructionConflict("validation attempt provenance conflicts")
+            if (
+                reference.get("summary") != summary
+                or attempt.get("attempt") != number
+                or (run_id is not None and attempt.get("validation_run_id") != run_id)
+                or (number < len(refs) and summary["status"] != "REJECTED")
+            ):
+                raise ConstructionConflict("validation attempt sequence conflicts")
+            raw = attempt.get("response")
+            if raw is not None and (
+                content_checksum(raw) != attempt["response_checksum"]
+                or len(raw) != attempt["response_chars"]
+            ):
+                raise ConstructionConflict("validation attempt response conflicts")
+            run_id = _required(attempt.get("validation_run_id"), "validation_run_id")
+            previous_id = reference["artifact_id"]
+        if summaries[-1]["status"] != payload["disposition"]:
+            raise ConstructionConflict("validation attempt final disposition conflicts")
 
 
 def _empty_canonical_extraction(**_kwargs: object) -> ExtractionOutput:
@@ -2133,6 +2471,7 @@ __all__ = [
     "ConstructionDeadlineExceeded",
     "ConstructionJobState",
     "ConstructionMetadata",
+    "ConstructionValidationAttempt",
     "KnowledgeConstructionResult",
     "Neo4jConstructionAuditStore",
     "Neo4jKnowledgeConstructionWorkflow",

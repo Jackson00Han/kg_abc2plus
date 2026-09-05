@@ -2,6 +2,18 @@
 
 ## Deferred
 
+- [ ] Design and evaluate evidence-safe identity propagation across multiple
+  mentions of one proposed entity. Current authoritative matching only reads
+  identity-property facts bound to the current mention revision; a matching
+  name or shared model entity ref must not transfer another mention's code.
+  The initial 185-character pump report exposed this boundary: the first
+  equipment mention had EquipmentCode evidence, while later mentions could
+  fail closed with missing-identity CONFLICT. The introductory report now uses
+  one equipment mention; retain multi-mention, homonym, conflicting-code,
+  tenant/ACL, document-version and revision-staleness cases for the future
+  design. Any extension must preserve exact source provenance and auditable
+  human decisions rather than bypassing current resolution checks.
+
 - [ ] Evaluate and add an independent reranker after the graph-expansion
   tuning is validated. Compare the current embedding-cosine candidate rerank
   against an established cross-encoder or provider reranker on the versioned
@@ -16,6 +28,18 @@
   successful explicit Document-filter diagnostic as an unfiltered-query pass.
 
 ## Current work
+
+- [x] Bound model validation feedback to one corrective call per Chunk, with
+  per-call budget/deadline checks, immutable attempt audit and safe UI summaries.
+  Provider failures and oversized output do not auto-retry. Preserve default
+  single-attempt compatibility, exact evidence, review and publication gates.
+
+
+- [x] Provide a versioned pump-maintenance exercise, downloadable source files,
+  source-only construction, exact runtime-ID binding for expert import, and a
+  Chinese step-by-step browser walkthrough. Automatically compute bounded
+  entity-resolution suggestions while preserving explicit linking, review
+  and publication.
 
 - [x] Tighten the local Playground graph-expansion limits and verify retrieval
   quality, tenant/access isolation, bounded execution, and Retrieval Trace
@@ -55,9 +79,13 @@
   See `docs/validation/extraction-timeout-correction.md`; the earlier failed
   attempt remains historical evidence, not silently relabelled as a pass.
 
-- [ ] Complete an actual browser visual/click acceptance pass when a browser
-  runtime is available. Executable Node VM interaction tests and real HTTP
-  checks pass, but this session could not obtain an in-app browser.
+- [x] Complete browser visual/click checks of the industrial-demo preparation
+  flow using standalone Chromium: real file downloads, source hashes, identity,
+  T-Box/metadata prefill and desktop/narrow layouts passed. Isolated mocked
+  queue responses additionally verified bounded matching and preserved edits.
+  The construction/review/publication lifecycle is checked separately over
+  authenticated HTTP, not claimed as browser-click evidence. See
+  `docs/validation/industrial-demo-workbench.md`.
 
 ## Completed follow-ups
 

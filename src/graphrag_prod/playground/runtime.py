@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from graphrag_prod.api.backend import ProviderUsage, QueryEmbedding
 from graphrag_prod.retrieval import RetrievalLimits
+from .industrial_demo import get_industrial_demo_kit
 
 PLAYGROUND_ISSUER = "sample-graphrag-local-playground"
 PLAYGROUND_AUDIENCE = "sample-graphrag-local-api"
@@ -310,6 +311,7 @@ class PlaygroundCatalog:
             "custom_semantic_retrieval": self._embedding_metadata is not None,
             "custom_bm25_retrieval": True,
             "document_upload": False,
+            "source_only_upload": False,
             "ontology_governance": False,
             "human_review": False,
             "knowledge_publication": False,
@@ -347,6 +349,7 @@ class PlaygroundCatalog:
                 "industrial_tbox_template": deepcopy(
                     DEFAULT_INDUSTRIAL_TBOX_TEMPLATE
                 ),
+                "industrial_demo": get_industrial_demo_kit(),
             },
             "capabilities": capabilities,
         }
@@ -470,6 +473,28 @@ def attach_playground_routes(app: FastAPI, catalog: PlaygroundCatalog) -> None:
     async def playground_bootstrap(response: Response) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
         return catalog.bootstrap()
+
+    @app.get("/playground/demo-files/{filename}", include_in_schema=False)
+    async def playground_demo_file(filename: str) -> Response:
+        # This allowlist serves committed synthetic teaching material only.
+        # Runtime documents and filesystem paths never enter this route.
+        item = next(
+            (entry for entry in get_industrial_demo_kit()["files"]
+             if entry["filename"] == filename),
+            None,
+        )
+        if item is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="demo file not found")
+        return Response(
+            item["text"].encode("utf-8"),
+            media_type=item["mime_type"],
+            headers={
+                **security_headers,
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
 
     @app.post("/playground/session", include_in_schema=False)
     async def playground_session(

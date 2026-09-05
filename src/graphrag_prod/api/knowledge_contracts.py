@@ -447,6 +447,7 @@ class AuthoritativeImportResponse(StrictAPIModel):
 
 
 class KnowledgeConstructionRequest(StrictAPIModel):
+    extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
     operation_key: Annotated[
         str,
         StringConstraints(
@@ -537,24 +538,55 @@ class KnowledgeConstructionRequest(StrictAPIModel):
         return base64.b64decode(self.content_base64, validate=True)
 
 
-class ConstructionChunkResponse(StrictAPIModel):
-    chunk_id: Identifier
-    artifact_id: Identifier
-    status: Literal["CANDIDATE", "QUARANTINED", "REJECTED", "EMPTY"]
+class ConstructionValidationAttemptResponse(StrictAPIModel):
+    attempt: Annotated[int, Field(strict=True, ge=1, le=2)]
+    status: Literal["CANDIDATE", "QUARANTINED", "REJECTED", "PROVIDER_ERROR"]
     finding_codes: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
-    mention_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
-    assertion_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
-    replayed: bool
+    response_checksum: Digest | None
 
-    @field_validator(
-        "finding_codes", "mention_record_ids", "assertion_record_ids", mode="before"
-    )
+    @field_validator("finding_codes", mode="before")
     @classmethod
     def accept_json_arrays(cls, value: object) -> object:
         return _json_array(value)
 
 
+class ConstructionChunkResponse(StrictAPIModel):
+    chunk_id: Identifier
+    artifact_id: Identifier
+    status: Literal["CANDIDATE", "QUARANTINED", "REJECTED", "EMPTY", "SOURCE_ONLY"]
+    finding_codes: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
+    mention_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
+    assertion_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
+    replayed: bool
+    validation_attempts: Annotated[
+        tuple[ConstructionValidationAttemptResponse, ...], Field(max_length=2)
+    ] = ()
+
+    @field_validator(
+        "finding_codes", "mention_record_ids", "assertion_record_ids",
+        "validation_attempts", mode="before"
+    )
+    @classmethod
+    def accept_json_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def source_only_has_no_proposals(self) -> Self:
+        if self.status == "SOURCE_ONLY" and (
+            self.finding_codes or self.mention_record_ids or self.assertion_record_ids
+            or self.validation_attempts
+        ):
+            raise ValueError("source-only outcomes cannot contain extracted knowledge")
+        if any(
+            value.attempt != number
+            for number, value in enumerate(self.validation_attempts, 1)
+        ):
+            raise ValueError("validation attempts must be consecutive from one")
+        return self
+
+
 class KnowledgeConstructionResponse(StrictAPIModel):
+    extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
     job_id: Identifier
     document_id: Identifier
     version_id: Identifier
@@ -569,6 +601,15 @@ class KnowledgeConstructionResponse(StrictAPIModel):
     @classmethod
     def accept_json_array(cls, value: object) -> object:
         return _json_array(value)
+
+    @model_validator(mode="after")
+    def chunks_match_extraction_mode(self) -> Self:
+        if any(
+            (chunk.status == "SOURCE_ONLY") != (self.extraction_mode == "SOURCE_ONLY")
+            for chunk in self.chunks
+        ):
+            raise ValueError("chunk outcomes must match extraction_mode")
+        return self
 
 
 class ConstructionJobListRequest(StrictAPIModel):
@@ -590,6 +631,7 @@ class ConstructionJobListRequest(StrictAPIModel):
 
 
 class ConstructionJobResponse(StrictAPIModel):
+    extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
     job_id: Identifier
     document_id: Identifier
     version_id: Identifier
@@ -614,6 +656,11 @@ class ConstructionJobResponse(StrictAPIModel):
     def valid_progress(self) -> Self:
         if self.completed_chunks > self.expected_chunks:
             raise ValueError("completed_chunks exceeds expected_chunks")
+        if any(
+            (chunk.status == "SOURCE_ONLY") != (self.extraction_mode == "SOURCE_ONLY")
+            for chunk in self.chunks
+        ):
+            raise ValueError("chunk outcomes must match extraction_mode")
         return self
 
 
@@ -1470,6 +1517,7 @@ __all__ = [
     "AuthoritativeImportRequest",
     "AuthoritativeImportResponse",
     "ConstructionChunkResponse",
+    "ConstructionValidationAttemptResponse",
     "ConstructionJobListRequest",
     "ConstructionJobListResponse",
     "ConstructionJobResponse",

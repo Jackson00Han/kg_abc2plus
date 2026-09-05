@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Callable
 
@@ -398,11 +399,15 @@ def _construction_chunk_payload(value: Any) -> dict[str, object]:
         "mention_record_ids": value.mention_record_ids,
         "assertion_record_ids": value.assertion_record_ids,
         "replayed": value.replayed,
+        "validation_attempts": tuple(
+            asdict(item) for item in getattr(value, "validation_attempts", ())
+        ),
     }
 
 
 def _construction_job_payload(value: Any) -> dict[str, object]:
     return {
+        "extraction_mode": value.extraction_mode,
         "job_id": value.job_id,
         "document_id": value.document_id,
         "version_id": value.version_id,
@@ -1139,6 +1144,7 @@ class Neo4jKnowledgeOperations:
                 access_groups=frozenset(request.access_groups),
                 published_at=request.published_at,
                 max_attempts=request.max_attempts,
+                extraction_mode=request.extraction_mode,
             )
             content = request.decoded_content()
         except (TypeError, ValueError) as error:
@@ -1168,22 +1174,12 @@ class Neo4jKnowledgeOperations:
         try:
             payload = {
                 "job_id": result.job_id,
+                "extraction_mode": result.extraction_mode,
                 "document_id": result.document_id,
                 "version_id": result.version_id,
                 "snapshot_id": result.snapshot_id,
                 "tbox_id": result.tbox_id,
-                "chunks": tuple(
-                    {
-                        "chunk_id": item.chunk_id,
-                        "artifact_id": item.artifact_id,
-                        "status": item.status,
-                        "finding_codes": item.finding_codes,
-                        "mention_record_ids": item.mention_record_ids,
-                        "assertion_record_ids": item.assertion_record_ids,
-                        "replayed": item.replayed,
-                    }
-                    for item in result.chunks
-                ),
+                "chunks": tuple(_construction_chunk_payload(item) for item in result.chunks),
             }
         except (AttributeError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
