@@ -1859,7 +1859,7 @@ class Neo4jPublishedGraphQualityService:
         try:
             with self.driver.session(database=self.database) as session:
                 return session.execute_read(self._transaction_work, principal)
-        except PublishedGraphQualityError:
+        except (PublishedGraphQualityError, TimeoutError):
             raise
         except Exception as exc:
             # Driver messages may contain connection strings, query fragments,

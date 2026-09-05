@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.graph.published_quality import (
@@ -18,6 +20,7 @@ from graphrag_prod.graph.published_quality import (
 from graphrag_prod.graph.published_quality_history import (
     Neo4jPublishedGraphQualityHistoryService,
     PublishedGraphQualityHistoryConflict,
+    PublishedGraphQualityHistoryUnavailable,
     _acl_payloads,
     _issue_payloads,
     _manifest,
@@ -194,7 +197,7 @@ class PublishedQualityHistoryUnitTests(unittest.TestCase):
         )
 
         with self.assertRaises(PublishedGraphQualityAuthorizationError):
-            service.audit(principal)
+            service.audit_and_record(principal)
 
         self.assertEqual(auditor.calls, [])
         self.assertEqual(driver.sessions, 0)
@@ -209,9 +212,88 @@ class PublishedQualityHistoryUnitTests(unittest.TestCase):
         )
 
         with self.assertRaises(PublishedGraphQualityConflict):
-            service.audit(self.principal)
+            service.audit_and_record(self.principal)
 
         self.assertEqual(auditor.calls, [self.principal])
+        self.assertEqual(driver.sessions, 0)
+
+    def test_transport_projection_is_validated_before_clock_or_write(self) -> None:
+        report = replace(
+            _report(),
+            review_sample=tuple(
+                PublishedGraphReviewSampleItem(
+                    "AssertionRevision", f"revision:{index}", (), ()
+                )
+                for index in range(21)
+            ),
+        )
+        # This is a valid reusable history report but exceeds a transport's
+        # smaller review-sample contract. It must not be silently truncated or
+        # committed before the transport can reject its response.
+        self.assertEqual(len(_report_document(report)["review_sample"]), 21)
+        observed: list[PublishedGraphQualityReport] = []
+
+        def validate_projection(value: PublishedGraphQualityReport) -> None:
+            observed.append(value)
+            if len(value.review_sample) > 20:
+                raise ValueError("transport review sample exceeds 20")
+
+        clock = MagicMock(side_effect=AssertionError("clock must not be called"))
+        driver = _NoSessionDriver()
+        service = Neo4jPublishedGraphQualityHistoryService(
+            driver,
+            auditor=_Auditor(report),
+            report_validator=validate_projection,
+            clock=clock,
+        )
+        self.assertFalse(hasattr(service, "audit"))
+        with self.assertRaises(PublishedGraphQualityHistoryConflict):
+            service.audit_and_record(self.principal)
+        self.assertEqual(observed, [report])
+        self.assertEqual(driver.sessions, 0)
+        clock.assert_not_called()
+
+    def test_timeouts_keep_their_identity_across_history_boundaries(self) -> None:
+        for boundary in ("audit", "validator", "clock", "write", "get", "list"):
+            with self.subTest(boundary=boundary):
+                timeout = TimeoutError("deadline exceeded")
+                driver = MagicMock()
+                session = driver.session.return_value.__enter__.return_value
+                session.execute_write.side_effect = timeout
+                session.execute_read.side_effect = timeout
+                validator = MagicMock(
+                    side_effect=timeout if boundary == "validator" else None
+                )
+                clock = MagicMock(
+                    return_value=datetime(2026, 1, 1, tzinfo=UTC),
+                    side_effect=timeout if boundary == "clock" else None,
+                )
+                service = Neo4jPublishedGraphQualityHistoryService(
+                    driver,
+                    auditor=_Auditor(timeout if boundary == "audit" else _report()),
+                    report_validator=validator,
+                    clock=clock,
+                )
+                with self.assertRaises(TimeoutError) as caught:
+                    if boundary == "get":
+                        service.get_run(self.principal, _report().run_id)
+                    elif boundary == "list":
+                        service.list_runs(self.principal)
+                    else:
+                        service.audit_and_record(self.principal)
+                self.assertIs(caught.exception, timeout)
+                if boundary in {"audit", "validator", "clock"}:
+                    driver.session.assert_not_called()
+
+    def test_projection_validator_failure_is_redacted_before_write(self) -> None:
+        driver = _NoSessionDriver()
+        validator = MagicMock(side_effect=RuntimeError("internal projection detail"))
+        service = Neo4jPublishedGraphQualityHistoryService(
+            driver, auditor=_Auditor(_report()), report_validator=validator
+        )
+        with self.assertRaises(PublishedGraphQualityHistoryUnavailable) as caught:
+            service.audit_and_record(self.principal)
+        self.assertNotIn("internal projection detail", str(caught.exception))
         self.assertEqual(driver.sessions, 0)
 
     def test_constructor_and_list_bounds_are_strict(self) -> None:
@@ -219,6 +301,10 @@ class PublishedQualityHistoryUnitTests(unittest.TestCase):
             Neo4jPublishedGraphQualityHistoryService(
                 _NoSessionDriver(),
                 auditor=object(),
+            )
+        with self.assertRaisesRegex(TypeError, "report_validator must be callable"):
+            Neo4jPublishedGraphQualityHistoryService(
+                _NoSessionDriver(), report_validator=object()
             )
         service = Neo4jPublishedGraphQualityHistoryService(
             _NoSessionDriver(),

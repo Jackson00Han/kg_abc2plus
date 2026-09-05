@@ -871,6 +871,16 @@ class PublishedGraphQualityTests(unittest.TestCase):
         self.assertNotIn("sensitive-marker", str(raised.exception))
         self.assertNotIn("sensitive-marker", repr(raised.exception))
 
+    def test_timeout_is_preserved_for_the_api_deadline_handler(self) -> None:
+        timeout = TimeoutError("quality audit deadline exceeded")
+        driver = _Driver([], execute_error=timeout)
+
+        with self.assertRaises(TimeoutError) as raised:
+            Neo4jPublishedGraphQualityService(driver).audit(_principal())
+
+        self.assertIs(raised.exception, timeout)
+        self.assertEqual(driver.execute_read_calls, 1)
+
     def test_query_contract_is_read_only_acl_bound_and_never_projects_text(
         self,
     ) -> None:

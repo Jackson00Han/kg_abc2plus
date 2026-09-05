@@ -327,6 +327,29 @@ class PublishedQualityHistoryNeo4jTests(unittest.TestCase):
         )
         self.assertIsNone(self._service(report).get_run(outsider, recorded.run_id))
 
+    def test_rejected_transport_projection_does_not_persist_history(self) -> None:
+        report = self._seed_publication("projection", 1, ("public",))
+
+        def reject_projection(_: PublishedGraphQualityReport) -> None:
+            raise ValueError("report does not satisfy the response contract")
+
+        service = Neo4jPublishedGraphQualityHistoryService(
+            self.driver,
+            self.database,
+            auditor=_Auditor(report),
+            report_validator=reject_projection,
+        )
+        with self.assertRaises(PublishedGraphQualityHistoryConflict):
+            service.audit_and_record(self.public)
+        for label in (
+            "PublishedGraphQualityRun",
+            "PublishedGraphQualityIssue",
+            "PublishedGraphQualityReviewSample",
+            "PublishedGraphQualityAclRequirement",
+        ):
+            self.assertEqual(self._node_count(label), 0)
+        self.assertEqual(self._node_count("KnowledgePublication"), 1)
+
     def test_property_child_and_binding_edge_tampering_fail_closed(self) -> None:
         report = self._seed_publication("tamper", 1, ("public",))
         service = self._service(report)

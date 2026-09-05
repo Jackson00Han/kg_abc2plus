@@ -1177,6 +1177,7 @@ class Neo4jPublishedGraphQualityHistoryService:
         database: str = "neo4j",
         *,
         auditor: PublishedGraphQualityAuditor | None = None,
+        report_validator: Callable[[PublishedGraphQualityReport], object] | None = None,
         clock: Callable[[], datetime] | None = None,
         transaction_timeout_seconds: float = 30.0,
     ) -> None:
@@ -1195,6 +1196,8 @@ class Neo4jPublishedGraphQualityHistoryService:
             )
         if auditor is not None and not callable(getattr(auditor, "audit", None)):
             raise TypeError("auditor must implement audit")
+        if report_validator is not None and not callable(report_validator):
+            raise TypeError("report_validator must be callable")
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
         self.driver = driver
@@ -1202,6 +1205,7 @@ class Neo4jPublishedGraphQualityHistoryService:
             driver,
             self.database,
         )
+        self.report_validator = report_validator
         self.clock = clock or (lambda: datetime.now(UTC))
         timeout_value = float(timeout)
         self._record_work = unit_of_work(
@@ -1226,17 +1230,12 @@ class Neo4jPublishedGraphQualityHistoryService:
             timeout=timeout_value,
         )(self._list_tx)
 
-    def audit(self, principal: Principal) -> PublishedGraphQualityReport:
-        """Run and record an audit while preserving the auditor's API shape."""
-
-        return self.audit_and_record(principal).report
-
     def audit_and_record(self, principal: Principal) -> PublishedGraphQualityRun:
         _require_quality_capability(principal)
         # Authorization/audit failures happen before a write session is opened.
         try:
             report = self.auditor.audit(principal)
-        except PublishedGraphQualityError:
+        except (PublishedGraphQualityError, TimeoutError):
             raise
         except Exception as exc:
             raise PublishedGraphQualityHistoryUnavailable() from exc
@@ -1248,9 +1247,20 @@ class Neo4jPublishedGraphQualityHistoryService:
             raise PublishedGraphQualityHistoryConflict() from exc
         if report.tenant_id != principal.tenant_id:
             raise PublishedGraphQualityHistoryConflict()
+        # A transport may have stricter output limits than the reusable history
+        # store. Validate that projection before any persistent side effect.
+        if self.report_validator is not None:
+            try:
+                self.report_validator(report)
+            except TimeoutError:
+                raise
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise PublishedGraphQualityHistoryConflict() from exc
+            except Exception as exc:
+                raise PublishedGraphQualityHistoryUnavailable() from exc
         try:
             recorded_at = _aware_utc(self.clock(), "clock result")
-        except PublishedGraphQualityHistoryConflict:
+        except (PublishedGraphQualityHistoryConflict, TimeoutError):
             raise
         except Exception as exc:
             raise PublishedGraphQualityHistoryUnavailable() from exc
@@ -1264,7 +1274,7 @@ class Neo4jPublishedGraphQualityHistoryService:
                 )
         except PublishedGraphQualityHistoryError:
             raise
-        except PublishedGraphQualityAuthorizationError:
+        except (PublishedGraphQualityAuthorizationError, TimeoutError):
             raise
         except Exception as exc:
             raise PublishedGraphQualityHistoryUnavailable() from exc
@@ -1281,7 +1291,7 @@ class Neo4jPublishedGraphQualityHistoryService:
                 return session.execute_read(self._get_work, principal, identifier)
         except PublishedGraphQualityHistoryError:
             raise
-        except PublishedGraphQualityAuthorizationError:
+        except (PublishedGraphQualityAuthorizationError, TimeoutError):
             raise
         except Exception as exc:
             raise PublishedGraphQualityHistoryUnavailable() from exc
@@ -1310,7 +1320,7 @@ class Neo4jPublishedGraphQualityHistoryService:
                 )
         except PublishedGraphQualityHistoryError:
             raise
-        except PublishedGraphQualityAuthorizationError:
+        except (PublishedGraphQualityAuthorizationError, TimeoutError):
             raise
         except Exception as exc:
             raise PublishedGraphQualityHistoryUnavailable() from exc
