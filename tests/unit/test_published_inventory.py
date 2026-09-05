@@ -716,6 +716,25 @@ class PublishedInventoryTests(unittest.TestCase):
             self.assertNotIn("chunk.text", projection)
             self.assertNotIn("revision {.*}", projection)
 
+    def test_literal_projection_requires_absent_entity_ids_without_coalescing(self) -> None:
+        query = " ".join(_ITEMS_QUERY.split())
+        self.assertIn(
+            "(revision.object_kind = 'entity' AND "
+            "navigation.object_entity_id = revision.object_entity_id)",
+            query,
+        )
+        self.assertIn(
+            "(revision.object_kind = 'literal' AND "
+            "navigation.object_entity_id IS NULL AND revision.object_entity_id IS NULL)",
+            query,
+        )
+        self.assertNotIn("coalesce(navigation.object_entity_id", query)
+        self.assertIn(
+            "(revision.object_kind = 'literal' AND COUNT { "
+            "MATCH (navigation)-[:OBJECT]->(:Entity) } = 0)",
+            query,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

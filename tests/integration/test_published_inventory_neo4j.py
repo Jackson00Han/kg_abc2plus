@@ -21,6 +21,7 @@ from graphrag_prod.graph.published_inventory import (
     Neo4jActivePublicationInventoryService,
 )
 from graphrag_prod.graph.schema import apply_schema, verify_schema
+from graphrag_prod.knowledge import ABoxRecordBatch, RecordRevision, knowledge_record_id
 from graphrag_prod.knowledge.review import (
     KNOWLEDGE_PUBLISH_CAPABILITY,
     KNOWLEDGE_REVIEW_CAPABILITY,
@@ -110,7 +111,18 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
             version=1,
             status=TBoxStatus.DRAFT,
             entity_types=(
-                EntityTypeDefinition("Company", ("ticker", "llm-candidate")),
+                EntityTypeDefinition(
+                    "Company",
+                    ("ticker", "llm-candidate"),
+                    properties=(
+                        PropertyDefinition(
+                            "Descriptor",
+                            PropertyDataType.STRING,
+                            False,
+                            Cardinality.ZERO_OR_ONE,
+                        ),
+                    ),
+                ),
                 EntityTypeDefinition("Product", ("apple-product", "llm-candidate")),
             ),
             relationship_types=(
@@ -364,6 +376,137 @@ class PublishedInventoryNeo4jTests(unittest.TestCase):
         with self.assertRaises(ActivePublicationInventoryConflict) as raised:
             self.inventory.list_active(self.principal)
         self.assertNotIn("tampered-source-fragment", str(raised.exception))
+
+    def test_authoritative_mixed_entity_and_literal_publication_is_inventory_safe(
+        self,
+    ) -> None:
+        # Expert imports publish directly, including literal facts that have no
+        # object entity property or OBJECT edge. Cypher NULL equality must not
+        # reject this valid projection, or accept an empty-string substitute.
+        mentions = tuple(
+            dataclasses.replace(
+                mention,
+                revision=RecordRevision.next(
+                    knowledge_record_id(
+                        self.tenant_id,
+                        "ENTITY_MENTION",
+                        f"inventory-authority:{mention.record_id}",
+                    ),
+                    0,
+                ),
+            )
+            for mention in self.authoritative.mentions
+        )
+        mention_ids = {
+            old.revision_id: new.revision_id
+            for old, new in zip(self.authoritative.mentions, mentions, strict=True)
+        }
+        original = self.authoritative.assertions[0]
+        relationship = dataclasses.replace(
+            original,
+            revision=RecordRevision.next(
+                knowledge_record_id(self.tenant_id, "ASSERTION", "inventory-authority:offers"),
+                0,
+            ),
+            subject_mention_revision_id=mention_ids[original.subject_mention_revision_id],
+            object_mention_revision_id=mention_ids[original.object_mention_revision_id],
+        )
+        literal = dataclasses.replace(
+            relationship,
+            revision=RecordRevision.next(
+                knowledge_record_id(self.tenant_id, "ASSERTION", "inventory-authority:descriptor"),
+                0,
+            ),
+            predicate="Descriptor",
+            object_entity=None,
+            object_mention_revision_id=None,
+            literal_value="offers",
+            literal_semantics=TypedLiteralValue(
+                datatype="STRING", typed_value="offers", raw_value="offers", canonical_value="offers"
+            ),
+        )
+        batch = ABoxRecordBatch(
+            tenant_id=self.tenant_id,
+            mentions=mentions,
+            assertions=(relationship, literal),
+        )
+        Neo4jKnowledgeStore(self.driver, self.database).import_authoritative(batch)
+        publication = self.publication.publish(
+            self.principal,
+            tuple(item.revision_id for item in (*mentions, relationship, literal)),
+            expected_active_publication_id=None,
+            published_at=PUBLISHED_AT,
+        )
+        result = self.inventory.list_active(self.principal)
+        self.assertEqual(result.publication_id, publication.publication_id)
+        self.assertEqual(result.total_record_count, 4)
+        self.assertEqual({item.authority_level for item in result.items}, {"AUTHORITATIVE"})
+        literal_item = next(item for item in result.items if item.ontology_key == "Descriptor")
+        self.assertEqual(literal_item.assertion.object_kind, "literal")
+        self.assertIsNone(literal_item.assertion.object_entity)
+        self.assertEqual(literal_item.assertion.literal.canonical_value, "offers")
+
+        frozen_report = self.inventory.quality_service.audit(self.principal)
+
+        class _FrozenQuality:
+            @staticmethod
+            def audit(_principal: Principal):  # type: ignore[no-untyped-def]
+                return frozen_report
+
+        inventory = Neo4jActivePublicationInventoryService(
+            self.driver, self.database, quality_service=_FrozenQuality()
+        )
+        for invalid_id in ("", "forged-object-entity"):
+            with self.subTest(invalid_id=invalid_id):
+                self.driver.execute_query(
+                    "MATCH (assertion:Assertion {tenant_id:$tenant_id, "
+                    "governed_publication_id:$publication_id, object_kind:'literal'}) "
+                    "SET assertion.object_entity_id=$invalid_id",
+                    tenant_id=self.tenant_id,
+                    publication_id=publication.publication_id,
+                    invalid_id=invalid_id,
+                    database_=self.database,
+                )
+                with self.assertRaises(ActivePublicationInventoryConflict):
+                    inventory.list_active(self.principal)
+        self.driver.execute_query(
+            "MATCH (assertion:Assertion {tenant_id:$tenant_id, "
+            "governed_publication_id:$publication_id, object_kind:'literal'}) "
+            "REMOVE assertion.object_entity_id",
+            tenant_id=self.tenant_id,
+            publication_id=publication.publication_id,
+            database_=self.database,
+        )
+        self.assertEqual(inventory.list_active(self.principal).total_record_count, 4)
+        self.driver.execute_query(
+            "MATCH (assertion:Assertion {tenant_id:$tenant_id, "
+            "governed_publication_id:$publication_id, object_kind:'literal'}) "
+            "MATCH (assertion)-[:SUBJECT]->(entity:Entity) "
+            "CREATE (assertion)-[:OBJECT]->(entity)",
+            tenant_id=self.tenant_id,
+            publication_id=publication.publication_id,
+            database_=self.database,
+        )
+        with self.assertRaises(ActivePublicationInventoryConflict):
+            inventory.list_active(self.principal)
+        self.driver.execute_query(
+            "MATCH (assertion:Assertion {tenant_id:$tenant_id, "
+            "governed_publication_id:$publication_id, object_kind:'literal'}) "
+            "-[unexpected:OBJECT]->(:Entity) DELETE unexpected",
+            tenant_id=self.tenant_id,
+            publication_id=publication.publication_id,
+            database_=self.database,
+        )
+        self.driver.execute_query(
+            "MATCH (assertion:Assertion {tenant_id:$tenant_id, "
+            "governed_publication_id:$publication_id, object_kind:'entity'}) "
+            "REMOVE assertion.object_entity_id",
+            tenant_id=self.tenant_id,
+            publication_id=publication.publication_id,
+            database_=self.database,
+        )
+        with self.assertRaises(ActivePublicationInventoryConflict):
+            inventory.list_active(self.principal)
 
     def test_property_tampering_after_quality_audit_still_fails_closed(self) -> None:
         publication = self._publish()

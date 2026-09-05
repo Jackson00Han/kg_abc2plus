@@ -380,7 +380,14 @@ CALL (publication, revision) {
     WITH revision, navigation, membership,
          CASE WHEN navigation IS NOT NULL
                    AND navigation.subject_entity_id = revision.subject_entity_id
-                   AND navigation.object_entity_id = revision.object_entity_id
+                   AND (
+                       (revision.object_kind = 'entity'
+                        AND navigation.object_entity_id = revision.object_entity_id)
+                       OR
+                       (revision.object_kind = 'literal'
+                        AND navigation.object_entity_id IS NULL
+                        AND revision.object_entity_id IS NULL)
+                   )
                    AND navigation.predicate = revision.predicate
                    AND navigation.object_kind = revision.object_kind
                    AND navigation.literal_value = coalesce(revision.literal_value, '')
