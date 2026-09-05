@@ -75,6 +75,7 @@ from graphrag_prod.playground import (
 from graphrag_prod.retrieval import (
     Neo4jEvidenceSubgraphProjector,
     Neo4jRetrievalEngine,
+    RetrievalBackendTimeout,
     RetrievalRequest as DomainRetrievalRequest,
 )
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
@@ -598,19 +599,26 @@ def _warm_retrieval(
     for tenant_id, question in sorted(questions_by_tenant.items()):
         principal = question["principal"]
         query_embedding = embedder.embed(str(question["query"]), tenant_id=tenant_id)
-        result = engine.retrieve(
-            DomainRetrievalRequest(
-                query_text=str(question["query"]),
-                query_vector=query_embedding.vector,
-                principal=Principal(
-                    principal_id=str(principal["principal_id"]),
-                    tenant_id=tenant_id,
-                    groups=frozenset(str(item) for item in principal["groups"]),
-                ),
-                query_embedding_space_id=query_embedding.embedding_space_id,
-                limits=PLAYGROUND_RETRIEVAL_LIMITS,
-            )
+        request = DomainRetrievalRequest(
+            query_text=str(question["query"]),
+            query_vector=query_embedding.vector,
+            principal=Principal(
+                principal_id=str(principal["principal_id"]),
+                tenant_id=tenant_id,
+                groups=frozenset(str(item) for item in principal["groups"]),
+            ),
+            query_embedding_space_id=query_embedding.embedding_space_id,
+            limits=PLAYGROUND_RETRIEVAL_LIMITS,
         )
+        try:
+            result = engine.retrieve(request)
+        except RetrievalBackendTimeout:
+            print(
+                f"      Retrieval warm-up timed out for {tenant_id}; "
+                "retrying once with the same bounds and query embedding",
+                flush=True,
+            )
+            result = engine.retrieve(request)
         if result.trace.tenant_id != tenant_id or not result.chunks:
             raise RuntimeError(f"Playground retrieval warm-up failed: {tenant_id}")
 
