@@ -8,6 +8,12 @@
   retrieval dataset before selecting a model or changing production ranking.
   The current external-provider smoke run meets MRR/evidence-recall floors but
   not the stricter production-reference Recall@5 and nDCG@5 targets.
+  The 2026-09-05 ad-hoc run also found a temporal/multi-company coverage gap:
+  a query requesting Meridian and Harbor FY2024 risk evidence selected
+  Harbor FY2023 instead of Harbor FY2024 in the final five Chunks. Keep this
+  original failure as a regression example when evaluating ranked-versus-
+  adjacent context selection and the deferred reranker; do not count a
+  successful explicit Document-filter diagnostic as an unfiltered-query pass.
 
 ## Current work
 
@@ -36,7 +42,32 @@
   creates immutable revisions and atomically rebinds dependent candidate
   assertions without approving those assertions.
 
+## Open live-acceptance checks
+
+- [ ] Repeat provider-backed upload/extraction/review/publication acceptance
+  after deciding the call budget for the configured `qwen3.8-max`. The
+  2026-09-05 single-Chunk attempt and same-operation recovery both returned
+  503; a separate diagnostic confirmed `APITimeoutError` at the unchanged
+  30-second provider bound. No LLM candidates were fabricated or approved.
+  Manual authoritative import, publication, graph retrieval and immutable
+  quality history passed independently; they do not close this model gate.
+
+- [ ] Complete an actual browser visual/click acceptance pass when a browser
+  runtime is available. Executable Node VM interaction tests and real HTTP
+  checks pass, but this session could not obtain an in-app browser.
+
 ## Completed follow-ups
+
+- [x] Recover once from a cold-start retrieval-store timeout during Playground
+  warm-up, preserving the same read-only request, vector, ACL, limits and
+  per-transaction deadline. No extra Embedding call or LLM retry is introduced;
+  persistent failures still refuse startup.
+
+- [x] Correct literal-object handling in the active A-Box inventory after a
+  real mixed-publication smoke test exposed Cypher null-equality rejection.
+  Valid literals require absent entity IDs and no OBJECT edge; forged IDs,
+  empty-string substitutes and malformed entity objects still fail closed.
+  See `docs/validation/inventory-literal-correction.md`.
 
 - [x] Expose immutable published-graph quality audit history. The Playground
   offers explicit recording, publication-filtered history, and isolated

@@ -134,6 +134,9 @@ temporary database.
 
 See [`docs/local_playground.md`](docs/local_playground.md) for capabilities,
 limitations, ports, and focused checks.
+The latest workbench validation and its unresolved live-provider/browser
+acceptance checks are recorded in
+[`docs/validation/governance-workbench-completion.md`](docs/validation/governance-workbench-completion.md).
 
 ## Prerequisites
 

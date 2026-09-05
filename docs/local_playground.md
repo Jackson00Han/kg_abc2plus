@@ -58,6 +58,9 @@ container is then stopped and removed; no database volume is retained. The
 launcher refuses non-loopback API and Neo4j addresses. It reads the
 OpenAI-compatible settings from `.env` and uses them server-side for embeddings
 and governed extraction. Retrieval transactions remain bounded at 30 seconds.
+During startup warm-up only, a retrieval-store timeout permits one retry of the
+same read with the same vector and authorization. Embedding is not repeated;
+a second timeout or any other error still prevents the service from starting.
 Local construction is preflighted at four Chunks, four model calls, and 16,000
 extraction characters, then cooperatively capped at 90 seconds inside a
 105-second API deadline. Answer
@@ -67,6 +70,14 @@ and provider-neutral response-format mode. The compact output shape remains in
 the prompt and the server strictly validates JSON, evidence, and the T-Box; a
 provider timeout is returned as a bounded dependency failure rather than
 silently retrying costly model calls.
+
+Model availability does not imply that extraction finishes within this local
+budget. The 2026-09-05 live `qwen3.8-max` single-Chunk acceptance timed out at
+30 seconds; its recoverable job and the downstream manual-governance checks
+are documented in
+[`validation/governance-workbench-completion.md`](validation/governance-workbench-completion.md).
+That report keeps real-provider limitations separate from passing deterministic
+regression tests.
 
 ## What the page exercises
 

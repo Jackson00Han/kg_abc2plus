@@ -1,10 +1,10 @@
 # Stage 8 Validation Record
 
 - Original completion date: 2026-09-02
-- Current baseline maintenance date: 2026-09-04
+- Current baseline maintenance date: 2026-09-05
 - Acceptance contract: `contracts/acceptance.v1.json` version 1.0.1
 - Validation profile: `dev-mini` version 1.0.0
-- Reviewed regression baseline: `dev-mini.v1.json` version 1.2.0
+- Reviewed regression baseline: `dev-mini.v1.json` version 1.3.0
 - Unified gold: `evaluation/gold-v1/manifest.json` version 2.0.0
 - Representative corpus: `dev-corpus-v1` version 1.0.1
 - Answer gold: version 1.1.0
@@ -160,6 +160,28 @@ change; the reviewed baseline changes are the new knowledge-quality identity
 and diagnostics, four new quality-asset unit test IDs, the v2 index identity,
 the current regression-policy digest, and migrations 006 through 010.
 
+The 2026-09-05 workbench maintenance reviewed baseline version 1.3.0 after
+the active-inventory literal correction and bounded startup-read recovery.
+Final evidence contains 636 unit, 15 HTTP end-to-end, 33 security, two
+regression and 125 disposable-Neo4j integration tests, all passing without
+skips. The final unit and integration suites took 140.637 and 716.039 seconds.
+The exact projection changes from 1.2.0 are migrations 011/012 and expanded
+test-ID sets. All ten earlier migration hashes, 160 per-case digests, contract
+metrics, quality diagnostics and other identities are unchanged. The two old
+test IDs absent from the new sets were reviewed as preserved/extended test
+renames, not removal of assertions or weakened gates.
+
+Two unified-report replays over this same final suite/observation set passed
+the reviewed baseline and reproduced semantic digest
+`5327ec4f55c280fb8e3469bb5fd603bb1703f3cbfbd02423d2956b7f6e34dcaf`.
+Those report replays are not two independent full-suite cycles. The baseline
+version update also passed 15 focused evaluation tests. This development
+maintenance is distinct from historical Stage 8 completion and does not renew
+Stage 9 qualification. The live Qwen timeout, partial temporal retrieval,
+inventory defect/correction and unavailable browser are explicitly recorded in
+`governance-workbench-completion.md`; deterministic baseline success does not
+erase those observations.
+
 Across the historical completion and later maintenance captures,
 gold/corpus rebuilds, acceptance-profile validation, lock verification,
 package build, bytecode compilation, shell syntax, and `git diff --check`
@@ -202,7 +224,7 @@ This decision advances the plan to Stage 9; it is not production-candidate
 qualification.
 <!-- STAGE8_FINAL_DECISION_END -->
 
-The 2026-09-04 maintenance validates the current industrial-knowledge changes
+The 2026-09-05 maintenance validates the current industrial-knowledge changes
 under `dev-mini`; it does not retroactively extend the historical Stage 9
 production-reference qualification at commit `7142fa3`. A fresh Stage 9 run is
 required before describing the current head as a production candidate.
