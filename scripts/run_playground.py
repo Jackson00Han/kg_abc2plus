@@ -108,25 +108,141 @@ class _ReadOnlyDocuments:
 
 
 class _Neo4jReadiness:
-    def __init__(self, driver: neo4j.Driver, database: str) -> None:
+    """Verify that retrieval can use one current, online vector space per tenant."""
+
+    _CHECK_NAMES = ("neo4j", "embedding_generations", "vector_indexes")
+
+    def __init__(
+        self,
+        driver: neo4j.Driver,
+        database: str,
+        *,
+        expected_tenant_ids: tuple[str, ...],
+    ) -> None:
         self.driver = driver
         self.database = database
+        tenant_ids = tuple(sorted({item.strip() for item in expected_tenant_ids}))
+        if (
+            not tenant_ids
+            or len(tenant_ids) != len(expected_tenant_ids)
+            or any(not item for item in tenant_ids)
+        ):
+            raise ValueError("expected_tenant_ids must be unique and non-empty")
+        self.expected_tenant_ids = tenant_ids
 
-    def check(self) -> BackendResult:
-        try:
-            records, _, _ = self.driver.execute_query(
-                Query("RETURN 1 AS ok", timeout=2.0),
-                database_=self.database,
-            )
-            ready = len(records) == 1 and records[0]["ok"] == 1
-        except Exception:
-            ready = False
+    @classmethod
+    def _result(cls, checks: Mapping[str, str]) -> BackendResult:
+        ready = all(checks.get(name) == "ok" for name in cls._CHECK_NAMES)
         return BackendResult(
             ReadinessResponse(
                 status="ready" if ready else "not_ready",
-                checks={"neo4j": "ok" if ready else "error"},
+                checks={name: checks.get(name, "error") for name in cls._CHECK_NAMES},
             )
         )
+
+    def check(self) -> BackendResult:
+        checks = {name: "error" for name in self._CHECK_NAMES}
+        try:
+            records, _, _ = self.driver.execute_query(
+                Query(
+                    """
+                    MATCH (state:TenantCorpusState)
+                    OPTIONAL MATCH (state)-[:ACTIVE_EMBEDDING_INDEX]->(
+                        pointer:EmbeddingIndexGeneration
+                    )
+                    OPTIONAL MATCH (active:EmbeddingIndexGeneration {
+                        tenant_id: state.tenant_id,
+                        state: 'ACTIVE'
+                    })
+                    WITH state,
+                         collect(DISTINCT pointer{
+                             .generation_id,
+                             .index_name,
+                             .state,
+                             .corpus_revision
+                         }) AS pointers,
+                         collect(DISTINCT active.generation_id) AS active_ids
+                    RETURN state.tenant_id AS tenant_id,
+                           state.corpus_revision AS corpus_revision,
+                           pointers,
+                           active_ids
+                    ORDER BY tenant_id
+                    """,
+                    timeout=2.0,
+                ),
+                database_=self.database,
+            )
+        except Exception:
+            return self._result(checks)
+        checks["neo4j"] = "ok"
+
+        try:
+            generations: dict[str, Mapping[str, Any]] = {}
+            for record in records:
+                tenant_id = record["tenant_id"]
+                pointers = record["pointers"]
+                active_ids = record["active_ids"]
+                if (
+                    not isinstance(tenant_id, str)
+                    or tenant_id in generations
+                    or not isinstance(pointers, (list, tuple))
+                    or len(pointers) != 1
+                    or not isinstance(active_ids, (list, tuple))
+                    or len(active_ids) != 1
+                ):
+                    raise ValueError("invalid active generation cardinality")
+                generation = dict(pointers[0])
+                if (
+                    generation.get("generation_id") != active_ids[0]
+                    or generation.get("state") != "ACTIVE"
+                    or isinstance(record["corpus_revision"], bool)
+                    or not isinstance(record["corpus_revision"], int)
+                    or isinstance(generation.get("corpus_revision"), bool)
+                    or not isinstance(generation.get("corpus_revision"), int)
+                    or generation["corpus_revision"] != record["corpus_revision"]
+                    or not isinstance(generation.get("index_name"), str)
+                    or not generation["index_name"]
+                ):
+                    raise ValueError("invalid active generation state")
+                generations[tenant_id] = generation
+            if tuple(sorted(generations)) != self.expected_tenant_ids:
+                raise ValueError("tenant corpus state coverage mismatch")
+            index_names = tuple(
+                generation["index_name"] for generation in generations.values()
+            )
+            if len(set(index_names)) != len(index_names):
+                raise ValueError("active generations share a vector index")
+        except (KeyError, TypeError, ValueError):
+            return self._result(checks)
+        checks["embedding_generations"] = "ok"
+
+        try:
+            index_records, _, _ = self.driver.execute_query(
+                Query(
+                    """
+                    SHOW INDEXES YIELD name, type, state
+                    WHERE name IN $index_names
+                    RETURN name, type, state
+                    """,
+                    timeout=2.0,
+                ),
+                index_names=list(index_names),
+                database_=self.database,
+            )
+            indexes = {
+                record["name"]: (record["type"], record["state"])
+                for record in index_records
+            }
+            if (
+                set(indexes) != set(index_names)
+                or len(indexes) != len(index_records)
+                or any(shape != ("VECTOR", "ONLINE") for shape in indexes.values())
+            ):
+                raise ValueError("active vector index is unavailable")
+        except Exception:
+            return self._result(checks)
+        checks["vector_indexes"] = "ok"
+        return self._result(checks)
 
 
 class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
@@ -600,7 +716,13 @@ def build_playground_app(
     backend = GraphRAGApplicationBackend(
         documents=_ReadOnlyDocuments(),
         queries=query_operations,
-        readiness=_Neo4jReadiness(driver, database),
+        readiness=_Neo4jReadiness(
+            driver,
+            database,
+            expected_tenant_ids=tuple(
+                sorted({plan.tenant_id for plan in fixture.plans})
+            ),
+        ),
         knowledge=knowledge_operations,
     )
     app = create_app(

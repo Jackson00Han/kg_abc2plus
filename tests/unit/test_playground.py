@@ -29,6 +29,7 @@ from graphrag_prod.playground import (
 )
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
 from scripts.run_playground import (
+    _Neo4jReadiness,
     _OpenAICompatibleEmbedder,
     _PlaygroundKnowledgeOperations,
 )
@@ -177,6 +178,174 @@ class PlaygroundRuntimeTests(unittest.TestCase):
             by_groups[frozenset({"beta-board"})].scopes,
             PLAYGROUND_SCOPES,
         )
+
+    @staticmethod
+    def _readiness_row(
+        tenant_id: str,
+        *,
+        corpus_revision: int = 7,
+        generation_revision: int = 7,
+        index_name: str | None = None,
+    ) -> dict[str, object]:
+        generation_id = f"generation-{tenant_id}"
+        return {
+            "tenant_id": tenant_id,
+            "corpus_revision": corpus_revision,
+            "pointers": [
+                {
+                    "generation_id": generation_id,
+                    "index_name": index_name or f"index-{tenant_id}",
+                    "state": "ACTIVE",
+                    "corpus_revision": generation_revision,
+                }
+            ],
+            "active_ids": [generation_id],
+        }
+
+    @staticmethod
+    def _readiness(driver: Mock) -> _Neo4jReadiness:
+        return _Neo4jReadiness(
+            driver,
+            "neo4j",
+            expected_tenant_ids=("tenant-alpha", "tenant-beta"),
+        )
+
+    def test_readiness_requires_current_online_generation_for_every_tenant(self) -> None:
+        driver = Mock()
+        rows = [
+            self._readiness_row("tenant-alpha"),
+            self._readiness_row("tenant-beta"),
+        ]
+        indexes = [
+            {"name": "index-tenant-alpha", "type": "VECTOR", "state": "ONLINE"},
+            {"name": "index-tenant-beta", "type": "VECTOR", "state": "ONLINE"},
+        ]
+        driver.execute_query.side_effect = [(rows, None, None), (indexes, None, None)]
+
+        payload = self._readiness(driver).check().payload
+
+        self.assertEqual(payload.status, "ready")
+        self.assertEqual(
+            payload.checks,
+            {
+                "neo4j": "ok",
+                "embedding_generations": "ok",
+                "vector_indexes": "ok",
+            },
+        )
+        self.assertEqual(driver.execute_query.call_count, 2)
+
+    def test_readiness_fails_closed_when_tenant_state_is_missing(self) -> None:
+        driver = Mock()
+        driver.execute_query.return_value = (
+            [self._readiness_row("tenant-alpha")],
+            None,
+            None,
+        )
+
+        payload = self._readiness(driver).check().payload
+
+        self.assertEqual(payload.status, "not_ready")
+        self.assertEqual(payload.checks["neo4j"], "ok")
+        self.assertEqual(payload.checks["embedding_generations"], "error")
+        self.assertEqual(payload.checks["vector_indexes"], "error")
+        driver.execute_query.assert_called_once()
+
+    def test_readiness_rejects_multiple_active_pointers(self) -> None:
+        driver = Mock()
+        alpha = self._readiness_row("tenant-alpha")
+        alpha["pointers"] = [
+            *alpha["pointers"],
+            {
+                "generation_id": "generation-tenant-alpha-duplicate",
+                "index_name": "index-tenant-alpha-duplicate",
+                "state": "ACTIVE",
+                "corpus_revision": 7,
+            },
+        ]
+        alpha["active_ids"] = [
+            "generation-tenant-alpha",
+            "generation-tenant-alpha-duplicate",
+        ]
+        driver.execute_query.return_value = (
+            [alpha, self._readiness_row("tenant-beta")],
+            None,
+            None,
+        )
+
+        payload = self._readiness(driver).check().payload
+
+        self.assertEqual(payload.status, "not_ready")
+        self.assertEqual(payload.checks["embedding_generations"], "error")
+        driver.execute_query.assert_called_once()
+
+    def test_readiness_rejects_stale_generation_revision(self) -> None:
+        driver = Mock()
+        driver.execute_query.return_value = (
+            [
+                self._readiness_row(
+                    "tenant-alpha",
+                    corpus_revision=8,
+                    generation_revision=7,
+                ),
+                self._readiness_row("tenant-beta"),
+            ],
+            None,
+            None,
+        )
+
+        payload = self._readiness(driver).check().payload
+
+        self.assertEqual(payload.status, "not_ready")
+        self.assertEqual(payload.checks["embedding_generations"], "error")
+        driver.execute_query.assert_called_once()
+
+    def test_readiness_rejects_missing_or_offline_vector_index(self) -> None:
+        rows = [
+            self._readiness_row("tenant-alpha"),
+            self._readiness_row("tenant-beta"),
+        ]
+        invalid_indexes = (
+            [{"name": "index-tenant-alpha", "type": "VECTOR", "state": "ONLINE"}],
+            [
+                {
+                    "name": "index-tenant-alpha",
+                    "type": "VECTOR",
+                    "state": "ONLINE",
+                },
+                {
+                    "name": "index-tenant-beta",
+                    "type": "VECTOR",
+                    "state": "POPULATING",
+                },
+            ],
+        )
+        for indexes in invalid_indexes:
+            with self.subTest(indexes=indexes):
+                driver = Mock()
+                driver.execute_query.side_effect = [
+                    (rows, None, None),
+                    (indexes, None, None),
+                ]
+
+                payload = self._readiness(driver).check().payload
+
+                self.assertEqual(payload.status, "not_ready")
+                self.assertEqual(payload.checks["neo4j"], "ok")
+                self.assertEqual(payload.checks["embedding_generations"], "ok")
+                self.assertEqual(payload.checks["vector_indexes"], "error")
+
+    def test_readiness_driver_failure_returns_only_safe_checks(self) -> None:
+        driver = Mock()
+        driver.execute_query.side_effect = RuntimeError(
+            "bolt://username:secret@private-host"
+        )
+
+        payload = self._readiness(driver).check().payload
+
+        self.assertEqual(payload.status, "not_ready")
+        self.assertEqual(set(payload.checks.values()), {"error"})
+        self.assertNotIn("private-host", payload.model_dump_json())
 
     def test_embedder_uses_reviewed_vectors_and_orthogonal_custom_fallback(self) -> None:
         embedder = FixtureQueryEmbedder(self.fixture)
@@ -481,6 +650,9 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertEqual(root.headers["location"], "/playground")
         self.assertEqual(page.status_code, 200)
         self.assertIn("GraphRAG Local Playground", page.text)
+        self.assertIn("知识库启动基线", page.text)
+        self.assertIn("静态启动 fixture，不随上传或撤回变化", page.text)
+        self.assertNotIn("知识库状态 <span>LIVE</span>", page.text)
         self.assertIn('id="query-input"', page.text)
         self.assertIn("/v1/retrieval", page.text)
         self.assertIn("/v1/knowledge:construct", page.text)
@@ -495,6 +667,9 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("当前身份缺少 knowledge:quality", page.text)
         self.assertIn("绝不返回源文本", page.text)
         self.assertIn('id="document-lifecycle-list"', page.text)
+        self.assertIn('id="document-lifecycle-summary"', page.text)
+        self.assertIn("当前 JWT 完整可见的实时活动数据", page.text)
+        self.assertIn("实时授权视图不可用；未用启动 fixture 数字代替", page.text)
         self.assertIn('id="document-lifecycle-refresh-button"', page.text)
         self.assertIn("/v1/knowledge/documents?limit=100", page.text)
         self.assertIn("/v1/knowledge/documents/${encodeURIComponent(item.document_id)}:retire", page.text)

@@ -553,15 +553,16 @@
     <aside class="inspector" aria-label="运行环境信息">
       <div class="inspector-inner">
         <section class="inspector-section">
-          <div class="inspector-title">知识库状态 <span>LIVE</span></div>
+          <div class="inspector-title">知识库启动基线 <span>FIXTURE</span></div>
           <div class="corpus-card">
             <div class="corpus-name"><div class="corpus-icon">KG</div><div><strong id="dataset-name">dev-corpus-v1</strong><span id="dataset-version">loading</span></div></div>
             <div class="stats-grid">
-              <div class="stat"><strong id="stat-documents">—</strong><span>Documents</span></div>
-              <div class="stat"><strong id="stat-chunks">—</strong><span>Chunks</span></div>
-              <div class="stat"><strong id="stat-entities">—</strong><span>Entities</span></div>
-              <div class="stat"><strong id="stat-tenants">—</strong><span>Tenants</span></div>
+              <div class="stat"><strong id="stat-documents">—</strong><span>基线 Documents</span></div>
+              <div class="stat"><strong id="stat-chunks">—</strong><span>基线 Chunks</span></div>
+              <div class="stat"><strong id="stat-entities">—</strong><span>基线 Entities</span></div>
+              <div class="stat"><strong id="stat-tenants">—</strong><span>基线 Tenants</span></div>
             </div>
+            <div class="exact-evidence">以上为静态启动 fixture，不随上传或撤回变化；当前身份的实时授权数量见“活动文档”。</div>
           </div>
         </section>
         <section class="inspector-section">
@@ -676,6 +677,7 @@
         <section class="workbench-card full" aria-labelledby="document-lifecycle-title">
           <div class="workbench-head"><div><h2 id="document-lifecycle-title">活动文档与受治理撤回</h2><p>仅列出当前身份完整可见、来源链闭合的活动文档元数据。撤回会解除活动版本、检索范围与向量 generation，不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></div><span class="step-chip">08</span></div>
           <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="document-lifecycle-refresh-button" type="button">刷新活动文档</button></div>
+          <div class="exact-evidence" id="document-lifecycle-summary">实时授权视图尚未加载。</div>
           <div class="history-list" id="document-lifecycle-list" aria-live="polite"><div class="output-box">活动文档尚未加载。</div></div>
         </section>
       </div>
@@ -731,6 +733,7 @@
         publicationRevisions: $('publication-revisions'), publicationRemovals: $('publication-removals'), publicationOutput: $('publication-output'),
         publicationCandidateList: $('publication-candidate-list'), historyList: $('history-list'),
         qualityContent: $('quality-content'),
+        documentLifecycleSummary: $('document-lifecycle-summary'),
         documentLifecycleList: $('document-lifecycle-list'),
       };
 
@@ -1055,6 +1058,7 @@
         elements.publicationRevisions.value = '';
         elements.publicationRemovals.value = '';
         elements.qualityContent.innerHTML = '<div class="output-box">活动图谱质量尚未加载。</div>';
+        elements.documentLifecycleSummary.textContent = '实时授权视图尚未加载。';
         elements.documentLifecycleList.innerHTML = '<div class="output-box">活动文档尚未加载。</div>';
         resetRetrievalResult();
         renderIdentity();
@@ -1860,8 +1864,10 @@
       };
 
       function renderActiveDocuments() {
+        const visibleChunks = state.activeDocuments.reduce((total, item) => total + Number(item.chunk_count || 0), 0);
+        elements.documentLifecycleSummary.textContent = `当前 JWT 完整可见的实时活动数据：${number(state.activeDocuments.length)} Documents · ${number(visibleChunks)} Chunks（有界读取最多 100 Documents）`;
         if (!state.activeDocuments.length) {
-          elements.documentLifecycleList.innerHTML = '<div class="output-box">当前身份没有完整可见的活动文档，或该身份缺少 knowledge:lifecycle。</div>';
+          elements.documentLifecycleList.innerHTML = '<div class="output-box">当前身份没有完整可见的活动文档。</div>';
           return;
         }
         elements.documentLifecycleList.innerHTML = state.activeDocuments.map((item, index) => {
@@ -1881,6 +1887,7 @@
 
       async function loadActiveDocuments() {
         const identityEpoch = state.identityEpoch;
+        elements.documentLifecycleSummary.textContent = '正在读取当前 JWT 完整可见的实时活动文档…';
         try {
           const payload = await apiRequest('/v1/knowledge/documents?limit=100');
           if (identityEpoch !== state.identityEpoch) return;
@@ -1892,6 +1899,7 @@
           const message = error.status === 403
             ? '当前身份缺少 knowledge:lifecycle，或没有完整可见的活动文档。'
             : error.message;
+          elements.documentLifecycleSummary.textContent = '实时授权视图不可用；未用启动 fixture 数字代替。';
           elements.documentLifecycleList.innerHTML = `<div class="output-box">${escapeHtml(message)}</div>`;
         }
       }
@@ -2052,7 +2060,7 @@
           setConnection('ready', '内核已连接');
           const counts = bootstrap.dataset.counts;
           $('dataset-name').textContent = bootstrap.dataset.id;
-          $('dataset-version').textContent = `version ${bootstrap.dataset.version} · ${bootstrap.dataset.embedding.model}`;
+          $('dataset-version').textContent = `启动基线 · version ${bootstrap.dataset.version} · ${bootstrap.dataset.embedding.model}`;
           $('stat-documents').textContent = number(counts.documents);
           $('stat-chunks').textContent = number(counts.active_chunks);
           $('stat-entities').textContent = number(counts.entities);

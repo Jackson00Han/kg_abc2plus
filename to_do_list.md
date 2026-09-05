@@ -38,6 +38,11 @@
 
 ## Completed follow-ups
 
+- [x] Separate immutable startup-fixture counters from runtime state in the
+  Playground, show a fresh ACL-complete active Documents/Chunks summary for the
+  selected JWT identity, and make readiness fail closed on missing/stale/multiple
+  active generations or unavailable Neo4j vector indexes.
+
 - [x] Make complete T-Box versions reusable from the Playground: load an exact
   checksum-bound definition, copy it to the next version for expert edits, or
   export a self-describing property-graph JSON artifact.

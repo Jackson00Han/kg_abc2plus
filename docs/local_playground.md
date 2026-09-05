@@ -263,3 +263,22 @@ non-zero status on any mismatch and removes its container when complete.
 Normal serving also performs the same preload and warm-up before it starts the
 API and page. This makes the first browser query representative of the warm
 local runtime instead of Neo4j's initial query-plan compilation.
+
+The four corpus counters in the right-hand inspector are explicitly labelled
+as the immutable **startup fixture baseline**. They describe the committed
+`dev-corpus-v1` input (10 Documents, 120 Chunks, 19 fixture Entities, and two
+Tenants); they are not relabelled as live state after an upload or retirement.
+The active-document card instead calculates a fresh Documents/Chunks summary
+from the bounded lifecycle response for sources that are completely visible to
+the selected JWT identity. An authorization or dependency failure is displayed
+as unavailable and never falls back to the fixture counters.
+
+`/health/ready` is also retrieval-aware. In addition to reaching Neo4j, it
+requires exactly the expected Tenant corpus-state rows, exactly one active
+embedding generation and pointer per Tenant, equality between each generation
+and corpus revision, and an `ONLINE` Neo4j vector index for every active
+generation. Missing or duplicate state, a stale revision, a missing/offline
+index, or a driver failure returns `not_ready`. The response exposes only the
+safe `ok`/`error` checks `neo4j`, `embedding_generations`, and `vector_indexes`;
+it never includes Tenant IDs, index names, connection details, or exception
+text.
