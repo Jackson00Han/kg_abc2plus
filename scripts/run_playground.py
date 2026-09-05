@@ -639,6 +639,8 @@ def build_playground_app(
             "human_review": True,
             "knowledge_publication": True,
             "published_graph_quality": True,
+            "published_graph_quality_history": True,
+            "active_abox_inventory": True,
             "document_retirement": True,
             "evidence_subgraph": True,
             "extraction_provider": {

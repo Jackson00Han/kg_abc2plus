@@ -668,14 +668,33 @@
           <div class="history-list" id="history-list" aria-live="polite"><div class="output-box">发布历史尚未加载。</div></div>
         </section>
 
+        <section class="workbench-card full" aria-labelledby="inventory-title">
+          <div class="workbench-head"><div><h2 id="inventory-title">活动 A-Box 清单</h2><p>检查唯一 active publication 中经过质量校验的实体与断言。清单只返回有界治理元数据和精确证据位置，不返回证据正文；勾选 revision 后会把对应稳定 record ID 加入第 05 步的移除列表。</p></div><span class="step-chip">07</span></div>
+          <div class="field-grid">
+            <div class="field"><label for="inventory-document-filter">按 Document ID 筛选（可选）</label><input id="inventory-document-filter" maxlength="256" placeholder="留空查看完整活动清单"></div>
+            <div class="field"><label for="inventory-limit">返回记录上限（1–500）</label><input id="inventory-limit" type="number" min="1" max="500" step="1" value="100"></div>
+          </div>
+          <div class="workbench-actions" style="justify-content:flex-start">
+            <button class="button" id="inventory-refresh-button" type="button">刷新活动清单</button>
+            <button class="button danger" id="inventory-add-removals-button" type="button">将勾选记录加入移除列表</button>
+          </div>
+          <div class="exact-evidence" id="inventory-summary">活动 A-Box 尚未加载。</div>
+          <div class="history-list" id="inventory-list" aria-live="polite"><div class="output-box">活动 A-Box 尚未加载。</div></div>
+        </section>
+
         <section class="workbench-card full" aria-labelledby="quality-title">
-          <div class="workbench-head"><div><h2 id="quality-title">活动已发布图谱质量</h2><p>按 active publication 的完整 ACL 与精确 T-Box 审计当前导航投影；只显示有界元数据、问题和证据 Chunk ID，绝不返回源文本。</p></div><span class="step-chip">07</span></div>
-          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="quality-refresh-button" type="button">运行质量审计</button></div>
+          <div class="workbench-head"><div><h2 id="quality-title">活动已发布图谱质量</h2><p>按 active publication 的完整 ACL 与精确 T-Box 审计当前导航投影；只显示有界元数据、问题和证据 Chunk ID，绝不返回源文本。</p></div><span class="step-chip">08</span></div>
+          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="quality-refresh-button" type="button">运行质量审计（不保存）</button><button class="button primary" id="quality-save-button" type="button">运行并保存审计</button></div>
           <div class="history-list" id="quality-content" aria-live="polite"><div class="output-box">活动图谱质量尚未加载。</div></div>
+          <div class="output-box" id="quality-save-output" aria-live="polite">只有点击“运行并保存审计”才写入不可变质量记录；重复运行保留首次观察者和记录时间。</div>
+          <div class="field" style="margin-top:14px"><label for="quality-history-publication">按 Publication ID 筛选历史（可选）</label><input id="quality-history-publication" maxlength="256" placeholder="留空查看当前身份可见的最近 10 条记录"></div>
+          <div class="workbench-actions" style="justify-content:flex-start"><button class="button" id="quality-history-refresh-button" type="button">刷新审计历史</button></div>
+          <div class="history-list" id="quality-history-list" aria-live="polite"><div class="output-box">审计历史尚未加载。</div></div>
+          <div class="history-list" id="quality-history-detail" aria-live="polite"><div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div></div>
         </section>
 
         <section class="workbench-card full" aria-labelledby="document-lifecycle-title">
-          <div class="workbench-head"><div><h2 id="document-lifecycle-title">活动文档与受治理撤回</h2><p>仅列出当前身份完整可见、来源链闭合的活动文档元数据。撤回会解除活动版本、检索范围与向量 generation，不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></div><span class="step-chip">08</span></div>
+          <div class="workbench-head"><div><h2 id="document-lifecycle-title">活动文档与受治理撤回</h2><p>仅列出当前身份完整可见、来源链闭合的活动文档元数据。撤回会解除活动版本、检索范围与向量 generation，不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></div><span class="step-chip">09</span></div>
           <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="document-lifecycle-refresh-button" type="button">刷新活动文档</button></div>
           <div class="exact-evidence" id="document-lifecycle-summary">实时授权视图尚未加载。</div>
           <div class="history-list" id="document-lifecycle-list" aria-live="polite"><div class="output-box">活动文档尚未加载。</div></div>
@@ -710,7 +729,19 @@
         publicationCandidates: [],
         selectedCandidateRevisions: new Set(),
         approvedRevisions: new Set(),
+        activeInventory: null,
+        inventoryEpoch: 0,
+        selectedInventoryRevisions: new Set(),
+        inventoryRevisionHistories: new Map(),
+        inventoryHistoryRequests: new Map(),
+        inventoryRemovalRecordIds: new Set(),
         quality: null,
+        qualityEpoch: 0,
+        qualityHistory: [],
+        qualityHistoryEpoch: 0,
+        qualityDetailEpoch: 0,
+        qualitySaveEpoch: 0,
+        qualitySaving: false,
         activeDocuments: [],
       };
 
@@ -732,7 +763,12 @@
         constructionOutput: $('construction-output'), constructionJobList: $('construction-job-list'), reviewList: $('review-list'),
         publicationRevisions: $('publication-revisions'), publicationRemovals: $('publication-removals'), publicationOutput: $('publication-output'),
         publicationCandidateList: $('publication-candidate-list'), historyList: $('history-list'),
+        inventoryDocumentFilter: $('inventory-document-filter'), inventoryLimit: $('inventory-limit'),
+        inventorySummary: $('inventory-summary'), inventoryList: $('inventory-list'),
         qualityContent: $('quality-content'),
+        qualitySaveButton: $('quality-save-button'), qualitySaveOutput: $('quality-save-output'),
+        qualityHistoryPublication: $('quality-history-publication'), qualityHistoryList: $('quality-history-list'),
+        qualityHistoryDetail: $('quality-history-detail'),
         documentLifecycleSummary: $('document-lifecycle-summary'),
         documentLifecycleList: $('document-lifecycle-list'),
       };
@@ -1050,20 +1086,34 @@
         state.constructionJobs = [];
         state.constructionOperation = null;
         state.publications = [];
+        invalidateInventory();
         state.quality = null;
+        state.qualityEpoch += 1;
+        state.qualityHistory = [];
+        state.qualityHistoryEpoch += 1;
+        state.qualityDetailEpoch += 1;
+        state.qualitySaveEpoch += 1;
+        state.qualitySaving = false;
+        elements.qualitySaveButton.disabled = false;
+        elements.qualitySaveOutput.textContent = '只有点击“运行并保存审计”才写入不可变质量记录。';
+        elements.qualityHistoryPublication.value = '';
+        elements.qualityHistoryList.innerHTML = '<div class="output-box">审计历史尚未加载。</div>';
+        elements.qualityHistoryDetail.innerHTML = '<div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div>';
         state.activeDocuments = [];
         state.publicationCandidates = [];
         state.selectedCandidateRevisions.clear();
         state.approvedRevisions.clear();
         elements.publicationRevisions.value = '';
         elements.publicationRemovals.value = '';
+        elements.inventorySummary.textContent = '活动 A-Box 尚未加载。';
+        elements.inventoryList.innerHTML = '<div class="output-box">活动 A-Box 尚未加载。</div>';
         elements.qualityContent.innerHTML = '<div class="output-box">活动图谱质量尚未加载。</div>';
         elements.documentLifecycleSummary.textContent = '实时授权视图尚未加载。';
         elements.documentLifecycleList.innerHTML = '<div class="output-box">活动文档尚未加载。</div>';
         resetRetrievalResult();
         renderIdentity();
         updateMode();
-        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadQuality(), loadActiveDocuments()]);
+        if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
       }
 
       async function run() {
@@ -1264,7 +1314,7 @@
         $('retrieval-nav').classList.toggle('active', !governance);
         $('governance-nav').classList.toggle('active', governance);
         if (governance) {
-          Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadQuality(), loadActiveDocuments()]);
+          Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         }
       }
 
@@ -1808,12 +1858,171 @@
         }
       }
 
-      function renderQuality() {
-        const report = state.quality;
-        if (!report) {
-          elements.qualityContent.innerHTML = '<div class="output-box">活动图谱质量尚未加载。</div>';
+      function inventoryLiteralMarkup(literal) {
+        if (!literal) return '<span>缺少受治理字面量</span>';
+        const displayValue = literal.canonical_value ?? literal.typed_value ?? literal.value;
+        const details = [
+          literal.datatype ? `datatype ${literal.datatype}` : null,
+          literal.canonical_unit ? `unit ${literal.canonical_unit}` : null,
+          literal.valid_from ? `valid from ${literal.valid_from}` : null,
+          literal.valid_to ? `valid to ${literal.valid_to}` : null,
+          literal.observed_at ? `observed ${literal.observed_at}` : null,
+        ].filter(Boolean).map(escapeHtml).join(' · ');
+        return `<span>${escapeHtml(displayValue)}${details ? `<br>${details}` : ''}</span>`;
+      }
+
+      function invalidateInventory() {
+        state.inventoryEpoch += 1;
+        state.activeInventory = null;
+        state.selectedInventoryRevisions.clear();
+        state.inventoryRevisionHistories.clear();
+        state.inventoryHistoryRequests.clear();
+        const removals = elements.publicationRemovals.value.split(/\s+/).filter(Boolean);
+        elements.publicationRemovals.value = removals.filter(value => !state.inventoryRemovalRecordIds.has(value)).join('\n');
+        state.inventoryRemovalRecordIds.clear();
+        renderInventory();
+        return state.inventoryEpoch;
+      }
+
+      function inventoryEntityMarkup(entity) {
+        if (!entity) return '<span>缺少受治理实体</span>';
+        return `<strong>${escapeHtml(entity.display_name)}</strong><br>${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}<br>entity ${escapeHtml(entity.entity_id)}`;
+      }
+
+      function inventoryEvidenceMarkup(evidence, label = 'record evidence') {
+        if (!evidence) return `<div class="exact-evidence">${escapeHtml(label)} · 不可用</div>`;
+        const document = evidence.document_id ? `Document ${escapeHtml(evidence.document_id)} · version ${escapeHtml(evidence.version_id)}<br>` : '';
+        return `<div class="exact-evidence"><strong>${escapeHtml(label)}</strong><br>${document}Chunk ${escapeHtml(evidence.chunk_id)} · ordinal ${escapeHtml(evidence.ordinal)} · chars ${escapeHtml(evidence.char_start)}:${escapeHtml(evidence.char_end)}<br>仅显示证据位置；源文本未由清单接口返回。</div>`;
+      }
+
+      function inventoryRelationshipPropertiesMarkup(assertion) {
+        const values = Array.isArray(assertion?.relationship_properties) ? assertion.relationship_properties : [];
+        if (!values.length) return '';
+        return `<div class="provider-note" style="margin-top:8px"><strong>关系属性</strong></div>${values.map(value => `<div class="governance-item" style="margin-top:7px"><strong>${escapeHtml(value.name)}</strong><p>property value ${escapeHtml(value.property_value_id)} · confidence ${escapeHtml(value.confidence)}<br>${inventoryLiteralMarkup(value.literal)}</p>${inventoryEvidenceMarkup(value.evidence, 'property evidence')}</div>`).join('')}`;
+      }
+
+      function inventoryRevisionHistoryMarkup(item, index) {
+        const history = state.inventoryRevisionHistories.get(item.record_id);
+        if (!history || history.headRevisionId !== item.revision_id) return `<div class="workbench-actions"><button class="button" type="button" data-inventory-history="${index}">查看不可变 revision 历史</button></div>`;
+        if (history.error) return `<div class="output-box">${escapeHtml(history.error)}</div><div class="workbench-actions"><button class="button" type="button" data-inventory-history="${index}">重试 revision 历史</button></div>`;
+        const rows = (history.items || []).map(revision => `<div class="exact-evidence"><strong>revision ${escapeHtml(revision.revision)} · ${escapeHtml(revision.trust?.status)}</strong> · ${escapeHtml(revision.revision_id)}<br>${escapeHtml(revision.trust?.authority)} · ${escapeHtml(revision.trust?.origin)} · ${escapeHtml(revision.trust?.reviewed_by || 'unreviewed')}${revision.trust?.reviewed_at ? ` · ${escapeHtml(revision.trust.reviewed_at)}` : ''}</div>`).join('');
+        return `<div class="provider-note" style="margin-top:10px"><strong>不可变 revision 历史</strong><br>通过既有 ACL 安全接口读取；此处不投影证据正文或审核备注。</div>${rows || '<div class="output-box">没有可见 revision。</div>'}<div class="workbench-actions"><button class="button" type="button" data-inventory-history="${index}">刷新 revision 历史</button></div>`;
+      }
+
+      function renderInventory() {
+        const inventory = state.activeInventory;
+        if (!inventory) {
+          elements.inventorySummary.textContent = '活动 A-Box 尚未加载。';
+          elements.inventoryList.innerHTML = '<div class="output-box">活动 A-Box 尚未加载。</div>';
           return;
         }
+        const filter = inventory.document_id ? ` · Document filter ${inventory.document_id}` : '';
+        elements.inventorySummary.textContent = `active publication generation ${inventory.publication_generation} · ${inventory.publication_id} · T-Box ${inventory.ontology_version_id} · manifest ${inventory.manifest_hash} · ${number(inventory.matching_record_count)} / ${number(inventory.total_record_count)} records${filter}${inventory.truncated ? ' · 返回列表已按 limit 截断' : ''}`;
+        if (!Array.isArray(inventory.items) || !inventory.items.length) {
+          elements.inventoryList.innerHTML = '<div class="output-box">当前筛选没有已发布记录；active publication 仍已通过完整清单校验。</div>';
+          return;
+        }
+        elements.inventoryList.innerHTML = inventory.items.map((item, index) => {
+          const entity = item.entity;
+          const assertion = item.assertion;
+          const object = assertion?.object_kind === 'entity'
+            ? inventoryEntityMarkup(assertion.object_entity)
+            : inventoryLiteralMarkup(assertion?.literal);
+          const structure = entity
+            ? `<div class="provider-note" style="margin-top:8px">${inventoryEntityMarkup(entity)}</div>`
+            : `<div class="provider-note" style="margin-top:8px"><strong>subject</strong><br>${inventoryEntityMarkup(assertion?.subject)}<br><br><strong>predicate</strong><br>${escapeHtml(assertion?.predicate)}<br><br><strong>object · ${escapeHtml(assertion?.object_kind)}</strong><br>${object}</div>${inventoryRelationshipPropertiesMarkup(assertion)}`;
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-inventory-select="${index}" ${state.selectedInventoryRevisions.has(item.revision_id) ? 'checked' : ''}> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity?.display_name || assertion?.predicate || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge ${item.authority_level === 'AUTHORITATIVE' ? 'authoritative' : ''}">${escapeHtml(item.authority_level)}</span><span class="trust-badge">${escapeHtml(item.governance_status)}</span><span class="trust-badge">${escapeHtml(item.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>record ${escapeHtml(item.record_id)}<br>revision ${escapeHtml(item.revision_id)} · ontology ${escapeHtml(item.ontology_key)}</p>${structure}${inventoryEvidenceMarkup(item.evidence)}${inventoryRevisionHistoryMarkup(item, index)}</article>`;
+        }).join('');
+        elements.inventoryList.querySelectorAll('[data-inventory-select]').forEach(input => {
+          input.addEventListener('change', () => {
+            const item = state.activeInventory?.items?.[Number(input.dataset.inventorySelect)];
+            if (!item) return;
+            if (input.checked) state.selectedInventoryRevisions.add(item.revision_id);
+            else state.selectedInventoryRevisions.delete(item.revision_id);
+          });
+        });
+        elements.inventoryList.querySelectorAll('[data-inventory-history]').forEach(button => {
+          button.addEventListener('click', () => loadInventoryRevisionHistory(Number(button.dataset.inventoryHistory), button));
+        });
+      }
+
+      async function loadInventory() {
+        const identityEpoch = state.identityEpoch;
+        const requestEpoch = invalidateInventory();
+        const documentId = elements.inventoryDocumentFilter.value.trim();
+        const limit = Number(elements.inventoryLimit.value);
+        if (!elements.inventoryLimit.checkValidity() || !Number.isSafeInteger(limit)) {
+          elements.inventorySummary.textContent = '活动 A-Box 参数无效。';
+          elements.inventoryList.innerHTML = '<div class="output-box">返回记录上限必须是 1–500 的整数。</div>';
+          return;
+        }
+        const params = new URLSearchParams({limit: String(limit)});
+        if (documentId) params.set('document_id', documentId);
+        elements.inventorySummary.textContent = '正在校验并读取完整 active publication…';
+        elements.inventoryList.innerHTML = '<div class="output-box">正在读取有界活动 A-Box 清单…</div>';
+        try {
+          const payload = await apiRequest(`/v1/knowledge/publication-inventory?${params.toString()}`);
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.inventoryEpoch) return;
+          state.activeInventory = payload;
+          renderInventory();
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.inventoryEpoch) return;
+          state.activeInventory = null;
+          state.selectedInventoryRevisions.clear();
+          state.inventoryRevisionHistories.clear();
+          const message = error.status === 403
+            ? '当前身份缺少 knowledge:quality，或不能完整查看 active publication 的全部 ACL。'
+            : error.status === 409
+              ? '当前租户没有唯一且质量合格的 active publication，或 publication / T-Box / manifest 状态冲突。'
+              : error.status === 503
+                ? '活动 A-Box 清单依赖暂不可用；未返回或缓存部分图谱。'
+                : error.message;
+          elements.inventorySummary.textContent = '活动 A-Box 实时授权视图不可用。';
+          elements.inventoryList.innerHTML = `<div class="output-box">${escapeHtml(message)}</div>`;
+        }
+      }
+
+      async function loadInventoryRevisionHistory(index, button) {
+        const item = state.activeInventory?.items?.[index];
+        if (!item) { showToast('活动 A-Box 已变化，请刷新'); return; }
+        const identityEpoch = state.identityEpoch;
+        const requestEpoch = state.inventoryEpoch;
+        const requestToken = Symbol();
+        state.inventoryHistoryRequests.set(item.record_id, requestToken);
+        const isCurrent = () => identityEpoch === state.identityEpoch && requestEpoch === state.inventoryEpoch && state.inventoryHistoryRequests.get(item.record_id) === requestToken;
+        button.disabled = true;
+        try {
+          const payload = await apiRequest(`/v1/knowledge/records/${encodeURIComponent(item.record_id)}/revisions?limit=100`);
+          if (!isCurrent()) return;
+          state.inventoryRevisionHistories.set(item.record_id, {headRevisionId: item.revision_id, items: payload.items || []});
+          renderInventory();
+        } catch (error) {
+          if (!isCurrent()) return;
+          state.inventoryRevisionHistories.set(item.record_id, {headRevisionId: item.revision_id, error: error.status === 403 ? '当前身份缺少 knowledge:review，不能读取 revision 历史。' : error.message});
+          renderInventory();
+        }
+      }
+
+      function addInventoryRemovals() {
+        const items = state.activeInventory?.items || [];
+        const selectedRecordIds = items
+          .filter(item => state.selectedInventoryRevisions.has(item.revision_id))
+          .map(item => item.record_id);
+        if (!selectedRecordIds.length) { showToast('请先勾选至少一个活动 revision'); return; }
+        const existing = elements.publicationRemovals.value.split(/\s+/).map(value => value.trim()).filter(Boolean);
+        selectedRecordIds.filter(value => !existing.includes(value)).forEach(value => state.inventoryRemovalRecordIds.add(value));
+        const recordIds = [...new Set([...existing, ...selectedRecordIds])];
+        elements.publicationRemovals.value = recordIds.join('\n');
+        elements.publicationRemovals.focus();
+        showToast(`已将 ${selectedRecordIds.length} 个稳定 record ID 加入第 05 步移除列表`);
+      }
+
+      function renderQuality() {
+        const report = state.quality;
+        elements.qualityContent.innerHTML = report ? qualityReportMarkup(report, 'active publication') : '<div class="output-box">活动图谱质量尚未加载。</div>';
+      }
+
+      function qualityReportMarkup(report, label) {
         const countLabels = {
           revisions: 'revisions', entity_mentions: 'mentions', assertions: 'assertions',
           relationship_assertions: 'relationships', literal_assertions: 'literals', canonical_entities: 'entities',
@@ -1825,9 +2034,9 @@
         const sample = Array.isArray(report.review_sample) && report.review_sample.length
           ? report.review_sample.map(item => `<article class="governance-item"><strong>${escapeHtml(item.object_kind)} · ${escapeHtml(item.object_id)}</strong><p>${escapeHtml((item.issue_codes || []).join(', '))}<br>evidence Chunks: ${escapeHtml((item.evidence_chunk_ids || []).join(', ') || '—')}</p></article>`).join('')
           : '<div class="output-box">当前没有人工复核样本。</div>';
-        elements.qualityContent.innerHTML = `
+        return `
           <article class="governance-item">
-            <div class="governance-item-head"><strong>active publication · generation ${escapeHtml(report.publication_generation)}</strong><span class="trust-badge ${report.passed ? 'authoritative' : 'danger'}">${report.passed ? 'PASS' : 'FAIL'}</span></div>
+            <div class="governance-item-head"><strong>${escapeHtml(label)} · generation ${escapeHtml(report.publication_generation)}</strong><span class="trust-badge ${report.passed ? 'authoritative' : 'danger'}">${report.passed ? 'PASS' : 'FAIL'}</span></div>
             <p>${escapeHtml(report.publication_id)}<br>T-Box ${escapeHtml(report.ontology_version_id)} · checksum ${escapeHtml(report.tbox_checksum)}<br>graph digest ${escapeHtml(report.graph_digest)}<br>manifest ${escapeHtml(report.manifest_hash)} · corpus revision ${escapeHtml(report.corpus_revision)}<br>ruleset ${escapeHtml(report.ruleset_version)} · run ${escapeHtml(report.run_id)}</p>
             <div class="graph-summary">${counts}</div>
             <div class="exact-evidence">issues ${escapeHtml(report.total_issue_count)} · errors ${escapeHtml(report.total_error_count)}${report.issues_truncated ? ' · 有界列表已截断' : ''}</div>
@@ -1838,21 +2047,101 @@
 
       async function loadQuality() {
         const identityEpoch = state.identityEpoch;
+        const requestEpoch = ++state.qualityEpoch;
+        state.quality = null;
         elements.qualityContent.innerHTML = '<div class="output-box">正在审计完整 active publication…</div>';
         try {
           const payload = await apiRequest('/v1/knowledge/quality');
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityEpoch) return;
           state.quality = payload;
           renderQuality();
         } catch (error) {
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityEpoch) return;
           state.quality = null;
-          const message = error.status === 403
-            ? '当前身份缺少 knowledge:quality，无法查看完整活动图谱质量。'
+          elements.qualityContent.innerHTML = `<div class="output-box">${escapeHtml(qualityErrorMessage(error))}</div>`;
+        }
+      }
+
+      function qualityErrorMessage(error) {
+        return error.status === 403
+          ? '当前身份缺少 knowledge:quality，或无法完整查看该审计记录的全部 ACL。'
+          : error.status === 404
+            ? '未找到当前身份可见的审计记录；请刷新历史。'
             : error.status === 409
-              ? '当前租户尚无可审计的唯一 active publication，或其 T-Box / 发布绑定存在冲突。'
-              : error.message;
-          elements.qualityContent.innerHTML = `<div class="output-box">${escapeHtml(message)}</div>`;
+              ? '当前 publication / T-Box / 图谱版本已变化或记录一致性冲突；请刷新后重试。'
+              : error.status === 503
+                ? '质量审计依赖暂不可用；请稍后重试。'
+                : error.message;
+      }
+
+      function renderQualityHistory() {
+        elements.qualityHistoryList.innerHTML = state.qualityHistory.length
+          ? state.qualityHistory.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><strong>历史观察 · generation ${escapeHtml(item.publication_generation)}</strong><span class="trust-badge ${item.passed ? 'authoritative' : 'danger'}">${item.passed ? 'PASS' : 'FAIL'}</span></div><p>run ${escapeHtml(item.run_id)}<br>publication ${escapeHtml(item.publication_id)}<br>T-Box ${escapeHtml(item.ontology_version_id)} · corpus revision ${escapeHtml(item.corpus_revision)}<br>issues ${escapeHtml(item.total_issue_count)} · errors ${escapeHtml(item.total_error_count)}${item.issues_truncated ? ' · 问题列表有界截断' : ''}<br>首次观察者 ${escapeHtml(item.recorded_by)} · ${escapeHtml(item.recorded_at)}</p><div class="workbench-actions"><button class="button" type="button" data-quality-history="${index}">查看历史观察详情</button></div></article>`).join('')
+          : '<div class="output-box">当前身份和筛选范围内没有已保存的质量审计。</div>';
+        elements.qualityHistoryList.querySelectorAll('[data-quality-history]').forEach(button => {
+          button.addEventListener('click', () => loadQualityRun(state.qualityHistory[Number(button.dataset.qualityHistory)]?.run_id));
+        });
+      }
+
+      async function loadQualityHistory() {
+        const identityEpoch = state.identityEpoch;
+        const requestEpoch = ++state.qualityHistoryEpoch;
+        state.qualityHistory = [];
+        state.qualityDetailEpoch += 1;
+        elements.qualityHistoryList.innerHTML = '<div class="output-box">正在读取最近 10 条可见质量审计…</div>';
+        elements.qualityHistoryDetail.innerHTML = '<div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div>';
+        const params = new URLSearchParams({limit: '10'});
+        const publicationId = elements.qualityHistoryPublication.value.trim();
+        if (publicationId) params.set('publication_id', publicationId);
+        try {
+          const payload = await apiRequest(`/v1/knowledge/quality/runs?${params.toString()}`);
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityHistoryEpoch) return;
+          state.qualityHistory = payload.items || [];
+          renderQualityHistory();
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityHistoryEpoch) return;
+          elements.qualityHistoryList.innerHTML = `<div class="output-box">${escapeHtml(qualityErrorMessage(error))}</div>`;
+        }
+      }
+
+      async function loadQualityRun(runId) {
+        if (!runId) return;
+        const identityEpoch = state.identityEpoch;
+        const requestEpoch = ++state.qualityDetailEpoch;
+        elements.qualityHistoryDetail.innerHTML = '<div class="output-box">正在读取不可变历史观察…</div>';
+        try {
+          const payload = await apiRequest(`/v1/knowledge/quality/runs/${encodeURIComponent(runId)}`);
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityDetailEpoch) return;
+          elements.qualityHistoryDetail.innerHTML = `<div class="exact-evidence"><strong>历史观察，不代表当前图谱状态</strong><br>首次观察者 ${escapeHtml(payload.recorded_by)} · ${escapeHtml(payload.recorded_at)}<br>record hash ${escapeHtml(payload.record_hash)}</div>${qualityReportMarkup(payload.report, '历史观察（非实时）')}`;
+        } catch (error) {
+          if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityDetailEpoch) return;
+          elements.qualityHistoryDetail.innerHTML = `<div class="output-box">${escapeHtml(qualityErrorMessage(error))}</div>`;
+        }
+      }
+
+      async function saveQualityRun() {
+        if (state.qualitySaving) return;
+        const identityEpoch = state.identityEpoch;
+        const requestEpoch = ++state.qualitySaveEpoch;
+        const isCurrent = () => identityEpoch === state.identityEpoch && requestEpoch === state.qualitySaveEpoch;
+        state.qualitySaving = true;
+        elements.qualitySaveButton.disabled = true;
+        elements.qualitySaveOutput.textContent = '正在审计并保存不可变质量记录…';
+        try {
+          const payload = await apiRequest('/v1/knowledge/quality/runs', {
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}',
+          });
+          if (!isCurrent()) return;
+          elements.qualitySaveOutput.textContent = `已保存历史观察 ${payload.report.run_id} · ${payload.report.passed ? 'PASS' : 'FAIL'} · 首次观察者 ${payload.recorded_by} · ${payload.recorded_at}。重复 run 保留原首次记录；此结果不替换实时审计。`;
+          await loadQualityHistory();
+        } catch (error) {
+          if (!isCurrent()) return;
+          elements.qualitySaveOutput.textContent = qualityErrorMessage(error);
+        } finally {
+          if (isCurrent()) {
+            state.qualitySaving = false;
+            elements.qualitySaveButton.disabled = false;
+          }
         }
       }
 
@@ -1953,7 +2242,7 @@
           if (identityEpoch !== state.identityEpoch) return;
           showToast(`文档已受治理撤回：${shortId(payload.document_id)} · corpus revision ${payload.corpus_revision}`);
           resetRetrievalResult();
-          await Promise.allSettled([loadActiveDocuments(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadQuality()]);
+          await Promise.allSettled([loadActiveDocuments(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory()]);
         } catch (error) {
           if (identityEpoch !== state.identityEpoch) return;
           const message = error.status === 409
@@ -1976,6 +2265,7 @@
         if (replaceRecordIds.length && !revisionIds.length) { output(elements.publicationOutput, '替换 active record 时必须同时提交 APPROVED revision。'); return; }
         const overlap = removeRecordIds.filter(value => replaceRecordIds.includes(value));
         if (overlap.length) { output(elements.publicationOutput, `同一 record 不能同时移除和替换：${overlap.join(', ')}`); return; }
+        invalidateInventory();
         try {
           const payload = await apiRequest('/v1/knowledge/publications:publish', {
             method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1987,7 +2277,7 @@
           elements.publicationRevisions.value = '';
           elements.publicationRemovals.value = '';
           showToast(`知识 publication ${shortId(payload.publication_id)} 已激活`);
-          await Promise.allSettled([loadPublicationCandidates(), loadHistory(), loadQuality(), loadActiveDocuments()]);
+          await Promise.allSettled([loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         } catch (error) {
           output(elements.publicationOutput, error.message);
         }
@@ -1997,13 +2287,14 @@
         const target = state.publications[index];
         const active = activePublication();
         if (!target || !active) { showToast('没有可用的 active publication'); return; }
+        invalidateInventory();
         try {
           const payload = await apiRequest(`/v1/knowledge/publications/${encodeURIComponent(target.publication_id)}:rollback`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({expected_active_publication_id: active.publication_id}),
           });
           showToast(`已回滚并激活 generation ${payload.generation}`);
-          await Promise.allSettled([loadHistory(), loadQuality(), loadActiveDocuments()]);
+          await Promise.allSettled([loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         } catch (error) {
           showToast(error.message);
         }
@@ -2127,7 +2418,17 @@
       $('publication-button').addEventListener('click', publishKnowledge);
       $('publication-candidates-refresh-button').addEventListener('click', loadPublicationCandidates);
       $('history-refresh-button').addEventListener('click', loadHistory);
+      $('inventory-refresh-button').addEventListener('click', loadInventory);
+      $('inventory-add-removals-button').addEventListener('click', addInventoryRemovals);
+      elements.inventoryDocumentFilter.addEventListener('keydown', event => {
+        if (event.key === 'Enter') loadInventory();
+      });
       $('quality-refresh-button').addEventListener('click', loadQuality);
+      elements.qualitySaveButton.addEventListener('click', saveQualityRun);
+      $('quality-history-refresh-button').addEventListener('click', loadQualityHistory);
+      elements.qualityHistoryPublication.addEventListener('keydown', event => {
+        if (event.key === 'Enter') loadQualityHistory();
+      });
       $('document-lifecycle-refresh-button').addEventListener('click', loadActiveDocuments);
       $('document-file').addEventListener('change', event => {
         const file = event.currentTarget.files?.[0];

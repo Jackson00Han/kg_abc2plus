@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 from pathlib import Path
+import shutil
+import subprocess
 import time
 from types import SimpleNamespace
 import unittest
@@ -629,6 +632,321 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("Candidate cosine ranking", source)
         self.assertNotIn("Candidate rerank", source)
 
+    def test_ui_exposes_acl_safe_active_abox_inventory(self) -> None:
+        source = (
+            Path(__file__).parents[2]
+            / "src"
+            / "graphrag_prod"
+            / "playground"
+            / "static"
+            / "index.html"
+        ).read_text()
+
+        for control_id in (
+            "inventory-document-filter",
+            "inventory-limit",
+            "inventory-refresh-button",
+            "inventory-add-removals-button",
+            "inventory-summary",
+            "inventory-list",
+        ):
+            self.assertIn(f'id="{control_id}"', source)
+        self.assertIn("/v1/knowledge/publication-inventory?${params.toString()}", source)
+        self.assertIn("params.set('document_id', documentId)", source)
+        self.assertIn("knowledge:quality", source)
+        self.assertIn("不能完整查看 active publication 的全部 ACL", source)
+        self.assertIn("没有唯一且质量合格的 active publication", source)
+        self.assertIn("清单依赖暂不可用", source)
+        self.assertIn("data-inventory-select", source)
+        self.assertIn("state.selectedInventoryRevisions.has(item.revision_id)", source)
+        self.assertIn(".map(item => item.record_id)", source)
+        self.assertIn("elements.publicationRemovals.value = recordIds.join('\\n')", source)
+        self.assertIn(
+            "/v1/knowledge/records/${encodeURIComponent(item.record_id)}/revisions?limit=100",
+            source,
+        )
+        self.assertIn("publication_generation", source)
+        self.assertIn("ontology_version_id", source)
+        self.assertIn("relationship_properties", source)
+        self.assertIn("evidence.char_start", source)
+        inventory_source = source[
+            source.index("function inventoryLiteralMarkup") : source.index(
+                "function renderQuality"
+            )
+        ]
+        self.assertNotIn("quoted_text", inventory_source)
+        self.assertNotIn("evidence_text", inventory_source)
+        self.assertIn("escapeHtml(item.record_id)", inventory_source)
+        self.assertIn("escapeHtml(entity.display_name)", inventory_source)
+
+    def _run_inventory_behavior(self, scenario: str, *, quality: bool = False) -> None:
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is required for executable Playground UI checks")
+        source = (
+            Path(__file__).parents[2]
+            / "src/graphrag_prod/playground/static/index.html"
+        ).read_text()
+        inventory = source[
+            source.index("function inventoryLiteralMarkup") : source.index(
+                "function renderQuality"
+            )
+        ]
+        publication = source[
+            source.index("async function publishKnowledge") : source.index(
+                "async function init"
+            )
+        ]
+        quality_source = source[
+            source.index("function renderQuality") : source.index(
+                "const documentBlockerLabels"
+            )
+        ] if quality else ""
+        harness = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const state = {
+  identityEpoch: 0, inventoryEpoch: 0, activeInventory: null,
+  selectedInventoryRevisions: new Set(), inventoryRevisionHistories: new Map(),
+  inventoryHistoryRequests: new Map(), inventoryRemovalRecordIds: new Set(),
+  selectedCandidateRevisions: new Set(), publicationCandidates: [],
+  approvedRevisions: new Set(), publications: [],
+  quality: null, qualityEpoch: 0, qualityHistory: [], qualityHistoryEpoch: 0,
+  qualityDetailEpoch: 0, qualitySaveEpoch: 0, qualitySaving: false,
+};
+const elements = {
+  inventoryDocumentFilter: {value: ''},
+  inventoryLimit: {value: '100', checkValidity: () => true},
+  inventorySummary: {textContent: ''},
+  inventoryList: {innerHTML: '', querySelectorAll: () => []},
+  publicationRemovals: {value: '', focus() {}},
+  publicationRevisions: {value: ''}, publicationOutput: {},
+  qualityContent: {innerHTML: ''}, qualitySaveButton: {disabled: false},
+  qualitySaveOutput: {textContent: ''}, qualityHistoryPublication: {value: ''},
+  qualityHistoryList: {innerHTML: '', querySelectorAll: () => []},
+  qualityHistoryDetail: {innerHTML: ''},
+};
+const requests = [];
+function apiRequest(url, options) {
+  return new Promise((resolve, reject) => requests.push({url, options, resolve, reject}));
+}
+function snapshot(id, revision = 'revision-1') {
+  return {publication_id: id, publication_generation: 1, manifest_hash: 'digest-' + id,
+    ontology_version_id: 'tbox-1', total_record_count: 1, matching_record_count: 1,
+    truncated: false, items: [{record_id: 'record-1', revision_id: revision,
+      record_kind: 'ENTITY_MENTION', authority_level: 'AUTHORITATIVE',
+      entity: {display_name: 'Pump', entity_type: 'Equipment', entity_id: 'entity-1'},
+      evidence: {document_id: 'document-1', version_id: 'version-1', chunk_id: 'chunk-1',
+        ordinal: 0, char_start: 0, char_end: 4}}]};
+}
+const context = vm.createContext({state, elements, requests, apiRequest, snapshot,
+  flush: () => new Promise(resolve => setImmediate(resolve)),
+  URLSearchParams, assert, showToast() {}, escapeHtml: String, number: String,
+  shortId: String, output() {}, activePublication: () => state.publications[0],
+  loadPublicationCandidates: async () => {}, loadHistory: async () => {},
+  loadQuality: async () => {}, loadActiveDocuments: async () => {},
+  loadQualityHistory: async () => {},
+});
+vm.runInContext(input.source, context);
+const watchdog = setTimeout(() => { console.error('UI scenario did not finish'); process.exit(1); }, 5000);
+vm.runInContext('(async () => {' + input.scenario + '})()', context)
+  .then(() => clearTimeout(watchdog))
+  .catch(error => { clearTimeout(watchdog); console.error(error); process.exitCode = 1; });
+"""
+        result = subprocess.run(
+            [node, "-e", harness],
+            input=json.dumps({"source": inventory + publication + quality_source, "scenario": scenario}),
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_inventory_latest_request_wins_over_stale_success_and_error(self) -> None:
+        self._run_inventory_behavior(r"""
+const first = loadInventory();
+elements.inventoryDocumentFilter.value = 'document-new';
+const second = loadInventory();
+requests[1].resolve(snapshot('new'));
+await second;
+requests[0].resolve(snapshot('old'));
+await first;
+assert.equal(state.activeInventory.publication_id, 'new');
+assert.ok(requests[1].url.includes('document_id=document-new'));
+const third = loadInventory();
+const fourth = loadInventory();
+requests[3].resolve(snapshot('newest'));
+await fourth;
+requests[2].reject({status: 403, message: 'stale denied'});
+await third;
+assert.equal(state.activeInventory.publication_id, 'newest');
+assert.ok(elements.inventorySummary.textContent.includes('newest'));
+""")
+
+    def test_inventory_denial_or_identity_change_cannot_restore_old_snapshot(self) -> None:
+        self._run_inventory_behavior(r"""
+const first = loadInventory();
+const second = loadInventory();
+requests[1].reject({status: 403, message: 'denied'});
+await second;
+requests[0].resolve(snapshot('old'));
+await first;
+assert.equal(state.activeInventory, null);
+assert.ok(elements.inventoryList.innerHTML.includes('knowledge:quality'));
+const third = loadInventory();
+state.identityEpoch += 1;
+requests[2].resolve(snapshot('other-identity'));
+await third;
+assert.equal(state.activeInventory, null);
+""")
+
+    def test_inventory_invalid_refresh_clears_derived_removals_and_pending_history(self) -> None:
+        self._run_inventory_behavior(r"""
+state.activeInventory = snapshot('old');
+state.selectedInventoryRevisions.add('revision-1');
+elements.publicationRemovals.value = 'manual-record';
+addInventoryRemovals();
+assert.equal(elements.publicationRemovals.value, 'manual-record\nrecord-1');
+const history = loadInventoryRevisionHistory(0, {});
+elements.inventoryLimit.checkValidity = () => false;
+await loadInventory();
+assert.equal(state.activeInventory, null);
+assert.equal(state.selectedInventoryRevisions.size, 0);
+assert.equal(elements.publicationRemovals.value, 'manual-record');
+requests[0].resolve({items: [{revision_id: 'stale'}]});
+await history;
+assert.equal(state.inventoryRevisionHistories.size, 0);
+assert.ok(elements.inventorySummary.textContent.includes('参数无效'));
+""")
+
+    def test_inventory_history_discards_older_same_record_responses(self) -> None:
+        self._run_inventory_behavior(r"""
+state.activeInventory = snapshot('active');
+const first = loadInventoryRevisionHistory(0, {});
+const second = loadInventoryRevisionHistory(0, {});
+requests[1].resolve({items: [{revision_id: 'new-history'}]});
+await second;
+requests[0].reject({status: 403, message: 'old denial'});
+await first;
+assert.equal(state.inventoryRevisionHistories.get('record-1').items[0].revision_id, 'new-history');
+""")
+
+    def test_publication_mutations_invalidate_inventory_before_request(self) -> None:
+        self._run_inventory_behavior(r"""
+state.publications = [{publication_id: 'active'}, {publication_id: 'previous'}];
+state.activeInventory = snapshot('active');
+state.selectedInventoryRevisions.add('revision-1');
+addInventoryRemovals();
+const publishing = publishKnowledge();
+assert.equal(state.activeInventory, null);
+assert.equal(state.selectedInventoryRevisions.size, 0);
+assert.equal(elements.publicationRemovals.value, '');
+assert.equal(JSON.parse(requests[0].options.body).remove_record_ids[0], 'record-1');
+requests[0].reject({message: 'conflict'});
+await publishing;
+state.activeInventory = snapshot('active');
+state.selectedInventoryRevisions.add('revision-1');
+addInventoryRemovals();
+const history = loadInventoryRevisionHistory(0, {});
+const rollback = rollbackPublication(1);
+assert.equal(state.activeInventory, null);
+assert.equal(elements.publicationRemovals.value, '');
+requests[2].reject({message: 'conflict'});
+await rollback;
+requests[1].resolve({items: [{revision_id: 'stale'}]});
+await history;
+assert.equal(state.inventoryRevisionHistories.size, 0);
+""")
+
+    def test_quality_history_reads_preserve_live_report_and_latest_selection(self) -> None:
+        self._run_inventory_behavior(r"""
+state.quality = {run_id: 'live'};
+const first = loadQualityHistory();
+elements.qualityHistoryPublication.value = 'publication/2';
+const second = loadQualityHistory();
+requests[1].resolve({items: [{run_id: 'new'}]});
+await second;
+requests[0].resolve({items: [{run_id: 'old'}]});
+await first;
+assert.equal(state.qualityHistory[0].run_id, 'new');
+assert.ok(requests[1].url.includes('publication_id=publication%2F2'));
+const oldDetail = loadQualityRun('old');
+const newDetail = loadQualityRun('new');
+requests[3].resolve({report: {run_id: 'new', passed: true}, recorded_by: 'first-expert'});
+await newDetail;
+requests[2].resolve({report: {run_id: 'old', passed: false}, recorded_by: 'old-expert'});
+await oldDetail;
+assert.ok(elements.qualityHistoryDetail.innerHTML.includes('first-expert'));
+assert.ok(!elements.qualityHistoryDetail.innerHTML.includes('old-expert'));
+assert.ok(elements.qualityHistoryDetail.innerHTML.includes('历史观察（非实时）'));
+assert.equal(state.quality.run_id, 'live');
+assert.ok(requests.every(request => !request.options?.method));
+""", quality=True)
+
+    def test_quality_save_is_explicit_single_write_and_shows_first_observer(self) -> None:
+        self._run_inventory_behavior(r"""
+state.quality = {run_id: 'live'};
+const saving = saveQualityRun();
+await saveQualityRun();
+assert.equal(requests.length, 1);
+assert.equal(requests[0].options.method, 'POST');
+assert.equal(requests[0].options.body, '{}');
+assert.equal(elements.qualitySaveButton.disabled, true);
+requests[0].resolve({report: {run_id: 'repeatable-run', passed: false},
+  recorded_by: 'original-observer', recorded_at: '2026-01-01T00:00:00Z'});
+await flush();
+assert.equal(requests[1].url, '/v1/knowledge/quality/runs?limit=10');
+requests[1].resolve({items: []});
+await saving;
+assert.ok(elements.qualitySaveOutput.textContent.includes('original-observer'));
+assert.ok(elements.qualitySaveOutput.textContent.includes('2026-01-01T00:00:00Z'));
+assert.ok(elements.qualitySaveOutput.textContent.includes('FAIL'));
+assert.equal(state.quality.run_id, 'live');
+assert.equal(elements.qualitySaveButton.disabled, false);
+assert.equal(state.qualitySaving, false);
+""", quality=True)
+
+    def test_quality_refresh_and_identity_changes_discard_stale_results(self) -> None:
+        self._run_inventory_behavior(r"""
+const first = loadQuality();
+const second = loadQuality();
+requests[1].resolve({run_id: 'new-live', passed: true});
+await second;
+requests[0].reject({status: 503});
+await first;
+assert.equal(state.quality.run_id, 'new-live');
+const detail = loadQualityRun('old-detail');
+const listing = loadQualityHistory();
+requests[2].resolve({report: {run_id: 'old-detail'}});
+await detail;
+assert.ok(!elements.qualityHistoryDetail.innerHTML.includes('old-detail'));
+requests[3].resolve({items: []});
+await listing;
+const saving = saveQualityRun();
+state.identityEpoch += 1;
+state.qualitySaving = false;
+elements.qualitySaveButton.disabled = false;
+elements.qualitySaveOutput.textContent = 'new identity';
+requests[4].resolve({report: {run_id: 'old identity'}, recorded_by: 'old observer'});
+await saving;
+assert.equal(elements.qualitySaveOutput.textContent, 'new identity');
+assert.equal(requests.length, 5);
+assert.equal(elements.qualitySaveButton.disabled, false);
+""", quality=True)
+
+    def test_quality_history_errors_are_distinct_and_do_not_reveal_old_detail(self) -> None:
+        self._run_inventory_behavior(r"""
+for (const [status, expected] of [[403, '全部 ACL'], [404, '未找到'], [409, '一致性冲突'], [503, '暂不可用']]) {
+  const loading = loadQualityRun('protected');
+  requests[requests.length - 1].reject({status, message: 'raw backend detail'});
+  await loading;
+  assert.ok(elements.qualityHistoryDetail.innerHTML.includes(expected));
+  assert.ok(!elements.qualityHistoryDetail.innerHTML.includes('raw backend detail'));
+}
+""", quality=True)
+
     def test_routes_serve_self_contained_ui_and_no_store_sessions(self) -> None:
         app = FastAPI()
         attach_playground_routes(app, self.catalog)
@@ -693,6 +1011,11 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("!revisionIds.length && !removeRecordIds.length", page.text)
         self.assertIn("同一 record 不能同时移除和替换", page.text)
         self.assertIn("不会删除 source", page.text)
+        self.assertIn('id="inventory-list"', page.text)
+        self.assertIn('id="inventory-summary"', page.text)
+        self.assertIn("/v1/knowledge/publication-inventory?", page.text)
+        self.assertIn("只返回有界治理元数据和精确证据位置", page.text)
+        self.assertIn("对应稳定 record ID 加入第 05 步", page.text)
         self.assertIn("/v1/ontologies:import", page.text)
         self.assertIn('id="tab-graph"', page.text)
         self.assertIn('id="governance-workspace"', page.text)

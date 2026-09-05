@@ -103,6 +103,13 @@ The page shows:
 - an independently authorized active-publication quality card showing the
   exact T-Box/publication binding, graph digest, bounded counts, pass state,
   issue metadata, and deterministic review sample Chunk IDs without source text;
+- explicit immutable quality-audit recording, a bounded publication-filtered
+  history list, and historical report details separated from the live report;
+- an independently authorized active A-Box inventory showing the exact active
+  publication/T-Box binding, entity and assertion structure, trust metadata,
+  typed relationship properties, and exact evidence locations without source
+  text; it can be filtered by Document ID and can map selected revision entries
+  to stable record IDs for a subsequent publication removal;
 - an independently authorized active-document lifecycle card showing bounded
   source metadata, ACL, Chunk count, active snapshot/generation CAS values, and
   stable governance blocker codes, with explicit logical retirement only when
@@ -166,11 +173,35 @@ Use the **知识构建** view for the complete property-graph governance loop:
    delete the source document or immutable record revisions. View publication history and use
    CAS-protected rollback when required. History shows the exact published
    T-Box version so schema lineage remains visible.
-6. Run the active graph quality audit as a full steward. The dedicated
+6. Inspect the active A-Box inventory as a full steward. The dedicated
+   `knowledge:quality` scope and complete visibility over every revision in the
+   active publication are required. The server validates the complete manifest
+   before applying the optional Document ID filter or bounded 1–500 item limit.
+   Each item shows kind, trust/origin/authority/confidence, the entity or
+   assertion structure, typed relationship-property values, and exact
+   document/version/Chunk/character evidence locations without evidence text.
+   Revision history can be opened through the existing ACL-safe endpoint.
+   Selecting inventory revisions and clicking the removal action copies their
+   deduplicated stable **record IDs**—not revision IDs—into the step 5
+   publication-removal input. Refreshing the inventory (including invalid
+   parameters), changing identity, or submitting a publication/rollback clears
+   the prior inventory snapshot, its selection/history, and removal IDs added
+   by this handoff; manually entered removal IDs are preserved during refresh.
+   Request sequencing prevents older inventory or revision-history responses
+   from restoring stale selections after a newer request or publication change.
+7. Run the active graph quality audit as a full steward. The dedicated
    `knowledge:quality` scope is required, complete publication ACL visibility is
    mandatory, and missing/conflicted active state is shown without leaking
    graph contents. The card contains only bounded metadata and Chunk IDs.
-7. Refresh active documents as a full steward. The dedicated
+   **运行质量审计（不保存）** and opening the page remain read-only.
+   **运行并保存审计** explicitly records an immutable observation, including
+   failed reports. Repeating an identical run preserves its first observer and
+   timestamp. The separate history list returns up to 10 visible runs and can
+   filter by publication ID; its details are labelled historical observations
+   and never replace the current live report. Identity changes and request
+   sequencing discard stale responses. Forbidden, missing, conflicting, and
+   unavailable states have distinct messages.
+8. Refresh active documents as a full steward. The dedicated
    `knowledge:lifecycle` scope is required. A document referenced by an active
    publication, current review revision, or in-flight job shows a stable
    blocker and no retirement button. After resolving blockers, explicit browser
@@ -178,7 +209,7 @@ Use the **知识构建** view for the complete property-graph governance loop:
    same-input session operation key. Success rebuilds and activates the tenant's
    vector generation before the API returns; immutable source and audit records
    remain available for governance.
-8. Retrieve the uploaded content. Only records in the active publication that
+9. Retrieve the uploaded content. Only records in the active publication that
    remain bound to current authorized evidence appear in **知识子图**.
 
 Expert imports are marked `AUTHORITATIVE`; LLM-extracted records are marked

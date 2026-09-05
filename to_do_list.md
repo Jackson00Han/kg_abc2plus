@@ -38,6 +38,19 @@
 
 ## Completed follow-ups
 
+- [x] Expose immutable published-graph quality audit history. The Playground
+  offers explicit recording, publication-filtered history, and isolated
+  historical details with original observer/time metadata. Live reads never
+  persist automatically; request and identity guards prevent stale output.
+
+- [x] Expose a bounded, ACL-complete active A-Box inventory in the Playground.
+  It shows the exact publication/T-Box binding, trust and instance structure,
+  relationship properties, and evidence locations without source text; an
+  optional Document filter, immutable revision history, and stable-record
+  publication-removal handoff make the active graph operationally inspectable.
+  Executable UI checks cover request reordering, denied refresh, identity
+  changes, invalid filters, and publication/rollback snapshot invalidation.
+
 - [x] Separate immutable startup-fixture counters from runtime state in the
   Playground, show a fresh ACL-complete active Documents/Chunks summary for the
   selected JWT identity, and make readiness fail closed on missing/stale/multiple
