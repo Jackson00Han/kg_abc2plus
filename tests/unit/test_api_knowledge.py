@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from graphrag_prod.api.backend import GraphRAGApplicationBackend
 from graphrag_prod.api.knowledge import Neo4jKnowledgeOperations
 from graphrag_prod.api.knowledge_contracts import (
+    ActivePublicationInventoryRequest,
+    ActivePublicationInventoryResponse,
     AuthoritativeImportRequest,
     ConstructionJobListRequest,
     ConstructionJobListResponse,
@@ -61,6 +63,16 @@ from graphrag_prod.graph.published_quality import (
     PublishedGraphQualityReport,
     PublishedGraphQualityUnavailable,
     PublishedGraphReviewSampleItem,
+)
+from graphrag_prod.graph.published_inventory import (
+    ActivePublicationInventory,
+    ActivePublicationInventoryAuthorizationError,
+    ActivePublicationInventoryConflict,
+    ActivePublicationInventoryItem,
+    ActivePublicationInventoryLimitExceeded,
+    ActivePublicationInventoryUnavailable,
+    InventoryAssertionSummary,
+    InventoryEntitySummary,
 )
 from graphrag_prod.graph.quality import IssueSeverity
 from graphrag_prod.ingestion.retirement import (
@@ -213,6 +225,46 @@ def _lifecycle_view(*, tenant_id: str = "tenant-alpha") -> DocumentLifecycleView
         access_policy_version=4,
         access_groups=("engineers",),
         blocker_codes=(),
+    )
+
+
+def _inventory(*, tenant_id: str = "tenant-alpha") -> ActivePublicationInventory:
+    company = InventoryEntitySummary("entity-1", "Organization", "org:one", "Org One")
+    asset = InventoryEntitySummary("entity-2", "Asset", "asset:one", "Asset One")
+    return ActivePublicationInventory(
+        tenant_id=tenant_id,
+        publication_id="publication-1",
+        publication_generation=2,
+        manifest_hash="2" * 64,
+        ontology_version_id="tbox-1",
+        document_id=None,
+        total_record_count=1,
+        matching_record_count=1,
+        truncated=False,
+        items=(
+            ActivePublicationInventoryItem(
+                record_id="record-1",
+                revision_id="revision-1",
+                record_kind="ASSERTION",
+                governance_status="PUBLISHED",
+                origin="LLM_EXTRACTED",
+                authority_level="SECONDARY",
+                confidence=0.91,
+                ontology_key="SUPPLIED_BY",
+                document_id="document-1",
+                version_id="version-1",
+                chunk_id="chunk-1",
+                evidence_chunk_ordinal=2,
+                evidence_char_start=10,
+                evidence_char_end=20,
+                assertion=InventoryAssertionSummary(
+                    subject=asset,
+                    predicate="SUPPLIED_BY",
+                    object_kind="entity",
+                    object_entity=company,
+                ),
+            ),
+        ),
     )
 
 
@@ -418,6 +470,75 @@ class KnowledgeContractTests(unittest.TestCase):
                 {**payload, "issues": payload["issues"] * 1_001}
             )
 
+    def test_active_publication_inventory_contract_is_strict_and_text_free(
+        self,
+    ) -> None:
+        payload = {
+            "publication_id": "publication-1",
+            "publication_generation": 2,
+            "manifest_hash": "2" * 64,
+            "ontology_version_id": "tbox-1",
+            "document_id": None,
+            "total_record_count": 1,
+            "matching_record_count": 1,
+            "truncated": False,
+            "items": [
+                {
+                    "record_id": "record-1",
+                    "revision_id": "revision-1",
+                    "record_kind": "ASSERTION",
+                    "governance_status": "PUBLISHED",
+                    "origin": "LLM_EXTRACTED",
+                    "authority_level": "SECONDARY",
+                    "confidence": 0.91,
+                    "ontology_key": "SUPPLIED_BY",
+                    "evidence": {
+                        "document_id": "document-1",
+                        "version_id": "version-1",
+                        "chunk_id": "chunk-1",
+                        "ordinal": 2,
+                        "char_start": 10,
+                        "char_end": 20,
+                    },
+                    "entity": None,
+                    "assertion": {
+                        "subject": {
+                            "entity_id": "entity-2",
+                            "entity_type": "Asset",
+                            "canonical_key": "asset:one",
+                            "display_name": "Asset One",
+                        },
+                        "predicate": "SUPPLIED_BY",
+                        "object_kind": "entity",
+                        "object_entity": {
+                            "entity_id": "entity-1",
+                            "entity_type": "Organization",
+                            "canonical_key": "org:one",
+                            "display_name": "Org One",
+                        },
+                        "literal": None,
+                        "relationship_properties": [],
+                    },
+                }
+            ],
+        }
+        response = ActivePublicationInventoryResponse.model_validate(payload)
+        self.assertEqual(response.items[0].evidence.ordinal, 2)
+        serialized = str(response.model_dump(mode="json"))
+        self.assertNotIn("tenant_id", serialized)
+        self.assertNotIn("evidence_text", serialized)
+        self.assertNotIn("source_text", serialized)
+        for invalid in (
+            {**payload, "tenant_id": "tenant-victim"},
+            {**payload, "truncated": True},
+            {**payload, "matching_record_count": 0},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    ActivePublicationInventoryResponse.model_validate(invalid)
+        with self.assertRaises(ValidationError):
+            ActivePublicationInventoryRequest(limit=501)
+
     def test_construct_uses_strict_canonical_base64_and_supported_mime(self) -> None:
         for mime_type in (
             "text/plain",
@@ -550,6 +671,7 @@ class KnowledgeContractTests(unittest.TestCase):
             OperationKind.KNOWLEDGE_HISTORY: ("knowledge:publish", False),
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: ("knowledge:publish", False),
             OperationKind.KNOWLEDGE_QUALITY: ("knowledge:quality", False),
+            OperationKind.KNOWLEDGE_INVENTORY: ("knowledge:quality", False),
             OperationKind.KNOWLEDGE_DOCUMENTS: ("knowledge:lifecycle", False),
             OperationKind.KNOWLEDGE_DOCUMENT_RETIRE: ("knowledge:lifecycle", True),
         }
@@ -589,6 +711,7 @@ class _Knowledge:
     review_queue = revision_history = review_batch = lambda *args: None
     resolution_suggestions = apply_resolution = lambda *args: None
     publish = rollback = history = publication_candidates = lambda *args: None
+    record_quality = quality_runs = quality_run = lambda *args: None
 
     def documents(self, principal: Principal, _request: object) -> BackendResult:
         self.principal = principal
@@ -641,6 +764,22 @@ class _Knowledge:
         payload = _quality_report().to_dict()
         payload.pop("tenant_id")
         return BackendResult(PublishedGraphQualityResponse.model_validate(payload))
+
+    def inventory(self, principal: Principal, _request: object) -> BackendResult:
+        self.principal = principal
+        value = _inventory()
+        payload = value.to_dict()
+        payload.pop("tenant_id")
+        item = payload["items"][0]
+        item["evidence"] = {
+            "document_id": item.pop("document_id"),
+            "version_id": item.pop("version_id"),
+            "chunk_id": item.pop("chunk_id"),
+            "ordinal": item.pop("evidence_chunk_ordinal"),
+            "char_start": item.pop("evidence_char_start"),
+            "char_end": item.pop("evidence_char_end"),
+        }
+        return BackendResult(ActivePublicationInventoryResponse.model_validate(payload))
 
 
 class KnowledgeBackendTests(unittest.TestCase):
@@ -1113,6 +1252,25 @@ class _Quality:
         return self.value
 
 
+class _Inventory:
+    def __init__(self, value: object = None, failure: Exception | None = None) -> None:
+        self.value = _inventory() if value is None else value
+        self.failure = failure
+        self.calls: list[tuple[Principal, str | None, int]] = []
+
+    def list_active(
+        self,
+        principal: Principal,
+        *,
+        document_id: str | None,
+        limit: int,
+    ) -> object:
+        self.calls.append((principal, document_id, limit))
+        if self.failure is not None:
+            raise self.failure
+        return self.value
+
+
 class _Retirement:
     def __init__(
         self,
@@ -1155,6 +1313,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
         publications: object | None = None,
         construction_audit: object | None = None,
         quality_service: object | None = None,
+        inventory_service: object | None = None,
         retirement_service: object | None = None,
     ) -> Neo4jKnowledgeOperations:
         return Neo4jKnowledgeOperations(
@@ -1166,6 +1325,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
             publications=publications or SimpleNamespace(),
             construction_audit=construction_audit,
             quality_service=quality_service,
+            inventory_service=inventory_service,
             retirement_service=retirement_service,
             clock=lambda: NOW,
         )
@@ -1176,6 +1336,14 @@ class KnowledgeAdapterTests(unittest.TestCase):
                 _Driver(),
                 _KnowledgeStore(),
                 quality_service=object(),
+            )
+
+    def test_inventory_service_injection_requires_list_boundary(self) -> None:
+        with self.assertRaisesRegex(TypeError, "inventory_service must implement"):
+            self._adapter(
+                _Driver(),
+                _KnowledgeStore(),
+                inventory_service=object(),
             )
 
     def test_retirement_service_injection_requires_both_lifecycle_boundaries(
@@ -1380,6 +1548,59 @@ class KnowledgeAdapterTests(unittest.TestCase):
                 )
                 with self.assertRaises(expected):
                     adapter.quality(principal)
+
+    def test_active_inventory_adapter_is_scoped_text_free_and_sanitized(self) -> None:
+        principal = Principal(
+            "expert-1",
+            "tenant-alpha",
+            frozenset({"engineers"}),
+            frozenset({"knowledge:quality"}),
+        )
+        inventory = _Inventory()
+        adapter = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            inventory_service=inventory,
+        )
+        result = adapter.inventory(
+            principal,
+            ActivePublicationInventoryRequest(document_id=None, limit=25),
+        )
+        self.assertEqual(result.payload.items[0].ontology_key, "SUPPLIED_BY")
+        serialized = str(result.payload.model_dump(mode="json"))
+        self.assertNotIn("tenant_id", serialized)
+        self.assertNotIn("evidence_text", serialized)
+        self.assertNotIn("source_text", serialized)
+        self.assertEqual(inventory.calls, [(principal, None, 25)])
+
+        cases = (
+            (ActivePublicationInventoryAuthorizationError(), AuthorizationError),
+            (ActivePublicationInventoryConflict(), ConflictError),
+            (ActivePublicationInventoryLimitExceeded(), ConflictError),
+            (ActivePublicationInventoryUnavailable(), DependencyUnavailableError),
+            (TimeoutError("secret endpoint"), DependencyTimeoutError),
+        )
+        for failure, expected in cases:
+            with self.subTest(failure=type(failure).__name__):
+                failing = self._adapter(
+                    _Driver(),
+                    _KnowledgeStore(),
+                    inventory_service=_Inventory(failure=failure),
+                )
+                with self.assertRaises(expected) as raised:
+                    failing.inventory(
+                        principal,
+                        ActivePublicationInventoryRequest(),
+                    )
+                self.assertNotIn("secret", str(raised.exception))
+
+        foreign = self._adapter(
+            _Driver(),
+            _KnowledgeStore(),
+            inventory_service=_Inventory(_inventory(tenant_id="tenant-other")),
+        )
+        with self.assertRaises(DependencyUnavailableError):
+            foreign.inventory(principal, ActivePublicationInventoryRequest())
 
     def test_authoritative_import_hydrates_acl_from_authorized_chunk(self) -> None:
         driver = _Driver()

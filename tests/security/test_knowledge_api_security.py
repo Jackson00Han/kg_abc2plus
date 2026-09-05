@@ -12,6 +12,7 @@ import jwt
 
 from graphrag_prod.api import JWTAuthConfig, JWTAuthenticator, create_app
 from graphrag_prod.api.knowledge_contracts import (
+    ActivePublicationInventoryResponse,
     ConstructionJobListResponse,
     DocumentLifecycleListResponse,
     DocumentRetirementResponse,
@@ -162,6 +163,20 @@ class _Backend:
                     )
                 )
             )
+        if envelope.operation is OperationKind.KNOWLEDGE_INVENTORY:
+            return BackendResult(
+                ActivePublicationInventoryResponse(
+                    publication_id="publication-1",
+                    publication_generation=1,
+                    manifest_hash="2" * 64,
+                    ontology_version_id="tbox-1",
+                    document_id=envelope.payload.get("document_id"),
+                    total_record_count=1,
+                    matching_record_count=0,
+                    truncated=False,
+                    items=(),
+                )
+            )
         if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENT_RETIRE:
             return BackendResult(
                 DocumentRetirementResponse(
@@ -245,6 +260,80 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
         self.assertEqual(envelope.tenant_id, "tenant-alpha")
         self.assertEqual(envelope.access_groups, frozenset({"engineers", "public"}))
         self.assertEqual(envelope.payload, {})
+
+    def test_active_inventory_uses_dedicated_scope_and_verified_identity(self) -> None:
+        denied = self.client.get(
+            "/v1/knowledge/publication-inventory",
+            headers=_headers(scope="knowledge:review knowledge:publish"),
+        )
+        allowed = self.client.get(
+            "/v1/knowledge/publication-inventory",
+            params={"document_id": "missing-document", "limit": 25, "tenant_id": "victim"},
+            headers=_headers(scope="knowledge:quality", groups=("engineers", "public")),
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(len(self.backend.envelopes), 1)
+        envelope = self.backend.envelopes[0]
+        self.assertEqual(envelope.operation, OperationKind.KNOWLEDGE_INVENTORY)
+        self.assertEqual(envelope.tenant_id, "tenant-alpha")
+        self.assertEqual(envelope.access_groups, frozenset({"engineers", "public"}))
+        self.assertEqual(envelope.payload, {"document_id": "missing-document", "limit": 25})
+        self.assertNotIn("tenant_id", allowed.text)
+        self.assertNotIn("source_text", allowed.text)
+        self.assertNotIn("evidence_text", allowed.text)
+        self.assertEqual(allowed.json()["matching_record_count"], 0)
+
+    def test_active_inventory_rejects_unbounded_or_malformed_filters_before_backend(
+        self,
+    ) -> None:
+        for params in (
+            {"limit": 0},
+            {"limit": 501},
+            {"limit": "true"},
+            {"document_id": ""},
+            {"document_id": "a" * 257},
+            {"document_id": "line\nbreak"},
+            {"document_id": "has space"},
+        ):
+            with self.subTest(params=params):
+                response = self.client.get(
+                    "/v1/knowledge/publication-inventory",
+                    params=params,
+                    headers=_headers(scope="knowledge:quality"),
+                )
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.backend.envelopes, [])
+
+    def test_active_inventory_partial_acl_denial_does_not_disclose_filtered_target(
+        self,
+    ) -> None:
+        class _DeniedBackend(_Backend):
+            def execute(self, envelope: OperationEnvelope, /) -> BackendResult:
+                if envelope.operation is OperationKind.KNOWLEDGE_INVENTORY:
+                    raise AuthorizationError()
+                return super().execute(envelope)
+
+        app = create_app(
+            authenticator=JWTAuthenticator(
+                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+            ),
+            backend=_DeniedBackend(),
+        )
+        with TestClient(app) as client:
+            responses = tuple(
+                client.get(
+                    "/v1/knowledge/publication-inventory",
+                    params={"document_id": document_id},
+                    headers=_headers(scope="knowledge:quality", groups=("public",)),
+                )
+                for document_id in ("known-protected-source", "missing-source", "foreign-source")
+            )
+        for response in responses:
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.json()["code"], "forbidden")
+            self.assertNotIn("source", response.json()["message"])
+        self.assertEqual(len({response.json()["message"] for response in responses}), 1)
 
     def test_document_lifecycle_requires_dedicated_scope_and_is_metadata_only(
         self,

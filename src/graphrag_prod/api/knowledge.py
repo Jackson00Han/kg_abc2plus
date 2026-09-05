@@ -31,6 +31,18 @@ from graphrag_prod.graph.published_quality import (
     PublishedGraphQualityReport,
     PublishedGraphQualityUnavailable,
 )
+from graphrag_prod.graph.published_quality_history import (
+    Neo4jPublishedGraphQualityHistoryService,
+    PublishedGraphQualityHistoryConflict,
+    PublishedGraphQualityHistoryUnavailable,
+)
+from graphrag_prod.graph.published_inventory import (
+    ActivePublicationInventoryAuthorizationError,
+    ActivePublicationInventoryConflict,
+    ActivePublicationInventoryLimitExceeded,
+    ActivePublicationInventoryUnavailable,
+    Neo4jActivePublicationInventoryService,
+)
 from graphrag_prod.ingestion import IngestionConflict
 from graphrag_prod.ingestion.retirement import (
     DocumentRetirementBackendUnavailable,
@@ -83,6 +95,8 @@ from graphrag_prod.ontology import (
 from graphrag_prod.ontology.store import TBoxConflict, TBoxValidationError
 
 from .knowledge_contracts import (
+    ActivePublicationInventoryRequest,
+    ActivePublicationInventoryResponse,
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
     ConstructionJobListRequest,
@@ -131,6 +145,11 @@ from .runtime import (
     DependencyUnavailableError,
     RequestValidationError,
     ResourceNotFoundError,
+)
+from .quality_history_contracts import (
+    PublishedGraphQualityRunListRequest,
+    PublishedGraphQualityRunListResponse,
+    PublishedGraphQualityRunResponse,
 )
 
 
@@ -479,6 +498,88 @@ def _published_quality_payload(
     }
 
 
+def _inventory_entity_payload(value: Any) -> dict[str, object]:
+    return {
+        "entity_id": value.entity_id,
+        "entity_type": value.entity_type,
+        "canonical_key": value.canonical_key,
+        "display_name": value.display_name,
+    }
+
+
+def _inventory_literal_payload(value: Any) -> dict[str, object]:
+    return {
+        "value": value.value,
+        "datatype": value.datatype,
+        "typed_value": value.typed_value,
+        "canonical_value": value.canonical_value,
+        "canonical_unit": value.canonical_unit,
+        "valid_from": value.valid_from,
+        "valid_to": value.valid_to,
+        "observed_at": value.observed_at,
+    }
+
+
+def _inventory_item_payload(value: Any) -> dict[str, object]:
+    evidence = {
+        "document_id": value.document_id,
+        "version_id": value.version_id,
+        "chunk_id": value.chunk_id,
+        "ordinal": value.evidence_chunk_ordinal,
+        "char_start": value.evidence_char_start,
+        "char_end": value.evidence_char_end,
+    }
+    assertion = None
+    if value.assertion is not None:
+        assertion = {
+            "subject": _inventory_entity_payload(value.assertion.subject),
+            "predicate": value.assertion.predicate,
+            "object_kind": value.assertion.object_kind,
+            "object_entity": (
+                None
+                if value.assertion.object_entity is None
+                else _inventory_entity_payload(value.assertion.object_entity)
+            ),
+            "literal": (
+                None
+                if value.assertion.literal is None
+                else _inventory_literal_payload(value.assertion.literal)
+            ),
+            "relationship_properties": tuple(
+                {
+                    "property_value_id": item.property_value_id,
+                    "name": item.name,
+                    "confidence": item.confidence,
+                    "literal": _inventory_literal_payload(item.literal),
+                    "evidence": {
+                        "document_id": value.document_id,
+                        "version_id": value.version_id,
+                        "chunk_id": item.evidence_chunk_id,
+                        "ordinal": item.evidence_chunk_ordinal,
+                        "char_start": item.evidence_char_start,
+                        "char_end": item.evidence_char_end,
+                    },
+                }
+                for item in value.assertion.relationship_properties
+            ),
+        }
+    return {
+        "record_id": value.record_id,
+        "revision_id": value.revision_id,
+        "record_kind": value.record_kind,
+        "governance_status": value.governance_status,
+        "origin": value.origin,
+        "authority_level": value.authority_level,
+        "confidence": value.confidence,
+        "ontology_key": value.ontology_key,
+        "evidence": evidence,
+        "entity": (
+            None if value.entity is None else _inventory_entity_payload(value.entity)
+        ),
+        "assertion": assertion,
+    }
+
+
 class Neo4jKnowledgeOperations:
     """Real adapter over T-Box, A-Box, construction, review, and publication."""
 
@@ -495,6 +596,8 @@ class Neo4jKnowledgeOperations:
         construction_audit: Any | None = None,
         resolution_source: Any | None = None,
         quality_service: Any | None = None,
+        quality_history_service: Any | None = None,
+        inventory_service: Any | None = None,
         retirement_service: Any | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -504,6 +607,15 @@ class Neo4jKnowledgeOperations:
             getattr(quality_service, "audit", None)
         ):
             raise TypeError("quality_service must implement audit")
+        if quality_history_service is not None and any(
+            not callable(getattr(quality_history_service, method, None))
+            for method in ("audit_and_record", "get_run", "list_runs")
+        ):
+            raise TypeError("quality_history_service must implement audit_and_record, get_run and list_runs")
+        if inventory_service is not None and not callable(
+            getattr(inventory_service, "list_active", None)
+        ):
+            raise TypeError("inventory_service must implement list_active")
         if retirement_service is not None and any(
             not callable(getattr(retirement_service, method, None))
             for method in ("list_active_documents", "retire")
@@ -531,6 +643,20 @@ class Neo4jKnowledgeOperations:
         )
         self.quality_service = quality_service or Neo4jPublishedGraphQualityService(
             driver, database
+        )
+        self.quality_history_service = quality_history_service or Neo4jPublishedGraphQualityHistoryService(
+            driver,
+            database,
+            auditor=self.quality_service,
+            clock=clock,
+            report_validator=lambda report: PublishedGraphQualityResponse.model_validate(
+                _published_quality_payload(report)
+            ),
+        )
+        self.inventory_service = inventory_service or Neo4jActivePublicationInventoryService(
+            driver,
+            database,
+            quality_service=self.quality_service,
         )
         self.retirement_service = retirement_service or Neo4jDocumentRetirementService(
             driver, database
@@ -1639,6 +1765,136 @@ class Neo4jKnowledgeOperations:
         except (AttributeError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(PublishedGraphQualityResponse, payload))
+
+    @staticmethod
+    def _quality_history_call(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return operation(*args, **kwargs)
+        except ApiRuntimeError:
+            raise
+        except PublishedGraphQualityAuthorizationError as error:
+            raise AuthorizationError() from error
+        except (PublishedGraphQualityHistoryConflict, PublishedGraphQualityConflict, PublishedGraphQualityLimitExceeded) as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except (PublishedGraphQualityHistoryUnavailable, PublishedGraphQualityUnavailable) as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+
+    @staticmethod
+    def _quality_run_response(principal: Principal, value: Any) -> BackendResult:
+        try:
+            if value.tenant_id != principal.tenant_id:
+                raise DependencyUnavailableError()
+            payload = {
+                "report": _published_quality_payload(value.report),
+                "recorded_by": value.recorded_by,
+                "recorded_at": value.recorded_at,
+                "record_hash": value.record_hash,
+            }
+        except (AttributeError, TypeError, ValueError) as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(PublishedGraphQualityRunResponse, payload))
+
+    def record_quality(self, principal: Principal) -> BackendResult:
+        _require_capability(principal, "knowledge:quality")
+        value = self._quality_history_call(self.quality_history_service.audit_and_record, principal)
+        return self._quality_run_response(principal, value)
+
+    def quality_run(self, principal: Principal, run_id: str) -> BackendResult:
+        _require_capability(principal, "knowledge:quality")
+        value = self._quality_history_call(self.quality_history_service.get_run, principal, run_id)
+        if value is None:
+            raise ResourceNotFoundError()
+        if getattr(value, "run_id", None) != run_id:
+            raise DependencyUnavailableError()
+        return self._quality_run_response(principal, value)
+
+    def quality_runs(self, principal: Principal, request: PublishedGraphQualityRunListRequest) -> BackendResult:
+        _require_capability(principal, "knowledge:quality")
+        values = self._quality_history_call(
+            self.quality_history_service.list_runs, principal,
+            publication_id=request.publication_id, limit=request.limit,
+        )
+        try:
+            items = []
+            for value in values:
+                if value.tenant_id != principal.tenant_id or (
+                    request.publication_id is not None
+                    and value.publication_id != request.publication_id
+                ):
+                    raise DependencyUnavailableError()
+                items.append({
+                    "run_id": value.run_id,
+                    "publication_id": value.publication_id,
+                    "publication_generation": value.publication_generation,
+                    "ontology_version_id": value.ontology_version_id,
+                    "corpus_revision": value.corpus_revision,
+                    "graph_digest": value.graph_digest,
+                    "ruleset_version": value.ruleset_version,
+                    "passed": value.passed,
+                    "total_issue_count": value.total_issue_count,
+                    "total_error_count": value.total_error_count,
+                    "issues_truncated": value.issues_truncated,
+                    "counts": dict(value.counts),
+                    "recorded_by": value.recorded_by,
+                    "recorded_at": value.recorded_at,
+                    "record_hash": value.record_hash,
+                })
+            if len(items) > request.limit:
+                raise DependencyUnavailableError()
+        except (AttributeError, TypeError, ValueError) as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(PublishedGraphQualityRunListResponse, {"items": items}))
+
+    def inventory(
+        self,
+        principal: Principal,
+        request: ActivePublicationInventoryRequest,
+    ) -> BackendResult:
+        """Return a safe, bounded projection of the active governed A-Box."""
+
+        _require_capability(principal, "knowledge:quality")
+        try:
+            result = self.inventory_service.list_active(
+                principal,
+                document_id=request.document_id,
+                limit=request.limit,
+            )
+        except ApiRuntimeError:
+            raise
+        except ActivePublicationInventoryAuthorizationError as error:
+            raise AuthorizationError() from error
+        except (
+            ActivePublicationInventoryConflict,
+            ActivePublicationInventoryLimitExceeded,
+        ) as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except ActivePublicationInventoryUnavailable as error:
+            raise DependencyUnavailableError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if result.tenant_id != principal.tenant_id:
+            raise DependencyUnavailableError()
+        try:
+            payload = {
+                "publication_id": result.publication_id,
+                "publication_generation": result.publication_generation,
+                "manifest_hash": result.manifest_hash,
+                "ontology_version_id": result.ontology_version_id,
+                "document_id": result.document_id,
+                "total_record_count": result.total_record_count,
+                "matching_record_count": result.matching_record_count,
+                "truncated": result.truncated,
+                "items": tuple(_inventory_item_payload(item) for item in result.items),
+            }
+        except (AttributeError, TypeError, ValueError) as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(ActivePublicationInventoryResponse, payload))
 
     def documents(
         self,

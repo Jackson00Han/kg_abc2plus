@@ -26,6 +26,10 @@ selected group must be a non-empty subset of the verified JWT groups.
 | Roll back a publication | `POST /v1/knowledge/publications/{id}:rollback` | `knowledge:publish` |
 | Read publication history | `GET /v1/knowledge/publications` | `knowledge:publish` |
 | Audit the complete active publication | `GET /v1/knowledge/quality` | `knowledge:quality` |
+| Audit and record immutable evidence | `POST /v1/knowledge/quality/runs` | `knowledge:quality` |
+| List recorded quality observations | `GET /v1/knowledge/quality/runs` | `knowledge:quality` |
+| Read one recorded quality observation | `GET /v1/knowledge/quality/runs/{run_id}` | `knowledge:quality` |
+| Inspect the active governed A-Box | `GET /v1/knowledge/publication-inventory` | `knowledge:quality` |
 | List fully visible active documents | `GET /v1/knowledge/documents` | `knowledge:lifecycle` |
 | Logically retire one active document | `POST /v1/knowledge/documents/{id}:retire` | `knowledge:lifecycle` |
 
@@ -115,6 +119,39 @@ generic forbidden response. Missing/ambiguous active publication, a broken
 exact T-Box binding, or a server audit-bound conflict returns the generic
 conflict response, while backend availability failures use the existing
 dependency taxonomy.
+
+The active A-Box inventory uses the same independent `knowledge:quality` scope.
+`document_id` is optional and `limit` is an integer from 1 to 500 (default 100).
+The service validates the entire active publication, source ACLs, immutable
+revision manifest, navigation projection, and relationship-property evidence
+before applying either filter or output limit. Its complete-manifest ceiling
+is 500 records; a larger publication returns a conflict rather than a partial
+validation result. Returned records include canonical entities, predicates,
+literal facts, authority/origin metadata, and exact evidence locations, including
+relationship-property locations. They exclude tenant identity and source or
+quoted-evidence text. Counts and `truncated` describe the bounded result. Missing
+or foreign document filters return the same empty result only after the caller
+is authorized for the complete publication; partial publication access returns
+generic forbidden. Read conflicts and dependency failures use the existing
+safe runtime taxonomy. See [the inventory contract](active_publication_inventory.md).
+
+Quality history has a separate explicit write action. `POST` accepts only `{}`
+and returns HTTP 200 for both a first observation and an identical replay. It
+audits the current publication and validates the HTTP report projection before
+recording any data. The publication, T-Box, manifest and corpus revision must
+still match inside the write transaction. Repeating an unchanged audit preserves
+the original observer and observation time. A failing report may be recorded
+but does not approve or promote any graph data. The runtime never automatically
+retries this write; the existing `GET /v1/knowledge/quality` remains a pure read.
+
+History lists accept an optional `publication_id` and a `limit` from 1 to 50.
+Detail and list results are tenant-filtered and require all recorded ACL
+requirements. They expose report metadata, the first observer/time and an
+integrity hash, without tenant IDs or evidence text. Missing and cross-tenant
+detail IDs return the same 404; incomplete ACL returns generic 403, stale or
+tampered history returns 409, timeouts return 504 and unavailable dependencies
+return 503. A historical pass describes its recorded graph observation; callers
+must run a fresh audit to assess the current graph.
 
 Document lifecycle is independently authorized. The list returns at most 100
 fully visible, provenance-closed active documents and only metadata required

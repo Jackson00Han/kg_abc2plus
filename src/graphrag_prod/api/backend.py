@@ -55,7 +55,16 @@ from .contracts import (
     RetrievalRequest,
     RetrievalResponse,
 )
+from .quality_history_contracts import (
+    PublishedGraphQualityRecordRequest,
+    PublishedGraphQualityRunListRequest,
+    PublishedGraphQualityRunListResponse,
+    PublishedGraphQualityRunRequest,
+    PublishedGraphQualityRunResponse,
+)
 from .knowledge_contracts import (
+    ActivePublicationInventoryRequest,
+    ActivePublicationInventoryResponse,
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
     ConstructionJobListRequest,
@@ -319,6 +328,16 @@ class KnowledgeOperations(Protocol):
     ) -> BackendResult: ...
 
     def quality(self, principal: Principal) -> BackendResult: ...
+
+    def record_quality(self, principal: Principal) -> BackendResult: ...
+
+    def quality_runs(self, principal: Principal, request: PublishedGraphQualityRunListRequest) -> BackendResult: ...
+
+    def quality_run(self, principal: Principal, run_id: str) -> BackendResult: ...
+
+    def inventory(
+        self, principal: Principal, request: ActivePublicationInventoryRequest
+    ) -> BackendResult: ...
 
     def documents(
         self, principal: Principal, request: DocumentLifecycleListRequest
@@ -1051,6 +1070,10 @@ class GraphRAGApplicationBackend:
                 "history",
                 "publication_candidates",
                 "quality",
+                "record_quality",
+                "quality_runs",
+                "quality_run",
+                "inventory",
                 "documents",
                 "retire_document",
             )
@@ -1085,6 +1108,10 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_HISTORY,
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
             OperationKind.KNOWLEDGE_QUALITY,
+            OperationKind.KNOWLEDGE_QUALITY_RECORD,
+            OperationKind.KNOWLEDGE_QUALITY_RUNS,
+            OperationKind.KNOWLEDGE_QUALITY_RUN,
+            OperationKind.KNOWLEDGE_INVENTORY,
             OperationKind.KNOWLEDGE_DOCUMENTS,
             OperationKind.KNOWLEDGE_DOCUMENT_RETIRE,
         }
@@ -1207,6 +1234,21 @@ class GraphRAGApplicationBackend:
                 return _response(
                     self._knowledge.quality(principal),
                     PublishedGraphQualityResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_QUALITY_RECORD:
+                _validated(PublishedGraphQualityRecordRequest, envelope.payload)
+                return _response(self._knowledge.record_quality(principal), PublishedGraphQualityRunResponse)
+            if envelope.operation is OperationKind.KNOWLEDGE_QUALITY_RUNS:
+                request = _validated(PublishedGraphQualityRunListRequest, envelope.payload)
+                return _response(self._knowledge.quality_runs(principal, request), PublishedGraphQualityRunListResponse)
+            if envelope.operation is OperationKind.KNOWLEDGE_QUALITY_RUN:
+                request = _validated(PublishedGraphQualityRunRequest, envelope.payload)
+                return _response(self._knowledge.quality_run(principal, request.run_id), PublishedGraphQualityRunResponse)
+            if envelope.operation is OperationKind.KNOWLEDGE_INVENTORY:
+                request = _validated(ActivePublicationInventoryRequest, envelope.payload)
+                return _response(
+                    self._knowledge.inventory(principal, request),
+                    ActivePublicationInventoryResponse,
                 )
             if envelope.operation is OperationKind.KNOWLEDGE_DOCUMENTS:
                 request = _validated(DocumentLifecycleListRequest, envelope.payload)

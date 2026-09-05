@@ -17,6 +17,7 @@ from graphrag_prod.api import (
     create_app,
 )
 from graphrag_prod.api.knowledge_contracts import (
+    ActivePublicationInventoryResponse,
     AuthoritativeImportResponse,
     ConstructionJobListResponse,
     ConstructionJobResponse,
@@ -159,6 +160,45 @@ def _documents() -> DocumentLifecycleListResponse:
     )
 
 
+def _inventory() -> ActivePublicationInventoryResponse:
+    return ActivePublicationInventoryResponse(
+        publication_id="publication-1",
+        publication_generation=1,
+        manifest_hash="b" * 64,
+        ontology_version_id="tbox-1",
+        document_id="document-1",
+        total_record_count=1,
+        matching_record_count=1,
+        truncated=False,
+        items=(
+            {
+                "record_id": "record-1",
+                "revision_id": "published-revision-1",
+                "record_kind": "ENTITY_MENTION",
+                "governance_status": "PUBLISHED",
+                "origin": "EXPERT_IMPORT",
+                "authority_level": "AUTHORITATIVE",
+                "confidence": 1.0,
+                "ontology_key": "Asset",
+                "evidence": {
+                    "document_id": "document-1",
+                    "version_id": "version-1",
+                    "chunk_id": "chunk-1",
+                    "ordinal": 0,
+                    "char_start": 0,
+                    "char_end": 6,
+                },
+                "entity": {
+                    "entity_id": "entity-1",
+                    "entity_type": "Asset",
+                    "canonical_key": "asset-id:P-7",
+                    "display_name": "Pump-7",
+                },
+            },
+        ),
+    )
+
+
 def _retirement() -> DocumentRetirementResponse:
     return DocumentRetirementResponse(
         retirement_id="retirement-1",
@@ -225,6 +265,8 @@ class _Readiness:
 
 
 class _Knowledge:
+    record_quality = quality_runs = quality_run = lambda *args: None
+
     def __init__(self, *, construction_status: str = "CANDIDATE") -> None:
         self.calls: list[tuple[str, object, object]] = []
         self.construction_status = construction_status
@@ -411,6 +453,10 @@ class _Knowledge:
     def quality(self, principal: object) -> BackendResult:
         self._record("quality", principal, None)
         return BackendResult(_quality())
+
+    def inventory(self, principal: object, request: object) -> BackendResult:
+        self._record("inventory", principal, request)
+        return BackendResult(_inventory())
 
     def documents(self, principal: object, request: object) -> BackendResult:
         self._record("documents", principal, request)
@@ -760,6 +806,10 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 ),
                 client.get("/v1/knowledge/publications?limit=10", headers=auth),
                 client.get("/v1/knowledge/quality", headers=auth),
+                client.get(
+                    "/v1/knowledge/publication-inventory?document_id=document-1&limit=10",
+                    headers=auth,
+                ),
                 client.get("/v1/knowledge/documents?limit=10", headers=auth),
                 client.post(
                     "/v1/knowledge/documents/document-1:retire",
@@ -773,7 +823,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
             )
 
         self.assertTrue(all(response.status_code == 200 for response in responses))
-        self.assertEqual(len(knowledge.calls), 18)
+        self.assertEqual(len(knowledge.calls), 19)
         self.assertEqual(
             [name for name, _, _ in knowledge.calls],
             [
@@ -793,6 +843,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 "rollback",
                 "history",
                 "quality",
+                "inventory",
                 "documents",
                 "retire_document",
             ],
@@ -801,6 +852,13 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
             self.assertEqual(principal.tenant_id, "tenant-industrial")
             self.assertEqual(principal.groups, frozenset({"engineers"}))
             self.assertEqual(principal.capabilities, frozenset(SCOPES.split()))
+        inventory_call = next(call for call in knowledge.calls if call[0] == "inventory")
+        self.assertEqual(inventory_call[2].document_id, "document-1")
+        self.assertEqual(inventory_call[2].limit, 10)
+        inventory_response = responses[16].json()
+        self.assertEqual(inventory_response["items"][0]["entity"]["display_name"], "Pump-7")
+        self.assertNotIn("tenant_id", str(inventory_response))
+        self.assertNotIn("source_text", str(inventory_response))
 
 
 if __name__ == "__main__":

@@ -88,6 +88,10 @@ class OperationKind(str, Enum):
     KNOWLEDGE_HISTORY = "knowledge_history"
     KNOWLEDGE_PUBLICATION_CANDIDATES = "knowledge_publication_candidates"
     KNOWLEDGE_QUALITY = "knowledge_quality"
+    KNOWLEDGE_QUALITY_RECORD = "knowledge_quality_record"
+    KNOWLEDGE_QUALITY_RUNS = "knowledge_quality_runs"
+    KNOWLEDGE_QUALITY_RUN = "knowledge_quality_run"
+    KNOWLEDGE_INVENTORY = "knowledge_inventory"
     KNOWLEDGE_DOCUMENTS = "knowledge_documents"
     KNOWLEDGE_DOCUMENT_RETIRE = "knowledge_document_retire"
 
@@ -105,6 +109,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_PUBLISH,
             self.KNOWLEDGE_ROLLBACK,
             self.KNOWLEDGE_DOCUMENT_RETIRE,
+            self.KNOWLEDGE_QUALITY_RECORD,
         }
 
     @property
@@ -123,6 +128,9 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_HISTORY,
             self.KNOWLEDGE_PUBLICATION_CANDIDATES,
             self.KNOWLEDGE_QUALITY,
+            self.KNOWLEDGE_QUALITY_RUNS,
+            self.KNOWLEDGE_QUALITY_RUN,
+            self.KNOWLEDGE_INVENTORY,
             self.KNOWLEDGE_DOCUMENTS,
         }
 
@@ -153,6 +161,10 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
         OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: "knowledge:publish",
         OperationKind.KNOWLEDGE_QUALITY: "knowledge:quality",
+        OperationKind.KNOWLEDGE_QUALITY_RECORD: "knowledge:quality",
+        OperationKind.KNOWLEDGE_QUALITY_RUNS: "knowledge:quality",
+        OperationKind.KNOWLEDGE_QUALITY_RUN: "knowledge:quality",
+        OperationKind.KNOWLEDGE_INVENTORY: "knowledge:quality",
         OperationKind.KNOWLEDGE_DOCUMENTS: "knowledge:lifecycle",
         OperationKind.KNOWLEDGE_DOCUMENT_RETIRE: "knowledge:lifecycle",
     }

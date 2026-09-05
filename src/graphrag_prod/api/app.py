@@ -42,6 +42,7 @@ from .contracts import (
     RetrievalResponse,
 )
 from .knowledge_contracts import (
+    ActivePublicationInventoryResponse,
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
     ConstructionJobListResponse,
@@ -84,6 +85,11 @@ from .runtime import (
     RuntimePolicy,
     classify_exception,
     required_scope,
+)
+from .quality_history_contracts import (
+    PublishedGraphQualityRecordRequest,
+    PublishedGraphQualityRunListResponse,
+    PublishedGraphQualityRunResponse,
 )
 
 
@@ -1019,6 +1025,55 @@ def create_app(
             OperationKind.KNOWLEDGE_QUALITY,
             {},
         )
+
+    @app.get(
+        "/v1/knowledge/publication-inventory",
+        response_model=ActivePublicationInventoryResponse,
+    )
+    async def active_publication_inventory(
+        request: Request,
+        identity: IdentityDependency,
+        document_id: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                max_length=256,
+                pattern=r"^[^\x00-\x20\x7f]+$",
+            ),
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    ) -> Any:
+        return await run_operation(
+            request,
+            identity,
+            OperationKind.KNOWLEDGE_INVENTORY,
+            {"document_id": document_id, "limit": limit},
+        )
+
+    @app.post("/v1/knowledge/quality/runs", response_model=PublishedGraphQualityRunResponse)
+    async def record_published_graph_quality(
+        request: Request,
+        body: PublishedGraphQualityRecordRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(request, identity, OperationKind.KNOWLEDGE_QUALITY_RECORD, body.model_dump(mode="python"))
+
+    @app.get("/v1/knowledge/quality/runs", response_model=PublishedGraphQualityRunListResponse)
+    async def published_graph_quality_runs(
+        request: Request,
+        identity: IdentityDependency,
+        publication_id: Annotated[str | None, Query(min_length=1, max_length=256, pattern=_PATH_ID)] = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ) -> Any:
+        return await run_operation(request, identity, OperationKind.KNOWLEDGE_QUALITY_RUNS, {"publication_id": publication_id, "limit": limit})
+
+    @app.get("/v1/knowledge/quality/runs/{run_id}", response_model=PublishedGraphQualityRunResponse)
+    async def published_graph_quality_run(
+        request: Request,
+        run_id: Annotated[str, Path(min_length=1, max_length=256, pattern=_PATH_ID)],
+        identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(request, identity, OperationKind.KNOWLEDGE_QUALITY_RUN, {"run_id": run_id})
 
     @app.get(
         "/v1/knowledge/documents",

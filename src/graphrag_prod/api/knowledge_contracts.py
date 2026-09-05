@@ -42,6 +42,7 @@ MAX_PUBLICATION_RECORDS = 500
 MAX_PUBLISHED_QUALITY_ISSUES = 1_000
 MAX_PUBLISHED_QUALITY_SAMPLE = 20
 MAX_ACTIVE_DOCUMENTS = 100
+MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS = 500
 MAX_EVIDENCE_CHARS = 100_000
 MAX_BASE64_DOCUMENT_CHARS = 4 * ((MAX_DOCUMENT_BYTES + 2) // 3)
 
@@ -1270,7 +1271,202 @@ class PublishedGraphQualityResponse(StrictAPIModel):
         return self
 
 
+class ActivePublicationInventoryRequest(StrictAPIModel):
+    """Bounded active A-Box inventory filters."""
+
+    document_id: Identifier | None = None
+    limit: Annotated[
+        int,
+        Field(strict=True, ge=1, le=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS),
+    ] = 100
+
+
+class ActivePublicationInventoryEvidenceResponse(StrictAPIModel):
+    """Exact source location without source or evidence text."""
+
+    document_id: Identifier
+    version_id: Identifier
+    chunk_id: Identifier
+    ordinal: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+    char_start: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+    char_end: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+
+    @model_validator(mode="after")
+    def valid_range(self) -> Self:
+        if self.char_end <= self.char_start:
+            raise ValueError("inventory evidence range must be non-empty")
+        return self
+
+
+class ActivePublicationInventoryEntityResponse(StrictAPIModel):
+    entity_id: Identifier
+    entity_type: TypeName
+    canonical_key: ShortText
+    display_name: ShortText
+
+
+class ActivePublicationInventoryLiteralResponse(StrictAPIModel):
+    value: LiteralSourceText
+    datatype: Literal[
+        "STRING",
+        "INTEGER",
+        "FLOAT",
+        "DECIMAL",
+        "BOOLEAN",
+        "DATE",
+        "DATETIME",
+        "DURATION",
+        "URI",
+        "JSON",
+    ] | None = None
+    typed_value: str | int | float | bool | None = None
+    canonical_value: LiteralSourceText | None = None
+    canonical_unit: LiteralUnitText | None = None
+    valid_from: LiteralTemporalText | None = None
+    valid_to: LiteralTemporalText | None = None
+    observed_at: LiteralTemporalText | None = None
+
+    @model_validator(mode="after")
+    def complete_typed_projection(self) -> Self:
+        typed_fields = (self.datatype, self.typed_value, self.canonical_value)
+        if all(value is None for value in typed_fields):
+            if any(
+                value is not None
+                for value in (
+                    self.canonical_unit,
+                    self.valid_from,
+                    self.valid_to,
+                    self.observed_at,
+                )
+            ):
+                raise ValueError("untyped inventory literal has typed-only fields")
+            return self
+        if any(value is None for value in typed_fields):
+            raise ValueError("typed inventory literal projection is incomplete")
+        return self
+
+
+class ActivePublicationInventoryRelationshipPropertyResponse(StrictAPIModel):
+    property_value_id: Identifier
+    name: TypeName
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
+    literal: ActivePublicationInventoryLiteralResponse
+    evidence: ActivePublicationInventoryEvidenceResponse
+
+
+class ActivePublicationInventoryAssertionResponse(StrictAPIModel):
+    subject: ActivePublicationInventoryEntityResponse
+    predicate: TypeName
+    object_kind: Literal["entity", "literal"]
+    object_entity: ActivePublicationInventoryEntityResponse | None = None
+    literal: ActivePublicationInventoryLiteralResponse | None = None
+    relationship_properties: Annotated[
+        tuple[ActivePublicationInventoryRelationshipPropertyResponse, ...],
+        Field(max_length=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS),
+    ] = ()
+
+    @field_validator("relationship_properties", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def valid_object_projection(self) -> Self:
+        if self.object_kind == "entity":
+            if self.object_entity is None or self.literal is not None:
+                raise ValueError("entity assertion inventory projection is incomplete")
+        elif self.object_entity is not None or self.literal is None:
+            raise ValueError("literal assertion inventory projection is incomplete")
+        if self.object_kind != "entity" and self.relationship_properties:
+            raise ValueError("literal assertions cannot carry relationship properties")
+        identifiers = tuple(
+            value.property_value_id for value in self.relationship_properties
+        )
+        _unique(identifiers, "relationship property value IDs")
+        return self
+
+
+class ActivePublicationInventoryItemResponse(StrictAPIModel):
+    record_id: Identifier
+    revision_id: Identifier
+    record_kind: Literal["ENTITY_MENTION", "ASSERTION"]
+    governance_status: Literal["PUBLISHED"]
+    origin: Literal[
+        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "RULE_DERIVED", "FIXTURE"
+    ]
+    authority_level: Literal["AUTHORITATIVE", "SECONDARY"]
+    confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
+    ontology_key: TypeName
+    evidence: ActivePublicationInventoryEvidenceResponse
+    entity: ActivePublicationInventoryEntityResponse | None = None
+    assertion: ActivePublicationInventoryAssertionResponse | None = None
+
+    @model_validator(mode="after")
+    def valid_record_projection(self) -> Self:
+        if self.record_kind == "ENTITY_MENTION":
+            if self.entity is None or self.assertion is not None:
+                raise ValueError("entity mention inventory projection is incomplete")
+        elif self.entity is not None or self.assertion is None:
+            raise ValueError("assertion inventory projection is incomplete")
+        return self
+
+
+class ActivePublicationInventoryResponse(StrictAPIModel):
+    publication_id: Identifier
+    publication_generation: Annotated[
+        int, Field(strict=True, ge=1, le=2_147_483_647)
+    ]
+    manifest_hash: Digest
+    ontology_version_id: Identifier
+    document_id: Identifier | None = None
+    total_record_count: Annotated[
+        int, Field(strict=True, ge=1, le=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS)
+    ]
+    matching_record_count: Annotated[
+        int, Field(strict=True, ge=0, le=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS)
+    ]
+    truncated: bool
+    items: Annotated[
+        tuple[ActivePublicationInventoryItemResponse, ...],
+        Field(max_length=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS),
+    ]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def consistent_inventory(self) -> Self:
+        if self.matching_record_count > self.total_record_count:
+            raise ValueError("matching inventory count cannot exceed total count")
+        if len(self.items) > self.matching_record_count:
+            raise ValueError("returned inventory items cannot exceed matching count")
+        if self.truncated != (len(self.items) < self.matching_record_count):
+            raise ValueError("inventory truncation flag does not match returned items")
+        revision_ids = tuple(item.revision_id for item in self.items)
+        _unique(revision_ids, "inventory revision IDs")
+        ordering = tuple(
+            (item.record_kind, item.record_id, item.revision_id) for item in self.items
+        )
+        if ordering != tuple(sorted(ordering)):
+            raise ValueError("inventory items must use stable ordering")
+        if self.document_id is not None and any(
+            item.evidence.document_id != self.document_id for item in self.items
+        ):
+            raise ValueError("inventory item does not match document filter")
+        return self
+
+
 __all__ = [
+    "ActivePublicationInventoryAssertionResponse",
+    "ActivePublicationInventoryEntityResponse",
+    "ActivePublicationInventoryEvidenceResponse",
+    "ActivePublicationInventoryItemResponse",
+    "ActivePublicationInventoryLiteralResponse",
+    "ActivePublicationInventoryRelationshipPropertyResponse",
+    "ActivePublicationInventoryRequest",
+    "ActivePublicationInventoryResponse",
     "AuthoritativeImportRequest",
     "AuthoritativeImportResponse",
     "ConstructionChunkResponse",
