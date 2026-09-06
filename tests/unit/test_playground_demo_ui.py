@@ -125,19 +125,41 @@ for (const item of [...draft.mentions, ...draft.assertions]) {
 }
 assert.equal(requests.length, 0);
 assert.match(elements.aboxOutput.textContent, /尚未|请查看/);
+// Selecting the correct file directly uses the ordinary upload URI. The
+// evidence identity must come from that upload, not from a preset address.
+elements.aboxEditor.value = '';
+refreshABoxPreparation('身份已切换');
+assert.equal($('abox-import-button').disabled, true);
+assert.equal($('abox-prepare-button').hidden, false);
+const direct = result(); direct.document_id = 'direct-upload-document';
+assert.equal(bindDemoAuthority(direct, {...metadata,
+  canonical_uri: 'urn:local:controlled-upload:authoritative_source.txt'}, source.sha256), true);
+const directDraft = JSON.parse(elements.aboxEditor.value);
+assert.equal(directDraft.mentions.length, 3);
+assert.equal(directDraft.assertions.length, 4);
+assert.equal(directDraft.mentions[0].evidence.document_id, 'direct-upload-document');
+assert.equal($('abox-import-button').disabled, false);
+assert.equal($('abox-prepare-button').hidden, true);
+assert.ok(!elements.aboxOutput.textContent.includes('身份已切换'));
+assert.equal(requests.length, 0);
 """)
 
     def test_changed_source_wrong_mode_and_partial_result_never_replace_user_draft(self) -> None:
         self.run_js(r"""
 assert.equal(bindDemoAuthority(result(), metadata, 'wrong-hash'), false);
 assert.equal(bindDemoAuthority(result(), {...metadata, extraction_mode: 'LLM'}, source.sha256), false);
-assert.equal(bindDemoAuthority(result(), {...metadata, canonical_uri: 'urn:other'}, source.sha256), false);
+assert.equal(bindDemoAuthority(result(), {...metadata, tbox_key: 'other-ontology'}, source.sha256), false);
 const extracted = result(); extracted.chunks[0].mention_record_ids = ['candidate'];
 assert.throws(() => bindDemoAuthority(extracted, metadata, source.sha256));
 const missing = result(); missing.document_id = '';
 assert.throws(() => bindDemoAuthority(missing, metadata, source.sha256));
 assert.equal(elements.aboxEditor.value, 'user draft');
 assert.equal(requests.length, 0);
+elements.aboxEditor.value = '';
+assert.equal(bindDemoAuthority(result(), metadata, 'wrong-hash'), false);
+assert.match(elements.aboxOutput.textContent, /文件内容.*不一致/);
+assert.equal($('abox-import-button').disabled, true);
+assert.equal($('abox-prepare-button').hidden, false);
 """)
 
     def test_prefill_selects_mode_but_leaves_file_and_all_writes_to_user(self) -> None:
@@ -166,6 +188,7 @@ assert.match(elements.aboxOutput.textContent, /身份已切换/);
     def test_upload_captures_source_mode_and_blocks_duplicate_submission(self) -> None:
         self.run_js(r"""
 prepareDemoUpload('authoritative_source');
+$('document-uri').value = 'urn:local:controlled-upload:authoritative_source.txt';
 $('document-file').files = [{size: 8, arrayBuffer: async () => new Uint8Array([1]).buffer}];
 const first = constructKnowledge();
 const duplicate = constructKnowledge();
@@ -178,6 +201,7 @@ assert.equal(JSON.parse(elements.aboxEditor.value).document_id, undefined);
 assert.equal(JSON.parse(elements.aboxEditor.value).mentions[0].evidence.document_id, 'real-document');
 assert.equal(state.constructionBusy, false);
 assert.equal($('construct-button').disabled, false);
+assert.match($('construction-next-note').textContent, /配套专家实例已填入 03/);
 """, upload=True)
 
     def test_identity_change_discards_inflight_upload_result_and_generated_draft(self) -> None:

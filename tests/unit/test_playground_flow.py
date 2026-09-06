@@ -49,6 +49,10 @@ class PlaygroundFlowUiTests(unittest.TestCase):
             line for line in self.source.splitlines()
             if line.strip().startswith("elements.aboxEditor.addEventListener(")
         )
+        code += self.source[
+            self.source.index("function refreshABoxPreparation("):
+            self.source.index("function clearDemoSourceBinding()")
+        ]
         harness = r"""
 const vm = require('node:vm');
 const assert = require('node:assert/strict');

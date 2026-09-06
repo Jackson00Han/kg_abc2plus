@@ -720,8 +720,8 @@
         <section class="workbench-card full" id="step-abox" data-construction-flow="baseline" aria-labelledby="abox-title">
           <div class="workbench-head"><div><h2 id="abox-title">导入并发布专家实例</h2><p>先核对来源和专家实例，点击导入；导入成功后在本区域点击“发布专家基准”。两项操作都由你确认，发布后才可用于后续消歧。</p></div><span class="step-chip">03</span></div>
           <label class="query-label" for="abox-editor">权威实体 / 关系 JSON</label>
-          <textarea class="json-editor" id="abox-editor" spellcheck="false"></textarea>
-          <div class="workbench-actions"><button class="button primary" id="abox-import-button" type="button">校验并导入权威层</button></div>
+          <textarea class="json-editor" id="abox-editor" spellcheck="false" placeholder="尚未准备专家实例。使用泵站示例时，请先在 02 上传 authoritative_source.txt；校验文件内容后，这里会填入配套实例及真实来源 ID。自有资料需填写经过专家核对的实例 JSON。"></textarea>
+          <div class="workbench-actions"><button class="button" id="abox-prepare-button" type="button">前往 02 准备权威来源</button><button class="button primary" id="abox-import-button" type="button" disabled>校验并导入权威层</button></div>
           <div class="output-box" id="abox-output">请先完成 02 的权威来源上传；示例包会自动填写真实来源 ID 与精确引文。</div>
           <div class="construction-next" id="abox-publication-panel" hidden>
             <p id="abox-publication-note">专家实例导入后，在这里完成发布。</p>
@@ -1364,7 +1364,7 @@
         $('abox-publication-panel').hidden = true;
         $('construction-next').hidden = true;
         elements.aboxEditor.value = '';
-        output(elements.aboxOutput, '身份已切换；请在当前身份下重新准备或导入专家实例。');
+        refreshABoxPreparation('身份已切换，已清除之前身份的实例草稿。请在当前身份下完成 02 的权威来源上传，再准备专家实例。');
         state.publications = [];
         invalidateInventory();
         state.quality = null;
@@ -1756,7 +1756,7 @@
           if (identityEpoch === state.identityEpoch) output(elements.aboxOutput, error.message);
         } finally {
           state.expertImportBusy = false;
-          $('abox-import-button').disabled = false;
+          refreshABoxPreparation();
         }
       }
 
@@ -1887,10 +1887,17 @@
         return state.bootstrap?.defaults?.industrial_demo || null;
       }
 
+      function refreshABoxPreparation(message = null) {
+        const empty = !elements.aboxEditor.value.trim();
+        $('abox-prepare-button').hidden = !empty;
+        $('abox-import-button').disabled = empty || Boolean(state.expertImportBusy);
+        if (message) output(elements.aboxOutput, message);
+      }
+
       function clearDemoSourceBinding() {
         if (state.demoSourceBinding) {
           elements.aboxEditor.value = '';
-          output(elements.aboxOutput, '身份已切换；请在当前身份下重新准备权威来源与实例。');
+          refreshABoxPreparation('身份已切换；请在当前身份下重新准备权威来源与实例。');
         }
         state.demoSourceBinding = null;
       }
@@ -1987,9 +1994,17 @@
       function bindDemoAuthority(payload, metadata, contentHash) {
         const kit = demoKit();
         const source = kit?.files.find(item => item.id === 'authoritative_source');
-        if (!source || metadata.extraction_mode !== 'SOURCE_ONLY' || metadata.canonical_uri !== source.metadata.canonical_uri || metadata.tbox_key !== kit.ontology.key) return false;
+        if (metadata.extraction_mode !== 'SOURCE_ONLY') return false;
+        if (!source || metadata.tbox_key !== kit.ontology.key) {
+          refreshABoxPreparation('权威来源已入库，但当前本体不是泵站示例本体，未自动填写示例实例。请按当前本体和来源证据填写专家实例 JSON；使用示例请先在 01 发布 pump-maintenance-demo 本体。');
+          return false;
+        }
+        // Source addresses and titles are user metadata. Only exact file bytes
+        // authorize the committed demo's evidence spans; IDs come from this upload.
         if (contentHash !== source.sha256) {
-          output($('demo-note'), '来源内容已改变：未套用示例实例。请按实际来源证据编辑 03 的实例 JSON。');
+          const message = '权威来源已入库，但文件内容与泵站示例不一致，未自动填写实例。请按实际来源证据填写专家实例 JSON；使用示例请在 02 上传未修改的 authoritative_source.txt。';
+          refreshABoxPreparation(message);
+          output($('demo-note'), message);
           return false;
         }
         if (payload.extraction_mode !== 'SOURCE_ONLY' || payload.chunks?.length !== 1 || payload.chunks[0].status !== 'SOURCE_ONLY' || payload.chunks[0].mention_record_ids?.length || payload.chunks[0].assertion_record_ids?.length) throw new Error('来源入库结果与示例合同不一致，未生成专家实例。');
@@ -2004,7 +2019,7 @@
         $('abox-publication-panel').hidden = true;
         elements.aboxEditor.value = JSON.stringify(bind(kit.authoritative_import_template), null, 2);
         state.demoSourceBinding = ids;
-        output(elements.aboxOutput, '已按刚入库的真实文档 / 版本 / Chunk ID 填写专家实例。请查看 JSON，点击“校验并导入权威层”，随后在同一区域点击“发布专家基准”。');
+        refreshABoxPreparation('已按刚入库的真实文档 / 版本 / Chunk ID 填写专家实例。请查看 JSON，点击“校验并导入权威层”，随后在同一区域点击“发布专家基准”。');
         output($('demo-note'), '权威来源已入库，未调用抽取模型。配套实例已填入 03，尚未导入或发布。');
         return true;
       }
@@ -2151,13 +2166,15 @@
           if (identityEpoch !== state.identityEpoch) return;
           completeConstructionOperation();
           showConstructionResult(payload);
-          bindDemoAuthority(payload, metadata, JSON.parse(fingerprint).content_sha256);
+          const expertDraftPrepared = bindDemoAuthority(payload, metadata, JSON.parse(fingerprint).content_sha256);
           state.lastConstructionMode = extractionMode;
           const hasCandidates = payload.chunks.some(chunk => chunk.mention_record_ids?.length || chunk.assertion_record_ids?.length);
           const rejectedChunks = payload.chunks.filter(chunk => chunk.status === 'REJECTED').length;
           $('construction-next').hidden = false;
           $('construction-next-note').textContent = extractionMode === 'SOURCE_ONLY'
-            ? '权威来源入库完成。下一步核对并导入专家实例，然后在同一区域发布。'
+            ? expertDraftPrepared
+              ? '权威来源入库完成，配套专家实例已填入 03。下一步核对并导入，然后在同一区域发布。'
+              : '权威来源已入库，但未自动填写专家实例。请查看 03 的具体说明，并按实际本体和来源证据准备实例 JSON。'
             : hasCandidates
               ? `已生成可审核记录。下一步先确认实体身份，再审核属性与关系。${rejectedChunks ? `另有 ${rejectedChunks} 个片段抽取未通过校验，请查看下方构建明细。` : ''}`
               : rejectedChunks
@@ -3259,18 +3276,8 @@
           state.bootstrap = bootstrap;
           renderDemoKit();
           elements.ontologyEditor.value = JSON.stringify(bootstrap.defaults.industrial_tbox_template, null, 2);
-          elements.aboxEditor.value = JSON.stringify({
-            ontology_version_id: 'replace-with-published-tbox-id',
-            mentions: [{
-              source_key: 'expert-equipment-001',
-              expected_previous_revision: 0,
-              entity: {entity_type: 'Equipment', canonical_key: 'equipment-id:001', canonical_name: 'Equipment 001', aliases: []},
-              evidence: {document_id: 'replace-document-id', version_id: 'replace-version-id', chunk_id: 'replace-chunk-id', char_start: 0, char_end: 1, quoted_text: 'X'},
-              confidence: 1.0,
-            }],
-            assertions: [],
-            review_notes: 'Expert-controlled import from verified source evidence',
-          }, null, 2);
+          elements.aboxEditor.value = '';
+          refreshABoxPreparation();
           const capabilities = bootstrap.capabilities || {};
           const labels = {
             ontology_governance: 'T-Box governance', document_upload: 'document upload',
@@ -3392,7 +3399,8 @@
       $('ontology-list-button').addEventListener('click', loadOntologies);
       $('ontology-import-button').addEventListener('click', importOntology);
       $('abox-import-button').addEventListener('click', importABox);
-      elements.aboxEditor.addEventListener('input', invalidateExpertImportReceipt);
+      elements.aboxEditor.addEventListener('input', () => { invalidateExpertImportReceipt(); refreshABoxPreparation(); });
+      $('abox-prepare-button').addEventListener('click', () => showConstructionFlow('baseline', 'source-upload-slot'));
       $('abox-publish-button').addEventListener('click', publishImportedABox);
       $('abox-next-button').addEventListener('click', () => showConstructionFlow('business', 'business-upload-slot'));
       document.querySelectorAll('[data-flow-choice]').forEach(button => button.addEventListener('click', () => showConstructionFlow(button.dataset.flowChoice, {baseline: 'step-ontology', business: 'business-upload-slot', maintenance: 'maintenance-inventory'}[button.dataset.flowChoice])));
