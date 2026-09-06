@@ -250,7 +250,7 @@
     .result-tab { min-width: 116px; padding: 9px 11px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 10px; font-weight: 720; }
     .result-tab[aria-selected="true"] { color: var(--strong); background: var(--surface); box-shadow: 0 0 0 1px var(--line) inset; }
     .tab-content { padding: 20px; }
-    .tab-content[hidden] { display: none; }
+    .tab-content[hidden], .workbench-actions [hidden] { display: none; }
 
     .answer-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
     .status-label { display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; color: var(--green); background: var(--green-soft); font-family: var(--mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
@@ -1783,6 +1783,29 @@
         return edit;
       }
 
+      function setReviewEditing(index, enabled) {
+        const item = state.reviews[index];
+        if (!item) return;
+        const editor = elements.reviewList.querySelector(`[data-review-editor="${index}"]`);
+        const panel = elements.reviewList.querySelector(`[data-review-edit-panel="${index}"]`);
+        const toggle = elements.reviewList.querySelector(`[data-review-edit-toggle="${index}"]`);
+        if (!editor || !panel || !toggle) return;
+        editor.disabled = !enabled;
+        panel.hidden = !enabled;
+        toggle.textContent = enabled ? '取消编辑' : '编辑内容';
+        toggle.setAttribute('aria-expanded', String(enabled));
+        elements.reviewList.querySelectorAll(`[data-review-index="${index}"]`).forEach(button => {
+          const approve = button.dataset.reviewAction === 'APPROVED';
+          button.hidden = enabled && !approve;
+          if (approve) {
+            button.textContent = enabled ? '保存修改并批准' : '批准';
+            button.dataset.saveEdits = String(enabled);
+          }
+        });
+        if (enabled) editor.focus();
+        else editor.value = JSON.stringify(reviewEdit(item), null, 2);
+      }
+
       function resolutionMarkup(item, index) {
         if (item.record_kind !== 'ENTITY_MENTION') return '';
         const resolution = state.resolutions.get(item.record_id);
@@ -1817,10 +1840,13 @@
         elements.reviewList.innerHTML = state.reviews.map((item, index) => {
           const entity = item.entity || item.subject || {};
           const object = item.object_entity?.canonical_name ?? item.literal_value ?? '';
-          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : relationshipPropertiesMarkup(item)}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div><div data-resolution-panel="${index}">${resolutionMarkup(item, index)}</div>${revisionHistoryMarkup(item, index)}<label class="checkbox-label" style="margin-top:8px"><input type="checkbox" data-review-edit-enabled="${index}"> 提交下方严格 JSON 编辑（字面量只提交 raw 字段）</label><textarea class="json-editor compact" data-review-editor="${index}" spellcheck="false">${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea><div class="workbench-actions"><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
+          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-review-select="${index}"> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge">${escapeHtml(item.trust?.authority)}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span><span class="trust-badge">${escapeHtml(item.trust?.origin)}</span><span class="trust-badge">confidence ${escapeHtml(item.confidence)}</span></div></div><p>${item.predicate ? `${escapeHtml(entity.canonical_name)} —[${escapeHtml(item.predicate)}]→ ${escapeHtml(object)}` : `${escapeHtml(entity.entity_type)} · ${escapeHtml(entity.canonical_key)}`}<br>record ${escapeHtml(item.record_id)} · revision ${escapeHtml(item.revision)}</p>${item.literal_value != null ? literalSemanticsMarkup(item) : relationshipPropertiesMarkup(item)}<div class="exact-evidence">Chunk <span title="${escapeHtml(item.evidence?.chunk_id)}">${escapeHtml(shortId(item.evidence?.chunk_id))}</span> · chars ${escapeHtml(item.evidence?.char_start)}:${escapeHtml(item.evidence?.char_end)} · ${escapeHtml(item.evidence?.quoted_text)}</div><div data-resolution-panel="${index}">${resolutionMarkup(item, index)}</div>${revisionHistoryMarkup(item, index)}<div data-review-edit-panel="${index}" hidden><label for="review-editor-${index}">编辑抽取内容（JSON）</label><p>修改后点击“保存修改并批准”；取消编辑会放弃本次修改。字面量填写原文值与单位。</p><textarea id="review-editor-${index}" class="json-editor compact" data-review-editor="${index}" spellcheck="false" disabled>${escapeHtml(JSON.stringify(reviewEdit(item), null, 2))}</textarea></div><div class="workbench-actions"><button class="button" type="button" data-review-edit-toggle="${index}" aria-expanded="false" aria-controls="review-editor-${index}">编辑内容</button><button class="button" type="button" data-review-action="APPROVED" data-review-index="${index}">批准</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">拒绝</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}">隔离</button></div></article>`;
         }).join('');
         elements.reviewList.querySelectorAll('[data-review-action]').forEach(button => {
-          button.addEventListener('click', () => submitReviews(button.dataset.reviewAction, [Number(button.dataset.reviewIndex)]));
+          button.addEventListener('click', () => submitReviews(button.dataset.reviewAction, [Number(button.dataset.reviewIndex)], button.dataset.saveEdits === 'true'));
+        });
+        elements.reviewList.querySelectorAll('[data-review-edit-toggle]').forEach(button => {
+          button.addEventListener('click', () => setReviewEditing(Number(button.dataset.reviewEditToggle), button.getAttribute('aria-expanded') !== 'true'));
         });
         bindResolutionActions(elements.reviewList);
         elements.reviewList.querySelectorAll('[data-revision-history]').forEach(button => {
@@ -2006,7 +2032,7 @@
         return [...elements.reviewList.querySelectorAll('[data-review-select]:checked')].map(input => Number(input.dataset.reviewSelect));
       }
 
-      async function submitReviews(decision, indexes) {
+      async function submitReviews(decision, indexes, saveEdits = false) {
         if (!indexes.length) { showToast('请先勾选审核记录'); return; }
         try {
           const decisions = indexes.map(index => {
@@ -2019,9 +2045,11 @@
               decision,
               notes: `Local Playground human review: ${decision}`,
             };
-            const enabled = elements.reviewList.querySelector(`[data-review-edit-enabled="${index}"]`)?.checked;
-            if (enabled) {
-              const editor = elements.reviewList.querySelector(`[data-review-editor="${index}"]`);
+            const editor = elements.reviewList.querySelector(`[data-review-editor="${index}"]`);
+            const editing = editor && !editor.disabled;
+            if (editing && !saveEdits) throw new Error('请先保存或取消所选记录的编辑，再进行批量审核');
+            if (saveEdits) {
+              if (!editing || decision !== 'APPROVED' || indexes.length !== 1) throw new Error('请在编辑中的记录上点击“保存修改并批准”');
               const edit = parseJsonEditor(editor, '审核编辑');
               request[item.record_kind === 'ENTITY_MENTION' ? 'mention_edit' : 'assertion_edit'] = edit;
             }

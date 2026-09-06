@@ -731,15 +731,23 @@ const assert = require('node:assert/strict');
 const {page, records} = JSON.parse(fs.readFileSync(0, 'utf8'));
 const original = JSON.stringify(records);
 const requests = [];
-let enabled = true;
+const editors = records.map(() => ({value: '', disabled: true, focus() {}}));
+const panels = records.map(() => ({hidden: true}));
+const toggles = records.map(() => ({setAttribute(key, value) {this[key] = value;}}));
+const actions = records.map(() => ['APPROVED', 'REJECTED', 'QUARANTINED'].map(
+  reviewAction => ({dataset: {reviewAction}, hidden: false})));
+const toasts = [];
 const context = {
   state: {reviews: records, approvedRevisions: new Set()},
   elements: {
     publicationRevisions: {},
     reviewList: {querySelector(selector) {
       const index = Number(selector.match(/="(\d+)"/)[1]);
-      return selector.includes('enabled') ? {checked: enabled} :
-        {value: JSON.stringify(vm.runInContext(`reviewEdit(state.reviews[${index}])`, context))};
+      if (selector.includes('edit-panel')) return panels[index];
+      if (selector.includes('edit-toggle')) return toggles[index];
+      return editors[index];
+    }, querySelectorAll(selector) {
+      return actions[Number(selector.match(/="(\d+)"/)[1])];
     }},
   },
   parseJsonEditor: editor => JSON.parse(editor.value),
@@ -749,7 +757,7 @@ const context = {
     requests.push(JSON.parse(options.body));
     return {outcomes: []};
   },
-  showToast: () => {}, loadReviews: async () => {}, loadActiveDocuments: async () => {},
+  showToast: text => toasts.push(text), loadReviews: async () => {}, loadActiveDocuments: async () => {},
 };
 vm.createContext(context);
 for (const [start, end] of [
@@ -758,10 +766,38 @@ for (const [start, end] of [
   ['async function submitReviews(', 'function activePublication('],
 ]) vm.runInContext(page.slice(page.indexOf(start), page.indexOf(end)), context);
 (async () => {
+  for (let i = 0; i < records.length; i++) {
+    vm.runInContext(`setReviewEditing(${i}, false)`, context);
+  }
+  const initial = editors[0].value;
+  vm.runInContext('setReviewEditing(0, true)', context);
+  assert.equal(panels[0].hidden, false);
+  assert.equal(toggles[0].textContent, '取消编辑');
+  assert.equal(actions[0][0].textContent, '保存修改并批准');
+  assert.equal(actions[0][1].hidden, true);
+  editors[0].value = '{invalid JSON';
+  await vm.runInContext("submitReviews('APPROVED', [0], true)", context);
+  assert.equal(requests.length, 0, 'invalid draft must not submit');
+  await vm.runInContext("submitReviews('APPROVED', [0, 1])", context);
+  assert.equal(requests.length, 0, 'batch review must not silently discard drafts');
+  assert.ok(toasts.at(-1).includes('保存或取消'));
+  vm.runInContext('setReviewEditing(0, false)', context);
+  assert.equal(editors[0].value, initial);
+  assert.equal(editors[0].disabled, true);
+  assert.equal(panels[0].hidden, true);
+  assert.equal(actions[0][0].textContent, '批准');
+  assert.equal(actions[0][1].hidden, false);
+  assert.equal(requests.length, 0, 'cancel must not submit');
+  for (let i = 0; i < records.length; i++) {
+    vm.runInContext(`setReviewEditing(${i}, true)`, context);
+    const edit = JSON.parse(editors[i].value);
+    edit.confidence = 0.87;
+    editors[i].value = JSON.stringify(edit);
+    await vm.runInContext(`submitReviews('APPROVED', [${i}], true)`, context);
+    vm.runInContext(`setReviewEditing(${i}, false)`, context);
+  }
   await vm.runInContext("submitReviews('APPROVED', [0, 1, 2])", context);
-  enabled = false;
-  await vm.runInContext("submitReviews('APPROVED', [0, 1, 2])", context);
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 4);
   assert.equal(JSON.stringify(records), original, 'edit generation mutated the queue');
   process.stdout.write(JSON.stringify(requests));
 })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -769,10 +805,11 @@ for (const [start, end] of [
             input=json.dumps({"page": page, "records": records}),
             text=True, capture_output=True, timeout=15, check=True,
         )
-        edited, status_only = json.loads(generated.stdout)
+        payloads = json.loads(generated.stdout)
+        edited = {"decisions": [payload["decisions"][0] for payload in payloads[:3]]}
         with TestClient(build_app()) as client:
-            for payload in (edited, status_only):
-                with self.subTest(editing=payload is edited):
+            for index, payload in enumerate(payloads):
+                with self.subTest(payload=index):
                     response = client.post(
                         "/v1/knowledge/reviews:batch", headers=auth, json=payload,
                     )
@@ -789,9 +826,12 @@ for (const [start, end] of [
                         "/v1/knowledge/reviews:batch", headers=auth, json=invalid,
                     )
                     self.assertEqual(response.status_code, 422)
-        self.assertEqual(len(knowledge.calls), 3)
-        decisions = knowledge.calls[1][2].decisions
+        self.assertEqual(len(knowledge.calls), 5)
+        decisions = [call[2].decisions[0] for call in knowledge.calls[1:4]]
         self.assertEqual(decisions[0].mention_edit.entity.aliases, ("P7",))
+        self.assertEqual(decisions[0].mention_edit.confidence, 0.87)
+        self.assertEqual(decisions[1].assertion_edit.confidence, 0.87)
+        self.assertEqual(decisions[2].assertion_edit.confidence, 0.87)
         self.assertEqual(decisions[1].assertion_edit.literal.raw_unit, "psi")
         self.assertEqual(decisions[1].assertion_edit.literal.raw_literal, "100")
         self.assertEqual(
@@ -804,7 +844,7 @@ for (const [start, end] of [
         prop = decisions[2].assertion_edit.relationship_properties[0]
         self.assertEqual(prop.literal.raw_unit, "psi")
         self.assertEqual(prop.evidence.quoted_text, quote)
-        for decision in knowledge.calls[2][2].decisions:
+        for decision in knowledge.calls[4][2].decisions:
             self.assertIsNone(decision.mention_edit)
             self.assertIsNone(decision.assertion_edit)
 
