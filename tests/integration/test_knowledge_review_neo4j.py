@@ -43,6 +43,8 @@ from graphrag_prod.knowledge.store import KnowledgeConflict, Neo4jKnowledgeStore
 from graphrag_prod.knowledge.trust import AuthorityLevel, GovernanceStatus
 from graphrag_prod.ontology import (
     EntityTypeDefinition,
+    HierarchyDefinition,
+    HierarchyKind,
     Neo4jTBoxStore,
     Cardinality,
     PropertyDataType,
@@ -237,6 +239,63 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             "MATCH (node) DETACH DELETE node",
             database_=self.database,
         )
+
+    def test_hierarchy_cycle_rejects_complete_publication_atomically_then_valid_set_publishes(self) -> None:
+        # This deliberately malformed approved graph exercises structural
+        # publication rejection. It does not claim the reverse source relation
+        # is semantically entailed or represent an industrial diagnostic rule.
+        tbox = dataclasses.replace(
+            self.tbox, version=2,
+            relationship_types=(RelationshipTypeDefinition(
+                "OFFERS", ("Company", "Product"), ("Company", "Product"),
+            ),),
+            hierarchies=(HierarchyDefinition(
+                "TestComposition", "OFFERS", HierarchyKind.COMPOSITION,
+                ("Company", "Product"),
+            ),),
+        )
+        tboxes = Neo4jTBoxStore(self.driver, self.database)
+        tboxes.import_version(tbox)
+        tboxes.publish(self.tenant_id, tbox.tbox_id, expected_active_tbox_id=self.tbox_id)
+        batch = self._distinct_authoritative_batch()
+        mentions = tuple(dataclasses.replace(
+            item, trust=dataclasses.replace(item.trust, ontology_version_id=tbox.tbox_id),
+        ) for item in batch.mentions)
+        forward = dataclasses.replace(
+            batch.assertions[0], trust=dataclasses.replace(batch.assertions[0].trust, ontology_version_id=tbox.tbox_id),
+        )
+        reverse = dataclasses.replace(
+            forward,
+            revision=RecordRevision.next(knowledge_record_id(self.tenant_id, "ASSERTION", "hierarchy-cycle"), 0),
+            subject=forward.object_entity, object_entity=forward.subject,
+            subject_mention_revision_id=forward.object_mention_revision_id,
+            object_mention_revision_id=forward.subject_mention_revision_id,
+        )
+        malformed = ABoxRecordBatch(self.tenant_id, mentions, (forward, reverse))
+        self.store.import_authoritative(malformed)
+        with self.assertRaisesRegex(KnowledgePublicationConflict, "hierarchy"):
+            self.publication.publish(
+                self.principal,
+                tuple(item.revision_id for item in (*mentions, forward, reverse)),
+                expected_active_publication_id=None, published_at=PUBLISHED_AT,
+            )
+        self.assertIsNone(self.publication.active(self.principal))
+        rows, _, _ = self.driver.execute_query(
+            "MATCH (revision:GovernedAssertionRevision {record_id: $record_id}) "
+            "RETURN collect(revision.governance_status) AS statuses",
+            record_id=forward.record_id, database_=self.database,
+        )
+        self.assertEqual(list(rows[0]["statuses"]), ["PUBLISHED"])
+        valid_ids = tuple(item.revision_id for item in (*mentions, forward))
+        valid = self.publication.publish(
+            self.principal, valid_ids,
+            expected_active_publication_id=None, published_at=PUBLISHED_AT,
+        )
+        self.assertEqual(len(valid.published_revision_ids), 3)
+        self.assertEqual(self.publication.publish(
+            self.principal, valid_ids, expected_active_publication_id=None,
+            published_at=PUBLISHED_AT,
+        ), valid)
 
     def _approve_all(self) -> tuple[str, ...]:
         mention_requests = tuple(

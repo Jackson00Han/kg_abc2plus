@@ -430,6 +430,26 @@ class Neo4jKnowledgeStore:
         batch.require_llm_candidates()
         return self._write_batch(batch, publish_entity_profiles=False)
 
+    @staticmethod
+    def require_rule_candidates(batch: ABoxRecordBatch) -> None:
+        """Validate explicit rule provenance without relabelling it as LLM output."""
+        for record in (*batch.mentions, *batch.assertions):
+            trust = record.trust
+            if (
+                trust.origin is not KnowledgeOrigin.RULE_DERIVED
+                or trust.authority is not AuthorityLevel.SECONDARY
+                or trust.status is not GovernanceStatus.CANDIDATE
+                or trust.extractor_version is None
+            ):
+                raise ValueError(
+                    "rule persistence requires identified RULE_DERIVED + SECONDARY + CANDIDATE records"
+                )
+
+    def persist_rule_candidates(self, batch: ABoxRecordBatch) -> KnowledgeWriteResult:
+        """Persist auditable rule output in the governed candidate layer only."""
+        self.require_rule_candidates(batch)
+        return self._write_batch(batch, publish_entity_profiles=False)
+
     def persist_llm_quarantined(self, batch: ABoxRecordBatch) -> KnowledgeWriteResult:
         """Persist below-threshold LLM output in the quarantine layer only."""
 

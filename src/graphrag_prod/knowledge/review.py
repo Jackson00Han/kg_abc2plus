@@ -28,6 +28,12 @@ from graphrag_prod.domain.ids import (
 )
 from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.ontology.models import Cardinality
+from graphrag_prod.ontology.hierarchy import (
+    HierarchyEdge,
+    HierarchyValidationError,
+    validate_hierarchy_edges,
+)
+from graphrag_prod.ontology.store import TBoxConflict, _decode_tbox
 
 from .models import (
     AssertionRecord,
@@ -1994,6 +2000,7 @@ class Neo4jKnowledgePublicationService:
                 ontology_version_id=ontology_version_id,
                 require_active_tbox=False,
             )
+            cls._validate_hierarchies_tx(tx, principal.tenant_id, ontology_version_id, records)
             return
         if current_id != expected_active_id:
             raise KnowledgePublicationConflict(
@@ -2200,6 +2207,9 @@ class Neo4jKnowledgePublicationService:
             tuple(published_records),
             require_active_tbox=True,
         )
+        cls._validate_hierarchies_tx(
+            tx, principal.tenant_id, ontology_version_id, tuple(published_records),
+        )
 
         published_records.sort(key=lambda record: record.revision_id)
         published_ids = tuple(
@@ -2341,6 +2351,7 @@ class Neo4jKnowledgePublicationService:
                 ontology_version_id=ontology_version_id,
                 require_active_tbox=False,
             )
+            cls._validate_hierarchies_tx(tx, principal.tenant_id, ontology_version_id, records)
             return
         if current_id != expected_active_id:
             raise KnowledgePublicationConflict(
@@ -2365,6 +2376,7 @@ class Neo4jKnowledgePublicationService:
             ontology_version_id=ontology_version_id,
             require_active_tbox=False,
         )
+        cls._validate_hierarchies_tx(tx, principal.tenant_id, ontology_version_id, records)
         cls._deactivate_materialization_tx(
             tx,
             principal.tenant_id,
@@ -2386,6 +2398,52 @@ class Neo4jKnowledgePublicationService:
             now,
             action="ROLLBACK",
         )
+
+    @staticmethod
+    def _validate_hierarchies_tx(
+        tx: Any,
+        tenant_id: str,
+        ontology_version_id: str,
+        records: tuple[EntityMentionRecord | AssertionRecord, ...],
+    ) -> None:
+        """Check the full final manifest inside the publication transaction.
+
+        The exact checksum-bound definition is loaded even for legacy T-Boxes.
+        A missing/corrupt declaration cannot silently disable hierarchy checks.
+        The same boundary applies to fresh publication, replay and rollback.
+        """
+        rows = tuple(tx.run(
+            """
+            MATCH (tbox:TBoxVersion {tenant_id: $tenant_id, tbox_id: $tbox_id})
+            WHERE tbox.status IN ['PUBLISHED', 'RETIRED']
+            RETURN tbox{.*} AS tbox
+            LIMIT 2
+            """,
+            tenant_id=tenant_id, tbox_id=ontology_version_id,
+        ))
+        if len(rows) != 1:
+            raise KnowledgePublicationConflict("bound hierarchy T-Box is unavailable")
+        try:
+            tbox = _decode_tbox(rows[0]["tbox"])
+            if tbox.tenant_id != tenant_id or tbox.tbox_id != ontology_version_id:
+                raise ValueError("hierarchy T-Box identity mismatch")
+            if len(records) > MAX_PUBLICATION_RECORDS:
+                raise ValueError("hierarchy manifest exceeds its publication budget")
+            for record in records:
+                if record.tenant_id != tenant_id or record.trust.ontology_version_id != ontology_version_id:
+                    raise ValueError("hierarchy record crosses its publication boundary")
+            if tbox.hierarchies:
+                validate_hierarchy_edges(tbox, (
+                    HierarchyEdge(
+                        record.subject.entity_id, record.subject.entity_type,
+                        record.predicate, record.object_entity.entity_id,
+                        record.object_entity.entity_type,
+                    )
+                    for record in records
+                    if isinstance(record, AssertionRecord) and record.object_entity is not None
+                ))
+        except (KeyError, TypeError, ValueError, TBoxConflict, HierarchyValidationError) as error:
+            raise KnowledgePublicationConflict("publication hierarchy validation failed") from error
 
     @staticmethod
     def _validate_property_cardinality_tx(

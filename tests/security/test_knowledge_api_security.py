@@ -232,6 +232,36 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
         self.assertEqual(denied.json()["code"], "forbidden")
         self.assertEqual(len(self.backend.envelopes), 1)
 
+    def test_hierarchy_import_cannot_weaken_semantics_or_inject_identity(self) -> None:
+        body = {
+            "key": "industrial-classification", "version": 1,
+            "entity_types": [{"name": "EquipmentClass", "canonical_key_namespaces": ["class"]}],
+            "relationship_types": [{
+                "name": "SUBTYPE_OF", "source_types": ["EquipmentClass"],
+                "target_types": ["EquipmentClass"],
+            }],
+        }
+        hierarchy = {
+            "name": "classification", "relationship_type": "SUBTYPE_OF",
+            "kind": "CLASSIFICATION", "node_types": ["EquipmentClass"],
+            "acyclic": True,
+        }
+        for changes in ({"tenant_id": "protected-tenant"}, {"acyclic": False},
+                        {"acyclic": 1}, {"node_types": []}, {"kind": "LAYOUT"}):
+            with self.subTest(changes=changes):
+                response = self.client.post(
+                    "/v1/ontologies:import", headers=_headers(scope="ontology:write"),
+                    json={**body, "hierarchies": [{**hierarchy, **changes}]},
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertNotIn("protected-tenant", response.text)
+        denied = self.client.post(
+            "/v1/ontologies:import", headers=_headers(scope="ontology:read"),
+            json={**body, "hierarchies": [hierarchy]},
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(self.backend.envelopes, [])
+
     def test_published_quality_requires_dedicated_scope_and_returns_no_source_text(
         self,
     ) -> None:

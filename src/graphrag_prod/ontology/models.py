@@ -60,6 +60,11 @@ class TBoxStatus(str, Enum):
     RETIRED = "RETIRED"
 
 
+class HierarchyKind(str, Enum):
+    CLASSIFICATION = "CLASSIFICATION"
+    COMPOSITION = "COMPOSITION"
+
+
 def _required_text(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
@@ -409,6 +414,57 @@ class RelationshipTypeDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class HierarchyDefinition:
+    """Explicit child-to-parent graph semantics, without type inheritance."""
+
+    name: str
+    relationship_type: str
+    kind: HierarchyKind
+    node_types: tuple[str, ...]
+    acyclic: bool = True
+    description: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _type_name(self.name, "hierarchy name"))
+        object.__setattr__(self, "relationship_type", _type_name(self.relationship_type, "hierarchy relationship"))
+        object.__setattr__(self, "kind", _enum_value(HierarchyKind, self.kind, "hierarchy kind"))
+        node_types = tuple(_type_name(item, "hierarchy node type") for item in self.node_types)
+        if not 1 <= len(node_types) <= 64:
+            raise ValueError("hierarchy requires between 1 and 64 node types")
+        _unique(node_types, "hierarchy node types")
+        if self.kind is HierarchyKind.CLASSIFICATION and len(node_types) != 1:
+            raise ValueError("classification hierarchy must use one concept node type")
+        object.__setattr__(self, "node_types", node_types)
+        if self.acyclic is not True:
+            raise ValueError("hierarchy acyclic must be true")
+        object.__setattr__(self, "description", _optional_text(self.description, "hierarchy description"))
+
+    def to_mapping(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "name": self.name, "relationship_type": self.relationship_type,
+            "kind": self.kind.value, "node_types": list(self.node_types),
+            "acyclic": self.acyclic,
+        }
+        if self.description is not None:
+            result["description"] = self.description
+        return result
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> HierarchyDefinition:
+        value = _mapping(value, "hierarchy")
+        _strict_keys(
+            value,
+            required=frozenset({"name", "relationship_type", "kind", "node_types", "acyclic"}),
+            optional=frozenset({"description"}), object_name="hierarchy",
+        )
+        return cls(
+            name=value["name"], relationship_type=value["relationship_type"],
+            kind=value["kind"], node_types=tuple(_sequence(value["node_types"], "hierarchy node_types")),
+            acyclic=value["acyclic"], description=value.get("description"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TBoxVersion:
     """One immutable in-memory version of a tenant's property-graph T-Box."""
 
@@ -419,6 +475,7 @@ class TBoxVersion:
     entity_types: tuple[EntityTypeDefinition, ...]
     relationship_types: tuple[RelationshipTypeDefinition, ...]
     description: str | None = None
+    hierarchies: tuple[HierarchyDefinition, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tenant_id", _required_text(self.tenant_id, "tenant_id"))
@@ -465,6 +522,19 @@ class TBoxVersion:
                 )
         object.__setattr__(self, "entity_types", entity_types)
         object.__setattr__(self, "relationship_types", relationship_types)
+        hierarchies = tuple(self.hierarchies)
+        if len(hierarchies) > 32 or any(not isinstance(item, HierarchyDefinition) for item in hierarchies):
+            raise ValueError("hierarchies requires at most 32 HierarchyDefinition values")
+        _unique([item.name for item in hierarchies], "hierarchy names")
+        _unique([item.relationship_type for item in hierarchies], "hierarchy relationship bindings")
+        relationship_by_name = {item.name: item for item in relationship_types}
+        for hierarchy in hierarchies:
+            relationship = relationship_by_name.get(hierarchy.relationship_type)
+            if relationship is None:
+                raise ValueError("hierarchy must bind a declared relationship type")
+            if set(hierarchy.node_types) != set(relationship.source_types) | set(relationship.target_types):
+                raise ValueError("hierarchy node_types must exactly cover its relationship endpoints")
+        object.__setattr__(self, "hierarchies", hierarchies)
         object.__setattr__(
             self,
             "description",
@@ -491,6 +561,13 @@ class TBoxVersion:
                 )
             ],
         }
+        # Preserve every legacy checksum: absence and an empty extension have
+        # exactly the same canonical representation as before this extension.
+        if self.hierarchies:
+            payload["hierarchies"] = [
+                {**item.to_mapping(), "node_types": sorted(item.node_types)}
+                for item in sorted(self.hierarchies, key=lambda item: item.name.casefold())
+            ]
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @property
@@ -516,6 +593,8 @@ class TBoxVersion:
         }
         if self.description is not None:
             result["description"] = self.description
+        if self.hierarchies:
+            result["hierarchies"] = [item.to_mapping() for item in self.hierarchies]
         if include_computed:
             result["tbox_id"] = self.tbox_id
             result["checksum"] = self.checksum
@@ -536,7 +615,7 @@ class TBoxVersion:
                     "relationship_types",
                 }
             ),
-            optional=frozenset({"description", "tbox_id", "checksum"}),
+            optional=frozenset({"description", "tbox_id", "checksum", "hierarchies"}),
             object_name="T-Box",
         )
         result = cls(
@@ -557,6 +636,10 @@ class TBoxVersion:
                 )
             ),
             description=value.get("description"),
+            hierarchies=tuple(
+                HierarchyDefinition.from_mapping(_mapping(item, "hierarchy"))
+                for item in _sequence(value.get("hierarchies", ()), "hierarchies")
+            ),
         )
         if "tbox_id" in value and value["tbox_id"] != result.tbox_id:
             raise ValueError("T-Box tbox_id does not match its identity fields")

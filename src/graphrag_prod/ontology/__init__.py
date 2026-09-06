@@ -3,6 +3,8 @@
 from .models import (
     Cardinality,
     EntityTypeDefinition,
+    HierarchyDefinition,
+    HierarchyKind,
     PropertyDataType,
     PropertyDefinition,
     RelationshipTypeDefinition,
@@ -15,6 +17,8 @@ from .store import Neo4jTBoxStore, TBoxConflict, TBoxValidationError
 __all__ = [
     "Cardinality",
     "EntityTypeDefinition",
+    "HierarchyDefinition",
+    "HierarchyKind",
     "Neo4jTBoxStore",
     "PropertyDataType",
     "PropertyDefinition",

@@ -222,7 +222,7 @@ class SourceCatalog:
     sources: tuple[IndustrialSource, ...]
 
     def __post_init__(self) -> None:
-        if self.catalog_id != "schneider-industrial-sources" or self.version != "1.0.0":
+        if self.catalog_id != "schneider-industrial-sources" or self.version not in {"1.0.0", "1.0.1"}:
             raise SourceCatalogError("unsupported source catalog identity/version")
         if not isinstance(self.verified_at, str):
             raise SourceCatalogError("verified_at must be an ISO date")

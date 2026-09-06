@@ -1,7 +1,7 @@
 {
   "schema_version": "industrial-sources-v1",
   "catalog_id": "schneider-industrial-sources",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "verified_at": "2026-09-06",
   "sources": [
     {
@@ -16,7 +16,7 @@
       "filename": "Canalis-KT-Installation-Guide-QGH3492101.pdf",
       "embedded_revision": "QGH3492101-04",
       "embedded_date": "12/2025",
-      "language": ["multilingual"],
+      "language": ["en"],
       "equipment_class": "BUSBAR_TRUNKING",
       "product_scope": ["Canalis KT", "Canalis KTA", "Canalis KTC"],
       "regional_scope": "International manual; verify local installation requirements separately",

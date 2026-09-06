@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import neo4j
 
 from graphrag_prod.graph.schema import apply_schema, verify_schema
+from graphrag_prod.industrial.ontology import build_industrial_tbox
 from graphrag_prod.ontology import (
     Neo4jTBoxStore,
     TBoxConflict,
@@ -134,6 +135,15 @@ class Neo4jTBoxStoreIntegrationTests(unittest.TestCase):
 
     def test_schema_is_structurally_valid_and_online(self) -> None:
         self.assertEqual(verify_schema(self.driver, self.database), [])
+
+    def test_industrial_hierarchies_round_trip_and_publish_as_immutable_definition(self) -> None:
+        value = build_industrial_tbox("tenant-industrial")
+        self.assertEqual(self.store.import_version(value), value)
+        self.assertEqual(self.store.get(value.tenant_id, value.tbox_id).hierarchies, value.hierarchies)
+        published = self.store.publish(value.tenant_id, value.tbox_id, expected_active_tbox_id=None)
+        self.assertEqual(published.hierarchies, value.hierarchies)
+        self.assertEqual(published.checksum, value.checksum)
+        self.assertEqual(self.store.active(value.tenant_id, value.key), published)
 
     def test_import_round_trips_complete_property_graph_idempotently(self) -> None:
         value = _tbox()

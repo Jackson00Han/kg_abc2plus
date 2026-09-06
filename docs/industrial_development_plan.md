@@ -82,7 +82,11 @@ explicitly separated files. The root agent owns commits and service restarts.
 - I1: complete; official catalog, development contract, bounded PDF parsing,
   external-cache acquisition and exact normalization passed their checks. See
   `docs/validation/industrial-sources.md`.
-- I2–I5: pending.
+- I2: complete; composed ontology/hierarchy, 34 authored documents, 330 semantic
+  Chunks and resumable governed loading passed model, unit/API/security and
+  real-Neo4j checks. Official excerpt preview totals 370 Chunks. See
+  `docs/validation/industrial-model.md`.
+- I3–I5: pending.
 
 Detailed evidence is recorded under `docs/validation/industrial-*.md`. This plan
 remains as design history; remove only the temporary active-work pointer from

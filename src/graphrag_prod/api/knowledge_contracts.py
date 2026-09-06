@@ -36,6 +36,7 @@ from .contracts import (
 MAX_ONTOLOGY_ENTITY_TYPES = 256
 MAX_ONTOLOGY_RELATIONSHIP_TYPES = 512
 MAX_ONTOLOGY_PROPERTIES = 256
+MAX_ONTOLOGY_HIERARCHIES = 32
 MAX_KNOWLEDGE_RECORDS = 500
 MAX_REVIEW_RECORDS = 100
 MAX_PUBLICATION_RECORDS = 500
@@ -230,6 +231,29 @@ class OntologyRelationshipType(StrictAPIModel):
         return self
 
 
+class OntologyHierarchy(StrictAPIModel):
+    """Explicit child-to-parent graph semantics, independent of screen layout."""
+
+    name: TypeName
+    relationship_type: TypeName
+    kind: Literal["CLASSIFICATION", "COMPOSITION"]
+    node_types: Annotated[tuple[TypeName, ...], Field(min_length=1, max_length=64)]
+    acyclic: Annotated[bool, Field(strict=True)]
+    description: ShortText | None = None
+
+    @field_validator("node_types", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @model_validator(mode="after")
+    def valid_hierarchy(self) -> Self:
+        _unique(self.node_types, "hierarchy node_types")
+        if not self.acyclic:
+            raise ValueError("hierarchies require acyclic semantics")
+        return self
+
+
 class OntologyImportRequest(StrictAPIModel):
     key: OntologyKey
     version: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
@@ -241,10 +265,13 @@ class OntologyImportRequest(StrictAPIModel):
         tuple[OntologyRelationshipType, ...],
         Field(max_length=MAX_ONTOLOGY_RELATIONSHIP_TYPES),
     ] = ()
+    hierarchies: Annotated[
+        tuple[OntologyHierarchy, ...], Field(max_length=MAX_ONTOLOGY_HIERARCHIES)
+    ] = ()
     description: ShortText | None = None
     expected_checksum: Digest | None = None
 
-    @field_validator("entity_types", "relationship_types", mode="before")
+    @field_validator("entity_types", "relationship_types", "hierarchies", mode="before")
     @classmethod
     def accept_json_arrays(cls, value: object) -> object:
         return _json_array(value)
@@ -253,6 +280,8 @@ class OntologyImportRequest(StrictAPIModel):
     def unique_types(self) -> Self:
         _unique(tuple(item.name for item in self.entity_types), "entity_types")
         _unique(tuple(item.name for item in self.relationship_types), "relationship_types")
+        _unique(tuple(item.name for item in self.hierarchies), "hierarchies")
+        _unique(tuple(item.relationship_type for item in self.hierarchies), "hierarchy relationships")
         return self
 
 
@@ -279,9 +308,12 @@ class OntologyVersionResponse(StrictAPIModel):
         tuple[OntologyRelationshipType, ...],
         Field(max_length=MAX_ONTOLOGY_RELATIONSHIP_TYPES),
     ]
+    hierarchies: Annotated[
+        tuple[OntologyHierarchy, ...], Field(max_length=MAX_ONTOLOGY_HIERARCHIES)
+    ] = ()
     description: ShortText | None = None
 
-    @field_validator("entity_types", "relationship_types", mode="before")
+    @field_validator("entity_types", "relationship_types", "hierarchies", mode="before")
     @classmethod
     def accept_json_arrays(cls, value: object) -> object:
         return _json_array(value)

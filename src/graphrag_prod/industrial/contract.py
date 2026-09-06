@@ -36,6 +36,7 @@ def validate_industrial_contract(value: Mapping[str, Any]) -> None:
     _integer(corpus["maximum_published_records"], "maximum_published_records", 1, 500)
     _integer(corpus["minimum_access_groups"], "minimum_access_groups", 3, 100)
     _integer(corpus["minimum_product_families"], "minimum_product_families", 2, 100)
+    _integer(corpus["minimum_installed_assets"], "minimum_installed_assets", 8, 1000)
     if len(set(value["scope"]["core_families"])) < corpus["minimum_product_families"]:
         raise ValueError("product families do not satisfy corpus diversity")
     if not {"OFFICIAL_PUBLICATION", "CURATED_REFERENCE", "SYNTHETIC_FIELD_RECORD"} <= set(corpus["source_kinds"]):
