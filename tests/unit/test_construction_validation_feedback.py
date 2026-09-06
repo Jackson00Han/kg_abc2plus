@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from dataclasses import replace
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
@@ -25,8 +26,11 @@ from graphrag_prod.construction import (
 )
 from graphrag_prod.construction.workflow import _chunk_result_from_payload, _chunk_result_payload
 from graphrag_prod.domain import Principal, content_checksum
+from graphrag_prod.knowledge import AuthorityLevel, GovernanceStatus, KnowledgeOrigin
+from graphrag_prod.ontology.models import TBoxVersion
+from graphrag_prod.playground.industrial_demo import get_industrial_demo_kit
 from tests.unit.test_construction_extraction import (
-    _profile, _repeated_entity_case, _tbox, _valid_payload,
+    _chunk, _profile, _repeated_entity_case, _tbox, _valid_payload,
 )
 from tests.unit.test_construction_workflow import SOURCE, _AuditStore, _metadata, _workflow
 
@@ -48,11 +52,14 @@ class _Responses:
         return {"choices": [{"finish_reason": "stop", "message": {"content": raw}}]}
 
 
-def _feedback_extractor(responses, *, attempts=2, limits=None, before_response=None):
+def _feedback_extractor(
+    responses, *, attempts=2, limits=None, before_response=None, active_tbox=None,
+):
     client = _Responses(responses, before_response)
     extractor = OpenAICompatibleOntologyExtractor(
         client=SimpleNamespace(chat=SimpleNamespace(completions=client)),
-        model="qwen-plus", active_tbox=_tbox(), prompt_version="industrial-prompt:v1",
+        model="qwen-plus", active_tbox=active_tbox or _tbox(),
+        prompt_version="industrial-prompt:v1",
         limits=limits or ExtractionLimits(timeout_seconds=30),
         max_validation_attempts=attempts,
     )
@@ -69,12 +76,97 @@ def _attempts(audit):
     return [p for p in audit.artifacts.values() if p.get("audit_type") == "VALIDATION_ATTEMPT"]
 
 
+def _homonym_fixture():
+    fixture = json.loads((
+        Path(__file__).parents[1] / "fixtures" / "homonym-span-failure.v1.json"
+    ).read_text(encoding="utf-8"))
+    kit = get_industrial_demo_kit()
+    source = next(item for item in kit["files"] if item["id"] == "homonym_report")
+    if source["text"] != fixture["source_text"]:
+        raise AssertionError("homonym regression requires the original source text")
+    if content_checksum(source["text"]) != fixture["source_sha256"]:
+        raise AssertionError("homonym regression source checksum changed")
+    chunk = replace(
+        _chunk(), text=source["text"], checksum=source["sha256"],
+        char_start=0, char_end=len(source["text"]),
+    )
+    tbox = TBoxVersion.from_mapping({
+        **kit["ontology"], "tenant_id": chunk.tenant_id, "status": "PUBLISHED",
+    })
+    return fixture, chunk, tbox
+
+
 class ConstructionValidationFeedbackTests(unittest.TestCase):
     def setUp(self):
         self.principal = Principal(
             "engineer:alice", "tenant-industrial", frozenset({"engineers"}),
             frozenset({"knowledge:construct"}),
         )
+
+    def test_recorded_homonym_responses_still_fail_closed_with_two_audited_attempts(self):
+        fixture, chunk, tbox = _homonym_fixture()
+        raw_responses = [attempt["response"] for attempt in fixture["attempts"]]
+        extractor, client = _feedback_extractor(
+            [*raw_responses, fixture["corrected_response"]], active_tbox=tbox,
+        )
+        attempts = []
+        with self.assertRaises(ExtractionRejected):
+            extractor.extract_audited_bounded(
+                artifact_id="homonym-historical", input_hash="homonym-input",
+                chunk=chunk, profile=_profile(), on_validation_attempt=attempts.append,
+            )
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(len(client.responses), 1)  # No third call silently repairs history.
+        self.assertEqual([attempt.status for attempt in attempts], ["REJECTED"] * 2)
+        for recorded, actual in zip(fixture["attempts"], attempts, strict=True):
+            with self.subTest(attempt=recorded["attempt"]):
+                self.assertEqual(content_checksum(recorded["response"]), recorded["response_checksum"])
+                self.assertEqual(actual.response, recorded["response"])
+                self.assertEqual(actual.response_checksum, recorded["response_checksum"])
+                self.assertEqual(
+                    [(finding.code, finding.path, finding.action) for finding in actual.findings],
+                    [(finding["code"], finding["path"], finding["action"]) for finding in recorded["findings"]],
+                )
+
+    def test_homonym_corrected_model_response_keeps_exact_evidence_and_distinct_code(self):
+        fixture, chunk, tbox = _homonym_fixture()
+        corrected = fixture["corrected_response"]
+        for historical in fixture["attempts"]:
+            with self.subTest(correcting_attempt=historical["attempt"]):
+                extractor, client = _feedback_extractor(
+                    [historical["response"], corrected], active_tbox=tbox,
+                )
+                attempts = []
+                result = extractor.extract_audited_bounded(
+                    artifact_id="homonym-corrected", input_hash="homonym-input",
+                    chunk=chunk, profile=_profile(), on_validation_attempt=attempts.append,
+                )
+                self.assertEqual(len(client.calls), 2)
+                self.assertEqual([attempt.status for attempt in attempts], ["REJECTED", "CANDIDATE"])
+                self.assertEqual(attempts[0].response, historical["response"])
+                self.assertEqual(attempts[1].response, json.dumps(corrected))
+                self.assertEqual(result.authority, AuthorityLevel.SECONDARY)
+                self.assertEqual(result.origin, KnowledgeOrigin.LLM_EXTRACTED)
+                self.assertEqual(result.status, GovernanceStatus.CANDIDATE)
+                self.assertEqual(len(result.output.entities), 1)
+                self.assertEqual(len(result.output.mentions), 1)
+                mention = result.output.mentions[0]
+                self.assertEqual((mention.surface, mention.char_start, mention.char_end), ("循环水泵", 47, 51))
+                facts = {assertion.predicate: assertion for assertion in result.output.assertions}
+                self.assertEqual(set(facts), {"EquipmentCode", "RatedPower"})
+                self.assertEqual(facts["EquipmentCode"].literal_value, "BC-P-202")
+                self.assertEqual(facts["EquipmentCode"].literal_semantics.canonical_value, "BC-P-202")
+                power = facts["RatedPower"].literal_semantics
+                self.assertEqual((power.raw_value, power.raw_unit), ("22.0", "kW"))
+                self.assertEqual((power.canonical_value, power.canonical_unit), ("22", "kW"))
+                for predicate, end in (("EquipmentCode", 81), ("RatedPower", 107)):
+                    fact = facts[predicate]
+                    self.assertEqual(fact.subject_entity_id, mention.entity_id)
+                    self.assertEqual((fact.evidence_char_start, fact.evidence_char_end), (47, end))
+                    self.assertIn(mention.surface, chunk.text[47:end])
+                    self.assertIn(fact.literal_value, chunk.text[47:end])
+                self.assertNotIn("BC-P-101", json.dumps(corrected))
+                self.assertEqual(chunk.checksum, fixture["source_sha256"])
 
     def test_repeated_entity_missing_mention_corrected_only_by_second_model_response(self):
         chunk, valid = _repeated_entity_case()

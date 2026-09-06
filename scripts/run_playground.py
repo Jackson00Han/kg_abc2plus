@@ -92,7 +92,7 @@ _PLAYGROUND_CONSTRUCTION_LIMITS = {
     "per_model_call_timeout_seconds": 30.0,
     "max_model_output_tokens": 2_048,
 }
-_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v4-validation-feedback"
+_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v5-endpoint-context"
 
 
 def _build_playground_extractor(client, model, tbox):
@@ -602,6 +602,110 @@ def _load_corpus(
     return fixture
 
 
+def _reuse_corpus(
+    driver: neo4j.Driver,
+    database: str,
+    embedder: _OpenAICompatibleEmbedder,
+):
+    """Resume an initialized local corpus without changing any stored data."""
+    print("[1/5] Verifying the versioned dev-corpus-v1 fixture", flush=True)
+    fixture = load_dev_corpus_fixture()
+    print("[2/5] Verifying the existing production graph schema", flush=True)
+    if verify_schema(driver, database):
+        raise RuntimeError("existing Playground schema is incomplete or invalid")
+    tenant_ids = tuple(sorted({plan.tenant_id for plan in fixture.plans}))
+    readiness = _Neo4jReadiness(
+        driver, database, expected_tenant_ids=tenant_ids,
+    ).check().payload
+    if readiness.status != "ready":
+        raise RuntimeError("existing Playground corpus is not ready for every tenant")
+
+    print("[3/5] Verifying current embedding profiles; preserving existing data", flush=True)
+    try:
+        records, _, _ = driver.execute_query(
+            Query(
+                """
+                MATCH (state:TenantCorpusState)-[:ACTIVE_EMBEDDING_INDEX]->(
+                    generation:EmbeddingIndexGeneration
+                )
+                WHERE state.tenant_id IN $tenant_ids
+                RETURN state.tenant_id AS tenant_id,
+                       generation.tenant_id AS generation_tenant_id,
+                       generation.embedding_space_id AS embedding_space_id,
+                       generation.dimensions AS dimensions,
+                       generation.similarity AS similarity,
+                       generation.index_name AS index_name,
+                       generation.label_name AS label_name
+                LIMIT $limit
+                """,
+                timeout=2.0,
+            ),
+            tenant_ids=list(tenant_ids), limit=len(tenant_ids) + 1,
+            database_=database,
+        )
+        if (
+            len(records) != len(tenant_ids)
+            or {record["tenant_id"] for record in records} != set(tenant_ids)
+        ):
+            raise ValueError("unexpected tenant generation coverage")
+        expected_indexes: dict[str, str] = {}
+        for record in records:
+            # The space ID binds provider, model, revision, dimensions and
+            # normalization; dimension equality alone cannot authorize reuse.
+            if (
+                record["generation_tenant_id"] != record["tenant_id"]
+                or record["embedding_space_id"] != embedder.embedding_space_id
+                or isinstance(record["dimensions"], bool)
+                or not isinstance(record["dimensions"], int)
+                or record["dimensions"] != embedder.dimensions
+                or record["similarity"] != "cosine"
+                or not isinstance(record["index_name"], str)
+                or not record["index_name"]
+                or not isinstance(record["label_name"], str)
+                or not record["label_name"]
+                or record["index_name"] in expected_indexes
+            ):
+                raise ValueError("existing generation does not match configuration")
+            expected_indexes[record["index_name"]] = record["label_name"]
+        indexes, _, _ = driver.execute_query(
+            Query(
+                """
+                SHOW INDEXES YIELD name, type, entityType, labelsOrTypes,
+                                   properties, state, options
+                WHERE name IN $index_names
+                RETURN name, type, entityType, labelsOrTypes, properties, state, options
+                """,
+                timeout=2.0,
+            ),
+            index_names=list(expected_indexes), database_=database,
+        )
+        if (
+            len(indexes) != len(expected_indexes)
+            or {record["name"] for record in indexes} != set(expected_indexes)
+        ):
+            raise ValueError("existing vector indexes are incomplete")
+        for record in indexes:
+            configuration = record["options"]["indexConfig"]
+            if (
+                record["type"] != "VECTOR"
+                or record["entityType"] != "NODE"
+                or record["state"] != "ONLINE"
+                or tuple(record["labelsOrTypes"]) != (expected_indexes[record["name"]],)
+                or tuple(record["properties"]) != ("vector",)
+                or isinstance(configuration.get("vector.dimensions"), bool)
+                or not isinstance(configuration.get("vector.dimensions"), int)
+                or configuration.get("vector.dimensions") != embedder.dimensions
+                or not isinstance(configuration.get("vector.similarity_function"), str)
+                or configuration["vector.similarity_function"].lower() != "cosine"
+            ):
+                raise ValueError("existing physical vector index does not match configuration")
+    except Exception:
+        raise RuntimeError(
+            "existing Playground embedding profile or vector index is incompatible"
+        ) from None
+    return fixture
+
+
 def _warm_retrieval(
     engine: Neo4jRetrievalEngine,
     fixture: Any,
@@ -653,8 +757,15 @@ def build_playground_app(
     signing_key: bytes,
     embedder: _OpenAICompatibleEmbedder,
     extraction_model: str = "qwen-plus",
+    reuse_existing_corpus: bool = False,
 ):
-    fixture = _load_corpus(driver, database, embedder)
+    if not isinstance(reuse_existing_corpus, bool):
+        raise ValueError("reuse_existing_corpus must be a boolean")
+    fixture = (
+        _reuse_corpus(driver, database, embedder)
+        if reuse_existing_corpus
+        else _load_corpus(driver, database, embedder)
+    )
     catalog = PlaygroundCatalog(
         fixture,
         signing_key,
@@ -983,6 +1094,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-open", action="store_true", help="do not open a browser")
     parser.add_argument(
+        "--reuse-existing-corpus",
+        action="store_true",
+        help="verify and reuse an initialized local database without loading fixture data",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="run the authenticated HTTP smoke suite and exit",
@@ -1067,6 +1183,7 @@ def main() -> None:
             signing_key=secrets.token_bytes(32),
             embedder=embedder,
             extraction_model=extraction_model,
+            reuse_existing_corpus=args.reuse_existing_corpus,
         )
     except Exception:
         driver.close()
@@ -1085,7 +1202,9 @@ def main() -> None:
     url = f"http://{f'[{host}]' if ':' in host else host}:{args.port}/playground"
     print(f"[5/5] Playground ready: {url}", flush=True)
     print(
-        "      Press Ctrl-C to stop; the shell launcher removes its container.",
+        "      Press Ctrl-C to stop; existing corpus data is preserved."
+        if args.reuse_existing_corpus
+        else "      Press Ctrl-C to stop; the shell launcher removes its container.",
         flush=True,
     )
     if not args.no_open:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 import hashlib
 import unittest
@@ -39,6 +40,11 @@ from graphrag_prod.playground.industrial_demo import (
     INDUSTRIAL_DEMO_DIRECTORY,
     build_authoritative_import,
     get_industrial_demo_kit,
+)
+from tests.unit.test_construction_extraction import _profile
+from tests.unit.test_construction_validation_feedback import (
+    _feedback_extractor,
+    _homonym_fixture,
 )
 
 
@@ -320,6 +326,30 @@ class IndustrialDemoTests(unittest.TestCase):
         self.assertIn("BC-P-101", self.files["maintenance_report"]["text"])
         self.assertIn("BC-P-202", self.files["homonym_report"]["text"])
         self.assertIn(candidate.canonical_name, self.files["homonym_report"]["text"])
+
+        # Feed the corrected extraction's real normalized identity to resolution,
+        # rather than relying only on the hand-constructed pair cases above.
+        fixture, chunk, _ = _homonym_fixture()
+        chunk = replace(
+            chunk, tenant_id=TENANT, access_policy_id=f"{TENANT}:finance",
+            access_groups=frozenset({"finance"}),
+        )
+        extractor, _ = _feedback_extractor(
+            [fixture["attempts"][0]["response"], fixture["corrected_response"]],
+            active_tbox=self.tbox,
+        )
+        extracted = extractor.extract_audited(
+            artifact_id="homonym-demo-regression", input_hash="homonym-demo-input",
+            chunk=chunk, profile=_profile(),
+        ).output
+        identity = EntityIdentity(**asdict(extracted.entities[0]))
+        code = next(item.literal_semantics for item in extracted.assertions if item.predicate == "EquipmentCode")
+        suggestions = service.suggest(
+            principal, identity,
+            identity_properties=(IdentityPropertyValue("EquipmentCode", code.datatype, code.canonical_value),),
+        )
+        self.assertEqual(suggestions[0].outcome, ResolutionOutcome.NO_MATCH)
+        self.assertNotEqual(identity.entity_id, profile.entity.entity_id)
 
 
 if __name__ == "__main__":

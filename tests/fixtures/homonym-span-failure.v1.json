@@ -1,0 +1,89 @@
+{
+  "fixture_id": "homonym-span-failure:v1",
+  "description": "Exact two rejected model response strings captured from the fictional homonym_report.txt upload on 2026-09-06; corrected_response is an adjudicated offline test response, not a historical provider response.",
+  "source_text": "同名设备登记记录（2026-09-06）\n资料性质：本项目虚构的消歧反例测试材料。\n设备名称：循环水泵；设备编码（EquipmentCode）为 BC-P-202，额定功率（RatedPower）为 22.0 kW。\n本记录仅描述设备编码 BC-P-202 对应的设备；名称相同不足以与其他设备合并。\n",
+  "attempts": [
+    {
+      "attempt": 1,
+      "response": "{\"entities\":[{\"ref\":\"equip1\",\"type\":\"Equipment\",\"mentions\":[{\"text\":\"循环水泵\",\"start\":47,\"end\":51,\"confidence\":0.95},{\"text\":\"设备编码 BC-P-202 对应的设备\",\"start\":115,\"end\":134,\"confidence\":0.9}]}],\"property_facts\":[{\"entity_ref\":\"equip1\",\"property\":\"EquipmentCode\",\"raw_literal\":\"BC-P-202\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"设备编码（EquipmentCode）为 BC-P-202\",\"start\":52,\"end\":81},\"confidence\":0.99},{\"entity_ref\":\"equip1\",\"property\":\"RatedPower\",\"raw_literal\":\"22.0\",\"unit\":\"kW\",\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"额定功率（RatedPower）为 22.0 kW\",\"start\":82,\"end\":107},\"confidence\":0.99}],\"relationships\":[]}",
+      "response_checksum": "b2e453b001fad8ec9ba9be4ce9af967c18ecb228dc57d7b275e7493e4f56b1f8",
+      "findings": [
+        {
+          "action": "REJECT",
+          "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+          "detail": "fact evidence must enclose an entity mention",
+          "path": "$.property_facts[0].entity_ref"
+        },
+        {
+          "action": "REJECT",
+          "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+          "detail": "fact evidence must enclose an entity mention",
+          "path": "$.property_facts[1].entity_ref"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "response": "{\"entities\":[{\"ref\":\"equip1\",\"type\":\"Equipment\",\"mentions\":[{\"text\":\"循环水泵；设备编码（EquipmentCode）为 BC-P-202，额定功率（RatedPower）为 22.0 kW\",\"start\":47,\"end\":107,\"confidence\":0.95}]}],\"property_facts\":[{\"entity_ref\":\"equip1\",\"property\":\"EquipmentCode\",\"raw_literal\":\"BC-P-202\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"循环水泵；设备编码（EquipmentCode）为 BC-P-202\",\"start\":47,\"end\":81},\"confidence\":0.99},{\"entity_ref\":\"equip1\",\"property\":\"RatedPower\",\"raw_literal\":\"22.0\",\"unit\":\"kW\",\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"循环水泵；设备编码（EquipmentCode）为 BC-P-202，额定功率（RatedPower）为 22.0 kW\",\"start\":47,\"end\":107},\"confidence\":0.99}],\"relationships\":[]}",
+      "response_checksum": "cf6233509c98d6af79713580ee0cca33c45319e1c590a50b3798c09351aabf9e",
+      "findings": [
+        {
+          "action": "REJECT",
+          "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+          "detail": "fact evidence must enclose an entity mention",
+          "path": "$.property_facts[0].entity_ref"
+        }
+      ]
+    }
+  ],
+  "source_sha256": "1c5f55a4bcb90fd86bc37227eb30c896fdfb5faace3404c52f474102cd39c782",
+  "corrected_response": {
+    "entities": [
+      {
+        "ref": "equip1",
+        "type": "Equipment",
+        "mentions": [
+          {
+            "text": "循环水泵",
+            "start": 47,
+            "end": 51,
+            "confidence": 0.95
+          }
+        ]
+      }
+    ],
+    "property_facts": [
+      {
+        "entity_ref": "equip1",
+        "property": "EquipmentCode",
+        "raw_literal": "BC-P-202",
+        "unit": null,
+        "valid_from": null,
+        "valid_to": null,
+        "observed_at": null,
+        "evidence": {
+          "text": "循环水泵；设备编码（EquipmentCode）为 BC-P-202",
+          "start": 47,
+          "end": 81
+        },
+        "confidence": 0.99
+      },
+      {
+        "entity_ref": "equip1",
+        "property": "RatedPower",
+        "raw_literal": "22.0",
+        "unit": "kW",
+        "valid_from": null,
+        "valid_to": null,
+        "observed_at": null,
+        "evidence": {
+          "text": "循环水泵；设备编码（EquipmentCode）为 BC-P-202，额定功率（RatedPower）为 22.0 kW",
+          "start": 47,
+          "end": 107
+        },
+        "confidence": 0.99
+      }
+    ],
+    "relationships": []
+  }
+}
