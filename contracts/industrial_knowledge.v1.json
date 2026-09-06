@@ -1,0 +1,81 @@
+{
+  "schema_version": "industrial-knowledge-contract-v1",
+  "version": "1.0.0",
+  "profile": "dev-mini",
+  "production_candidate_eligible": false,
+  "purpose": "工业设备知识构建、诊断证据检索与图谱探索；不代表现场诊断准确率或厂家认证",
+  "scope": {
+    "manufacturer": "Schneider Electric",
+    "core_families": ["CANALIS_KT", "EVOPACT_HVX_UP_TO_24KV"],
+    "product_variants": ["CANALIS_KTA", "CANALIS_KTC", "EVOPACT_HVX_UP_TO_24KV"],
+    "excluded_from_automatic_applicability": ["EVOPACT_HVX_12KV_CN", "EVOPACT_HVX_O", "EVOPACT_SURESET_5_15KV", "CANALIS_KR"],
+    "languages": ["zh", "en"]
+  },
+  "corpus": {
+    "dataset_id": "industrial-v1",
+    "minimum_authored_documents": 32,
+    "minimum_chunks": 300,
+    "maximum_chunks": 1000,
+    "minimum_product_families": 2,
+    "minimum_access_groups": 3,
+    "minimum_installed_assets": 8,
+    "maximum_published_records": 500,
+    "source_kinds": ["OFFICIAL_PUBLICATION", "CURATED_REFERENCE", "SYNTHETIC_FIELD_RECORD"],
+    "count_originals_separately_from_derivatives": true,
+    "synthetic_is_not_real_field_evidence": true,
+    "routine_validation_requires_provider": false
+  },
+  "evidence_invariants": [
+    "immutable_original_and_normalized_checksums",
+    "exact_chunk_ranges_and_page_locations",
+    "model_and_installed_asset_are_distinct",
+    "symptom_is_not_confirmed_cause",
+    "graph_path_is_not_causal_proof",
+    "authority_origin_review_and_applicability_are_independent",
+    "tenant_and_acl_filter_every_recall_and_expansion",
+    "published_graph_is_separately_counted_from_source_corpus",
+    "no_silent_vector_space_or_provider_substitution"
+  ],
+  "question_classes": [
+    {"id": "identity", "positive": "设备编码和别名定位", "negative": "同名不同编码不得混为同一设备"},
+    {"id": "exact_value", "positive": "保留记录中的原始数值与单位", "negative": "资料未给出适用阈值时不补造阈值"},
+    {"id": "structure", "positive": "设备组成与连接证据", "negative": "连接路径不能推出因果"},
+    {"id": "diagnostic_evidence", "positive": "结合现象、历史与适用技术依据", "negative": "现象不足以确认唯一原因"},
+    {"id": "temporal_conflict", "positive": "定位不同时间记录及变更", "negative": "旧记录不得默认为当前状态"},
+    {"id": "product_applicability", "positive": "限定资料支持的产品范围", "negative": "HVX不同电压/系列资料不能串用"},
+    {"id": "unanswerable", "positive": "明确说明缺少的证据", "negative": "相关词命中不能构成回答依据"},
+    {"id": "unauthorized", "positive": "返回当前身份可见证据", "negative": "隐藏资料的ID、正文及存在性不得泄露"}
+  ],
+  "evaluation": {
+    "minimum_cases": 48,
+    "dataset_owner": "repository industrial evaluation maintainers; enterprise SME adjudication remains external",
+    "holdout_predictions_are_independent": true,
+    "negative_cases_must_be_reported": true,
+    "metrics": [
+      {"id": "recall_at_5", "operator": "gte", "target": 0.85, "measurement": "Existing recall_at_k over independently annotated expected source Chunk IDs"},
+      {"id": "mrr", "operator": "gte", "target": 0.80, "measurement": "Existing reciprocal rank over answerable, authorized gold cases"},
+      {"id": "ndcg_at_5", "operator": "gte", "target": 0.80, "measurement": "Existing ndcg_at_k with annotated evidence relevance"},
+      {"id": "citation_location_accuracy", "operator": "eq", "target": 1.0, "measurement": "Recompute checksums and exact text slices for every returned citation"},
+      {"id": "product_scope_violations", "operator": "eq", "target": 0, "measurement": "Compare every returned source to explicit requested applicability"},
+      {"id": "authorization_violations", "operator": "eq", "target": 0, "measurement": "Paired authorized/hidden populations; inspect IDs, counts, text and graph paths"},
+      {"id": "graph_bound_violations", "operator": "eq", "target": 0, "measurement": "Assert bounded nodes, edges, seeds, depth, and pinned publication on every page/expansion"}
+    ],
+    "latency_and_cost": "Report measured browser, embedding, retrieval and graph timings separately; no new production performance qualification"
+  },
+  "resources": {
+    "online_source_bytes": 5242880,
+    "offline_original_bytes": 100663296,
+    "selected_pdf_pages_per_normalization": 24,
+    "maximum_graph_nodes_per_response": 150,
+    "maximum_graph_edges_per_response": 200,
+    "maximum_graph_expansion_hops": 2,
+    "maximum_concurrent_load_jobs": 1
+  },
+  "delivery": {
+    "same_port_as_playground": true,
+    "reusable_graph_api_and_component": true,
+    "existing_user_data_preserved": true,
+    "browser_walkthrough_required": true,
+    "checkpoint_and_milestone_pushes": true
+  }
+}

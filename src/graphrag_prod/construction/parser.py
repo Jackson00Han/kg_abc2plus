@@ -93,6 +93,119 @@ class ChunkingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceLocation:
+    """An exact normalized-text range mapped to a physical source location.
+
+    PDF boxes use pdfplumber points from the top-left of the extracted page.
+    Table indexes, rows and columns are one-based. Empty cells have empty
+    ranges; their location is retained instead of fabricating a value.
+    """
+
+    char_start: int
+    char_end: int
+    page_number: int
+    kind: str
+    bbox: tuple[float, float, float, float]
+    table_number: int | None = None
+    row_number: int | None = None
+    column_number: int | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("char_start", "char_end", "page_number"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"source location {name} must be an integer")
+        if self.char_start < 0 or self.char_end < self.char_start:
+            raise ValueError("source location range is invalid")
+        if self.kind not in {"page", "text", "table_row", "table_cell"}:
+            raise ValueError("unknown source location kind")
+        if self.kind != "table_cell" and self.char_start == self.char_end:
+            raise ValueError("source location must not be empty")
+        if self.page_number <= 0:
+            raise ValueError("source location page must be positive")
+        if (
+            not isinstance(self.bbox, tuple)
+            or len(self.bbox) != 4
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in self.bbox
+            )
+            or self.bbox[0] > self.bbox[2]
+            or self.bbox[1] > self.bbox[3]
+        ):
+            raise ValueError("source location bounding box is invalid")
+        required = {
+            "table_row": ("table_number", "row_number"),
+            "table_cell": ("table_number", "row_number", "column_number"),
+        }.get(self.kind, ())
+        for name in ("table_number", "row_number", "column_number"):
+            value = getattr(self, name)
+            if name in required and value is None:
+                raise ValueError(f"{self.kind} requires {name}")
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            ):
+                raise ValueError(f"{name} must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedSource:
+    """Opt-in rich parser result; its offsets already refer to normalized text."""
+
+    text: str
+    source_locations: tuple[SourceLocation, ...]
+    parser_version: str
+    selected_pages: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if _normalize_text(self.text) != self.text:
+            raise ValueError("rich parser text must already be normalized")
+        if not isinstance(self.source_locations, tuple) or any(
+            not isinstance(item, SourceLocation) for item in self.source_locations
+        ):
+            raise ValueError("source locations must be immutable")
+        if not isinstance(self.parser_version, str) or not self.parser_version.strip():
+            raise ValueError("rich parser requires a version")
+        if (
+            not isinstance(self.selected_pages, tuple)
+            or not self.selected_pages
+            or any(
+                isinstance(page, bool) or not isinstance(page, int) or page <= 0
+                for page in self.selected_pages
+            )
+            or tuple(sorted(set(self.selected_pages))) != self.selected_pages
+        ):
+            raise ValueError("selected pages must be ordered and unique")
+        pages = tuple(item for item in self.source_locations if item.kind == "page")
+        if tuple(item.page_number for item in pages) != self.selected_pages:
+            raise ValueError("page ranges must match selected pages")
+        cursor = 0
+        for page in pages:
+            if page.char_start != cursor:
+                raise ValueError("page ranges must be gapless")
+            cursor = page.char_end
+        if cursor != len(self.text):
+            raise ValueError("page ranges must cover the complete normalized source")
+        page_by_number = {page.page_number: page for page in pages}
+        for item in self.source_locations:
+            page = page_by_number.get(item.page_number)
+            if page is None or not (
+                page.char_start <= item.char_start <= item.char_end <= page.char_end
+            ):
+                raise ValueError("source location exceeds its page range")
+            tolerance = 0.001  # Rounded PDF point coordinates, not pixel margins.
+            if (
+                item.bbox[0] < page.bbox[0] - tolerance
+                or item.bbox[1] < page.bbox[1] - tolerance
+                or item.bbox[2] > page.bbox[2] + tolerance
+                or item.bbox[3] > page.bbox[3] + tolerance
+            ):
+                raise ValueError("source location bounding box exceeds its physical page")
+
+
+@dataclass(frozen=True, slots=True)
 class ParsedDocument:
     """Normalized source plus an exact, gapless ChunkSeed projection."""
 
@@ -102,6 +215,9 @@ class ParsedDocument:
     normalized_checksum: str
     splitter_signature: str
     chunks: tuple[ChunkSeed, ...]
+    source_locations: tuple[SourceLocation, ...] = ()
+    parser_version: str | None = None
+    selected_pages: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.chunks:
@@ -121,6 +237,26 @@ class ParsedDocument:
             raise ValueError("parsed document chunks must reproduce normalized_text")
         if content_checksum(self.normalized_text) != self.normalized_checksum:
             raise ValueError("normalized checksum does not match normalized_text")
+        if self.source_locations:
+            source = NormalizedSource(
+                self.normalized_text,
+                self.source_locations,
+                self.parser_version or "",
+                self.selected_pages,
+            )
+            pages = {
+                item.page_number: item
+                for item in source.source_locations
+                if item.kind == "page"
+            }
+            for seed in self.chunks:
+                page = pages.get(seed.page_number)
+                if page is None or not (
+                    page.char_start <= seed.char_start < seed.char_end <= page.char_end
+                ):
+                    raise ValueError("located chunk must stay within one physical page")
+        elif self.parser_version is not None or self.selected_pages:
+            raise ValueError("rich parser metadata requires source locations")
 
 
 class DocumentParserPlugin(Protocol):
@@ -129,7 +265,7 @@ class DocumentParserPlugin(Protocol):
     @property
     def mime_types(self) -> frozenset[str]: ...
 
-    def parse(self, payload: bytes) -> str: ...
+    def parse(self, payload: bytes) -> str | NormalizedSource: ...
 
 
 def _decode_utf8(payload: bytes) -> str:
@@ -305,20 +441,58 @@ class BoundedDocumentParser:
             raise DocumentParseError(f"unsupported MIME type: {canonical_mime}")
 
         parsed = plugin.parse(payload)
-        if not isinstance(parsed, str):
-            raise TypeError("parser plugins must return text")
-        normalized = _normalize_text(parsed)
+        if not isinstance(parsed, (str, NormalizedSource)):
+            raise TypeError("parser plugins must return text or NormalizedSource")
+        located = parsed if isinstance(parsed, NormalizedSource) else None
+        normalized = located.text if located else _normalize_text(parsed)
         if len(normalized) > self.limits.max_normalized_chars:
             raise DocumentParseError("normalized source exceeds the character limit")
-        chunks = split_gapless(normalized, config=self.chunking)
+        chunks = (
+            split_located_gapless(located, config=self.chunking)
+            if located
+            else split_gapless(normalized, config=self.chunking)
+        )
         return ParsedDocument(
             mime_type=canonical_mime,
             normalized_text=normalized,
             original_checksum=content_checksum(payload),
             normalized_checksum=content_checksum(normalized),
-            splitter_signature=self.chunking.signature,
+            splitter_signature=(
+                f"{self.chunking.signature}|{located.parser_version}:"
+                f"pages={','.join(str(page) for page in located.selected_pages)}"
+                if located
+                else self.chunking.signature
+            ),
             chunks=chunks,
+            source_locations=located.source_locations if located else (),
+            parser_version=located.parser_version if located else None,
+            selected_pages=located.selected_pages if located else (),
         )
+
+
+def split_located_gapless(
+    source: NormalizedSource, *, config: ChunkingConfig | None = None
+) -> tuple[ChunkSeed, ...]:
+    """Apply the existing splitter independently inside each selected page."""
+
+    seeds: list[ChunkSeed] = []
+    for page in source.source_locations:
+        if page.kind != "page":
+            continue
+        for seed in split_gapless(
+            source.text[page.char_start:page.char_end], config=config
+        ):
+            seeds.append(
+                ChunkSeed(
+                    ordinal=len(seeds),
+                    text=seed.text,
+                    char_start=page.char_start + seed.char_start,
+                    char_end=page.char_start + seed.char_end,
+                    page_number=page.page_number,
+                    section=f"PDF physical page {page.page_number}",
+                )
+            )
+    return tuple(seeds)
 
 
 def split_gapless(

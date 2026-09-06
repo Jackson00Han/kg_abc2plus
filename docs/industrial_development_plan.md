@@ -78,7 +78,11 @@ explicitly separated files. The root agent owns commits and service restarts.
 - I0: checks passed; checkpoint commit/push records completion. Starting revision
   `260307d`; current service and its database are retained. Only `to_do_list.md`
   was modified before this task. See `docs/validation/industrial-checkpoint.md`.
-- I1–I5: pending.
+- I0 checkpoint: `fd6dd13`, pushed to `origin/main`.
+- I1: complete; official catalog, development contract, bounded PDF parsing,
+  external-cache acquisition and exact normalization passed their checks. See
+  `docs/validation/industrial-sources.md`.
+- I2–I5: pending.
 
 Detailed evidence is recorded under `docs/validation/industrial-*.md`. This plan
 remains as design history; remove only the temporary active-work pointer from
