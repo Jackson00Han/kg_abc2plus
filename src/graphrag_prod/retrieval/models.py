@@ -6,9 +6,13 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import math
 from numbers import Real
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from graphrag_prod.industrial.retrieval import IndustrialScopeTrace
 
 from graphrag_prod.domain.access import Principal
+from .reranking import RerankTrace
 
 
 def _text(value: str, name: str) -> str:
@@ -44,8 +48,12 @@ class VersionFilter:
     document_ids: frozenset[str] = field(default_factory=frozenset)
     version_ids: frozenset[str] = field(default_factory=frozenset)
     published_at_or_before: datetime | None = None
+    # An empty resolved scope is different from an omitted restriction.
+    match_none: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.match_none) is not bool:
+            raise TypeError("match_none must be boolean")
         object.__setattr__(
             self,
             "document_ids",
@@ -134,8 +142,15 @@ class RetrievalRequest:
     query_embedding_space_id: str
     limits: RetrievalLimits = field(default_factory=RetrievalLimits)
     version_filter: VersionFilter = field(default_factory=VersionFilter)
+    # Trusted server-derived scope context; not part of the HTTP request model.
+    rerank_context: str | None = None
 
     def __post_init__(self) -> None:
+        if self.rerank_context is not None and (
+            not isinstance(self.rerank_context, str) or not self.rerank_context.strip()
+            or len(self.rerank_context) > 1_024 or any(ord(c) < 32 for c in self.rerank_context)
+        ):
+            raise ValueError("rerank_context must be bounded single-line server context")
         object.__setattr__(self, "query_text", _text(self.query_text, "query_text"))
         object.__setattr__(
             self,
@@ -213,6 +228,10 @@ class RetrievalTrace:
     context_chars: int
     limits: RetrievalLimits
     version_filter: VersionFilter
+    knowledge_publication_id: str | None = None
+    knowledge_activation_generation: int = 0
+    industrial_scope: IndustrialScopeTrace | None = None
+    reranking: RerankTrace | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -224,6 +243,7 @@ class RetrievalTrace:
                 if self.version_filter.published_at_or_before is None
                 else self.version_filter.published_at_or_before.isoformat()
             ),
+            "match_none": self.version_filter.match_none,
         }
         return payload
 

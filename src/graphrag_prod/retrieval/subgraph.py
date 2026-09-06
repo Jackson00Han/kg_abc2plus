@@ -927,11 +927,17 @@ class Neo4jEvidenceSubgraphProjector:
         version_filter: VersionFilter = VersionFilter(),
     ) -> EvidenceSubgraph:
         selected_limits = limits or EvidenceSubgraphLimits()
-        chunk_ids = self._chunk_ids(selected_chunk_ids, selected_limits)
         if not isinstance(trust_policy, SubgraphTrustPolicy):
             raise TypeError("trust_policy must be SubgraphTrustPolicy")
         if not isinstance(version_filter, VersionFilter):
             raise TypeError("version_filter must be VersionFilter")
+        if version_filter.match_none:
+            if selected_chunk_ids:
+                self._chunk_ids(selected_chunk_ids, selected_limits)
+            elif not isinstance(selected_chunk_ids, tuple):
+                raise TypeError("selected_chunk_ids must be a tuple")
+            return EvidenceSubgraph(trust_policy, (), (), (), (), (), ())
+        chunk_ids = self._chunk_ids(selected_chunk_ids, selected_limits)
         parameters: dict[str, object] = {
             "tenant_id": principal.tenant_id,
             "groups": sorted(principal.groups),
@@ -1370,6 +1376,8 @@ class Neo4jEvidenceSubgraphProjector:
         citation: SubgraphCitation,
         version_filter: VersionFilter,
     ) -> None:
+        if version_filter.match_none:
+            raise SubgraphProjectionError("a match-none scope cannot expose evidence")
         if (
             version_filter.document_ids
             and citation.document_id not in version_filter.document_ids

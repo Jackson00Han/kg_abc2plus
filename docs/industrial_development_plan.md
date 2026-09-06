@@ -86,7 +86,13 @@ explicitly separated files. The root agent owns commits and service restarts.
   Chunks and resumable governed loading passed model, unit/API/security and
   real-Neo4j checks. Official excerpt preview totals 370 Chunks. See
   `docs/validation/industrial-model.md`.
-- I3–I5: pending.
+- I3: complete. The 370-Chunk live load, frozen 72-case comparison, scoped
+  retrieval and standard listwise reranking passed the primary acceptance gate:
+  Recall@5 0.8635, MRR 0.9531, nDCG@5 0.8629, zero scope/ACL/citation errors.
+  Holdout independently passes; development recall and two incomplete PDF
+  contexts remain explicit limitations. See
+  `docs/validation/industrial-retrieval.md`.
+- I4–I5: pending; implementation begins after I3 is validated and pushed.
 
 Detailed evidence is recorded under `docs/validation/industrial-*.md`. This plan
 remains as design history; remove only the temporary active-work pointer from

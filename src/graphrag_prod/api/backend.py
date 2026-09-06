@@ -9,7 +9,7 @@ operation envelope and keeps provider-specific work behind small protocols.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import math
 from numbers import Real
 import time
@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from graphrag_prod.domain import Principal
 from graphrag_prod.domain.ids import canonicalize_uri, content_checksum
+from graphrag_prod.industrial.retrieval import IndustrialScopeResolution, build_rerank_scope_context
 from graphrag_prod.generation import (
     AnswerResult,
     GenerationRequest,
@@ -42,6 +43,8 @@ from graphrag_prod.retrieval import (
     RetrievalUnavailable,
     SubgraphTrustPolicy,
 )
+from graphrag_prod.retrieval.engine import RerankAttemptedFailure
+from .runtime import RerankingFailedError
 
 from .contracts import (
     AnswerRequest,
@@ -738,6 +741,8 @@ class GraphRAGQueryOperations:
         generation_service: GroundedGenerationService,
         *,
         subgraph_projector: EvidenceSubgraphProjector | None = None,
+        industrial_scope_resolver: Any | None = None,
+        include_industrial_rerank_context: bool = False,
         monotonic: Any = time.monotonic,
     ) -> None:
         if not callable(getattr(retrieval_engine, "retrieve", None)):
@@ -752,10 +757,16 @@ class GraphRAGQueryOperations:
             raise TypeError("subgraph_projector must provide project()")
         if not callable(monotonic):
             raise TypeError("monotonic must be callable")
+        if industrial_scope_resolver is not None and not callable(getattr(industrial_scope_resolver, "resolve", None)):
+            raise TypeError("industrial_scope_resolver must provide resolve()")
+        if type(include_industrial_rerank_context) is not bool:
+            raise TypeError("include_industrial_rerank_context must be boolean")
         self._retrieval_engine = retrieval_engine
         self._query_embedder = query_embedder
         self._generation_service = generation_service
         self._subgraph_projector = subgraph_projector
+        self._industrial_scope_resolver = industrial_scope_resolver
+        self._include_industrial_rerank_context = include_industrial_rerank_context
         self._monotonic = monotonic
 
     def _generate(self, request: GenerationRequest) -> GeneratedAnswer:
@@ -795,6 +806,36 @@ class GraphRAGQueryOperations:
         *,
         limits: Any,
     ) -> tuple[RetrievalResult, UsageMetadata]:
+        version_filter = request.version_filter.to_domain()
+        scope_resolution = None
+        scope_stages: tuple[tuple[str, float], ...] = ()
+        if request.industrial_scope is not None:
+            if self._industrial_scope_resolver is None:
+                raise DependencyUnavailableError()
+            scope_started = float(self._monotonic())
+            scope = request.industrial_scope.to_domain()
+            try:
+                scope_resolution = self._industrial_scope_resolver.resolve(
+                    principal, scope, version_filter=version_filter,
+                )
+            except (ApiRuntimeError, KeyboardInterrupt, SystemExit):
+                raise
+            except (TimeoutError, RetrievalBackendTimeout) as error:
+                raise DependencyTimeoutError() from error
+            except Exception as error:
+                raise DependencyUnavailableError() from error
+            if (
+                not isinstance(scope_resolution, IndustrialScopeResolution)
+                or scope_resolution.trace.requested != scope
+                or scope_resolution.version_filter.published_at_or_before != version_filter.published_at_or_before
+                or (version_filter.match_none and not scope_resolution.version_filter.match_none)
+                or (version_filter.version_ids and not scope_resolution.version_filter.version_ids <= version_filter.version_ids)
+                or (not scope_resolution.version_filter.match_none and not scope_resolution.version_filter.version_ids)
+                or len(scope_resolution.version_filter.version_ids) > 100
+            ):
+                raise DependencyUnavailableError()
+            version_filter = scope_resolution.version_filter
+            scope_stages = (("industrial_scope", _elapsed_ms(scope_started, self._monotonic)),)
         embedding_started = float(self._monotonic())
         try:
             embedding = self._query_embedder.embed(
@@ -812,7 +853,6 @@ class GraphRAGQueryOperations:
         embedding_ms = _elapsed_ms(embedding_started, self._monotonic)
 
         retrieval_started = float(self._monotonic())
-        version_filter = request.version_filter.to_domain()
         try:
             result = self._retrieval_engine.retrieve(
                 DomainRetrievalRequest(
@@ -822,8 +862,14 @@ class GraphRAGQueryOperations:
                     query_embedding_space_id=embedding.embedding_space_id,
                     limits=limits,
                     version_filter=version_filter,
+                    rerank_context=(build_rerank_scope_context(request.industrial_scope.to_domain().asset_keys)
+                        if self._include_industrial_rerank_context and request.industrial_scope is not None else None),
                 )
             )
+        except RerankAttemptedFailure as error:
+            if error.timeout:
+                raise DependencyTimeoutError() from error
+            raise RerankingFailedError() from error
         except RetrievalBackendTimeout as error:
             raise DependencyTimeoutError() from error
         except (RetrievalBackendUnavailable, RetrievalUnavailable) as error:
@@ -841,11 +887,36 @@ class GraphRAGQueryOperations:
             != tuple(chunk.citation.chunk_id for chunk in result.chunks)
         ):
             raise DependencyUnavailableError()
+        if version_filter.match_none and any((
+            result.chunks, result.trace.vector_recall, result.trace.bm25_recall,
+            result.trace.seed_ranking, result.trace.graph_expansion, result.trace.candidate_vector_ranking,
+            result.trace.final_ranking, result.trace.decisions,
+        )):
+            raise DependencyUnavailableError()
+        if any(
+            (version_filter.document_ids and chunk.citation.document_id not in version_filter.document_ids)
+            or (version_filter.version_ids and chunk.citation.version_id not in version_filter.version_ids)
+            or (version_filter.published_at_or_before is not None and (
+                chunk.citation.published_at is None
+                or chunk.citation.published_at > version_filter.published_at_or_before
+            ))
+            for chunk in result.chunks
+        ):
+            raise DependencyUnavailableError()
+        if scope_resolution is not None:
+            result = replace(result, trace=replace(result.trace, industrial_scope=scope_resolution.trace))
         retrieval_ms = _elapsed_ms(retrieval_started, self._monotonic)
         usage_values = _provider_usage(embedding.usage)
+        rerank_stages: tuple[tuple[str, float], ...] = ()
+        if result.trace.reranking is not None and result.trace.reranking.response is not None:
+            rerank = result.trace.reranking.response
+            usage_values["input_tokens"] += rerank.input_tokens
+            usage_values["output_tokens"] += rerank.output_tokens
+            usage_values["model_calls"] += 1
+            rerank_stages = (("candidate_reranking", float(rerank.duration_ms)),)
         return result, UsageMetadata(
             retrieval_ms=retrieval_ms,
-            stages=(("query_embedding", embedding_ms), ("retrieval", retrieval_ms)),
+            stages=scope_stages + (("query_embedding", embedding_ms), ("retrieval", retrieval_ms)) + rerank_stages,
             **usage_values,
         )
 
@@ -862,6 +933,7 @@ class GraphRAGQueryOperations:
             "document_ids": tuple(sorted(result.trace.version_filter.document_ids)),
             "version_ids": tuple(sorted(result.trace.version_filter.version_ids)),
             "published_at_or_before": result.trace.version_filter.published_at_or_before,
+            "match_none": result.trace.version_filter.match_none,
         }
         payload["graph"] = None
         if request.include_graph and self._subgraph_projector is not None:

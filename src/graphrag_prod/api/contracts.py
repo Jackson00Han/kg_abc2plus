@@ -50,6 +50,7 @@ Identifier = Annotated[
         pattern=r"^[^\x00-\x20\x7f]+$",
     ),
 ]
+Checksum = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
 GroupName = Annotated[
     str,
     StringConstraints(
@@ -328,6 +329,7 @@ class VersionFilterRequest(StrictAPIModel):
     document_ids: Annotated[tuple[Identifier, ...], Field(max_length=MAX_FILTER_IDS)] = ()
     version_ids: Annotated[tuple[Identifier, ...], Field(max_length=MAX_FILTER_IDS)] = ()
     published_at_or_before: AwareDatetime | None = None
+    match_none: Annotated[bool, Field(strict=True)] = False
 
     @field_validator("published_at_or_before", mode="before")
     @classmethod
@@ -355,6 +357,7 @@ class VersionFilterRequest(StrictAPIModel):
             document_ids=frozenset(self.document_ids),
             version_ids=frozenset(self.version_ids),
             published_at_or_before=self.published_at_or_before,
+            match_none=self.match_none,
         )
 
 
@@ -408,12 +411,49 @@ class GenerationLimitsRequest(StrictAPIModel):
         return GenerationLimits(**self.model_dump())
 
 
+class IndustrialScopeRequest(StrictAPIModel):
+    family: Literal["canalis-kt", "evopact-hvx-up24"] | None = None
+    asset_keys: Annotated[
+        tuple[Annotated[str, StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9-]{1,99}$")], ...],
+        Field(max_length=8),
+    ] = ()
+    include_references: Annotated[bool, Field(strict=True)] = True
+    source_kinds: Annotated[
+        tuple[Literal["CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD"], ...],
+        Field(max_length=3),
+    ] = ()
+
+    @field_validator("asset_keys", "source_kinds", mode="before")
+    @classmethod
+    def validate_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+    @field_validator("asset_keys", "source_kinds")
+    @classmethod
+    def validate_unique_scope(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
+        return _unique(value, getattr(info, "field_name", "scope"))
+
+    def to_domain(self):
+        from graphrag_prod.industrial.retrieval import IndustrialScope
+        return IndustrialScope(self.family, self.asset_keys, self.include_references, self.source_kinds)
+
+
+class IndustrialScopeTraceResponse(StrictAPIModel):
+    requested: IndustrialScopeRequest
+    matched_documents: Annotated[int, Field(strict=True, ge=0, le=100)]
+    reference_documents: Annotated[int, Field(strict=True, ge=0, le=100)]
+    match_none: Annotated[bool, Field(strict=True)]
+    reference_only_sources_omitted: Literal[True] = True
+    policy_version: Literal["industrial-current-scope:v1"]
+
+
 class RetrievalRequest(StrictAPIModel):
     query_text: Annotated[
         str,
         StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=MAX_QUERY_CHARS),
     ]
     version_filter: VersionFilterRequest = Field(default_factory=VersionFilterRequest)
+    industrial_scope: IndustrialScopeRequest | None = None
     limits: RetrievalLimitsRequest = Field(default_factory=RetrievalLimitsRequest)
     include_graph: bool = True
     graph_trust_policy: Literal[
@@ -433,6 +473,7 @@ class AnswerRequest(StrictAPIModel):
         StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=MAX_QUERY_CHARS),
     ]
     version_filter: VersionFilterRequest = Field(default_factory=VersionFilterRequest)
+    industrial_scope: IndustrialScopeRequest | None = None
     retrieval_limits: RetrievalLimitsRequest = Field(default_factory=RetrievalLimitsRequest)
     generation_limits: GenerationLimitsRequest = Field(default_factory=GenerationLimitsRequest)
 
@@ -576,6 +617,46 @@ class TraceDecisionResponse(StrictAPIModel):
     reason: ShortText
 
 
+class RerankScoreResponse(StrictAPIModel):
+    chunk_id: Identifier
+    index: Annotated[int, Field(strict=True, ge=0, le=49)]
+    score: Annotated[float, Field(allow_inf_nan=False)] | None
+
+
+class RerankProviderTraceResponse(StrictAPIModel):
+    scores: Annotated[tuple[RerankScoreResponse, ...], Field(min_length=1, max_length=50)]
+    model: Identifier
+    endpoint: Annotated[str, StringConstraints(strict=True, max_length=512)]
+    instruct: Annotated[str, StringConstraints(strict=True, max_length=2_000)] | None
+    request_id: Identifier
+    input_tokens: Annotated[int, Field(strict=True, ge=0, le=1_000_000)]
+    duration_ms: Annotated[float, Field(ge=0, le=300_000, allow_inf_nan=False)]
+    input_checksum: Checksum
+    output_checksum: Checksum
+    input_bytes: Annotated[int, Field(strict=True, ge=0, le=1_000_000)]
+    pair_utf8_bytes: Annotated[int, Field(strict=True, ge=0, le=1_000_000)]
+    candidate_count: Annotated[int, Field(strict=True, ge=1, le=50)]
+    rendering_version: Identifier
+    rendered_input_checksums: Annotated[tuple[Checksum, ...], Field(max_length=50)]
+    source_checksums: Annotated[tuple[Checksum, ...], Field(max_length=50)]
+    output_tokens: Annotated[int, Field(strict=True, ge=0, le=1_000_000)] = 0
+    normalization_method: Literal["none", "stable-deduplicate-complete-permutation:v1"] = "none"
+    normalization_removed_count: Annotated[int, Field(strict=True, ge=0, le=50)] = 0
+    raw_output_checksum: Checksum | None = None
+    raw_permutation: Annotated[tuple[Annotated[int, Field(strict=True, ge=0, le=49)], ...], Field(max_length=100)] = ()
+    prompt_tokens: Annotated[int, Field(strict=True, ge=0, le=1_000_000)] | None = None
+    completion_tokens: Annotated[int, Field(strict=True, ge=0, le=1_000_000)] | None = None
+    total_tokens: Annotated[int, Field(strict=True, ge=0, le=1_000_000)] | None = None
+
+
+class RerankTraceResponse(StrictAPIModel):
+    status: Literal["RERANKED", "SKIPPED_EMPTY"]
+    candidate_limit: Annotated[int, Field(strict=True, ge=1, le=50)]
+    candidate_chunk_ids: Annotated[tuple[Identifier, ...], Field(max_length=50)]
+    response: RerankProviderTraceResponse | None
+    ranked_chunk_ids: Annotated[tuple[Identifier, ...], Field(max_length=50)]
+
+
 class RetrievalTraceResponse(StrictAPIModel):
     trace_id: Identifier
     method: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)]
@@ -594,6 +675,10 @@ class RetrievalTraceResponse(StrictAPIModel):
     context_chars: Annotated[int, Field(strict=True, ge=0, le=30_000)]
     limits: RetrievalLimitsRequest
     version_filter: VersionFilterRequest
+    knowledge_publication_id: Identifier | None = None
+    knowledge_activation_generation: Annotated[int, Field(strict=True, ge=0)] = 0
+    industrial_scope: IndustrialScopeTraceResponse | None = None
+    reranking: RerankTraceResponse | None = None
 
 
 GraphName = Annotated[
@@ -1228,6 +1313,8 @@ __all__ = [
     "IngestDocumentRequest",
     "IngestionRequest",
     "IngestionResponse",
+    "IndustrialScopeRequest",
+    "IndustrialScopeTraceResponse",
     "JobResponse",
     "JobStatusResponse",
     "MAX_DOCUMENT_BYTES",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import fields
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 import hashlib
 import json
@@ -37,6 +37,10 @@ from .ranking import (
     resource_allocation_score,
     select_context,
     stable_deduplicate,
+)
+from .reranking import (
+    CandidateReranker, MAX_RERANK_CANDIDATES, RerankCandidate,
+    RerankResponse, RerankTrace, RerankingError,
 )
 
 
@@ -79,16 +83,37 @@ class RetrievalBackendTimeout(RetrievalBackendError):
     """The retrieval store exceeded a configured deadline."""
 
 
+class RerankAttemptedFailure(RetrievalBackendError):
+    """A model call may already have been charged; callers must not auto-retry."""
+
+    def __init__(self, *, timeout: bool = False) -> None:
+        self.timeout = timeout
+        RuntimeError.__init__(self, "candidate reranking failed after a provider attempt")
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedRerank:
+    request: RetrievalRequest
+    result: RetrievalResult
+    candidates: tuple[RerankCandidate, ...]
+
+
 CORPUS_STATE_QUERY = """
 MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
 OPTIONAL MATCH (state)-[:ACTIVE_EMBEDDING_INDEX]->(
     generation:EmbeddingIndexGeneration {tenant_id: $tenant_id, state: 'ACTIVE'}
 )
 WHERE generation.corpus_revision = state.corpus_revision
+OPTIONAL MATCH (publication_state:KnowledgePublicationState {tenant_id: $tenant_id})
+OPTIONAL MATCH (publication_state)-[:ACTIVE_KNOWLEDGE_PUBLICATION]->(
+    publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'}
+)
 RETURN state.corpus_revision AS corpus_revision,
        generation.generation_id AS generation_id,
        generation.embedding_space_id AS embedding_space_id,
-       generation.dimensions AS dimensions
+       generation.dimensions AS dimensions,
+       publication.publication_id AS knowledge_publication_id,
+       coalesce(publication_state.activation_generation, 0) AS knowledge_activation_generation
 """
 
 
@@ -475,6 +500,29 @@ def _trace_hits(
     )
 
 
+def _retrieved_chunk(
+    record: dict[str, Any], *, role: str, score: float | None, reasons: tuple[str, ...],
+) -> RetrievedChunk:
+    citation = Citation(
+        chunk_id=str(record["chunk_id"]),
+        chunk_checksum=str(record["chunk_checksum"]),
+        document_id=str(record["document_id"]),
+        canonical_uri=str(record["canonical_uri"]),
+        source_name=str(record["source_name"]),
+        version_id=str(record["version_id"]),
+        version_checksum=str(record["version_checksum"]),
+        version_number=int(record["version_number"]),
+        ordinal=int(record["ordinal"]),
+        char_start=int(record["char_start"]),
+        char_end=int(record["char_end"]),
+        page_number=None if record.get("page_number") is None else int(record["page_number"]),
+        section=None if record.get("section") is None else str(record["section"]),
+        document_title=None if record.get("document_title") is None else str(record["document_title"]),
+        published_at=_native_datetime(record.get("published_at")),
+    )
+    return RetrievedChunk(str(record["text"]), citation, role, score, reasons)
+
+
 class Neo4jRetrievalEngine:
     """Run a complete bounded retrieval in one consistent read transaction."""
 
@@ -484,6 +532,8 @@ class Neo4jRetrievalEngine:
         database: str = "neo4j",
         *,
         transaction_timeout_seconds: float = 60.0,
+        reranker: CandidateReranker | None = None,
+        rerank_candidate_limit: int = MAX_RERANK_CANDIDATES,
     ) -> None:
         if driver is None:
             raise ValueError("driver must not be None")
@@ -504,13 +554,29 @@ class Neo4jRetrievalEngine:
         self.driver = driver
         self.database = database.strip()
         self.transaction_timeout_seconds = float(transaction_timeout_seconds)
+        if reranker is not None and not callable(getattr(reranker, "rerank", None)):
+            raise TypeError("reranker must provide rerank()")
+        if type(rerank_candidate_limit) is not int or not 1 <= rerank_candidate_limit <= MAX_RERANK_CANDIDATES:
+            raise ValueError("rerank_candidate_limit must be between 1 and 50")
+        self._reranker = reranker
+        self.rerank_candidate_limit = rerank_candidate_limit
         self._transaction_work = unit_of_work(
             metadata={"component": "graphrag-retrieval", "operation": "retrieve"},
             timeout=self.transaction_timeout_seconds,
         )(self._retrieve_tx)
+        self._prepare_work = unit_of_work(
+            metadata={"component": "graphrag-retrieval", "operation": "prepare-rerank"},
+            timeout=self.transaction_timeout_seconds,
+        )(self._prepare_rerank_tx)
+        self._finalize_work = unit_of_work(
+            metadata={"component": "graphrag-retrieval", "operation": "finalize-rerank"},
+            timeout=self.transaction_timeout_seconds,
+        )(self._finalize_rerank_tx)
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         try:
+            if self._reranker is not None:
+                return self._retrieve_reranked(request)
             with self.driver.session(database=self.database) as session:
                 for attempt in range(_CORPUS_STATE_ATTEMPTS):
                     try:
@@ -534,8 +600,176 @@ class Neo4jRetrievalEngine:
         except DriverError as error:
             raise RetrievalBackendUnavailable() from error
 
+    def _retrieve_reranked(self, request: RetrievalRequest) -> RetrievalResult:
+        prepared = None
+        with self.driver.session(database=self.database) as session:
+            for attempt in range(_CORPUS_STATE_ATTEMPTS):
+                try:
+                    prepared = session.execute_read(self._prepare_work, request, self.rerank_candidate_limit)
+                    break
+                except _CorpusStateChanged as error:
+                    if attempt + 1 == _CORPUS_STATE_ATTEMPTS:
+                        raise RetrievalUnavailable("tenant corpus changed repeatedly before reranking") from error
+        if not isinstance(prepared, _PreparedRerank):
+            raise RetrievalUnavailable("reranking candidate preparation is invalid")
+        if not prepared.candidates:
+            if prepared.result.chunks:
+                raise RetrievalUnavailable("context has no authorized reranking candidates")
+            trace = replace(prepared.result.trace, reranking=RerankTrace(
+                "SKIPPED_EMPTY", self.rerank_candidate_limit, (), None,
+            ))
+            return replace(prepared.result, trace=trace)
+
+        try:
+            return self._rank_prepared(prepared)
+        except Exception as error:
+            timeout = (
+                isinstance(error, (TimeoutError, RetrievalBackendTimeout, ConnectionAcquisitionTimeoutError))
+                or getattr(error, "code", None) in _TRANSACTION_TIMEOUT_CODES
+            )
+            raise RerankAttemptedFailure(timeout=timeout) from error
+
+    def _rank_prepared(self, prepared: _PreparedRerank) -> RetrievalResult:
+        request = prepared.request
+        # The provider is outside both managed transactions. A transaction retry
+        # can never repeat the paid call, and no provider failure falls back.
+        try:
+            query = request.query_text + ("\n" + request.rerank_context if request.rerank_context else "")
+            response = self._reranker.rerank(query, prepared.candidates)
+        except (TimeoutError, RerankingError) as error:
+            if isinstance(error, TimeoutError) or getattr(error, "code", None) == "RERANK_TIMEOUT":
+                raise RetrievalBackendTimeout() from error
+            raise RetrievalUnavailable("candidate reranking failed") from error
+        except Exception as error:
+            raise RetrievalUnavailable("candidate reranking failed") from error
+        if not isinstance(response, RerankResponse):
+            raise RetrievalUnavailable("candidate reranking returned an invalid response")
+        candidate_ids = tuple(candidate.chunk_id for candidate in prepared.candidates)
+        expected_checksums = tuple(candidate.checksum for candidate in prepared.candidates)
+        if response.source_checksums != expected_checksums or len(response.rendered_input_checksums) != len(candidate_ids):
+            raise RetrievalUnavailable("reranking response differs from its exact source inputs")
+        # Provider rank order is canonical. Pointwise model scores are optional
+        # observations; a listwise provider may return ranks without scores.
+        ordered_scores = response.scores
+        ordered_ids = tuple(item.chunk_id for item in ordered_scores)
+        try:
+            trace = RerankTrace("RERANKED", self.rerank_candidate_limit, candidate_ids, response, ordered_ids)
+        except (TypeError, ValueError, IndexError) as error:
+            raise RetrievalUnavailable("reranking output does not identify its exact candidates") from error
+        try:
+            with self.driver.session(database=self.database) as session:
+                return session.execute_read(self._finalize_work, prepared, trace)
+        except _CorpusStateChanged as error:
+            # Do not spend a second paid call after a publication, embedding,
+            # version or access change during external model execution.
+            raise RetrievalUnavailable("retrieval state changed during reranking; issue a fresh request") from error
+
     @staticmethod
-    def _retrieve_tx(tx: Any, request: RetrievalRequest) -> RetrievalResult:
+    def _prepare_rerank_tx(tx: Any, request: RetrievalRequest, candidate_limit: int) -> _PreparedRerank:
+        capture: dict[str, Any] = {"limit": candidate_limit}
+        result = Neo4jRetrievalEngine._retrieve_tx(tx, request, _candidate_capture=capture)
+        return _PreparedRerank(request, result, capture.get("candidates", ()))
+
+    @staticmethod
+    def _check_rerank_state(tx: Any, prepared: _PreparedRerank, parameters: dict[str, Any]) -> None:
+        rows = _records(tx, CORPUS_STATE_QUERY, parameters)
+        if len(rows) != 1:
+            raise _CorpusStateChanged()
+        row, trace = rows[0], prepared.result.trace
+        if (
+            row.get("corpus_revision") != trace.corpus_revision
+            or row.get("generation_id") != trace.embedding_generation_id
+            or row.get("embedding_space_id") != trace.embedding_space_id
+            or row.get("dimensions") != len(prepared.request.query_vector)
+            or Neo4jRetrievalEngine._publication_identity(row)
+            != (trace.knowledge_publication_id, trace.knowledge_activation_generation)
+        ):
+            raise _CorpusStateChanged()
+
+    @staticmethod
+    def _finalize_rerank_tx(tx: Any, prepared: _PreparedRerank, reranking: RerankTrace) -> RetrievalResult:
+        request, previous = prepared.request, prepared.result.trace
+        limits, version_filter = request.limits, request.version_filter
+        common = {
+            "tenant_id": request.principal.tenant_id, "groups": sorted(request.principal.groups),
+            "document_ids": sorted(version_filter.document_ids), "version_ids": sorted(version_filter.version_ids),
+            "published_before": version_filter.published_at_or_before,
+            "corpus_revision": previous.corpus_revision, "generation_id": previous.embedding_generation_id,
+            "embedding_space_id": previous.embedding_space_id, "dimensions": len(request.query_vector),
+        }
+        Neo4jRetrievalEngine._check_rerank_state(tx, prepared, common)
+        # The response exposes recall/rejection IDs as well as selected evidence.
+        # Recheck every one under current snapshot/version and document+chunk ACL.
+        visible_ids = set(previous.selected_chunk_ids)
+        for stage in (previous.vector_recall, previous.bm25_recall, previous.seed_ranking,
+                      previous.graph_expansion, previous.candidate_vector_ranking,
+                      previous.final_ranking, previous.decisions):
+            visible_ids.update(item.chunk_id for item in stage)
+        visible_ids.update(reranking.candidate_chunk_ids)
+        rows = _records(tx, HYDRATE_QUERY, {**common, "chunk_ids": sorted(visible_ids)})
+        hydrated = {str(row["chunk_id"]): row for row in rows}
+        if len(hydrated) != len(rows) or set(hydrated) != visible_ids:
+            raise _CorpusStateChanged()
+        for candidate in prepared.candidates:
+            row = hydrated[candidate.chunk_id]
+            if (row["text"] != candidate.text or row["chunk_checksum"] != candidate.checksum
+                    or row["document_id"] != candidate.document_id or row["version_id"] != candidate.version_id
+                    or row.get("document_title") != candidate.source_title or row.get("section") != candidate.source_section):
+                raise _CorpusStateChanged()
+
+        ordered_ids = reranking.ranked_chunk_ids
+        scores = {item.chunk_id: item.score for item in reranking.response.scores}
+        anchors = ordered_ids[:limits.anchor_k]
+        adjacent_records = _records(tx, ADJACENT_QUERY, {
+            **common, "anchor_ids": list(anchors), "adjacent_window": limits.adjacent_window,
+            "limit": limits.anchor_k * max(1, limits.adjacent_window) * 2,
+        }) if anchors and limits.adjacent_window else []
+        adjacent_ids = _ids(adjacent_records)
+        if adjacent_ids:
+            adjacent_rows = _records(tx, HYDRATE_QUERY, {**common, "chunk_ids": list(adjacent_ids)})
+            if {str(row["chunk_id"]) for row in adjacent_rows} != set(adjacent_ids):
+                raise _CorpusStateChanged()
+            hydrated.update({str(row["chunk_id"]): row for row in adjacent_rows})
+        Neo4jRetrievalEngine._check_rerank_state(tx, prepared, common)
+
+        # Provider rank determines candidate order. Optional scores are neither
+        # added to RRF nor interpreted as fact confidence or cross-query probabilities.
+        content_keys = {identifier: _content_deduplication_key(row) for identifier, row in hydrated.items()}
+        combined, duplicates = stable_deduplicate((*ordered_ids, *adjacent_ids), content_keys,
+                                                  deduplicate_content=limits.deduplicate_content)
+        ranked_set = set(ordered_ids)
+        adjacency = tuple(identifier for identifier in combined if identifier not in ranked_set)
+        selection = select_context(ranked_ids=ordered_ids, anchor_ids=anchors, adjacent_ids=adjacency,
+            char_lengths={identifier: len(str(row["text"])) for identifier, row in hydrated.items()},
+            max_chunks=limits.top_k, max_chars=limits.max_context_chars)
+        decisions = [item for item in previous.decisions
+                     if item.reason in {"insufficient_rrf_channels", "final_authorization_or_version_check"}]
+        decisions.extend(TraceDecision(identifier, "rejected", "rerank_candidate_limit")
+                         for identifier in (item.chunk_id for item in previous.final_ranking)
+                         if identifier not in ranked_set)
+        decisions.extend(TraceDecision(identifier, "rejected", "duplicate_content") for identifier in duplicates)
+        decisions.extend(TraceDecision(identifier, "rejected", reason) for identifier, reason in selection.skipped)
+        role_by_id = dict(selection.roles)
+        positions = {identifier: index for index, identifier in enumerate(ordered_ids, start=1)}
+        adjacent_anchors = {str(row["chunk_id"]): str(row["anchor_id"]) for row in adjacent_records}
+        chunks = []
+        for identifier in selection.chunk_ids:
+            role = role_by_id[identifier]
+            reasons = ((f"reranker {reranking.response.model} rank {positions[identifier]}",)
+                       if identifier in positions else (f"adjacent to {adjacent_anchors[identifier]}",))
+            chunks.append(_retrieved_chunk(hydrated[identifier], role=role, score=scores.get(identifier), reasons=reasons))
+            decisions.append(TraceDecision(identifier, "selected", role))
+        trace_id = hashlib.sha256((previous.trace_id + "\0" + reranking.response.input_checksum
+                                  + "\0" + reranking.response.output_checksum).encode("utf-8")).hexdigest()
+        trace = replace(previous, trace_id=trace_id, method=previous.method + " + candidate reranking",
+                        decisions=tuple(decisions), selected_chunk_ids=selection.chunk_ids,
+                        context_chars=selection.total_chars, reranking=reranking)
+        return RetrievalResult(tuple(chunks), trace)
+
+    @staticmethod
+    def _retrieve_tx(
+        tx: Any, request: RetrievalRequest, *, _candidate_capture: dict[str, Any] | None = None,
+    ) -> RetrievalResult:
         principal = request.principal
         limits = request.limits
         version_filter = request.version_filter
@@ -562,6 +796,7 @@ class Neo4jRetrievalEngine:
                 f"query vector dimension {len(request.query_vector)} does not match {dimensions}"
             )
         corpus_revision = int(state["corpus_revision"])
+        publication_identity = Neo4jRetrievalEngine._publication_identity(state)
         common.update(
             {
                 "corpus_revision": corpus_revision,
@@ -572,7 +807,7 @@ class Neo4jRetrievalEngine:
             }
         )
 
-        vector_records = _records(
+        vector_records = [] if version_filter.match_none else _records(
             tx,
             VECTOR_RECALL_QUERY,
             {
@@ -599,7 +834,7 @@ class Neo4jRetrievalEngine:
                     "limit": limits.bm25_recall_k,
                 },
             )
-            if lucene_query
+            if lucene_query and not version_filter.match_none
             else []
         )
         vector_ids = _ids(vector_records)
@@ -736,7 +971,10 @@ class Neo4jRetrievalEngine:
             str(state["embedding_space_id"]),
             dimensions,
         )
-        if final_identity != captured_identity:
+        if (
+            final_identity != captured_identity
+            or Neo4jRetrievalEngine._publication_identity(final_state) != publication_identity
+        ):
             raise _CorpusStateChanged()
         hydrated = {str(record["chunk_id"]): record for record in hydrated_records}
         for chunk_id in hydrate_ids:
@@ -756,6 +994,17 @@ class Neo4jRetrievalEngine:
         )
         for chunk_id in duplicate_ids:
             decisions.append(TraceDecision(chunk_id, "rejected", "duplicate_content"))
+        if _candidate_capture is not None:
+            _candidate_capture["candidates"] = tuple(
+                RerankCandidate(
+                    chunk_id, str(hydrated[chunk_id]["text"]), str(hydrated[chunk_id]["chunk_checksum"]),
+                    source_title=hydrated[chunk_id].get("document_title"),
+                    source_section=hydrated[chunk_id].get("section"),
+                    document_id=str(hydrated[chunk_id]["document_id"]),
+                    version_id=str(hydrated[chunk_id]["version_id"]),
+                )
+                for chunk_id in deduped_ranking[:_candidate_capture["limit"]]
+            )
         anchor_ids = deduped_ranking[: limits.anchor_k]
         hydrated_adjacency = tuple(
             chunk_id for chunk_id in adjacent_ids if chunk_id in hydrated
@@ -797,38 +1046,9 @@ class Neo4jRetrievalEngine:
             reasons.extend(graph_reasons.get(chunk_id, []))
             if role == "adjacent":
                 reasons.append(f"adjacent to {adjacency_anchor[chunk_id]}")
-            citation = Citation(
-                chunk_id=chunk_id,
-                chunk_checksum=str(record["chunk_checksum"]),
-                document_id=str(record["document_id"]),
-                canonical_uri=str(record["canonical_uri"]),
-                source_name=str(record["source_name"]),
-                version_id=str(record["version_id"]),
-                version_checksum=str(record["version_checksum"]),
-                version_number=int(record["version_number"]),
-                ordinal=int(record["ordinal"]),
-                char_start=int(record["char_start"]),
-                char_end=int(record["char_end"]),
-                page_number=(
-                    None if record.get("page_number") is None else int(record["page_number"])
-                ),
-                section=(None if record.get("section") is None else str(record["section"])),
-                document_title=(
-                    None
-                    if record.get("document_title") is None
-                    else str(record["document_title"])
-                ),
-                published_at=_native_datetime(record.get("published_at")),
-            )
-            result_chunks.append(
-                RetrievedChunk(
-                    text=str(record["text"]),
-                    citation=citation,
-                    role=role,
-                    score=final_scores.get(chunk_id),
-                    reasons=tuple(reasons),
-                )
-            )
+            result_chunks.append(_retrieved_chunk(
+                record, role=role, score=final_scores.get(chunk_id), reasons=tuple(reasons),
+            ))
             decisions.append(TraceDecision(chunk_id, "selected", role))
 
         seed_trace = tuple(
@@ -863,6 +1083,7 @@ class Neo4jRetrievalEngine:
             request,
             corpus_revision,
             str(state["generation_id"]),
+            publication_identity=publication_identity,
         )
         trace = RetrievalTrace(
             trace_id=trace_id,
@@ -882,14 +1103,28 @@ class Neo4jRetrievalEngine:
             context_chars=selection.total_chars,
             limits=limits,
             version_filter=version_filter,
+            knowledge_publication_id=publication_identity[0],
+            knowledge_activation_generation=publication_identity[1],
         )
         return RetrievalResult(tuple(result_chunks), trace)
+
+    @staticmethod
+    def _publication_identity(state: dict[str, Any]) -> tuple[str | None, int]:
+        publication_id = state.get("knowledge_publication_id")
+        generation = state.get("knowledge_activation_generation", 0)
+        if (
+            publication_id is not None
+            and (not isinstance(publication_id, str) or not publication_id.strip())
+        ) or type(generation) is not int or generation < 0:
+            raise RetrievalUnavailable("tenant knowledge publication state is invalid")
+        return publication_id, generation
 
     @staticmethod
     def _trace_id(
         request: RetrievalRequest,
         corpus_revision: int,
         generation_id: str,
+        *, publication_identity: tuple[str | None, int] = (None, 0),
     ) -> str:
         cutoff: datetime | None = request.version_filter.published_at_or_before
         payload = {
@@ -904,6 +1139,9 @@ class Neo4jRetrievalEngine:
             "documents": sorted(request.version_filter.document_ids),
             "versions": sorted(request.version_filter.version_ids),
             "published_before": None if cutoff is None else cutoff.isoformat(),
+            "match_none": request.version_filter.match_none,
+            "knowledge_publication_id": publication_identity[0],
+            "knowledge_activation_generation": publication_identity[1],
             "limits": {
                 item.name: getattr(request.limits, item.name)
                 for item in fields(request.limits)

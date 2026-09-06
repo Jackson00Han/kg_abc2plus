@@ -409,6 +409,14 @@ class DependencyUnavailableError(RetryableBackendError):
     pass
 
 
+class RerankingFailedError(ApiRuntimeError):
+    """The model may have been charged; never retry this request automatically."""
+
+    code = ErrorCode.DEPENDENCY_UNAVAILABLE
+    status_code = 503
+    default_message = "candidate reranking failed after a provider attempt"
+
+
 class ConstructionIngestionFailedError(ApiRuntimeError):
     code = ErrorCode.CONSTRUCTION_INGESTION_FAILED
     status_code = 503

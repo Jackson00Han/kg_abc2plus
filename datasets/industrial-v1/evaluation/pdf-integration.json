@@ -1,0 +1,157 @@
+{
+  "cases": [
+    {
+      "answerability": "SUPPORTED",
+      "artifact_checksum": "1be221e9ffec4086efd571793f01613af6784f0013b53d01433197cfd8deb1e9",
+      "case_id": "industrial-pdf-001",
+      "embedded_revision": "QGH3492101-04",
+      "expected_evidence_notes": "Step 4 label and connection state precede the numeric paragraph; footnote (1) and the transformer connection note occur on the next physical page. Do not convert this retrieval test into a site procedure.",
+      "family": "canalis-kt",
+      "normalized_checksum": "86a9af400cf9bf37a8872257cca8df43b723981041ce95f272165d0aa57c7f95",
+      "original_checksum": "f6cd37fa6401687e280951675ff78d1beb16e41f36c8cf5c7befb3d9a7f22dd4",
+      "parser_version": "pdfplumber-source-map:v1",
+      "physical_pages": [
+        71,
+        72
+      ],
+      "question": "Canalis KT 投运表中，绝缘检查条目的数值可以脱离连接状态和中性线脚注单独引用吗？哪些跨页条件必须同时呈现？",
+      "required_chunks": [
+        {
+          "char_end": 4446,
+          "char_start": 3615,
+          "ordinal": 5,
+          "page_number": 71,
+          "text_checksum": "b5646e770d139d121cad1065f901e438a24cc345e0709ca840bb381733796bdb"
+        },
+        {
+          "char_end": 4681,
+          "char_start": 4446,
+          "ordinal": 6,
+          "page_number": 71,
+          "text_checksum": "61474b223815a399505bd36f4f0ff343b17af91b9f9a96942284b67892075f4e"
+        },
+        {
+          "char_end": 5537,
+          "char_start": 4681,
+          "ordinal": 7,
+          "page_number": 72,
+          "text_checksum": "ac500063ae1ffdd79f7c8dfc578b4b5e2986aa55c1adea46ff8570098cddf60d"
+        },
+        {
+          "char_end": 7268,
+          "char_start": 6370,
+          "ordinal": 9,
+          "page_number": 72,
+          "text_checksum": "c8b1acac8af626c96382df3a3f0804c08521b58c15a6e888c91f4bd4852fe7cc"
+        }
+      ],
+      "required_evidence_sets": [
+        [
+          5,
+          6,
+          7,
+          9
+        ]
+      ],
+      "source_id": "canalis-kt-installation",
+      "source_kind": "OFFICIAL_PUBLICATION",
+      "splitter_signature": "bounded-boundary:v1:max=900:min-ratio=0.6|pdfplumber-source-map:v1:pages=30,71,72,76,77",
+      "suggested_artifact_filename": "canalis-selected-en.v1.json"
+    },
+    {
+      "answerability": "SUPPORTED",
+      "artifact_checksum": "a15e20ab8e29894127d0d21fa752a909b55048e4bbbd20bc7804319653b705ec",
+      "case_id": "industrial-pdf-002",
+      "embedded_revision": "BQT34371-02",
+      "expected_evidence_notes": "Merged symptom header and the MX1 row start are in 15, while the row continuation starts 16. Possible-cause column does not certify an installed asset diagnosis.",
+      "family": "evopact-hvx-up24",
+      "normalized_checksum": "682579f25e41e657fb2c1905a15afd3bfe620521ba27af021e24996dc957010a",
+      "original_checksum": "bc4398d4c211bbd498afe7a775603e9247148e1a3a4036d346483d6eb63ef90b",
+      "parser_version": "pdfplumber-source-map:v1",
+      "physical_pages": [
+        104
+      ],
+      "question": "HVX 故障表里 MX1 持续供电这一可能原因对应哪个现象？可以把该条目理解为已确认释放器损坏吗？",
+      "required_chunks": [
+        {
+          "char_end": 11195,
+          "char_start": 10310,
+          "ordinal": 15,
+          "page_number": 104,
+          "text_checksum": "497715b389ec41ffc3256a4c228fe3c2c38db85daca77131cb6080d57dc5f1c9"
+        },
+        {
+          "char_end": 12075,
+          "char_start": 11195,
+          "ordinal": 16,
+          "page_number": 104,
+          "text_checksum": "bebf0ee619576e593cc26bb98eb7f85318156d8a8a52be74126416b90a1d9776"
+        }
+      ],
+      "required_evidence_sets": [
+        [
+          15,
+          16
+        ]
+      ],
+      "source_id": "evopact-hvx-up-to-24kv",
+      "source_kind": "OFFICIAL_PUBLICATION",
+      "splitter_signature": "bounded-boundary:v1:max=900:min-ratio=0.6|pdfplumber-source-map:v1:pages=9,10,14,103,104,105",
+      "suggested_artifact_filename": "hvx-selected-final.v1.json"
+    },
+    {
+      "answerability": "SUPPORTED",
+      "artifact_checksum": "a15e20ab8e29894127d0d21fa752a909b55048e4bbbd20bc7804319653b705ec",
+      "case_id": "industrial-pdf-003",
+      "embedded_revision": "BQT34371-02",
+      "expected_evidence_notes": "The column headings are in 15, the new symptom header starts at the end of 16 and continues at the start of 17; empty merged cells are not independent diagnoses.",
+      "family": "evopact-hvx-up24",
+      "normalized_checksum": "682579f25e41e657fb2c1905a15afd3bfe620521ba27af021e24996dc957010a",
+      "original_checksum": "bc4398d4c211bbd498afe7a775603e9247148e1a3a4036d346483d6eb63ef90b",
+      "parser_version": "pdfplumber-source-map:v1",
+      "physical_pages": [
+        104
+      ],
+      "question": "HVX 表中负荷切除命令、意外分闸命令与短路相关条目属于哪个问题类别？这些可能原因是否互相等同？",
+      "required_chunks": [
+        {
+          "char_end": 11195,
+          "char_start": 10310,
+          "ordinal": 15,
+          "page_number": 104,
+          "text_checksum": "497715b389ec41ffc3256a4c228fe3c2c38db85daca77131cb6080d57dc5f1c9"
+        },
+        {
+          "char_end": 12075,
+          "char_start": 11195,
+          "ordinal": 16,
+          "page_number": 104,
+          "text_checksum": "bebf0ee619576e593cc26bb98eb7f85318156d8a8a52be74126416b90a1d9776"
+        },
+        {
+          "char_end": 12897,
+          "char_start": 12075,
+          "ordinal": 17,
+          "page_number": 104,
+          "text_checksum": "a696e49a63c096e5840bd982171bb4f4ebee81b17f1a7c20a2b0fd18a893c097"
+        }
+      ],
+      "required_evidence_sets": [
+        [
+          15,
+          16,
+          17
+        ]
+      ],
+      "source_id": "evopact-hvx-up-to-24kv",
+      "source_kind": "OFFICIAL_PUBLICATION",
+      "splitter_signature": "bounded-boundary:v1:max=900:min-ratio=0.6|pdfplumber-source-map:v1:pages=9,10,14,103,104,105",
+      "suggested_artifact_filename": "hvx-selected-final.v1.json"
+    }
+  ],
+  "checksum": "a8efea61e6907b74ccbcfcf9253c402e87ed73458d3089bc5bde81fef0d34102",
+  "included_in_primary_gold_metrics": false,
+  "requires_external_cache": true,
+  "schema_version": "industrial-pdf-integration-gold-v1",
+  "version": "industrial-pdf-gold-v1.0.0"
+}
