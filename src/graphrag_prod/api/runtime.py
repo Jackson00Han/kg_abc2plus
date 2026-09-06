@@ -81,6 +81,7 @@ class OperationKind(str, Enum):
     KNOWLEDGE_REVIEW_QUEUE = "knowledge_review_queue"
     KNOWLEDGE_REVISION_HISTORY = "knowledge_revision_history"
     KNOWLEDGE_REVIEW_BATCH = "knowledge_review_batch"
+    KNOWLEDGE_REVIEW_ASSESSMENT = "knowledge_review_assessment"
     ENTITY_RESOLUTION_SUGGEST = "entity_resolution_suggest"
     ENTITY_RESOLUTION_APPLY = "entity_resolution_apply"
     KNOWLEDGE_PUBLISH = "knowledge_publish"
@@ -125,6 +126,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_REVIEW_QUEUE,
             self.KNOWLEDGE_REVISION_HISTORY,
             self.ENTITY_RESOLUTION_SUGGEST,
+            self.KNOWLEDGE_REVIEW_ASSESSMENT,
             self.KNOWLEDGE_HISTORY,
             self.KNOWLEDGE_PUBLICATION_CANDIDATES,
             self.KNOWLEDGE_QUALITY,
@@ -154,6 +156,7 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_REVIEW_QUEUE: "knowledge:review",
         OperationKind.KNOWLEDGE_REVISION_HISTORY: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_BATCH: "knowledge:review",
+        OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT: "knowledge:review",
         OperationKind.ENTITY_RESOLUTION_SUGGEST: "knowledge:review",
         OperationKind.ENTITY_RESOLUTION_APPLY: "knowledge:review",
         OperationKind.KNOWLEDGE_PUBLISH: "knowledge:publish",

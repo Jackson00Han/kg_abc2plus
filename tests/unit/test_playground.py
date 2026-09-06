@@ -750,6 +750,7 @@ function snapshot(id, revision = 'revision-1') {
         ordinal: 0, char_start: 0, char_end: 4}}]};
 }
 const context = vm.createContext({state, elements, requests, apiRequest, snapshot,
+  showConstructionFlow() {},
   flush: () => new Promise(resolve => setImmediate(resolve)),
   URLSearchParams, assert, showToast() {}, escapeHtml: String, number: String,
   shortId: String, output() {}, activePublication: () => state.publications[0],
@@ -1024,18 +1025,18 @@ for (const [status, expected] of [[403, '全部 ACL'], [404, '未找到'], [409,
         self.assertIn('id="inventory-summary"', page.text)
         self.assertIn("/v1/knowledge/publication-inventory?", page.text)
         self.assertIn("只返回有界治理元数据和精确证据位置", page.text)
-        self.assertIn("对应稳定 record ID 加入第 05 步", page.text)
+        self.assertIn("对应稳定 record ID 加入 06“发布业务知识”", page.text)
         self.assertIn("/v1/ontologies:import", page.text)
         self.assertIn('id="tab-graph"', page.text)
         self.assertIn('id="governance-workspace"', page.text)
         self.assertIn("literal_semantics", page.text)
         self.assertIn("raw_literal", page.text)
         self.assertNotIn("edit.literal_value", page.text)
-        self.assertIn("canonical 语义由服务端", page.text)
+        self.assertIn("同一区域点击“发布专家基准”", page.text)
         self.assertIn("/v1/knowledge/entity-resolution/", page.text)
         self.assertIn("/v1/knowledge/entity-resolution:apply", page.text)
         self.assertIn("resolution?.revision !== item.revision", page.text)
-        self.assertIn("依赖 assertions，但不会自动批准", page.text)
+        self.assertIn("实体确认不会自动批准它的属性或关系", page.text)
         self.assertIn("请输入本次实体链接的人工审核依据", page.text)
         self.assertIn('id="document-access-groups"', page.text)
         self.assertIn("access_groups: accessGroups", page.text)

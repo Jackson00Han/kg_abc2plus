@@ -18,6 +18,8 @@ from enum import StrEnum
 from typing import Any, Iterable, Mapping, Protocol
 from uuid import uuid5
 
+from neo4j import unit_of_work
+
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import (
     ID_NAMESPACE,
@@ -242,6 +244,7 @@ class ReviewRequest:
     reviewed_at: datetime
     notes: str
     edit: MentionEdit | AssertionEdit | None = None
+    duplicate_of_revision_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.record_kind, ReviewRecordKind):
@@ -280,6 +283,12 @@ class ReviewRequest:
             )
             if not isinstance(self.edit, expected):
                 raise TypeError("review edit does not match record_kind")
+        if self.duplicate_of_revision_id is not None:
+            _required_text(self.duplicate_of_revision_id, "duplicate_of_revision_id")
+            if (self.record_kind is not ReviewRecordKind.ASSERTION
+                    or self.decision is not GovernanceStatus.REJECTED
+                    or self.edit is not None):
+                raise ValueError("duplicate dismissal requires an unedited assertion rejection")
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,9 +730,17 @@ class Neo4jKnowledgeReviewService:
                 ),
             )
         )
+        transaction_work = self._review_batch_tx
+        if any(request.duplicate_of_revision_id is not None for request in work):
+            from .review_assessment import ASSESSMENT_TRANSACTION_TIMEOUT_SECONDS
+
+            transaction_work = unit_of_work(
+                timeout=ASSESSMENT_TRANSACTION_TIMEOUT_SECONDS,
+                metadata={"component": "review-assessment", "operation": "keep-existing"},
+            )(transaction_work)
         with self.driver.session(database=self.database) as session:
             outcomes = session.execute_write(
-                self._review_batch_tx,
+                transaction_work,
                 principal,
                 work,
             )
@@ -1003,6 +1020,23 @@ class Neo4jKnowledgeReviewService:
                 principal,
                 request,
             )
+            if request.duplicate_of_revision_id is not None:
+                from .review_assessment import Neo4jReviewAssessmentService
+
+                assessment = Neo4jReviewAssessmentService.assess_tx(
+                    tx, principal, request.record_id, request.expected_revision,
+                )
+                if (assessment.status != "DUPLICATE" or not any(
+                    match.record.revision_id == request.duplicate_of_revision_id
+                    for match in assessment.matches
+                )):
+                    raise KnowledgeConflict("duplicate recommendation is no longer current")
+                # Store the authority link in immutable review audit metadata;
+                # the original extraction, document and evidence remain intact.
+                request = dataclasses.replace(request, notes=(
+                    f"KEEP_EXISTING_AUTHORITATIVE_FACT revision={request.duplicate_of_revision_id}; "
+                    f"duplicate graph insertion dismissed; extraction evidence retained. {request.notes}"
+                )[:4_000])
             updated = cls._reviewed_record_tx(
                 tx,
                 principal,
@@ -1015,6 +1049,8 @@ class Neo4jKnowledgeReviewService:
             # resolved into the published T-Box identity contract.
             if request.decision is GovernanceStatus.APPROVED:
                 cls._validate_record_tbox_tx(tx, updated)
+            elif request.decision is GovernanceStatus.QUARANTINED and request.edit is not None:
+                cls._validate_record_tbox_tx(tx, updated, allow_provisional_namespace=True)
             if isinstance(updated, EntityMentionRecord):
                 Neo4jKnowledgeStore._create_mention_revision_tx(
                     tx,
@@ -1121,12 +1157,25 @@ class Neo4jKnowledgeReviewService:
         current: EntityMentionRecord | AssertionRecord,
         request: ReviewRequest,
     ) -> EntityMentionRecord | AssertionRecord:
-        trust = current.trust.transition_to(
-            request.decision,
-            reviewed_by=principal.principal_id,
-            reviewed_at=request.reviewed_at,
-            review_notes=request.notes,
-        )
+        if (current.trust.status is GovernanceStatus.QUARANTINED
+                and request.decision is GovernanceStatus.QUARANTINED
+                and request.edit is not None):
+            # A corrected draft remains isolated while advancing its immutable
+            # revision. This is not a new lifecycle transition; an unedited
+            # repeated quarantine still uses and fails the strict state machine.
+            trust = dataclasses.replace(
+                current.trust,
+                reviewed_by=principal.principal_id,
+                reviewed_at=request.reviewed_at,
+                review_notes=request.notes,
+            )
+        else:
+            trust = current.trust.transition_to(
+                request.decision,
+                reviewed_by=principal.principal_id,
+                reviewed_at=request.reviewed_at,
+                review_notes=request.notes,
+            )
         revision = RecordRevision.next(
             current.record_id,
             request.expected_revision,
@@ -1262,6 +1311,8 @@ class Neo4jKnowledgeReviewService:
     def _validate_record_tbox_tx(
         tx: Any,
         record: EntityMentionRecord | AssertionRecord,
+        *,
+        allow_provisional_namespace: bool = False,
     ) -> None:
         if isinstance(record, EntityMentionRecord):
             namespace, separator, _ = record.entity.canonical_key.partition(":")
@@ -1276,12 +1327,17 @@ class Neo4jKnowledgeReviewService:
                           name: $entity_type
                       })
                 WHERE $namespace IN type.canonical_key_namespaces
+                   OR ($allow_provisional_namespace AND $namespace = 'llm-candidate')
                 RETURN type.name AS name
                 """,
                 tenant_id=record.tenant_id,
                 tbox_id=record.trust.ontology_version_id,
                 entity_type=record.entity.entity_type,
                 namespace=namespace.casefold() if separator else "",
+                allow_provisional_namespace=(
+                    allow_provisional_namespace
+                    and record.trust.status is GovernanceStatus.QUARANTINED
+                ),
             ).single()
             if row is None:
                 raise KnowledgeReviewUnavailable(
@@ -1321,10 +1377,10 @@ class Neo4jKnowledgeReviewService:
                       (relationship:TBoxRelationshipType {
                           name: $predicate
                       })
-                OPTIONAL MATCH (relationship)-[:DECLARES_PROPERTY]->
-                               (property:TBoxPropertyDefinition)
                 WHERE $subject_type IN relationship.source_types
                   AND $object_type IN relationship.target_types
+                OPTIONAL MATCH (relationship)-[:DECLARES_PROPERTY]->
+                               (property:TBoxPropertyDefinition)
                 RETURN relationship.name AS name,
                        collect(
                            CASE WHEN property IS NULL THEN NULL

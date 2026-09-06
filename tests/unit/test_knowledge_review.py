@@ -178,6 +178,26 @@ class KnowledgeReviewContractTests(unittest.TestCase):
                 reviewed_at=datetime(2025, 2, 4, 5, 6),
             )
 
+        paused_trust = mention.trust.transition_to(
+            GovernanceStatus.QUARANTINED, reviewed_by="reviewer:first",
+            reviewed_at=REVIEWED_AT, review_notes="First correction remains isolated.",
+        )
+        paused = dataclasses.replace(mention, trust=paused_trust, revision=RecordRevision.next(mention.record_id, 1))
+        correction = dataclasses.replace(request, expected_revision=2, decision=GovernanceStatus.QUARANTINED,
+                                         notes="Second correction remains isolated.")
+        edited = Neo4jKnowledgeReviewService._reviewed_record_tx(object(), _principal(), paused, correction)
+        self.assertEqual(edited.revision.revision, 3)
+        self.assertEqual(edited.trust.status, GovernanceStatus.QUARANTINED)
+        self.assertEqual(edited.trust.review_notes, correction.notes)
+        self.assertEqual(edited.trust.reviewed_by, _principal().principal_id)
+        self.assertEqual(edited.trust.origin, paused.trust.origin)
+        self.assertEqual(edited.trust.authority, paused.trust.authority)
+        self.assertEqual(edited.evidence, paused.evidence)
+        with self.assertRaisesRegex(ValueError, "illegal governance transition"):
+            Neo4jKnowledgeReviewService._reviewed_record_tx(object(), _principal(), paused, dataclasses.replace(correction, edit=None))
+        with self.assertRaisesRegex(ValueError, "illegal governance transition"):
+            paused.trust.transition_to(GovernanceStatus.QUARANTINED)
+
     def test_assertion_edit_requires_exactly_one_object_shape(self) -> None:
         assertion = make_knowledge_batch(authoritative=False).assertions[0]
         edit = AssertionEdit(

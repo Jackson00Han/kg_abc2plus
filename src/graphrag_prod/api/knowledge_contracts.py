@@ -791,6 +791,43 @@ class ReviewRecordResponse(StrictAPIModel):
         return self
 
 
+class ReviewAssessmentRequest(StrictAPIModel):
+    record_id: Identifier
+    expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+
+
+class ReviewDependencyResponse(StrictAPIModel):
+    role: Literal["subject", "object"]
+    mention_record_id: Identifier | None
+    mention_revision_id: Identifier | None
+    name: ShortText
+    status: Literal["CANDIDATE", "APPROVED", "PUBLISHED", "QUARANTINED", "REJECTED", "SUPERSEDED", "UNAVAILABLE"]
+    ready: bool
+    evidence: EvidenceResponse | None = None
+
+
+class AuthoritativeFactMatchResponse(StrictAPIModel):
+    publication_id: Identifier
+    record: ReviewRecordResponse
+
+
+class ReviewAssessmentResponse(StrictAPIModel):
+    record_id: Identifier
+    revision_id: Identifier
+    revision: Annotated[int, Field(strict=True, ge=1)]
+    status: Literal["READY", "BLOCKED", "DUPLICATE", "CONFLICT", "UNAVAILABLE"]
+    reason_code: ShortText
+    summary: ShortText
+    dependencies: Annotated[tuple[ReviewDependencyResponse, ...], Field(min_length=1, max_length=2)]
+    matches: Annotated[tuple[AuthoritativeFactMatchResponse, ...], Field(max_length=100)] = ()
+    truncated: bool = False
+
+    @field_validator("dependencies", "matches", mode="before")
+    @classmethod
+    def accept_json_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
 class ReviewQueueRequest(StrictAPIModel):
     statuses: Annotated[
         tuple[Literal["CANDIDATE", "QUARANTINED"], ...], Field(min_length=1, max_length=2)
@@ -964,6 +1001,7 @@ class ReviewDecisionInput(StrictAPIModel):
     notes: LongText
     mention_edit: MentionEditInput | None = None
     assertion_edit: AssertionEditInput | None = None
+    duplicate_of_revision_id: Identifier | None = None
 
     @model_validator(mode="after")
     def valid_edit(self) -> Self:
@@ -973,6 +1011,11 @@ class ReviewDecisionInput(StrictAPIModel):
             raise ValueError("mention review cannot contain assertion_edit")
         if self.record_kind == "ASSERTION" and self.mention_edit is not None:
             raise ValueError("assertion review cannot contain mention_edit")
+        if self.duplicate_of_revision_id is not None and (
+            self.record_kind != "ASSERTION" or self.decision != "REJECTED"
+            or self.mention_edit is not None or self.assertion_edit is not None
+        ):
+            raise ValueError("duplicate dismissal requires an unedited assertion rejection")
         return self
 
 

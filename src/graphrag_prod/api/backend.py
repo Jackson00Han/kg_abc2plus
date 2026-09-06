@@ -94,6 +94,8 @@ from .knowledge_contracts import (
     PublishedGraphQualityResponse,
     ReviewBatchRequest,
     ReviewBatchResponse,
+    ReviewAssessmentRequest,
+    ReviewAssessmentResponse,
     ReviewQueueRequest,
     ReviewQueueResponse,
     RecordRevisionHistoryRequest,
@@ -298,6 +300,10 @@ class KnowledgeOperations(Protocol):
 
     def review_batch(
         self, principal: Principal, request: ReviewBatchRequest
+    ) -> BackendResult: ...
+
+    def review_assessment(
+        self, principal: Principal, request: ReviewAssessmentRequest
     ) -> BackendResult: ...
 
     def resolution_suggestions(
@@ -1102,6 +1108,7 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_REVISION_HISTORY,
             OperationKind.KNOWLEDGE_REVIEW_BATCH,
             OperationKind.ENTITY_RESOLUTION_SUGGEST,
+            OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT,
             OperationKind.ENTITY_RESOLUTION_APPLY,
             OperationKind.KNOWLEDGE_PUBLISH,
             OperationKind.KNOWLEDGE_ROLLBACK,
@@ -1191,6 +1198,12 @@ class GraphRAGApplicationBackend:
                 return _response(
                     self._knowledge.review_batch(principal, request),
                     ReviewBatchResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT:
+                request = _validated(ReviewAssessmentRequest, envelope.payload)
+                return _response(
+                    self._knowledge.review_assessment(principal, request),
+                    ReviewAssessmentResponse,
                 )
             if envelope.operation is OperationKind.ENTITY_RESOLUTION_SUGGEST:
                 request = _validated(EntityResolutionRequest, envelope.payload)

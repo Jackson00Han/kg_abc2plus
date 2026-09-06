@@ -738,7 +738,7 @@ const actions = records.map(() => ['APPROVED', 'REJECTED', 'QUARANTINED'].map(
   reviewAction => ({dataset: {reviewAction}, hidden: false})));
 const toasts = [];
 const context = {
-  state: {reviews: records, approvedRevisions: new Set()},
+  state: {reviews: records, approvedRevisions: new Set(), identityEpoch: 0, reviewEpoch: 0, resolutions: new Map(), reviewAssessments: new Map()},
   elements: {
     publicationRevisions: {},
     reviewList: {querySelector(selector) {
@@ -747,7 +747,8 @@ const context = {
       if (selector.includes('edit-toggle')) return toggles[index];
       return editors[index];
     }, querySelectorAll(selector) {
-      return actions[Number(selector.match(/="(\d+)"/)[1])];
+      const match = selector.match(/="(\d+)"/);
+      return match ? actions[Number(match[1])] : actions.flat();
     }},
   },
   parseJsonEditor: editor => JSON.parse(editor.value),
@@ -763,9 +764,13 @@ vm.createContext(context);
 for (const [start, end] of [
   ['function literalSemantics(', 'function literalSemanticsMarkup('],
   ['function reviewEdit(', 'function resolutionMarkup('],
+  ['function reviewModel(', 'function reviewTechnical('],
+  ['function setReviewBusy(', 'async function keepExistingFact('],
   ['async function submitReviews(', 'function activePublication('],
 ]) vm.runInContext(page.slice(page.indexOf(start), page.indexOf(end)), context);
 (async () => {
+  context.state.resolutions.set(records[0].record_id,{revision:1,identityEpoch:0,reviewEpoch:0,status:'ready',suggestions:[{outcome:'NO_MATCH'}]});
+  for (const record of records.slice(1)) context.state.reviewAssessments.set(record.record_id,{revision:1,identityEpoch:0,reviewEpoch:0,status:'READY'});
   for (let i = 0; i < records.length; i++) {
     vm.runInContext(`setReviewEditing(${i}, false)`, context);
   }
@@ -773,10 +778,10 @@ for (const [start, end] of [
   vm.runInContext('setReviewEditing(0, true)', context);
   assert.equal(panels[0].hidden, false);
   assert.equal(toggles[0].textContent, '取消编辑');
-  assert.equal(actions[0][0].textContent, '保存修改并批准');
+  assert.equal(actions[0][0].hidden, true, 'edited content must be checked before approval');
   assert.equal(actions[0][1].hidden, true);
   editors[0].value = '{invalid JSON';
-  await vm.runInContext("submitReviews('APPROVED', [0], true)", context);
+  await vm.runInContext("submitReviews('QUARANTINED', [0], true)", context);
   assert.equal(requests.length, 0, 'invalid draft must not submit');
   await vm.runInContext("submitReviews('APPROVED', [0, 1])", context);
   assert.equal(requests.length, 0, 'batch review must not silently discard drafts');
@@ -785,7 +790,7 @@ for (const [start, end] of [
   assert.equal(editors[0].value, initial);
   assert.equal(editors[0].disabled, true);
   assert.equal(panels[0].hidden, true);
-  assert.equal(actions[0][0].textContent, '批准');
+  assert.equal(actions[0][0].textContent, '确认新实体');
   assert.equal(actions[0][1].hidden, false);
   assert.equal(requests.length, 0, 'cancel must not submit');
   for (let i = 0; i < records.length; i++) {
@@ -793,7 +798,7 @@ for (const [start, end] of [
     const edit = JSON.parse(editors[i].value);
     edit.confidence = 0.87;
     editors[i].value = JSON.stringify(edit);
-    await vm.runInContext(`submitReviews('APPROVED', [${i}], true)`, context);
+    await vm.runInContext(`submitReviews('QUARANTINED', [${i}], true)`, context);
     vm.runInContext(`setReviewEditing(${i}, false)`, context);
   }
   await vm.runInContext("submitReviews('APPROVED', [0, 1, 2])", context);

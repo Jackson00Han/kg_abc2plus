@@ -75,6 +75,7 @@ from graphrag_prod.knowledge.entity_resolution import (
     ResolutionOutcome,
     ResolutionSuggestion,
 )
+from graphrag_prod.knowledge.review_assessment import Neo4jReviewAssessmentService
 from graphrag_prod.knowledge.review import (
     AssertionEdit,
     KnowledgeAuthorizationError,
@@ -84,6 +85,7 @@ from graphrag_prod.knowledge.review import (
     Neo4jKnowledgePublicationService,
     Neo4jKnowledgeReviewService,
     ReviewRecordKind,
+    ReviewQueueItem,
     ReviewRequest,
 )
 from graphrag_prod.knowledge.store import KnowledgeConflict, KnowledgeStoreError
@@ -132,6 +134,8 @@ from .knowledge_contracts import (
     RelationshipPropertyInput,
     ReviewBatchRequest,
     ReviewBatchResponse,
+    ReviewAssessmentRequest,
+    ReviewAssessmentResponse,
     ReviewQueueRequest,
     ReviewQueueResponse,
     RecordRevisionHistoryRequest,
@@ -601,6 +605,7 @@ class Neo4jKnowledgeOperations:
         publications: Any | None = None,
         construction_audit: Any | None = None,
         resolution_source: Any | None = None,
+        assessment_service: Any | None = None,
         quality_service: Any | None = None,
         quality_history_service: Any | None = None,
         inventory_service: Any | None = None,
@@ -641,6 +646,7 @@ class Neo4jKnowledgeOperations:
         self.tboxes = tboxes or Neo4jTBoxStore(driver, database)
         self.knowledge = knowledge or Neo4jKnowledgeStore(driver, database)
         self.reviews = reviews or Neo4jKnowledgeReviewService(driver, database)
+        self.assessments = assessment_service or Neo4jReviewAssessmentService(driver, database)
         self.publications = publications or Neo4jKnowledgePublicationService(
             driver, database
         )
@@ -1509,6 +1515,42 @@ class Neo4jKnowledgeOperations:
         }
         return BackendResult(_outbound(EntityResolutionApplyResponse, payload))
 
+    def review_assessment(
+        self, principal: Principal, request: ReviewAssessmentRequest,
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:review")
+        try:
+            value = self.assessments.assess(principal, request.record_id, request.expected_revision)
+            payload = {
+                "record_id": value.record_id, "revision_id": value.revision_id,
+                "revision": value.revision, "status": value.status,
+                "reason_code": value.reason_code, "summary": value.summary,
+                "truncated": value.truncated,
+                "dependencies": tuple({
+                    "role": item.role, "mention_record_id": item.mention_record_id,
+                    "mention_revision_id": item.mention_revision_id, "name": item.name,
+                    "status": item.status, "ready": item.ready,
+                    "evidence": None if item.evidence is None else _evidence_payload(item.evidence),
+                } for item in value.dependencies),
+                "matches": tuple({
+                    "publication_id": item.publication_id,
+                    "record": _review_record_payload(ReviewQueueItem(ReviewRecordKind.ASSERTION, item.record)),
+                } for item in value.matches),
+            }
+            return BackendResult(_outbound(ReviewAssessmentResponse, payload))
+        except ApiRuntimeError:
+            raise
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except KnowledgeReviewUnavailable as error:
+            raise ResourceNotFoundError() from error
+        except KnowledgeConflict as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+
     def review_batch(
         self, principal: Principal, request: ReviewBatchRequest
     ) -> BackendResult:
@@ -1592,6 +1634,7 @@ class Neo4jKnowledgeOperations:
                         reviewed_at=now,
                         notes=item.notes,
                         edit=edit,
+                        duplicate_of_revision_id=item.duplicate_of_revision_id,
                     )
                 )
         except (TypeError, ValueError) as error:

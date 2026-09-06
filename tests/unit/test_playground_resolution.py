@@ -22,6 +22,9 @@ class PlaygroundResolutionTests(unittest.TestCase):
             page.index("function reviewEdit(") : page.index("function chosenReviews(")
         ]
         source += page[
+            page.index("function chosenReviews(") : page.index("function activePublication(")
+        ]
+        source += page[
             page.index("async function publishOntology(") : page.index("async function importABox(")
         ]
         source += page[
@@ -62,6 +65,10 @@ const requests = [];
 let promptCount = 0;
 let confirmCount = 0;
 function apiRequest(url, options) {
+  if (url.includes('/review-assessments/')) {
+    const recordId=decodeURIComponent(url.split('/').pop().split('?')[0]);
+    return Promise.resolve({record_id:recordId,revision:1,status:'BLOCKED',summary:'确认关联实体后才能审核',dependencies:[],matches:[]});
+  }
   return new Promise((resolve, reject) => requests.push({url, options, settled: false,
     resolve(value) { this.settled = true; resolve(value); },
     reject(error) { this.settled = true; reject(error); }}));
@@ -82,7 +89,7 @@ function resolution(id, revision = 1, outcome = 'AUTO_LINK') {
 }
 const context = vm.createContext({state, elements, requests, panels, draft, item, resolution,
   assert, apiRequest, flush: () => new Promise(resolve => setImmediate(resolve)),
-  showToast() {}, escapeHtml: String, shortId: String,
+  showToast() {}, escapeHtml: String, shortId: String, literalSemantics: item => item.literal_semantics || {}, parseJsonEditor: editor => JSON.parse(editor.value),
   relationshipPropertiesMarkup: () => '', literalSemanticsMarkup: () => '',
   prompt: () => { promptCount += 1; return null; },
   confirm: () => { confirmCount += 1; return false; },

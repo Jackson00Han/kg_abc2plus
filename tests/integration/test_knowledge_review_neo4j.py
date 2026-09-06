@@ -326,6 +326,105 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             assertions=(authoritative_assertion,),
         )
 
+    def _prepare_review_assessment(self):
+        from graphrag_prod.knowledge.review_assessment import Neo4jReviewAssessmentService
+
+        service = Neo4jReviewAssessmentService(self.driver, self.database)
+        assertion = self.batch.assertions[0]
+        blocked = service.assess(self.principal, assertion.record_id, 1)
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertEqual(len(blocked.dependencies), 2)
+        self.assertFalse(any(value.ready for value in blocked.dependencies))
+        authoritative = self._distinct_authoritative_batch()
+        self.store.import_authoritative(authoritative)
+        publication = self.publication.publish(
+            self.principal,
+            tuple(record.revision_id for record in (*authoritative.mentions, *authoritative.assertions)),
+            expected_active_publication_id=None, published_at=PUBLISHED_AT,
+        )
+        for mention, target in zip(self.batch.mentions, self.authoritative_batch.mentions, strict=True):
+            self.review.apply_entity_resolution(
+                self.principal, record_id=mention.record_id, expected_revision=1,
+                target=target.entity, reviewed_at=REVIEWED_AT, notes="Confirm source identity.",
+            )
+        current = self.store.get_assertion(self.principal, assertion.record_id, statuses=(GovernanceStatus.CANDIDATE,))
+        result = service.assess(self.principal, current.record_id, current.revision.revision)
+        self.assertEqual(result.status, "DUPLICATE")
+        self.assertTrue(all(value.ready for value in result.dependencies))
+        self.assertEqual(len(result.matches), 1)
+        self.assertEqual(result.matches[0].publication_id, publication.publication_id)
+        return service, current, result, publication
+
+    def test_review_assessment_requires_endpoints_and_duplicate_dismissal_retains_audit(self):
+        service, current, result, publication = self._prepare_review_assessment()
+        before, _, _ = self.driver.execute_query("MATCH (n) RETURN count(n) AS count", database_=self.database)
+        self.assertEqual(service.assess(self.principal, current.record_id, current.revision.revision), result)
+        after, _, _ = self.driver.execute_query("MATCH (n) RETURN count(n) AS count", database_=self.database)
+        self.assertEqual(before[0]["count"], after[0]["count"])
+        request = ReviewRequest(
+            ReviewRecordKind.ASSERTION, current.record_id, current.revision.revision,
+            GovernanceStatus.REJECTED, REVIEWED_AT, "Keep the existing fact and this source audit.",
+            duplicate_of_revision_id=result.matches[0].record.revision_id,
+        )
+        outcome = self.review.review_batch(self.principal, (request,)).outcomes[0]
+        self.assertEqual(outcome.status, GovernanceStatus.REJECTED)
+        history = self.review.revision_history(self.principal, current.record_id)
+        self.assertIn("KEEP_EXISTING_AUTHORITATIVE_FACT", history[0].record.trust.review_notes)
+        self.assertIn(result.matches[0].record.revision_id, history[0].record.trust.review_notes)
+        self.assertEqual(history[0].record.evidence, current.evidence)
+        self.assertEqual(history[-1].record.trust.status, GovernanceStatus.CANDIDATE)
+        self.assertEqual(self.publication.active(self.principal).publication_id, publication.publication_id)
+        with self.assertRaises(KnowledgeConflict):
+            self.review.review_batch(self.principal, (request,))
+
+    def test_review_assessment_hides_other_acl_and_rechecks_removed_authority(self):
+        service, current, result, publication = self._prepare_review_assessment()
+        for principal in (
+            dataclasses.replace(self.principal, groups=frozenset({"legal"})),
+            dataclasses.replace(self.principal, tenant_id="another-tenant"),
+        ):
+            with self.subTest(principal=principal.principal_id), self.assertRaises(KnowledgeReviewUnavailable):
+                service.assess(principal, current.record_id, current.revision.revision)
+        with self.assertRaises(KnowledgeConflict):
+            service.assess(self.principal, current.record_id, 1)
+        authority = result.matches[0].record
+        self.driver.execute_query(
+            "MATCH (r:GovernedAssertionRevision {revision_id: $revision_id}) SET r.access_groups = ['legal']",
+            revision_id=authority.revision_id, database_=self.database,
+        )
+        hidden = service.assess(self.principal, current.record_id, current.revision.revision)
+        self.assertEqual(hidden.matches, ())
+        self.driver.execute_query(
+            "MATCH (r:GovernedAssertionRevision {revision_id: $revision_id}) SET r.access_groups = $groups",
+            revision_id=authority.revision_id, groups=sorted(authority.evidence.access_groups), database_=self.database,
+        )
+        self.review.quarantine(
+            self.principal, record_kind=ReviewRecordKind.ASSERTION,
+            record_id=authority.record_id, expected_revision=authority.revision.revision,
+            reviewed_at=REVIEWED_AT, notes="Pending expert re-evaluation, active publication unchanged.",
+        )
+        # A later record head does not silently remove the fact from the
+        # currently active publication. Its immutable revision still compares.
+        still_active = service.assess(self.principal, current.record_id, current.revision.revision)
+        self.assertEqual(still_active.status, "DUPLICATE")
+        self.assertEqual(still_active.matches[0].record.revision_id, authority.revision_id)
+        self.publication.publish(
+            self.principal, (), expected_active_publication_id=publication.publication_id,
+            published_at=PUBLISHED_AT + timedelta(minutes=1),
+            remove_record_ids=(result.matches[0].record.record_id,),
+        )
+        self.assertEqual(service.assess(self.principal, current.record_id, current.revision.revision).status, "READY")
+        request = ReviewRequest(
+            ReviewRecordKind.ASSERTION, current.record_id, current.revision.revision,
+            GovernanceStatus.REJECTED, REVIEWED_AT, "Previously duplicate.",
+            duplicate_of_revision_id=result.matches[0].record.revision_id,
+        )
+        with self.assertRaises(KnowledgeConflict):
+            self.review.review_batch(self.principal, (request,))
+        self.assertEqual(self.store.get_assertion(
+            self.principal, current.record_id, statuses=(GovernanceStatus.CANDIDATE,),
+        ).revision_id, current.revision_id)
+
     def test_queue_is_tenant_acl_safe_and_review_is_append_only_cas(self) -> None:
         reader = Principal(
             "reader",
@@ -422,6 +521,66 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
             "original_revision": 1,
             "original_status": "CANDIDATE",
         })
+
+        assertion = self.batch.assertions[0]
+        edit = AssertionEdit(
+            assertion.subject, assertion.predicate, assertion.subject_mention_revision_id,
+            0.96, object_entity=assertion.object_entity,
+            object_mention_revision_id=assertion.object_mention_revision_id,
+        )
+        first_request = ReviewRequest(
+            ReviewRecordKind.ASSERTION, assertion.record_id, 1,
+            GovernanceStatus.QUARANTINED, REVIEWED_AT,
+            "First explicit correction; inspect again before approval.", edit,
+        )
+        self.review.review_batch(self.principal, (first_request,))
+        second_request = dataclasses.replace(first_request, expected_revision=2,
+                                             notes="Second explicit correction.", edit=dataclasses.replace(edit, confidence=0.94))
+        self.review.review_batch(self.principal, (second_request,))
+        history = self.review.revision_history(self.principal, assertion.record_id)
+        self.assertEqual([item.record.revision.revision for item in history], [3, 2, 1])
+        self.assertEqual(history[0].record.trust.status, GovernanceStatus.QUARANTINED)
+        self.assertEqual(history[0].record.confidence, 0.94)
+        self.assertEqual(history[0].record.trust.review_notes, second_request.notes)
+        self.assertEqual(history[1].record.trust.review_notes, first_request.notes)
+        self.assertTrue(all(item.record.evidence == assertion.evidence for item in history))
+        self.assertEqual(history[0].record.trust.authority, AuthorityLevel.SECONDARY)
+        with self.assertRaises(KnowledgeConflict):
+            self.review.review_batch(self.principal, (second_request,))
+        current_request = dataclasses.replace(second_request, expected_revision=3)
+        with self.assertRaisesRegex(ValueError, "illegal governance transition"):
+            self.review.review_batch(self.principal, (dataclasses.replace(current_request, edit=None),))
+        for invalid_edit in (
+            dataclasses.replace(edit, predicate="UNDECLARED"),
+            dataclasses.replace(edit, subject=assertion.object_entity),
+        ):
+            with self.subTest(predicate=invalid_edit.predicate, entity_type=invalid_edit.subject.entity_type):
+                with self.assertRaises(KnowledgeReviewUnavailable):
+                    self.review.review_batch(self.principal, (dataclasses.replace(current_request, edit=invalid_edit),))
+        self.assertEqual(self.store.get_assertion(
+            self.principal, assertion.record_id, statuses=(GovernanceStatus.QUARANTINED,),
+        ).revision.revision, 3)
+        approved_mention = self.store.get_entity_mention(
+            self.principal, mention.record_id, statuses=(GovernanceStatus.APPROVED,),
+        )
+        isolated = self.review.quarantine(
+            self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+            record_id=mention.record_id, expected_revision=approved_mention.revision.revision,
+            reviewed_at=REVIEWED_AT, notes="Recheck entity details.",
+        )
+        mention_request = ReviewRequest(
+            ReviewRecordKind.ENTITY_MENTION, mention.record_id, isolated.revision,
+            GovernanceStatus.QUARANTINED, REVIEWED_AT, "Correct isolated entity details.",
+            MentionEdit(approved_mention.entity, 0.92),
+        )
+        self.review.review_batch(self.principal, (mention_request,))
+        corrected = self.store.get_entity_mention(
+            self.principal, mention.record_id, statuses=(GovernanceStatus.QUARANTINED,),
+        )
+        self.assertEqual(corrected.revision.revision, isolated.revision + 1)
+        self.assertEqual(corrected.confidence, 0.92)
+        self.assertEqual(corrected.evidence, approved_mention.evidence)
+        self.assertEqual(corrected.trust.review_notes, mention_request.notes)
 
     def test_entity_resolution_atomically_rebinds_both_assertion_endpoints(
         self,

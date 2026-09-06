@@ -76,7 +76,8 @@ const context = vm.createContext({$, fields, kit, source, state, elements, metad
   constructionFingerprint: async () => JSON.stringify({content_sha256: source.sha256}),
   nextConstructionOperation: () => 'demo-operation-key', completeConstructionOperation() {},
   loadConstructionJobs: async () => {}, loadReviews: async () => {},
-  loadActiveDocuments: async () => {},
+  loadActiveDocuments: async () => {}, showConstructionFlow() {},
+  requirePublishedConstructionOntology: async () => true,
   apiRequest: (url, options) => new Promise((resolve, reject) => requests.push({url, options, resolve, reject})),
   flush: () => new Promise(resolve => setImmediate(resolve)),
 });
@@ -205,6 +206,7 @@ const payload = result();
 payload.extraction_mode = 'LLM';
 payload.raw_response = 'PRIVATE_MODEL_RESPONSE';
 payload.chunks[0].status = 'CANDIDATE';
+payload.chunks[0].mention_record_ids = ['reviewable-mention'];
 payload.chunks[0].raw_response = 'PRIVATE_MODEL_RESPONSE';
 payload.chunks[0].validation_attempts = [
   {attempt: 1, status: 'REJECTED', finding_codes: ['ENDPOINT_OUTSIDE_EVIDENCE'], response_checksum: 'a'.repeat(64), raw_response: 'PRIVATE_MODEL_RESPONSE'},
@@ -222,6 +224,9 @@ assert.match(visible, /第二次校验通过/);
 assert.match(visible, /人工审核和明确发布/);
 assert.ok(!visible.includes('PRIVATE_MODEL_RESPONSE'));
 assert.ok(!elements.constructionOutput.textContent.includes('PRIVATE_MODEL_RESPONSE'));
+assert.equal($('construction-next').hidden, false);
+assert.equal($('construction-next-button').hidden, false);
+assert.match($('construction-next-note').textContent, /已生成可审核记录/);
 assert.equal(requests.length, 1);
 """, upload=True)
 
@@ -249,7 +254,51 @@ failed.chunks[0].validation_attempts = [1, 2].map(attempt => ({attempt, status: 
 showConstructionResult(failed);
 assert.match($('construction-validation-summary').innerHTML, /校验仍未通过/);
 assert.ok(!$('construction-validation-summary').innerHTML.includes('第二次校验通过'));
-""")
+// A previous completion must disappear while the next upload is pending.
+$('construction-next').hidden = false;
+async function uploadAndFinish(payload) {
+  $('document-file').files = [{size: 8, arrayBuffer: async () => new Uint8Array([1]).buffer}];
+  const index = requests.length;
+  const pending = constructKnowledge();
+  assert.equal($('construction-next').hidden, true);
+  assert.equal($('construction-next-button').hidden, false);
+  await flush();
+  assert.equal(requests.length, index + 1);
+  requests[index].resolve(payload);
+  await pending;
+  assert.equal(state.constructionBusy, false);
+  assert.equal($('construct-button').disabled, false);
+  assert.equal($('construction-next').hidden, false);
+}
+await uploadAndFinish(failed);
+assert.equal($('construction-next-button').hidden, true);
+assert.match($('construction-next-note').textContent, /抽取未通过本体或证据校验/);
+assert.match($('construction-next-note').textContent, /本次没有新增图谱知识/);
+assert.ok(!$('construction-next-note').textContent.includes('下一步先确认'));
+// Validation may succeed without finding any reviewable records.
+await uploadAndFinish(legacy);
+assert.equal($('construction-next-button').hidden, true);
+assert.match($('construction-next-note').textContent, /未抽取到可审核实体或事实/);
+assert.ok(!$('construction-next-note').textContent.includes('未通过'));
+// A fact alone is sufficient, even when a different chunk failed validation.
+const mixed = result(); mixed.extraction_mode = 'LLM';
+mixed.chunks[0].status = 'CANDIDATE';
+mixed.chunks[0].assertion_record_ids = ['reviewable-fact'];
+mixed.chunks.push({...failed.chunks[0], chunk_id: 'rejected-chunk'});
+await uploadAndFinish(mixed);
+assert.equal($('construction-next-button').hidden, false);
+assert.match($('construction-next-button').textContent, /确认实体与审核事实/);
+assert.match($('construction-next-note').textContent, /已生成可审核记录/);
+assert.match($('construction-next-note').textContent, /另有 1 个片段抽取未通过校验/);
+await uploadAndFinish(legacy);
+assert.equal($('construction-next-button').hidden, true);
+// Source-only completion deliberately proceeds to expert import without candidates.
+prepareDemoUpload('authoritative_source');
+await uploadAndFinish(result());
+assert.equal($('construction-next-button').hidden, false);
+assert.match($('construction-next-button').textContent, /导入并发布专家实例/);
+assert.match($('construction-next-note').textContent, /权威来源入库完成/);
+""", upload=True)
 
     def test_job_details_share_validation_summary_and_discard_old_identity_result(self) -> None:
         self.run_js(r"""

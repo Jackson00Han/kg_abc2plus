@@ -67,6 +67,7 @@ from .knowledge_contracts import (
     PublishedGraphQualityResponse,
     ReviewBatchRequest,
     ReviewBatchResponse,
+    ReviewAssessmentResponse,
     ReviewQueueResponse,
     RecordRevisionHistoryResponse,
     RollbackRequest,
@@ -905,6 +906,21 @@ def create_app(
             identity,
             OperationKind.KNOWLEDGE_REVISION_HISTORY,
             {"record_id": record_id, "request": {"limit": limit}},
+        )
+
+    @app.get(
+        "/v1/knowledge/review-assessments/{record_id}",
+        response_model=ReviewAssessmentResponse,
+    )
+    async def knowledge_review_assessment(
+        request: Request,
+        record_id: KnowledgeRecordPath,
+        identity: IdentityDependency,
+        expected_revision: Annotated[int, Query(ge=1, le=2_147_483_647)],
+    ) -> Any:
+        return await run_operation(
+            request, identity, OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT,
+            {"record_id": record_id, "expected_revision": expected_revision},
         )
 
     @app.get(
