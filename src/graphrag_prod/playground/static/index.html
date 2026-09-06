@@ -355,6 +355,11 @@
     .governance-hero p { max-width: 760px; margin: 6px 0 0; color: var(--muted); }
     .capability-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: 430px; }
     .capability { padding: 4px 7px; border-radius: 999px; color: var(--green); background: var(--green-soft); font-family: var(--mono); font-size: 8px; }
+    .reset-dialog { width: min(520px, calc(100vw - 40px)); padding: 24px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-small); }
+    .reset-dialog::backdrop { background: rgb(10 30 38 / 65%); }
+    .reset-dialog h2 { margin: 0 0 12px; color: var(--strong); }
+    .reset-dialog p { line-height: 1.7; }
+    .reset-dialog [hidden] { display: none !important; }
     .governance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .construction-flow-nav { position: sticky; top: 66px; z-index: 20; margin-bottom: 14px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-small); }
     .construction-flow-tabs, .construction-flow-steps { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -652,6 +657,7 @@
           <div class="field"><label for="governance-persona-select">当前治理身份（JWT tenant / groups / scopes）</label><select id="governance-persona-select"></select></div>
           <div class="capability-list" id="capability-list" aria-label="工作台能力" style="margin-top:9px"></div>
           <p id="governance-scope-note" style="font-family:var(--mono);font-size:8px;text-align:right"></p>
+          <div class="workbench-actions"><button class="button danger" id="local-reset-button" type="button" hidden>全部重新开始</button></div>
         </div>
       </div>
 
@@ -792,6 +798,18 @@
   </section>
 
   <div class="toast" id="toast" role="status"></div>
+  <dialog class="reset-dialog" id="local-reset-dialog" aria-labelledby="local-reset-title" aria-describedby="local-reset-description">
+    <h2 id="local-reset-title">全部重新开始</h2>
+    <p id="local-reset-description">将清空本地演示环境所有身份的本体、权威实例、上传文档、抽取结果、审核、发布及历史记录，恢复初始状态。此操作无法撤销。</p>
+    <p id="local-reset-retained">自带的 10 份文档、120 个 Chunk 检索示例将保留；已下载到电脑的文件不受影响。</p>
+    <p id="local-reset-status" role="status" aria-live="polite"></p>
+    <div class="workbench-actions">
+      <button class="button" id="local-reset-cancel" type="button">取消</button>
+      <button class="button danger" id="local-reset-confirm" type="button">确认清空并重新开始</button>
+      <button class="button" id="local-reset-check" type="button" hidden>检查重置状态</button>
+      <button class="button primary" id="local-reset-reload" type="button" hidden>刷新页面，从 01 开始</button>
+    </div>
+  </dialog>
 
   <script>
     (() => {
@@ -799,6 +817,7 @@
 
       const state = {
         bootstrap: null,
+        localReset: null,
         selectedQuestion: null,
         retrieval: null,
         raw: null,
@@ -1017,7 +1036,12 @@
           };
           const error = new Error(messages[response.status] || `请求失败（HTTP ${response.status}）`);
           error.status = response.status;
+          error.code = payload?.error?.code;
           error.payload = payload && typeof payload === 'object' ? {request_id: payload.request_id} : null;
+          if (state.localReset && url.startsWith('/v1/') && ['PLAYGROUND_RESET_STALE', 'PLAYGROUND_RESET_RUNNING', 'PLAYGROUND_RESET_FAILED'].includes(error.code)) {
+            handleLocalResetConflict(error.code);
+            error.message = '本地演示环境已重置或正在恢复，请按页面提示刷新后继续。';
+          }
           throw error;
         }
         return payload;
@@ -1033,11 +1057,159 @@
       }
 
       async function apiRequest(url, options = {}) {
+        if (state.localReset?.blocked) throw new Error('正在确认或恢复演示环境，请先完成页面上的重置操作。');
         const persona = currentPersona();
         if (!persona) throw new Error('请先选择测试身份');
         const token = await sessionToken(persona.id);
+        if (state.localReset?.blocked) throw new Error('演示环境正在恢复，本次操作未提交。');
         const headers = {Authorization: `Bearer ${token}`, ...(options.headers || {})};
+        if (state.localReset && url.startsWith('/v1/') && !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
+          headers['X-Playground-Generation'] = state.localReset.pageGeneration;
+        }
         return jsonRequest(url, {...options, headers});
+      }
+
+      const RESET_OPERATION_KEY = 'graphrag-playground-reset-operation';
+      const RESET_RETURN_KEY = 'graphrag-playground-reset-return';
+
+      function resetStoredOperation() {
+        try { return JSON.parse(sessionStorage.getItem(RESET_OPERATION_KEY) || 'null'); } catch (_) { return null; }
+      }
+
+      function renderResetDialog(phase, message) {
+        const reset = state.localReset;
+        if (!reset) return;
+        reset.phase = phase;
+        reset.blocked = true;
+        $('local-reset-button').disabled = true;
+        $('local-reset-title').textContent = {confirm: '全部重新开始', running: '正在重新开始', failed: '重置未完成', unknown: '正在确认重置状态', stale: '演示环境已更新'}[phase] || '全部重新开始';
+        $('local-reset-description').hidden = phase !== 'confirm';
+        $('local-reset-retained').hidden = phase !== 'confirm';
+        $('local-reset-status').textContent = message;
+        $('local-reset-cancel').hidden = !['confirm', 'not-started'].includes(phase);
+        $('local-reset-confirm').hidden = !['confirm', 'failed', 'not-started'].includes(phase);
+        $('local-reset-confirm').textContent = phase === 'failed' ? '重新确认重置' : phase === 'not-started' ? '重新确认' : '确认清空并重新开始';
+        $('local-reset-check').hidden = !['running', 'unknown'].includes(phase);
+        $('local-reset-reload').hidden = phase !== 'stale';
+        const dialog = $('local-reset-dialog');
+        if (!dialog.open) dialog.showModal();
+      }
+
+      function openLocalReset() {
+        const reset = state.localReset;
+        if (!reset || ['running', 'unknown', 'stale'].includes(reset.phase)) return;
+        renderResetDialog('confirm', '确认后，所有身份均需从 01 定义并发布本体重新开始。');
+        $('local-reset-cancel').hidden = reset.status?.state === 'FAILED';
+        $(reset.status?.state === 'FAILED' ? 'local-reset-confirm' : 'local-reset-cancel').focus();
+      }
+
+      function cancelLocalReset() {
+        const reset = state.localReset;
+        if (!reset || !['confirm', 'not-started'].includes(reset.phase) || reset.status?.state === 'FAILED') return;
+        reset.phase = 'idle';
+        reset.blocked = false;
+        $('local-reset-button').disabled = false;
+        $('local-reset-dialog').close();
+      }
+
+      function clearResetBrowserState() {
+        try {
+          const keys = Array.from({length: sessionStorage.length}, (_, index) => sessionStorage.key(index));
+          keys.filter(key => key && (key.startsWith('graphrag-construction-') || key.startsWith('graphrag-document-retirement-operation:') || key === RESET_OPERATION_KEY)).forEach(key => sessionStorage.removeItem(key));
+          sessionStorage.setItem(RESET_RETURN_KEY, JSON.stringify({persona_id: currentPersona()?.id || null}));
+        } catch (_) {}
+      }
+
+      function returnAfterReset() {
+        if (state.localReset?.reloading) return;
+        if (state.localReset) state.localReset.reloading = true;
+        clearResetBrowserState();
+        location.reload();
+      }
+
+      function applyLocalResetStatus(status) {
+        const reset = state.localReset;
+        reset.status = status;
+        if (status.state === 'RUNNING') {
+          renderResetDialog('running', '正在清空构建数据并恢复初始演示环境。业务操作暂时不可用；刷新页面后仍可查看进度。');
+        } else if (status.state === 'FAILED') {
+          renderResetDialog('failed', `重置未完成，当前环境暂不可用。可以重新确认后重试。${status.error_code ? ` 错误编号：${status.error_code}` : ''}`);
+        } else if (reset.pending && status.reset_id === reset.pending.operation_id && status.state === 'SUCCEEDED') {
+          renderResetDialog('running', '已恢复初始状态，正在返回 01。');
+          returnAfterReset();
+        } else if (status.generation !== reset.pageGeneration) {
+          renderResetDialog('stale', '演示环境已在其他页面重新开始。旧页面的内容不能继续提交，请刷新后从 01 开始。');
+        } else if (reset.phase === 'unknown') {
+          reset.pending = null;
+          try { sessionStorage.removeItem(RESET_OPERATION_KEY); } catch (_) {}
+          renderResetDialog('not-started', '服务端尚未接受本次重置。现有数据未因本次操作清空；可取消或重新确认。');
+        }
+      }
+
+      function scheduleLocalResetStatus() {
+        const reset = state.localReset;
+        if (!reset || reset.reloading) return;
+        window.clearTimeout(reset.timer);
+        reset.timer = window.setTimeout(() => checkLocalResetStatus(), ['running', 'unknown'].includes(reset.phase) ? 1500 : 5000);
+      }
+
+      async function checkLocalResetStatus() {
+        const reset = state.localReset;
+        if (!reset || reset.checking || reset.reloading) return;
+        reset.checking = true;
+        try {
+          const status = await jsonRequest('/playground/reset', {headers: {'X-Playground-Reset-Token': reset.controlToken}});
+          applyLocalResetStatus(status);
+        } catch (error) {
+          if (error.status === 403) renderResetDialog('stale', '本地服务已重新加载，当前页面的控制会话已失效。请刷新页面后继续。');
+          else if (reset.blocked && reset.phase !== 'confirm') renderResetDialog('unknown', '暂时无法确认服务端状态。业务操作保持暂停；恢复连接后检查状态，不会自动重复提交重置。');
+        } finally {
+          reset.checking = false;
+          scheduleLocalResetStatus();
+        }
+      }
+
+      async function confirmLocalReset() {
+        const reset = state.localReset;
+        if (!reset) return;
+        if (['failed', 'not-started'].includes(reset.phase)) { openLocalReset(); return; }
+        if (reset.phase !== 'confirm') return;
+        const operation = {operation_id: globalThis.crypto.randomUUID(), expected_generation: reset.status.generation};
+        reset.pending = operation;
+        try { sessionStorage.setItem(RESET_OPERATION_KEY, JSON.stringify(operation)); } catch (_) {}
+        renderResetDialog('running', '正在提交重置请求，请稍候。');
+        try {
+          const status = await jsonRequest('/playground/reset', {
+            method: 'POST', headers: {'Content-Type': 'application/json', 'X-Playground-Reset-Token': reset.controlToken},
+            body: JSON.stringify({confirmation: 'RESET_ALL', ...operation}),
+          });
+          applyLocalResetStatus(status);
+        } catch (error) {
+          renderResetDialog('unknown', error.code === 'PLAYGROUND_RESET_BUSY'
+            ? '仍有请求在执行，尚未开始重置。正在检查环境状态。'
+            : '未能确认重置请求的结果，正在查询服务端状态；不会自动再次提交。');
+          await checkLocalResetStatus();
+        }
+        scheduleLocalResetStatus();
+      }
+
+      function handleLocalResetConflict(code) {
+        if (code === 'PLAYGROUND_RESET_STALE') renderResetDialog('stale', '演示环境已经更新。旧页面的操作已被阻止，请刷新后继续。');
+        else renderResetDialog('unknown', '演示环境正在恢复，业务操作暂不可用。正在检查状态。');
+        checkLocalResetStatus();
+      }
+
+      function initializeLocalReset(config) {
+        if (!config?.enabled) return;
+        state.localReset = {controlToken: config.control_token, pageGeneration: config.generation,
+          status: config, phase: 'idle', blocked: false, pending: resetStoredOperation(), timer: null, checking: false};
+        $('local-reset-button').hidden = false;
+        if (state.localReset.pending && config.state === 'READY') {
+          try { sessionStorage.removeItem(RESET_OPERATION_KEY); } catch (_) {}
+          state.localReset.pending = null;
+        }
+        applyLocalResetStatus(config);
+        scheduleLocalResetStatus();
       }
 
       function parseJsonEditor(element, label) {
@@ -1226,7 +1398,7 @@
 
       async function run() {
         const queryText = elements.query.value.trim();
-        if (state.busy || !queryText) return;
+        if (state.busy || !queryText || state.localReset?.blocked) return;
         let payload;
         try {
           payload = requestPayload(queryText);
@@ -1243,7 +1415,9 @@
         const started = performance.now();
         try {
           const token = await sessionToken(personaId, {signal: controller.signal});
+          if (state.localReset?.blocked) return;
           const headers = {'Authorization': `Bearer ${token}`, 'Content-Type':'application/json'};
+          if (state.localReset) headers['X-Playground-Generation'] = state.localReset.pageGeneration;
           const retrieval = await jsonRequest('/v1/retrieval', {
             method: 'POST', headers, body: JSON.stringify(payload), signal: controller.signal,
           });
@@ -3145,7 +3319,24 @@
           const classes = [...new Set(bootstrap.questions.map(item => item.question_class))];
           elements.classFilter.insertAdjacentHTML('beforeend', classes.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(classLabels[value] || value)}</option>`).join(''));
           selectQuestion(bootstrap.defaults.question_id, {closeDrawer:false});
+          let resetReturn = null;
+          try {
+            resetReturn = JSON.parse(sessionStorage.getItem(RESET_RETURN_KEY) || 'null');
+            sessionStorage.removeItem(RESET_RETURN_KEY);
+          } catch (_) {}
+          if (resetReturn && bootstrap.personas.some(item => item.id === resetReturn.persona_id)) {
+            elements.persona.value = resetReturn.persona_id;
+            $('governance-persona-select').value = resetReturn.persona_id;
+          }
           renderQuestions(); renderIdentity(); updateMode();
+          initializeLocalReset(bootstrap.local_reset);
+          if (state.localReset?.blocked || state.localReset?.reloading) return;
+          if (resetReturn) {
+            switchWorkspace('governance');
+            showConstructionFlow('baseline', 'step-ontology');
+            showToast('已恢复初始状态，请从 01 开始。');
+            return;
+          }
           await run();
         } catch (error) {
           setConnection('error', '内核不可用');
@@ -3186,6 +3377,15 @@
       });
       $('retrieval-nav').addEventListener('click', () => switchWorkspace('retrieval'));
       $('governance-nav').addEventListener('click', () => switchWorkspace('governance'));
+      $('local-reset-button').addEventListener('click', openLocalReset);
+      $('local-reset-cancel').addEventListener('click', cancelLocalReset);
+      $('local-reset-confirm').addEventListener('click', confirmLocalReset);
+      $('local-reset-check').addEventListener('click', checkLocalResetStatus);
+      $('local-reset-reload').addEventListener('click', returnAfterReset);
+      $('local-reset-dialog').addEventListener('cancel', event => {
+        event.preventDefault();
+        cancelLocalReset();
+      });
       $('ontology-reset').addEventListener('click', () => {
         elements.ontologyEditor.value = JSON.stringify(state.bootstrap.defaults.industrial_tbox_template, null, 2);
       });

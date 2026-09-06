@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from graphrag_prod.api.backend import ProviderUsage, QueryEmbedding
 from graphrag_prod.retrieval import RetrievalLimits
 from .industrial_demo import get_industrial_demo_kit
+from .reset import PlaygroundResetController
 
 PLAYGROUND_ISSUER = "sample-graphrag-local-playground"
 PLAYGROUND_AUDIENCE = "sample-graphrag-local-api"
@@ -434,13 +435,21 @@ class SessionRequest(BaseModel):
     persona_id: str = Field(min_length=10, max_length=10, pattern=r"^persona-[0-9]{2}$")
 
 
-def attach_playground_routes(app: FastAPI, catalog: PlaygroundCatalog) -> None:
+def attach_playground_routes(
+    app: FastAPI, catalog: PlaygroundCatalog,
+    *, reset_controller: PlaygroundResetController | None = None,
+) -> None:
     """Attach the local UI without changing production API authentication."""
 
     if not isinstance(app, FastAPI):
         raise TypeError("app must be a FastAPI instance")
     if not isinstance(catalog, PlaygroundCatalog):
         raise TypeError("catalog must be a PlaygroundCatalog")
+    if reset_controller is not None:
+        if not isinstance(reset_controller, PlaygroundResetController):
+            raise TypeError("reset_controller must be PlaygroundResetController")
+        reset_controller.install_middleware(app)
+        reset_controller.attach_routes(app)
     page = (
         files("graphrag_prod.playground")
         .joinpath("static")
@@ -472,7 +481,10 @@ def attach_playground_routes(app: FastAPI, catalog: PlaygroundCatalog) -> None:
     @app.get("/playground/bootstrap", include_in_schema=False)
     async def playground_bootstrap(response: Response) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
-        return catalog.bootstrap()
+        payload = catalog.bootstrap()
+        if reset_controller is not None:
+            payload["local_reset"] = reset_controller.bootstrap()
+        return payload
 
     @app.get("/playground/demo-files/{filename}", include_in_schema=False)
     async def playground_demo_file(filename: str) -> Response:

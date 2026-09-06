@@ -3,8 +3,9 @@
 The local Playground is a one-command, browser-based way to exercise the
 validated GraphRAG retrieval and governed property-graph construction paths. It
 runs against a new disposable Neo4j container, loads the committed
-`dev-corpus-v1`, and sends every action through the real authenticated `/v1`
-API. It remains a retrieval service: it does not generate a final answer.
+`dev-corpus-v1`, and sends normal knowledge and query actions through the real
+authenticated `/v1` API. Explicit local environment reset is a separate
+maintenance control described below. It does not generate a final answer.
 
 ## Run it
 
@@ -77,7 +78,7 @@ offsets. It supplies no entity or relationship suggestions, and never repairs
 model output: JSON, exact evidence spans, endpoint containment and the T-Box
 are still strictly validated before creating any candidate.
 
-The current `v4-validation-feedback` extraction prompt also makes explicit that
+The current `v5-endpoint-context` extraction prompt also makes explicit that
 every relationship endpoint and property subject must have an actually
 declared mention inside its evidence span. Numeric/code evidence must include
 the subject as well as the value/unit. The clarification and its observed
@@ -114,6 +115,37 @@ are retained in
 The diagnosed cause, controlled provider comparisons and corrected acceptance
 are recorded separately in
 [`validation/extraction-timeout-correction.md`](validation/extraction-timeout-correction.md).
+
+## Start the whole exercise again
+
+The knowledge-construction page has one **全部重新开始** button. Its confirmation
+lists the full scope: all personas' ontologies, authoritative instances, uploaded
+documents, extraction/review records, publications and history are deleted. The
+original ten public fixture documents and 120 Chunks are restored; downloaded
+local files are unaffected. On success the page clears stale browser operation
+state, preserves the selected persona, and returns to step 01. Cancellation does
+not change data. No reset occurs merely by starting or reloading the service.
+
+This control exists only in the explicitly disposable local launcher. It uses a
+separate same-origin control token and is not a production deletion endpoint or
+a tenant-scoped governance action. It affects the entire local demo database,
+including other personas. Outstanding requests and actual background workers
+prevent reset; queued abandoned requests cannot write into the new environment.
+The page shows reset status across browser refreshes and offers explicit retry
+if restoration fails. Business operations remain unavailable until restoration
+succeeds. A server process restart is different from a browser refresh: this
+maintenance job is process-local, and an interrupted, incomplete database still
+fails the normal readiness checks.
+
+Reset reuses validated fixture embeddings captured before any deletion; it
+makes no provider calls. Schema and physical indexes remain installed. For
+direct local API clients, read the current `local_reset.generation` from
+`/playground/bootstrap` and send `X-Playground-Generation` on `/v1` write requests,
+in addition to the usual JWT. Refresh stale clients after a reset or service
+restart. The browser handles this automatically.
+
+Implementation boundaries and verification are recorded in
+[the reset validation report](validation/playground-reset.md).
 
 ## What the page exercises
 

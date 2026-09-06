@@ -79,6 +79,7 @@ from graphrag_prod.retrieval import (
     RetrievalRequest as DomainRetrievalRequest,
 )
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
+from scripts.playground_reset_store import capture_reset_embeddings, reset_playground_corpus
 
 
 _PLAYGROUND_CONSTRUCTION_LIMITS = {
@@ -758,9 +759,12 @@ def build_playground_app(
     embedder: _OpenAICompatibleEmbedder,
     extraction_model: str = "qwen-plus",
     reuse_existing_corpus: bool = False,
+    enable_reset: bool = False,
 ):
     if not isinstance(reuse_existing_corpus, bool):
         raise ValueError("reuse_existing_corpus must be a boolean")
+    if not isinstance(enable_reset, bool):
+        raise ValueError("enable_reset must be a boolean")
     fixture = (
         _reuse_corpus(driver, database, embedder)
         if reuse_existing_corpus
@@ -857,6 +861,15 @@ def build_playground_app(
         ),
         knowledge=knowledge_operations,
     )
+    reset_controller = None
+    if enable_reset:
+        from graphrag_prod.playground.reset import PlaygroundResetController
+
+        cached_fixture = capture_reset_embeddings(driver, database, fixture, embedder)
+        reset_controller = PlaygroundResetController(
+            lambda: reset_playground_corpus(driver, database, cached_fixture),
+        )
+        backend = reset_controller.wrap_backend(backend)
     app = create_app(
         authenticator=JWTAuthenticator(
             JWTAuthConfig(
@@ -883,7 +896,7 @@ def build_playground_app(
         ),
         shutdown_callbacks=(driver.close,),
     )
-    attach_playground_routes(app, catalog)
+    attach_playground_routes(app, catalog, reset_controller=reset_controller)
     app.state.playground_gold_questions = tuple(fixture.build.questions)
     return app
 
@@ -901,6 +914,8 @@ def _run_http_check(app: Any) -> None:
         if bootstrap_response.status_code != 200:
             raise RuntimeError("Playground bootstrap check failed")
         bootstrap = bootstrap_response.json()
+        if bootstrap.get("local_reset", {}).get("enabled"):
+            client.headers["X-Playground-Generation"] = bootstrap["local_reset"]["generation"]
         personas = {item["id"]: item for item in bootstrap["personas"]}
         tokens: dict[str, str] = {}
         for persona_id in personas:
@@ -1184,6 +1199,9 @@ def main() -> None:
             embedder=embedder,
             extraction_model=extraction_model,
             reuse_existing_corpus=args.reuse_existing_corpus,
+            # main() already requires a loopback URI and the explicit disposable
+            # database opt-in. Production create_app() never installs this API.
+            enable_reset=True,
         )
     except Exception:
         driver.close()
