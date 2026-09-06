@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime
+from importlib.resources import files
+import json
+import shutil
+import subprocess
 import time
 import unittest
 
@@ -591,17 +595,20 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
 
     def test_literal_import_and_review_http_contracts_are_raw_only(self) -> None:
         knowledge = _Knowledge()
-        app = create_app(
-            authenticator=JWTAuthenticator(
-                JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
-            ),
-            backend=GraphRAGApplicationBackend(
-                documents=_Documents(),
-                queries=_Queries(),
-                readiness=_Readiness(),
-                knowledge=knowledge,
-            ),
-        )
+
+        def build_app():
+            return create_app(
+                authenticator=JWTAuthenticator(
+                    JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)
+                ),
+                backend=GraphRAGApplicationBackend(
+                    documents=_Documents(),
+                    queries=_Queries(),
+                    readiness=_Readiness(),
+                    knowledge=knowledge,
+                ),
+            )
+
         quote = "Pump-7 pressure was 100 psi at 2025-01-02T03:04:05Z"
         mention = {
             "source_key": "expert-pump-7",
@@ -638,7 +645,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
             },
         }
         auth = _headers()
-        with TestClient(app) as client:
+        with TestClient(build_app()) as client:
             accepted = client.post(
                 "/v1/knowledge/authoritative:import",
                 headers=auth,
@@ -673,6 +680,133 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
         self.assertEqual(parsed.assertions[0].literal.raw_literal, "100")
         self.assertEqual(parsed.assertions[0].literal.raw_unit, "psi")
         self.assertFalse(hasattr(parsed.assertions[0].literal, "canonical_value"))
+
+        # Exercise the actual page serializer and submit handler against the
+        # strict HTTP contract, including response-only entity IDs on all paths.
+        entity = {**mention["entity"], "entity_id": "entity-1", "aliases": ["P7"]}
+        semantics = {
+            "datatype": "DECIMAL",
+            "raw_value": "100",
+            "raw_unit": "psi",
+            "raw_observed_at": "2025-01-02T03:04:05Z",
+            "canonical_value": "689.4757293168",
+            "canonical_unit": "kPa",
+        }
+        records = [
+            {
+                "record_kind": "ENTITY_MENTION", "record_id": "mention-1",
+                "revision": 1, "confidence": 0.99, "entity": entity,
+            },
+            {
+                "record_kind": "ASSERTION", "record_id": "pressure-1",
+                "revision": 1, "confidence": 0.99, "subject": entity,
+                "subject_mention_revision_id": "mention-revision-1",
+                "predicate": "PRESSURE", "literal_semantics": semantics,
+            },
+            {
+                "record_kind": "ASSERTION", "record_id": "contains-1",
+                "revision": 1, "confidence": 0.99, "subject": entity,
+                "subject_mention_revision_id": "mention-revision-1",
+                "predicate": "CONTAINS",
+                "object_entity": {
+                    **entity, "entity_id": "entity-2", "canonical_key": "asset-id:S-7",
+                    "canonical_name": "Seal-7", "aliases": [],
+                },
+                "object_mention_revision_id": "mention-revision-2",
+                "relationship_properties": [{
+                    "property_value_id": "property-1", "name": "PRESSURE",
+                    "literal_semantics": semantics, "evidence": assertion["evidence"],
+                    "confidence": 0.98,
+                }],
+            },
+        ]
+        page = files("graphrag_prod.playground").joinpath("static/index.html").read_text()
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for the UI/API contract check")
+        generated = subprocess.run(
+            [node, "-e", r"""
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const {page, records} = JSON.parse(fs.readFileSync(0, 'utf8'));
+const original = JSON.stringify(records);
+const requests = [];
+let enabled = true;
+const context = {
+  state: {reviews: records, approvedRevisions: new Set()},
+  elements: {
+    publicationRevisions: {},
+    reviewList: {querySelector(selector) {
+      const index = Number(selector.match(/="(\d+)"/)[1]);
+      return selector.includes('enabled') ? {checked: enabled} :
+        {value: JSON.stringify(vm.runInContext(`reviewEdit(state.reviews[${index}])`, context))};
+    }},
+  },
+  parseJsonEditor: editor => JSON.parse(editor.value),
+  apiRequest: async (path, options) => {
+    assert.equal(path, '/v1/knowledge/reviews:batch');
+    assert.equal(options.method, 'POST');
+    requests.push(JSON.parse(options.body));
+    return {outcomes: []};
+  },
+  showToast: () => {}, loadReviews: async () => {}, loadActiveDocuments: async () => {},
+};
+vm.createContext(context);
+for (const [start, end] of [
+  ['function literalSemantics(', 'function literalSemanticsMarkup('],
+  ['function reviewEdit(', 'function resolutionMarkup('],
+  ['async function submitReviews(', 'function activePublication('],
+]) vm.runInContext(page.slice(page.indexOf(start), page.indexOf(end)), context);
+(async () => {
+  await vm.runInContext("submitReviews('APPROVED', [0, 1, 2])", context);
+  enabled = false;
+  await vm.runInContext("submitReviews('APPROVED', [0, 1, 2])", context);
+  assert.equal(requests.length, 2);
+  assert.equal(JSON.stringify(records), original, 'edit generation mutated the queue');
+  process.stdout.write(JSON.stringify(requests));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""],
+            input=json.dumps({"page": page, "records": records}),
+            text=True, capture_output=True, timeout=15, check=True,
+        )
+        edited, status_only = json.loads(generated.stdout)
+        with TestClient(build_app()) as client:
+            for payload in (edited, status_only):
+                with self.subTest(editing=payload is edited):
+                    response = client.post(
+                        "/v1/knowledge/reviews:batch", headers=auth, json=payload,
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+            # Explicitly supplied readonly fields must still be rejected.
+            for index, field in (
+                (0, "entity"), (1, "subject"), (2, "subject"), (2, "object_entity")
+            ):
+                invalid = json.loads(json.dumps(edited))
+                edit_key = "mention_edit" if index == 0 else "assertion_edit"
+                invalid["decisions"][index][edit_key][field]["entity_id"] = "entity-1"
+                with self.subTest(index=index, field=field):
+                    response = client.post(
+                        "/v1/knowledge/reviews:batch", headers=auth, json=invalid,
+                    )
+                    self.assertEqual(response.status_code, 422)
+        self.assertEqual(len(knowledge.calls), 3)
+        decisions = knowledge.calls[1][2].decisions
+        self.assertEqual(decisions[0].mention_edit.entity.aliases, ("P7",))
+        self.assertEqual(decisions[1].assertion_edit.literal.raw_unit, "psi")
+        self.assertEqual(decisions[1].assertion_edit.literal.raw_literal, "100")
+        self.assertEqual(
+            decisions[1].assertion_edit.literal.raw_observed_at,
+            "2025-01-02T03:04:05Z",
+        )
+        self.assertEqual(
+            decisions[2].assertion_edit.object_entity.canonical_key, "asset-id:S-7"
+        )
+        prop = decisions[2].assertion_edit.relationship_properties[0]
+        self.assertEqual(prop.literal.raw_unit, "psi")
+        self.assertEqual(prop.evidence.quoted_text, quote)
+        for decision in knowledge.calls[2][2].decisions:
+            self.assertIsNone(decision.mention_edit)
+            self.assertIsNone(decision.assertion_edit)
 
     def test_all_governance_routes_share_auth_runner_and_typed_backend(self) -> None:
         knowledge = _Knowledge()

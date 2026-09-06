@@ -1745,17 +1745,25 @@
       }
 
       function reviewEdit(item) {
+        // Response identities also contain a server-owned entity_id. Only
+        // KnowledgeEntityInput fields belong in a strict review edit request.
+        const entityInput = entity => ({
+          entity_type: entity.entity_type,
+          canonical_key: entity.canonical_key,
+          canonical_name: entity.canonical_name,
+          aliases: [...(entity.aliases || [])],
+        });
         if (item.record_kind === 'ENTITY_MENTION') {
-          return {entity: item.entity, confidence: item.confidence};
+          return {entity: entityInput(item.entity), confidence: item.confidence};
         }
         const edit = {
-          subject: item.subject,
+          subject: entityInput(item.subject),
           predicate: item.predicate,
           subject_mention_revision_id: item.subject_mention_revision_id,
           confidence: item.confidence,
         };
         if (item.object_entity) {
-          edit.object_entity = item.object_entity;
+          edit.object_entity = entityInput(item.object_entity);
           edit.object_mention_revision_id = item.object_mention_revision_id;
           edit.relationship_properties = (item.relationship_properties || []).map(value => {
             const semantics = literalSemantics(value);
