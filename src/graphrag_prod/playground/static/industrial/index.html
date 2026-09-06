@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>工业知识工作台 · Industrial Knowledge</title>
+    <link rel="stylesheet" href="/industrial/assets/workbench.css" />
+    <script defer src="/industrial/assets/vendor/cytoscape.min.js"></script>
+    <script
+      defer
+      src="/industrial/assets/vendor/cytoscape-dagre.min.js"
+    ></script>
+    <script type="module" src="/industrial/assets/app.mjs"></script>
+  </head>
+  <body>
+    <aside class="rail">
+      <a class="brand" href="/industrial" aria-label="工业知识工作台首页"
+        ><svg viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M7 8L25 8L16 25Z" />
+          <circle cx="7" cy="8" r="4" />
+          <circle cx="25" cy="8" r="4" />
+          <circle cx="16" cy="25" r="4" /></svg
+        ><span>知序<span class="brand-sub">INDUSTRIAL KNOWLEDGE</span></span></a
+      >
+      <div class="rail-caption">知识工作空间</div>
+      <nav aria-label="工作台导航">
+        <button class="nav-item active" data-panel="explore">
+          <span class="nav-symbol">⌘</span>图谱探索<span class="nav-dot"></span>
+        </button>
+        <button class="nav-item" data-panel="search">
+          <span class="nav-symbol">⌕</span>证据检索
+        </button>
+        <button class="nav-item" data-panel="sources">
+          <span class="nav-symbol">▤</span>来源资料
+        </button>
+        <button class="nav-item" data-panel="build">
+          <span class="nav-symbol">＋</span>知识构建
+        </button>
+      </nav>
+      <div class="rail-domain">
+        <span class="small-label">当前领域</span
+        ><strong>工业配电与设备运维</strong>
+        <p>从设备结构，追溯到事实与证据。</p>
+        <span class="domain-chip">CANALIS</span
+        ><span class="domain-chip">EVOPACT HVX</span>
+      </div>
+      <div class="rail-bottom">
+        <span class="connection-dot"></span
+        ><span id="service-status">正在连接服务</span
+        ><a href="/playground">原服务工作台 ↗</a>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="breadcrumb">
+          工作空间<span>/</span
+          ><strong id="breadcrumb-current">图谱探索</strong>
+        </div>
+        <div class="identity-picker">
+          <span>查看身份</span
+          ><select id="persona" aria-label="查看身份" disabled>
+            <option>正在加载…</option></select
+          ><button
+            id="refresh-session"
+            class="icon-button"
+            title="刷新身份与视图"
+            aria-label="刷新身份与视图"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+      <main>
+        <div id="global-message" class="message" role="status" hidden></div>
+        <section id="panel-explore" class="panel active" aria-label="图谱探索">
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">EXPLORE THE CONNECTIONS</div>
+              <h1>让工业知识，看得清楚。</h1>
+              <p>沿着设备、部件与诊断线索，找到每一条关系背后的依据。</p>
+            </div>
+            <div class="heading-marker">
+              <span>工业知识图谱</span
+              ><strong id="graph-version">连接中</strong>
+            </div>
+          </div>
+          <div class="scope-bar">
+            <label
+              >产品族<select id="family">
+                <option value="canalis-kt">Canalis KT · 母线槽</option>
+                <option value="evopact-hvx-up24">
+                  EvoPacT HVX · 真空断路器
+                </option>
+                <option value="">全部工业产品族</option>
+              </select></label
+            >
+            <label class="asset-filter"
+              >设备实例<select id="asset">
+                <option value="">当前产品族的可见设备</option>
+              </select></label
+            >
+            <label
+              >事实范围<select id="trust">
+                <option value="PUBLISHED_SECONDARY_INCLUSIVE">
+                  权威导入 + 次权威
+                </option>
+                <option value="AUTHORITATIVE_ONLY">仅权威导入</option>
+              </select></label
+            >
+            <button id="reload-graph" class="button secondary">
+              刷新图谱 ↻
+            </button>
+          </div>
+          <div class="graph-stats">
+            <div>
+              <span class="stat-icon green">◉</span
+              ><span
+                ><strong id="node-count">—</strong
+                ><small id="node-count-label">当前可见节点</small></span
+              >
+            </div>
+            <div>
+              <span class="stat-icon blue">⇄</span
+              ><span
+                ><strong id="edge-count">—</strong
+                ><small id="edge-count-label">有证据的关系</small></span
+              >
+            </div>
+            <div>
+              <span class="stat-icon purple">◇</span
+              ><span
+                ><strong id="type-count">—</strong
+                ><small>当前节点类型</small></span
+              >
+            </div>
+            <div class="stats-note">
+              <span class="pulse-dot"></span
+              ><span
+                >按身份授权的局部视图<br /><small
+                  >节点与来源资料分开计数</small
+                ></span
+              >
+            </div>
+          </div>
+          <div class="graph-workspace">
+            <div class="graph-stage">
+              <div class="graph-toolbar">
+                <div class="segmented" role="group" aria-label="图谱关系视图">
+                  <button data-view="composition" class="selected">
+                    组成层级</button
+                  ><button data-view="classification">分类层级</button
+                  ><button data-view="diagnostic">诊断关系</button
+                  ><button data-view="connection">电气连接</button
+                  ><button data-view="all">全部关系</button
+                  ><button data-view="ontology">本体模型</button>
+                </div>
+                <button
+                  id="fit-graph"
+                  class="icon-button"
+                  aria-label="适应画布"
+                  title="适应画布"
+                >
+                  ⛶
+                </button>
+              </div>
+              <div class="canvas-wrap">
+                <div
+                  id="graph-canvas"
+                  aria-label="可交互知识图谱：可点击节点和关系查看证据"
+                ></div>
+                <div id="graph-placeholder" class="graph-placeholder">
+                  <span class="loading-orbit"></span
+                  ><strong>正在载入有来源的知识关系</strong>
+                  <p>构建当前身份可见的图谱视图</p>
+                </div>
+                <div class="canvas-caption" id="canvas-caption">
+                  组成层级 · 滚轮缩放 · 拖动节点 · 点击查看依据
+                </div>
+                <div class="canvas-controls">
+                  <button id="zoom-in" aria-label="放大">＋</button
+                  ><button id="zoom-out" aria-label="缩小">−</button
+                  ><button
+                    id="export-graph"
+                    aria-label="导出当前图谱图片"
+                    title="导出当前可见图谱"
+                  >
+                    ↓
+                  </button>
+                </div>
+              </div>
+              <div class="graph-footer">
+                <div id="type-legend" class="type-legend"></div>
+                <div class="graph-key">
+                  <span><i></i>权威导入</span
+                  ><span><i class="dashed"></i>次权威</span>
+                </div>
+                <button id="next-page" class="text-button" hidden>
+                  下一页 →</button
+                ><span id="graph-timing" class="muted"></span>
+              </div>
+            </div>
+            <aside class="inspector" aria-label="节点与关系详情">
+              <div class="inspector-title">
+                <strong>知识详情</strong
+                ><span class="small-label">EVIDENCE</span>
+              </div>
+              <div id="inspector-content" class="inspector-content">
+                <div class="inspector-empty">
+                  <span class="inspect-illustration">◎</span>
+                  <h3>每条关系，都有来处。</h3>
+                  <p>
+                    点击图中的节点或连线，查看实体含义、事实来源和审核信息。
+                  </p>
+                  <div class="guide-step">
+                    <b>01</b><span>先选择产品族或具体设备</span>
+                  </div>
+                  <div class="guide-step">
+                    <b>02</b><span>按组成、连接或诊断关系浏览</span>
+                  </div>
+                  <div class="guide-step">
+                    <b>03</b><span>回到原文，核对事实与适用范围</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+          <div class="provenance-note">
+            <span>资料说明</span>
+            <p>
+              当前样例包含官方手册节选、项目整理参考和明确标记的合成设备记录。“权威导入”表示项目治理类别；项目整理材料尚未经过企业专家认证。层级位置不代表事实权威，诊断连线不表示已确认故障原因。
+            </p>
+          </div>
+        </section>
+        <section id="panel-search" class="panel" aria-label="证据检索" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">RETRIEVE WITH CONTEXT</div>
+              <h1>提一个问题，找到依据。</h1>
+              <p>
+                结合设备适用范围与原始资料，查看相关证据、引用和缺失的上下文。
+              </p>
+            </div>
+          </div>
+          <div class="search-layout">
+            <div>
+              <form id="search-form" class="card search-card">
+                <label for="question">你想了解什么？</label
+                ><textarea
+                  id="question"
+                  rows="4"
+                  maxlength="4000"
+                  placeholder="例如：这台设备的故障现象有哪些？哪些原因仍待验证？"
+                  required
+                ></textarea>
+                <div class="search-scope">
+                  <label
+                    >产品族<select id="search-family">
+                      <option value="canalis-kt">Canalis KT</option>
+                      <option value="evopact-hvx-up24">EvoPacT HVX</option>
+                      <option value="">全部工业产品族</option>
+                    </select></label
+                  ><label
+                    >设备编码（可选）<input
+                      id="search-asset"
+                      maxlength="64"
+                      placeholder="如 BKT-A01" /></label
+                  ><label class="check-line"
+                    ><input
+                      id="search-references"
+                      type="checkbox"
+                      checked
+                    />包含适用参考资料</label
+                  >
+                </div>
+                <div class="form-footer">
+                  <span>返回来源证据；当前服务未启用回答生成。</span
+                  ><button
+                    type="submit"
+                    class="button primary"
+                    id="search-submit"
+                  >
+                    检索证据 ↗
+                  </button>
+                </div>
+              </form>
+              <div
+                id="search-summary"
+                class="result-summary"
+                aria-live="polite"
+              ></div>
+              <div id="search-results" class="stack">
+                <div class="empty-state">
+                  输入问题后，相关片段会按证据相关性排列在这里。
+                </div>
+              </div>
+            </div>
+            <aside class="card context-guide">
+              <span class="small-label">提问提示</span>
+              <h3>问题越具体，证据越有用。</h3>
+              <p>
+                提供设备编码、时间或工况，可以减少相似设备与不同修订资料之间的混淆。
+              </p>
+              <button
+                class="question-example"
+                data-question="母线槽连接块出现温升异常，需要核对哪些记录？现有材料能否确认唯一原因？"
+                data-family="canalis-kt"
+                data-asset="BKT-A01"
+              >
+                母线槽温升异常有哪些诊断依据？ →</button
+              ><button
+                class="question-example"
+                data-question="真空断路器不能合闸时，哪些现象、控制条件和历史记录需要区分？"
+                data-family="evopact-hvx-up24"
+                data-asset="HVX-A01"
+              >
+                断路器不能合闸，如何区分候选原因？ →
+              </button>
+              <div class="soft-note">
+                手册的跨页条件和表格续行可能超出前五条结果。涉及完整操作条件时，请继续核对引用原文。
+              </div>
+            </aside>
+          </div>
+        </section>
+        <section id="panel-sources" class="panel" aria-label="来源资料" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">TRACEABLE SOURCES</div>
+              <h1>知识库的每一份依据。</h1>
+              <p>区分官方来源、项目参考、合成样例与用户补充资料。</p>
+            </div>
+            <div class="source-filters">
+              <select id="sources-family" aria-label="资料产品族">
+                <option value="">全部工业产品族</option>
+                <option value="canalis-kt">Canalis KT · 母线槽</option>
+                <option value="evopact-hvx-up24">
+                  EvoPacT HVX · 真空断路器
+                </option></select
+              ><button id="refresh-sources" class="button secondary">
+                刷新资料 ↻
+              </button>
+            </div>
+          </div>
+          <div id="sources-summary" class="result-summary"></div>
+          <div id="sources-list" class="source-grid"></div>
+        </section>
+        <section id="panel-build" class="panel" aria-label="知识构建" hidden>
+          <div class="page-heading">
+            <div>
+              <div class="eyebrow">BUILD · REVIEW · PUBLISH</div>
+              <h1>把领域资料，变成可追溯知识。</h1>
+              <p>沿用已发布的工业本体，逐步补充证据、复核候选事实并发布。</p>
+            </div>
+          </div>
+          <div
+            class="build-tabs segmented"
+            role="group"
+            aria-label="知识构建步骤"
+          >
+            <button data-build-tab="upload" class="selected">1. 补充资料</button
+            ><button data-build-tab="review">2. 复核候选</button
+            ><button data-build-tab="publish">3. 发布知识</button>
+          </div>
+          <div id="build-upload" class="build-section">
+            <div class="build-layout">
+              <form id="upload-form" class="card">
+                <h2>补充工业文件</h2>
+                <p class="muted">
+                  新资料会明确标记为用户上传。自动抽取的结果进入候选队列。
+                </p>
+                <label class="file-drop" for="upload-file"
+                  ><span class="upload-symbol">↑</span><strong>选择文件</strong
+                  ><span>TXT / Markdown / CSV / JSON · 最大 5 MiB</span
+                  ><input
+                    id="upload-file"
+                    type="file"
+                    accept=".txt,.md,.csv,.json"
+                    required
+                /></label>
+                <a
+                  class="quiet-link"
+                  href="/industrial/assets/demo/industrial-extension.txt"
+                  download="industrial-extension.txt"
+                  >下载合成演示补充资料 ↓</a
+                >
+                <div class="form-grid">
+                  <label
+                    >资料标题<input
+                      id="upload-title"
+                      maxlength="256"
+                      required /></label
+                  ><label
+                    >产品族<select id="upload-family">
+                      <option value="canalis-kt">Canalis KT · 母线槽</option>
+                      <option value="evopact-hvx-up24">
+                        EvoPacT HVX · 真空断路器
+                      </option>
+                    </select></label
+                  ><label
+                    >关联设备（可选）<input
+                      id="upload-asset"
+                      placeholder="如 BKT-A01"
+                      maxlength="64" /></label
+                  ><label>可见岗位<select id="upload-group"></select></label
+                  ><label
+                    >处理方式<select id="upload-mode">
+                      <option value="LLM">入库并抽取候选事实</option>
+                      <option value="SOURCE_ONLY">仅入库，保留来源片段</option>
+                    </select></label
+                  ><label
+                    >资料日期（可选）<input id="upload-date" type="date"
+                  /></label>
+                </div>
+                <div class="form-footer">
+                  <span id="upload-limit-note"
+                    >自动抽取最多 2 个片段；仅入库最多 4 个片段。</span
+                  ><button
+                    class="button primary"
+                    id="upload-submit"
+                    type="submit"
+                  >
+                    建立知识候选 ↗
+                  </button>
+                </div>
+                <div
+                  id="upload-status"
+                  class="inline-status"
+                  role="status"
+                ></div>
+              </form>
+              <aside class="card context-guide">
+                <span class="small-label">本体与治理</span>
+                <h3>沿用工业电气本体</h3>
+                <p>
+                  设备类别、产品型号、安装实例、部件、现象、候选原因和检查项分别建模。
+                </p>
+                <div class="flow-list">
+                  <div><b>01</b><span>上传资料并关联产品范围</span></div>
+                  <div><b>02</b><span>抽取实体与关系，保留原文</span></div>
+                  <div><b>03</b><span>逐项复核后，再加入已发布图谱</span></div>
+                </div>
+                <p class="soft-note">
+                  可用“工业维护人员”补充维护资料，再切换“工业管理员”独立复核和发布。不会自动把抽取结果提升为权威事实。
+                </p>
+                <button
+                  id="refresh-jobs"
+                  type="button"
+                  class="button secondary"
+                >
+                  查看当前可见任务
+                </button>
+                <div id="construction-jobs" class="compact-stack"></div>
+              </aside>
+            </div>
+          </div>
+          <div id="build-review" class="build-section" hidden>
+            <div class="section-action">
+              <p>
+                先确认实体身份，再核对关系及其来源。每项决定都需要填写依据。
+              </p>
+              <button id="refresh-reviews" class="button secondary">
+                刷新候选队列 ↻
+              </button>
+            </div>
+            <div id="review-list" class="stack"></div>
+          </div>
+          <div id="build-publish" class="build-section" hidden>
+            <div class="section-action">
+              <p>从已经批准的候选中选择。发布会保留当前图谱中已有的记录。</p>
+              <button id="refresh-publications" class="button secondary">
+                刷新待发布知识 ↻
+              </button>
+            </div>
+            <div class="card">
+              <div id="publication-state" class="muted"></div>
+              <div id="publication-candidates" class="stack"></div>
+              <div class="form-footer">
+                <span id="publication-selection">尚未选择候选</span
+                ><button id="publish-submit" class="button primary" disabled>
+                  发布所选知识
+                </button>
+              </div>
+              <div
+                id="publish-status"
+                class="inline-status"
+                role="status"
+              ></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

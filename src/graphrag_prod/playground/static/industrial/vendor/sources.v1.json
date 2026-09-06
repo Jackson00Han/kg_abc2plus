@@ -1,0 +1,165 @@
+{
+  "manifest_version": "industrial-graph-vendor:v1",
+  "verified_on": "2026-09-07",
+  "runtime_network_dependencies": [],
+  "browser_script_load_order": [
+    "cytoscape.min.js",
+    "cytoscape-dagre.min.js"
+  ],
+  "browser_globals": [
+    "cytoscape",
+    "cytoscapeDagre"
+  ],
+  "packages": [
+    {
+      "name": "cytoscape",
+      "version": "3.34.2",
+      "license": "MIT",
+      "registry_url": "https://registry.npmjs.org/cytoscape/3.34.2",
+      "repository": "git+https://github.com/cytoscape/cytoscape.js.git",
+      "tarball_url": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.34.2.tgz",
+      "tarball_integrity": "sha512-Cm2jaj1X/PBNlzV9yH8zcfGOxO7U+CJ/+mxSBVPSchLaugdp4jtlGx5qaHtPRZ6tgiZ5P+o1XoRfJA+ba6KM3g==",
+      "tarball_sha256": "92e9eeb010d5f16913c0216e5abab6f6b0e7b05ba29d72ed58ff3fdb03226f7a",
+      "tarball_bytes": 1378195,
+      "runtime_distribution": "standalone",
+      "published_at": "2026-08-25T14:38:11.193Z"
+    },
+    {
+      "name": "cytoscape-dagre",
+      "version": "4.0.1",
+      "license": "MIT",
+      "registry_url": "https://registry.npmjs.org/cytoscape-dagre/4.0.1",
+      "repository": "git+https://github.com/cytoscape/cytoscape.js-dagre.git",
+      "tarball_url": "https://registry.npmjs.org/cytoscape-dagre/-/cytoscape-dagre-4.0.1.tgz",
+      "tarball_integrity": "sha512-hyNdh8Vp1nwzBcjHnM4c71G81bFhPmQYLXD2HM9AZIvl+8TrMzWEOPW45hF/XOBQiEguPcDQzi6VrXR1XBcXOA==",
+      "tarball_sha256": "830f9ad4860db701cb6f899ef3590f5c1bfb4d53d8108894f00b56131907e514",
+      "tarball_bytes": 220753,
+      "runtime_distribution": "extension_bundle",
+      "published_at": "2026-08-28T12:23:25.690Z",
+      "peer_dependencies": {
+        "cytoscape": "^3.2.22"
+      },
+      "upstream_banner_version": "4.0.0",
+      "bundled_dependencies": {
+        "@dagrejs/dagre": "3.0.0",
+        "@dagrejs/graphlib": "4.0.1"
+      }
+    },
+    {
+      "name": "@dagrejs/dagre",
+      "version": "3.0.0",
+      "license": "MIT",
+      "registry_url": "https://registry.npmjs.org/@dagrejs/dagre/3.0.0",
+      "repository": "git+https://github.com/dagrejs/dagre.git",
+      "tarball_url": "https://registry.npmjs.org/@dagrejs/dagre/-/dagre-3.0.0.tgz",
+      "tarball_integrity": "sha512-ZzhnTy1rfuoew9Ez3EIw4L2znPGnYYhfn8vc9c4oB8iw6QAsszbiU0vRhlxWPFnmmNSFAkrYeF1PhM5m4lAN0Q==",
+      "tarball_sha256": "7d4e67fb70304a2e8b389a1200884ea1b4e2e761bf9f70f07eb77d3d28f1fb3f",
+      "tarball_bytes": 300445,
+      "runtime_distribution": "included_in_cytoscape-dagre"
+    },
+    {
+      "name": "@dagrejs/graphlib",
+      "version": "4.0.1",
+      "license": "MIT",
+      "registry_url": "https://registry.npmjs.org/@dagrejs/graphlib/4.0.1",
+      "repository": "git+https://github.com/dagrejs/graphlib.git",
+      "tarball_url": "https://registry.npmjs.org/@dagrejs/graphlib/-/graphlib-4.0.1.tgz",
+      "tarball_integrity": "sha512-IvcV6FduIIAmLwnH+yun+QtV36SC7mERqa86aClNqmMN09WhmPPYU8ckHrZBozErf+UvHPWOTJYaGYiIcs0DgA==",
+      "tarball_sha256": "80b514972e3b102e15c6b42fa0e2f98703256692306a9e23708313c55d6b3605",
+      "tarball_bytes": 107297,
+      "runtime_distribution": "included_in_cytoscape-dagre"
+    }
+  ],
+  "files": [
+    {
+      "path": "cytoscape.min.js",
+      "package": "cytoscape",
+      "package_version": "3.34.2",
+      "archive_member": "package/dist/cytoscape.min.js",
+      "upstream_sha256": "b85c213252b880cbb2d86c10dc537f673560e82494da4330f1ccc18fbcb5f145",
+      "upstream_bytes": 435503,
+      "sha256": "b85c213252b880cbb2d86c10dc537f673560e82494da4330f1ccc18fbcb5f145",
+      "bytes": 435503,
+      "transformations": []
+    },
+    {
+      "path": "LICENSE.cytoscape.txt",
+      "package": "cytoscape",
+      "package_version": "3.34.2",
+      "archive_member": "package/LICENSE",
+      "upstream_sha256": "eb319c6e6f233607f71e8e2f450391751883cfc0eeb3ca7ef574c13d1d9c2203",
+      "upstream_bytes": 1082,
+      "sha256": "f7ebdc2a36c48b5413fe0b60f7a16b6163ff171d5bb35f27dfda432962dd4f49",
+      "bytes": 1083,
+      "transformations": [
+        "normalize final newline to one LF"
+      ]
+    },
+    {
+      "path": "cytoscape-dagre.min.js",
+      "package": "cytoscape-dagre",
+      "package_version": "4.0.1",
+      "archive_member": "package/dist/cytoscape-dagre.min.js",
+      "upstream_sha256": "ec671a41d2bfcac580352e2997797793949e3489cecaf347fc48670d4bd456b0",
+      "upstream_bytes": 45649,
+      "sha256": "c9b231f93aa504cccf6129ca6518929bbebb343a8b1faacb5d5357af147e71b6",
+      "bytes": 45601,
+      "transformations": [
+        "remove omitted sourceMappingURL trailer"
+      ]
+    },
+    {
+      "path": "LICENSE.cytoscape-dagre.txt",
+      "package": "cytoscape-dagre",
+      "package_version": "4.0.1",
+      "archive_member": "package/LICENSE",
+      "upstream_sha256": "c8f8d9008103872d6686927c1646c9267726c1f1c44a8f625399325b6d190837",
+      "upstream_bytes": 1102,
+      "sha256": "68d80f4257073b743f601731e0057c4582ae82c2504d81216aee44ce5942a258",
+      "bytes": 1103,
+      "transformations": [
+        "normalize final newline to one LF"
+      ]
+    },
+    {
+      "path": "LICENSE.dagre.txt",
+      "package": "@dagrejs/dagre",
+      "package_version": "3.0.0",
+      "archive_member": "package/LICENSE",
+      "upstream_sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
+      "upstream_bytes": 1062,
+      "sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
+      "bytes": 1062,
+      "transformations": []
+    },
+    {
+      "path": "dagre.esm.js.LEGAL.txt",
+      "package": "@dagrejs/dagre",
+      "package_version": "3.0.0",
+      "archive_member": "package/dist/dagre.esm.js.LEGAL.txt",
+      "upstream_sha256": "9148bffb1e84382a8b6668eeb2b53c6a554341d714fba129856ea5eb350d35f3",
+      "upstream_bytes": 1078,
+      "sha256": "9148bffb1e84382a8b6668eeb2b53c6a554341d714fba129856ea5eb350d35f3",
+      "bytes": 1078,
+      "transformations": []
+    },
+    {
+      "path": "LICENSE.graphlib.txt",
+      "package": "@dagrejs/graphlib",
+      "package_version": "4.0.1",
+      "archive_member": "package/LICENSE",
+      "upstream_sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
+      "upstream_bytes": 1062,
+      "sha256": "6a349742a6cb219d5a2fc8d0844f6d89a6efc62e20c664450d884fc7ff2d6015",
+      "bytes": 1062,
+      "transformations": []
+    }
+  ],
+  "verification": {
+    "npm_tarball_integrity": "SHA-512 SRI verified for all four archives; registry signatures were not independently verified",
+    "bundled_version_evidence": "https://github.com/cytoscape/cytoscape.js-dagre/blob/v4.0.1/package-lock.json",
+    "bundled_source_match": "Extension source-map embedded dagre.esm.js equals the @dagrejs/dagre 3.0.0 published dist bytes; no source maps retained",
+    "peer_compatibility": "cytoscape 3.34.2 satisfies cytoscape-dagre 4.0.1 declared ^3.2.22",
+    "upstream_banner_note": "Published cytoscape-dagre 4.0.1 archive contains a 4.0.0 banner; banner retained unchanged, package version pinned by registry integrity"
+  }
+}

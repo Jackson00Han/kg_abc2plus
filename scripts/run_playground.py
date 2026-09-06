@@ -172,6 +172,7 @@ class _Neo4jReadiness:
                 Query(
                     """
                     MATCH (state:TenantCorpusState)
+                    WHERE state.tenant_id IN $enabled_tenants
                     OPTIONAL MATCH (state)-[:ACTIVE_EMBEDDING_INDEX]->(
                         pointer:EmbeddingIndexGeneration
                     )
@@ -196,6 +197,7 @@ class _Neo4jReadiness:
                     timeout=2.0,
                 ),
                 database_=self.database,
+                enabled_tenants=list(self.expected_tenant_ids),
             )
         except Exception:
             return self._result(checks)
@@ -761,7 +763,15 @@ def build_playground_app(
     reuse_existing_corpus: bool = False,
     enable_reset: bool = False,
     skip_provider_warmup: bool = False,
+    enable_industrial: bool = False,
 ):
+    if type(enable_industrial) is not bool:
+        raise ValueError("enable_industrial must be boolean")
+    if enable_industrial and not reuse_existing_corpus:
+        raise ValueError("industrial runtime requires reuse_existing_corpus; load the corpus explicitly first")
+    if enable_industrial:
+        # The legacy reset deliberately drops the entire disposable database.
+        enable_reset = False
     if not isinstance(reuse_existing_corpus, bool):
         raise ValueError("reuse_existing_corpus must be a boolean")
     if not isinstance(enable_reset, bool):
@@ -775,9 +785,18 @@ def build_playground_app(
         if reuse_existing_corpus
         else _load_corpus(driver, database, embedder)
     )
+    from graphrag_prod.playground.industrial_runtime import (
+        INDUSTRIAL_TENANT, TenantQueryOperations, build_industrial_query_operations,
+        verify_existing_industrial_runtime,
+    )
+    if enable_industrial:
+        verify_existing_industrial_runtime(driver, database, embedder.embedding_space_id)
+    enabled_tenants = tuple(sorted({plan.tenant_id for plan in fixture.plans}
+                                  | ({INDUSTRIAL_TENANT} if enable_industrial else set())))
     catalog = PlaygroundCatalog(
         fixture,
         signing_key,
+        enable_industrial=enable_industrial,
         embedding_metadata={
             "provider": embedder.provider,
             "model": embedder.model,
@@ -824,6 +843,24 @@ def build_playground_app(
         GroundedGenerationService(_DisabledAnswerModel()),
         subgraph_projector=Neo4jEvidenceSubgraphProjector(driver, database),
     )
+    graph_operations = None
+    if enable_industrial:
+        from graphrag_prod.api.graph import Neo4jGraphOperations
+        from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser
+        from graphrag_prod.industrial.retrieval import Neo4jIndustrialScopeResolver
+        from graphrag_prod.industrial.source_catalog import Neo4jIndustrialSourceCatalog
+        industrial_queries = build_industrial_query_operations(
+            driver, database, embedder=embedder,
+            generation_service=GroundedGenerationService(_DisabledAnswerModel()),
+            api_key=embedder.client.api_key,
+        )
+        query_operations = TenantQueryOperations(query_operations, industrial_queries)
+        graph_operations = Neo4jGraphOperations(
+            browser=Neo4jPublishedGraphBrowser(driver, database),
+            industrial_scope_resolver=Neo4jIndustrialScopeResolver(driver, database),
+            source_catalog=Neo4jIndustrialSourceCatalog(driver, database),
+        )
+    from graphrag_prod.industrial.construction import Neo4jIndustrialUploadPolicy, industrial_upload_parser
     prompt_signature = _PLAYGROUND_EXTRACTION_PROMPT
     construction = Neo4jKnowledgeConstructionWorkflow(
         driver=driver,
@@ -844,6 +881,8 @@ def build_playground_app(
         extractor_factory=lambda tbox: _build_playground_extractor(
             embedder.client, extraction_model, tbox,
         ),
+        industrial_upload_policy=Neo4jIndustrialUploadPolicy(driver, database) if enable_industrial else None,
+        industrial_parser=industrial_upload_parser() if enable_industrial else None,
         config=ConstructionConfig(
             extractor_signature=f"openai-compatible:{extraction_model}:v2",
             prompt_signature=prompt_signature,
@@ -867,11 +906,10 @@ def build_playground_app(
         readiness=_Neo4jReadiness(
             driver,
             database,
-            expected_tenant_ids=tuple(
-                sorted({plan.tenant_id for plan in fixture.plans})
-            ),
+            expected_tenant_ids=enabled_tenants,
         ),
         knowledge=knowledge_operations,
+        **({"graph": graph_operations} if graph_operations is not None else {}),
     )
     reset_controller = None
     if enable_reset:
@@ -1119,6 +1157,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--enable-industrial", action="store_true", help="reuse the loaded industrial corpus with governed graph UI and industrial reranking")
     parser.add_argument("--no-open", action="store_true", help="do not open a browser")
     parser.add_argument(
         "--reuse-existing-corpus",
@@ -1218,6 +1257,7 @@ def main() -> None:
             embedder=embedder,
             extraction_model=extraction_model,
             reuse_existing_corpus=args.reuse_existing_corpus,
+            enable_industrial=args.enable_industrial,
             skip_provider_warmup=args.skip_provider_warmup,
             # main() already requires a loopback URI and the explicit disposable
             # database opt-in. Production create_app() never installs this API.

@@ -419,8 +419,8 @@ class IndustrialScopeRequest(StrictAPIModel):
     ] = ()
     include_references: Annotated[bool, Field(strict=True)] = True
     source_kinds: Annotated[
-        tuple[Literal["CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD"], ...],
-        Field(max_length=3),
+        tuple[Literal["CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD", "USER_UPLOAD"], ...],
+        Field(max_length=4),
     ] = ()
 
     @field_validator("asset_keys", "source_kinds", mode="before")
@@ -444,7 +444,7 @@ class IndustrialScopeTraceResponse(StrictAPIModel):
     reference_documents: Annotated[int, Field(strict=True, ge=0, le=100)]
     match_none: Annotated[bool, Field(strict=True)]
     reference_only_sources_omitted: Literal[True] = True
-    policy_version: Literal["industrial-current-scope:v1"]
+    policy_version: Literal["industrial-current-scope:v1", "industrial-current-scope:v2"]
 
 
 class RetrievalRequest(StrictAPIModel):
@@ -679,6 +679,9 @@ class RetrievalTraceResponse(StrictAPIModel):
     knowledge_activation_generation: Annotated[int, Field(strict=True, ge=0)] = 0
     industrial_scope: IndustrialScopeTraceResponse | None = None
     reranking: RerankTraceResponse | None = None
+    knowledge_tbox_id: Identifier | None = None
+    knowledge_tbox_checksum: Checksum | None = None
+    knowledge_publication_generation: Annotated[int, Field(strict=True, ge=0)] = 0
 
 
 GraphName = Annotated[

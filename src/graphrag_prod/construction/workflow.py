@@ -67,6 +67,11 @@ from graphrag_prod.knowledge.trust import (
 from graphrag_prod.ontology.models import TBoxStatus, TBoxVersion
 from graphrag_prod.ontology.store import Neo4jTBoxStore
 
+from graphrag_prod.industrial.construction import (
+    INDUSTRIAL_TENANT, IndustrialUploadContext, IndustrialUploadRejected, IndustrialUploadUnavailable,
+)
+from graphrag_prod.industrial.provenance import IndustrialProvenanceConflict, canonical_json
+
 from .extraction import (
     AuditedExtraction,
     ExtractionFinding,
@@ -152,6 +157,7 @@ class ConstructionMetadata:
     published_at: datetime | None = None
     max_attempts: int = 3
     extraction_mode: str = "LLM"
+    industrial_context: IndustrialUploadContext | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -172,6 +178,8 @@ class ConstructionMetadata:
         object.__setattr__(self, "access_groups", groups)
         _aware(self.published_at, "published_at")
         _extraction_mode(self.extraction_mode)
+        if self.industrial_context is not None and not isinstance(self.industrial_context, IndustrialUploadContext):
+            raise TypeError("industrial_context must be IndustrialUploadContext")
         if (
             isinstance(self.max_attempts, bool)
             or not isinstance(self.max_attempts, int)
@@ -274,6 +282,8 @@ class ConstructionJobState:
     access_groups: frozenset[str]
     created_at: datetime
     extraction_mode: str = "LLM"
+
+    industrial_context_json: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -849,6 +859,8 @@ class Neo4jConstructionAuditStore:
             "expected_chunks": expected_chunks,
             "extraction_mode": state.extraction_mode,
         }
+        if state.industrial_context_json is not None:
+            identity["industrial_context_json"] = state.industrial_context_json
         captured_lifecycle = {
             "expected_active_snapshot_id": state.expected_active_snapshot_id or "",
             "source_generation": state.source_generation,
@@ -884,6 +896,7 @@ class Neo4jConstructionAuditStore:
             access_groups=frozenset(stored["access_groups"]),
             created_at=_native_datetime(stored["created_at"], "created_at"),
             extraction_mode=stored.get("extraction_mode", "LLM"),
+            industrial_context_json=stored.get("industrial_context_json"),
         )
 
     @staticmethod
@@ -1791,7 +1804,11 @@ class Neo4jKnowledgeConstructionWorkflow:
         audit_store: ConstructionAuditStore | None = None,
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] | None = None,
+        industrial_upload_policy: Any | None = None,
+        industrial_parser: BoundedDocumentParser | None = None,
     ) -> None:
+        self.industrial_upload_policy = industrial_upload_policy
+        self.industrial_parser = industrial_parser
         self.pipeline = pipeline
         self.embedding_provider = embedding_provider
         self.embedding_profile = embedding_profile
@@ -1898,9 +1915,24 @@ class Neo4jKnowledgeConstructionWorkflow:
                 "source access groups must be a principal-group subset"
             )
         deadline = self._monotonic_now() + self.config.deadline_seconds
+        industrial = principal.tenant_id == INDUSTRIAL_TENANT or metadata.industrial_context is not None
+        if industrial:
+            if self.industrial_upload_policy is None:
+                raise ConstructionConflict("industrial upload policy is unavailable")
+            try:
+                self.industrial_upload_policy.preflight(principal, metadata)
+            except IndustrialUploadUnavailable as error:
+                raise ConstructionAuthorizationError(str(error)) from error
+            except IndustrialUploadRejected as error:
+                raise ConstructionConflict(str(error)) from error
+        industrial_identity = (None if metadata.industrial_context is None
+                               else metadata.industrial_context.identity(principal))
         self._require_deadline(deadline)
-        parsed = self.parser.parse(payload, mime_type=metadata.mime_type)
+        selected_parser = self.industrial_parser if industrial and self.industrial_parser is not None else self.parser
+        parsed = selected_parser.parse(payload, mime_type=metadata.mime_type)
         self._preflight_budget(parsed, extraction_mode=metadata.extraction_mode)
+        if industrial:
+            self.industrial_upload_policy.validate_parsed(metadata, parsed)
         self._require_deadline(deadline)
         tbox = self.tbox_store.active(principal.tenant_id, metadata.tbox_key)
         if (
@@ -2004,6 +2036,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                     "ingestion_profile_id": ingestion_profile.profile_id,
                     "extraction_profile_id": extraction_profile.profile_id,
                     "access_groups": sorted(metadata.access_groups),
+                    **({"industrial_context": industrial_identity} if industrial_identity is not None else {}),
                     # Keep already-published LLM request identities replayable.
                     **(
                         {"extraction_mode": "SOURCE_ONLY"}
@@ -2041,6 +2074,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                 access_groups=observed.access_groups,
                 created_at=now,
                 extraction_mode=metadata.extraction_mode,
+                industrial_context_json=None if industrial_identity is None else canonical_json(industrial_identity),
             ),
             expected_chunks=len(parsed.chunks),
         )
@@ -2072,6 +2106,13 @@ class Neo4jKnowledgeConstructionWorkflow:
             raise
         self._require_deadline(deadline)
         document, version, chunks = ingestion_request.domain_inputs()
+        if industrial:
+            try:
+                self.industrial_upload_policy.persist(principal, metadata, parsed, job)
+            except IndustrialUploadUnavailable as error:
+                raise ConstructionAuthorizationError(str(error)) from error
+            except (IndustrialUploadRejected, IndustrialProvenanceConflict) as error:
+                raise ConstructionConflict(str(error)) from error
         results: list[ConstructionChunkResult] = []
         model_calls_started = [0]
 

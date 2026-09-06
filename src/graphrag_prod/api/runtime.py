@@ -95,6 +95,10 @@ class OperationKind(str, Enum):
     KNOWLEDGE_INVENTORY = "knowledge_inventory"
     KNOWLEDGE_DOCUMENTS = "knowledge_documents"
     KNOWLEDGE_DOCUMENT_RETIRE = "knowledge_document_retire"
+    GRAPH_QUERY = "graph_query"
+    GRAPH_EVIDENCE = "graph_evidence"
+    INDUSTRIAL_SOURCES = "industrial_sources"
+    INDUSTRIAL_SOURCE_CHUNK = "industrial_source_chunk"
 
     @property
     def is_write(self) -> bool:
@@ -134,6 +138,10 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_QUALITY_RUN,
             self.KNOWLEDGE_INVENTORY,
             self.KNOWLEDGE_DOCUMENTS,
+            self.GRAPH_QUERY,
+            self.GRAPH_EVIDENCE,
+            self.INDUSTRIAL_SOURCES,
+            self.INDUSTRIAL_SOURCE_CHUNK,
         }
 
 
@@ -170,6 +178,10 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_INVENTORY: "knowledge:quality",
         OperationKind.KNOWLEDGE_DOCUMENTS: "knowledge:lifecycle",
         OperationKind.KNOWLEDGE_DOCUMENT_RETIRE: "knowledge:lifecycle",
+        OperationKind.GRAPH_QUERY: "knowledge:graph:read",
+        OperationKind.GRAPH_EVIDENCE: "knowledge:graph:read",
+        OperationKind.INDUSTRIAL_SOURCES: "retrieval:read",
+        OperationKind.INDUSTRIAL_SOURCE_CHUNK: "retrieval:read",
     }
 )
 
@@ -285,10 +297,12 @@ class ErrorCode(str, Enum):
     FORBIDDEN = "forbidden"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
+    GRAPH_VIEW_CHANGED = "graph_view_changed"
     RATE_LIMITED = "rate_limited"
     DEPENDENCY_TIMEOUT = "dependency_timeout"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     CONSTRUCTION_INGESTION_FAILED = "construction_ingestion_failed"
+    CONSTRUCTION_INPUT_LIMIT = "construction_input_limit"
     OVERLOADED = "overloaded"
     RUNTIME_CLOSED = "runtime_closed"
     INTERNAL = "internal_error"
@@ -365,6 +379,14 @@ class RequestValidationError(ApiRuntimeError):
     default_message = "the request is invalid"
 
 
+class IndustrialConstructionInputLimitError(RequestValidationError):
+    code = ErrorCode.CONSTRUCTION_INPUT_LIMIT
+    default_message = (
+        "industrial upload text or title exceeds the contextual reranker UTF-8 "
+        "byte budget; shorten the title or split the file"
+    )
+
+
 class AuthenticationError(ApiRuntimeError):
     code = ErrorCode.UNAUTHENTICATED
     status_code = 401
@@ -387,6 +409,11 @@ class ConflictError(ApiRuntimeError):
     code = ErrorCode.CONFLICT
     status_code = 409
     default_message = "the operation conflicts with current state"
+
+
+class GraphViewChangedError(ConflictError):
+    code = ErrorCode.GRAPH_VIEW_CHANGED
+    default_message = "the graph view changed; refresh the graph"
 
 
 class RateLimitExceeded(ApiRuntimeError):
@@ -445,10 +472,12 @@ class RuntimeClosedError(ApiRuntimeError):
 _PUBLIC_ERROR_MESSAGES = MappingProxyType(
     {
         ErrorCode.INVALID_REQUEST: RequestValidationError.default_message,
+        ErrorCode.CONSTRUCTION_INPUT_LIMIT: IndustrialConstructionInputLimitError.default_message,
         ErrorCode.UNAUTHENTICATED: AuthenticationError.default_message,
         ErrorCode.FORBIDDEN: AuthorizationError.default_message,
         ErrorCode.NOT_FOUND: ResourceNotFoundError.default_message,
         ErrorCode.CONFLICT: ConflictError.default_message,
+        ErrorCode.GRAPH_VIEW_CHANGED: GraphViewChangedError.default_message,
         ErrorCode.RATE_LIMITED: RateLimitExceeded.default_message,
         ErrorCode.DEPENDENCY_TIMEOUT: DependencyTimeoutError.default_message,
         ErrorCode.DEPENDENCY_UNAVAILABLE: DependencyUnavailableError.default_message,

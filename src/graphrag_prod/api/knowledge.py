@@ -21,6 +21,7 @@ from graphrag_prod.construction.workflow import (
     ConstructionIngestionFailed,
     Neo4jConstructionAuditStore,
 )
+from graphrag_prod.industrial.construction import IndustrialUploadBudgetExceeded
 from graphrag_prod.domain import Principal, RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.domain.ids import (
     entity_id as make_entity_id,
@@ -149,6 +150,7 @@ from .runtime import (
     BackendResult,
     ConflictError,
     ConstructionIngestionFailedError,
+    IndustrialConstructionInputLimitError,
     DependencyTimeoutError,
     DependencyUnavailableError,
     RequestValidationError,
@@ -1153,6 +1155,7 @@ class Neo4jKnowledgeOperations:
                 published_at=request.published_at,
                 max_attempts=request.max_attempts,
                 extraction_mode=request.extraction_mode,
+                industrial_context=None if request.industrial_context is None else request.industrial_context.to_domain(),
             )
             content = request.decoded_content()
         except (TypeError, ValueError) as error:
@@ -1171,6 +1174,8 @@ class Neo4jKnowledgeOperations:
             raise ConstructionIngestionFailedError() from error
         except (ConstructionConflict, IngestionConflict) as error:
             raise ConflictError() from error
+        except IndustrialUploadBudgetExceeded as error:
+            raise IndustrialConstructionInputLimitError() from error
         except (ConstructionBudgetExceeded, DocumentParseError) as error:
             raise RequestValidationError() from error
         except TimeoutError as error:

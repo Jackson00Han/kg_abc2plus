@@ -108,12 +108,19 @@ OPTIONAL MATCH (publication_state:KnowledgePublicationState {tenant_id: $tenant_
 OPTIONAL MATCH (publication_state)-[:ACTIVE_KNOWLEDGE_PUBLICATION]->(
     publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'}
 )
+OPTIONAL MATCH (publication)-[tbox_binding:USES_TBOX_VERSION]->(tbox:TBoxVersion)
 RETURN state.corpus_revision AS corpus_revision,
        generation.generation_id AS generation_id,
        generation.embedding_space_id AS embedding_space_id,
        generation.dimensions AS dimensions,
        publication.publication_id AS knowledge_publication_id,
-       coalesce(publication_state.activation_generation, 0) AS knowledge_activation_generation
+       coalesce(publication_state.activation_generation, 0) AS knowledge_activation_generation,
+       coalesce(publication.generation, 0) AS knowledge_publication_generation,
+       publication.ontology_version_id AS knowledge_tbox_id,
+       tbox.checksum AS knowledge_tbox_checksum,
+       tbox.tenant_id AS knowledge_tbox_tenant_id,
+       tbox.tbox_id AS knowledge_bound_tbox_id,
+       count(tbox_binding) AS knowledge_tbox_links
 """
 
 
@@ -683,6 +690,8 @@ class Neo4jRetrievalEngine:
             or row.get("dimensions") != len(prepared.request.query_vector)
             or Neo4jRetrievalEngine._publication_identity(row)
             != (trace.knowledge_publication_id, trace.knowledge_activation_generation)
+            or Neo4jRetrievalEngine._tbox_identity(row)
+            != (trace.knowledge_tbox_id, trace.knowledge_tbox_checksum, trace.knowledge_publication_generation)
         ):
             raise _CorpusStateChanged()
 
@@ -797,6 +806,9 @@ class Neo4jRetrievalEngine:
             )
         corpus_revision = int(state["corpus_revision"])
         publication_identity = Neo4jRetrievalEngine._publication_identity(state)
+        tbox_identity = Neo4jRetrievalEngine._tbox_identity(state)
+        if state.get("knowledge_tbox_tenant_id") not in {None, principal.tenant_id}:
+            raise RetrievalUnavailable("tenant knowledge T-Box state is invalid")
         common.update(
             {
                 "corpus_revision": corpus_revision,
@@ -974,6 +986,7 @@ class Neo4jRetrievalEngine:
         if (
             final_identity != captured_identity
             or Neo4jRetrievalEngine._publication_identity(final_state) != publication_identity
+            or Neo4jRetrievalEngine._tbox_identity(final_state) != tbox_identity
         ):
             raise _CorpusStateChanged()
         hydrated = {str(record["chunk_id"]): record for record in hydrated_records}
@@ -1105,6 +1118,9 @@ class Neo4jRetrievalEngine:
             version_filter=version_filter,
             knowledge_publication_id=publication_identity[0],
             knowledge_activation_generation=publication_identity[1],
+            knowledge_tbox_id=tbox_identity[0],
+            knowledge_tbox_checksum=tbox_identity[1],
+            knowledge_publication_generation=tbox_identity[2],
         )
         return RetrievalResult(tuple(result_chunks), trace)
 
@@ -1118,6 +1134,18 @@ class Neo4jRetrievalEngine:
         ) or type(generation) is not int or generation < 0:
             raise RetrievalUnavailable("tenant knowledge publication state is invalid")
         return publication_id, generation
+
+    @staticmethod
+    def _tbox_identity(state: dict[str, Any]) -> tuple[str | None, str | None, int]:
+        tbox_id, checksum = state.get("knowledge_tbox_id"), state.get("knowledge_tbox_checksum")
+        generation = state.get("knowledge_publication_generation", 0)
+        if type(generation) is not int or generation < 0 or (tbox_id is None) != (checksum is None):
+            raise RetrievalUnavailable("tenant knowledge T-Box state is invalid")
+        if tbox_id is not None and (not isinstance(tbox_id, str) or not tbox_id or not isinstance(checksum, str) or re.fullmatch(r"[0-9a-f]{64}", checksum) is None):
+            raise RetrievalUnavailable("tenant knowledge T-Box state is invalid")
+        if "knowledge_tbox_links" in state and state.get("knowledge_publication_id") is not None and (state["knowledge_tbox_links"] != 1 or state.get("knowledge_bound_tbox_id") != tbox_id or tbox_id is None or generation < 1):
+            raise RetrievalUnavailable("tenant knowledge T-Box state is invalid")
+        return tbox_id, checksum, generation
 
     @staticmethod
     def _trace_id(

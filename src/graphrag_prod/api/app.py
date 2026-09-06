@@ -92,6 +92,10 @@ from .quality_history_contracts import (
     PublishedGraphQualityRunListResponse,
     PublishedGraphQualityRunResponse,
 )
+from .graph_contracts import (
+    GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
+    IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
+)
 
 
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
@@ -742,6 +746,22 @@ def create_app(
             OperationKind.ANSWER,
             body.model_dump(mode="python"),
         )
+
+    @app.post("/v1/knowledge/graph:query", response_model=GraphBrowseResponse)
+    async def graph_query(request: Request, body: GraphBrowseRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.GRAPH_QUERY, body.model_dump(mode="python"))
+
+    @app.post("/v1/knowledge/graph:evidence", response_model=GraphEvidenceResponseEnvelope)
+    async def graph_evidence(request: Request, body: GraphEvidenceRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.GRAPH_EVIDENCE, body.model_dump(mode="python"))
+
+    @app.post("/v1/industrial/sources:query", response_model=IndustrialSourcesResponse)
+    async def industrial_sources(request: Request, body: IndustrialSourcesRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.INDUSTRIAL_SOURCES, body.model_dump(mode="python"))
+
+    @app.post("/v1/industrial/sources:chunk", response_model=IndustrialSourceChunkEnvelope)
+    async def industrial_source_chunk(request: Request, body: IndustrialSourceChunkRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.INDUSTRIAL_SOURCE_CHUNK, body.model_dump(mode="python"))
 
     @app.get("/v1/ontologies", response_model=OntologyListResponse)
     async def list_ontologies(

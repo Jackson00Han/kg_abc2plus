@@ -246,9 +246,13 @@ class PlaygroundCatalog:
         *,
         embedding_metadata: Mapping[str, Any] | None = None,
         capabilities: Mapping[str, Any] | None = None,
+        enable_industrial: bool = False,
     ) -> None:
         if not isinstance(signing_key, bytes) or len(signing_key) < 32:
             raise ValueError("Playground signing key must contain at least 32 bytes")
+        if type(enable_industrial) is not bool:
+            raise TypeError("enable_industrial must be boolean")
+        self.enable_industrial = enable_industrial
         self.fixture = fixture
         self._signing_key = signing_key
         self._embedding_metadata = (
@@ -279,6 +283,9 @@ class PlaygroundCatalog:
             )
             for index, (tenant_id, groups) in enumerate(identities, start=1)
         )
+        if enable_industrial:
+            from .industrial_runtime import industrial_personas
+            self.personas += industrial_personas()
         self.personas_by_id = {item.persona_id: item for item in self.personas}
         persona_id_by_scope = {
             (item.tenant_id, item.groups): item.persona_id for item in self.personas
@@ -323,7 +330,10 @@ class PlaygroundCatalog:
         # This deployment intentionally has no final-answer route authorization;
         # callers cannot make the bootstrap claim otherwise.
         capabilities["answer_generation"] = False
+        from .industrial_runtime import industrial_bootstrap
         return {
+            "industrial": industrial_bootstrap() if self.enable_industrial else {"enabled": False},
+            "enabled_tenants": sorted({item.tenant_id for item in self.personas}),
             "schema_version": "local-playground-bootstrap-v1",
             "mode": (
                 "retrieval-and-governance"
@@ -521,3 +531,7 @@ def attach_playground_routes(
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="session identity not found") from None
+
+    from .industrial_web import attach_industrial_web
+
+    attach_industrial_web(app)

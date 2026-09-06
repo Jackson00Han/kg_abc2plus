@@ -15,6 +15,7 @@ from graphrag_prod.api.runtime import (
     BoundedOperationRunner,
     DependencyTimeoutError,
     ErrorCode,
+    IndustrialConstructionInputLimitError,
     OperationEnvelope,
     OperationKind,
     PrincipalRateLimiter,
@@ -63,6 +64,14 @@ class _ScriptedBackend:
 
 
 class RuntimeContractTests(unittest.TestCase):
+    def test_industrial_input_limit_has_fixed_actionable_error_without_private_content(self):
+        error = classify_exception(IndustrialConstructionInputLimitError("private source contents"))
+        self.assertEqual(error.code, ErrorCode.CONSTRUCTION_INPUT_LIMIT)
+        self.assertEqual(error.status_code, 422)
+        self.assertFalse(error.retryable)
+        self.assertIn("shorten the title or split the file", error.public_message)
+        self.assertNotIn("private source", error.public_message)
+
     def test_envelope_normalizes_identity_and_freezes_payload(self) -> None:
         payload = {"key": "value"}
         envelope = OperationEnvelope(

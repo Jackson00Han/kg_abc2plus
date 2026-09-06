@@ -478,7 +478,27 @@ class AuthoritativeImportResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class IndustrialConstructionContextRequest(StrictAPIModel):
+    family: Literal["canalis-kt", "evopact-hvx-up24"]
+    asset_keys: Annotated[tuple[Annotated[str, StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9-]{1,99}$")], ...], Field(max_length=8)] = ()
+
+    @field_validator("asset_keys", mode="before")
+    @classmethod
+    def json_assets(cls, value: object) -> object:
+        return _json_array(value)
+
+    @field_validator("asset_keys")
+    @classmethod
+    def unique_assets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(sorted(_unique(value, "asset_keys")))
+
+    def to_domain(self):
+        from graphrag_prod.industrial.construction import IndustrialUploadContext
+        return IndustrialUploadContext(self.family, self.asset_keys)
+
+
 class KnowledgeConstructionRequest(StrictAPIModel):
+    industrial_context: IndustrialConstructionContextRequest | None = None
     extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
     operation_key: Annotated[
         str,

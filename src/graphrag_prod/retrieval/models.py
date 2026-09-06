@@ -232,6 +232,9 @@ class RetrievalTrace:
     knowledge_activation_generation: int = 0
     industrial_scope: IndustrialScopeTrace | None = None
     reranking: RerankTrace | None = None
+    knowledge_tbox_id: str | None = None
+    knowledge_tbox_checksum: str | None = None
+    knowledge_publication_generation: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)

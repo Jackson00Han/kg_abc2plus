@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from graphrag_prod.domain import Principal
 from graphrag_prod.domain.ids import canonicalize_uri, content_checksum
+from graphrag_prod.graph.browse_models import GraphReadPin, GraphViewChanged
 from graphrag_prod.industrial.retrieval import IndustrialScopeResolution, build_rerank_scope_context
 from graphrag_prod.generation import (
     AnswerResult,
@@ -64,6 +65,10 @@ from .quality_history_contracts import (
     PublishedGraphQualityRunListResponse,
     PublishedGraphQualityRunRequest,
     PublishedGraphQualityRunResponse,
+)
+from .graph_contracts import (
+    GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
+    IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
 )
 from .knowledge_contracts import (
     ActivePublicationInventoryRequest,
@@ -117,6 +122,7 @@ from .runtime import (
     RequestValidationError,
     ResourceNotFoundError,
     UsageMetadata,
+    GraphViewChangedError,
     required_scope,
 )
 
@@ -213,6 +219,7 @@ class EvidenceSubgraphProjector(Protocol):
         *,
         trust_policy: SubgraphTrustPolicy,
         version_filter: VersionFilter,
+        expected_pin: GraphReadPin | None = None,
     ) -> EvidenceSubgraph: ...
 
 
@@ -944,11 +951,15 @@ class GraphRAGQueryOperations:
             graph_started = float(self._monotonic())
             try:
                 if result.trace.selected_chunk_ids:
+                    pin = GraphReadPin(result.trace.knowledge_publication_id, result.trace.knowledge_publication_generation,
+                        result.trace.knowledge_activation_generation, result.trace.knowledge_tbox_id,
+                        result.trace.knowledge_tbox_checksum, result.trace.corpus_revision)
                     graph = self._subgraph_projector.project(
                         principal,
                         result.trace.selected_chunk_ids,
                         trust_policy=policy,
                         version_filter=result.trace.version_filter,
+                        expected_pin=pin,
                     )
                 else:
                     graph = EvidenceSubgraph(
@@ -962,6 +973,8 @@ class GraphRAGQueryOperations:
                     )
             except (ApiRuntimeError, KeyboardInterrupt, SystemExit):
                 raise
+            except GraphViewChanged as error:
+                raise GraphViewChangedError() from error
             except TimeoutError as error:
                 raise DependencyTimeoutError() from error
             except Exception as error:
@@ -989,6 +1002,11 @@ class GraphRAGQueryOperations:
             ):
                 raise DependencyUnavailableError()
             graph_version_filter = result.trace.version_filter
+            if any(publication_id != result.trace.knowledge_publication_id for publication_id in graph.publication_ids) or any(
+                item.provenance.publication_id != result.trace.knowledge_publication_id
+                or item.provenance.ontology_version_id != result.trace.knowledge_tbox_id for item in evidence
+            ):
+                raise GraphViewChangedError()
             if any(
                 (
                     graph_version_filter.document_ids
@@ -1120,6 +1138,7 @@ class GraphRAGApplicationBackend:
         queries: GraphRAGQueryOperations,
         readiness: ReadinessOperations,
         knowledge: KnowledgeOperations | None = None,
+        graph: Any | None = None,
     ) -> None:
         for value, methods, name in (
             (documents, ("ingest", "delete", "get_job"), "documents"),
@@ -1131,6 +1150,9 @@ class GraphRAGApplicationBackend:
         self._documents = documents
         self._queries = queries
         self._readiness = readiness
+        if graph is not None and any(not callable(getattr(graph, method, None)) for method in ("query", "evidence", "source_list", "source_chunk")):
+            raise TypeError("graph does not implement its required operations")
+        self._graph = graph
         if knowledge is not None:
             methods = (
                 "ontology_list",
@@ -1168,6 +1190,21 @@ class GraphRAGApplicationBackend:
             return _response(self._readiness.check(), ReadinessResponse)
 
         principal = _trusted_principal(envelope)
+        graph_operations = {
+            OperationKind.GRAPH_QUERY: (GraphBrowseRequest, GraphBrowseResponse, "query"),
+            OperationKind.GRAPH_EVIDENCE: (GraphEvidenceRequest, GraphEvidenceResponseEnvelope, "evidence"),
+            OperationKind.INDUSTRIAL_SOURCES: (IndustrialSourcesRequest, IndustrialSourcesResponse, "source_list"),
+            OperationKind.INDUSTRIAL_SOURCE_CHUNK: (IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope, "source_chunk"),
+        }
+        if envelope.operation in graph_operations:
+            if self._graph is None:
+                raise DependencyUnavailableError()
+            request_model, response_model, method = graph_operations[envelope.operation]
+            try:
+                request = _validated(request_model, envelope.payload)
+            except (TypeError, ValueError) as error:
+                raise RequestValidationError() from error
+            return _response(getattr(self._graph, method)(principal, request), response_model)
         knowledge_operations = {
             OperationKind.ONTOLOGY_LIST,
             OperationKind.ONTOLOGY_IMPORT,

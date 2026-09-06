@@ -118,6 +118,14 @@ not approval or evidence of a live production deployment.
 
 ## Local Playground
 
+The industrial workbench for Canalis KT and EvoPacT HVX is available at
+`/industrial` on an industrial-enabled service (the retained development
+instance uses <http://127.0.0.1:8002/industrial>). It combines separate physical,
+classification and diagnostic graph views with exact source inspection,
+industrial retrieval, and governed upload/review/publication. Start with the
+[Chinese workbench guide](docs/industrial_workbench.md) and
+[retained-database runtime instructions](docs/industrial_runtime_and_uploads.md).
+
 To try the completed knowledge-base retrieval and authorization pipeline in a
 browser, run:
 

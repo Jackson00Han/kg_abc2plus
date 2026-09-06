@@ -22,7 +22,7 @@ from graphrag_prod.retrieval.models import VersionFilter
 
 
 FAMILIES = ("canalis-kt", "evopact-hvx-up24")
-SOURCE_KINDS = ("CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD")
+SOURCE_KINDS = ("CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD", "USER_UPLOAD")
 MAX_SCOPE_DOCUMENTS = 100
 _ASSET_KEY = re.compile(r"^[a-z][a-z0-9-]{1,99}$")
 
@@ -40,7 +40,7 @@ class IndustrialScope:
         if type(self.include_references) is not bool:
             raise TypeError("include_references must be boolean")
         for name, values, limit in (
-            ("asset_keys", self.asset_keys, 8), ("source_kinds", self.source_kinds, 3),
+            ("asset_keys", self.asset_keys, 8), ("source_kinds", self.source_kinds, 4),
         ):
             if (
                 not isinstance(values, tuple) or len(values) > limit
@@ -63,7 +63,7 @@ class IndustrialScopeTrace:
     match_none: bool
     # No hidden-source counts or missing-asset identities are exposed.
     reference_only_sources_omitted: bool = True
-    policy_version: str = "industrial-current-scope:v1"
+    policy_version: str = "industrial-current-scope:v2"
 
     def __post_init__(self) -> None:
         if not isinstance(self.requested, IndustrialScope):
@@ -75,7 +75,7 @@ class IndustrialScopeTrace:
             raise ValueError("reference count exceeds matched sources")
         if type(self.match_none) is not bool or self.match_none != (self.matched_documents == 0):
             raise ValueError("scope trace match-none state differs from its source count")
-        if self.reference_only_sources_omitted is not True or self.policy_version != "industrial-current-scope:v1":
+        if self.reference_only_sources_omitted is not True or self.policy_version != "industrial-current-scope:v2":
             raise ValueError("scope trace policy is unsupported")
 
     def as_dict(self) -> dict[str, Any]:
@@ -153,7 +153,7 @@ ASSET_SCOPE_QUERY = "// industrial-scope:assets\n" + _SOURCE_MATCH + """
 
 SOURCE_SCOPE_QUERY = "// industrial-scope:sources\n" + _SOURCE_MATCH + """
   AND (
-      (version.industrial_source_kind='SYNTHETIC_FIELD_RECORD'
+      (version.industrial_source_kind IN ['SYNTHETIC_FIELD_RECORD','USER_UPLOAD']
        AND (size($asset_keys)=0 OR any(key IN $asset_keys WHERE key IN version.industrial_asset_keys)))
       OR ($include_references AND version.industrial_source_kind IN ['CURATED_REFERENCE','OFFICIAL_PUBLICATION']
           AND size(version.industrial_asset_keys)=0)
@@ -288,7 +288,7 @@ scope-incompatible identities produce the same empty result.
             match_none=not rows,
         )
         trace = IndustrialScopeTrace(
-            scope, len(rows), sum(row["source_kind"] != "SYNTHETIC_FIELD_RECORD" for row in rows),
+            scope, len(rows), sum(row["source_kind"] in ("CURATED_REFERENCE", "OFFICIAL_PUBLICATION") for row in rows),
             not rows,
         )
         return IndustrialScopeResolution(effective, trace)

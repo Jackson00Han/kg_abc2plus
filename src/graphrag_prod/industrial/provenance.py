@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from typing import Any
+from neo4j import Query
 
 from graphrag_prod.domain.access import Principal
 
@@ -42,7 +43,7 @@ def _source_facets(metadata: dict[str, Any]) -> dict[str, Any]:
         raise IndustrialProvenanceConflict("industrial source asset keys must be bounded and canonical")
     kind = metadata.get("source_kind")
     key = metadata.get("source_key")
-    if kind not in {"CURATED_REFERENCE", "SYNTHETIC_FIELD_RECORD", "OFFICIAL_PUBLICATION"}:
+    if kind not in {"CURATED_REFERENCE", "SYNTHETIC_FIELD_RECORD", "OFFICIAL_PUBLICATION", "USER_UPLOAD"}:
         raise IndustrialProvenanceConflict("industrial source kind is invalid")
     if not isinstance(key, str) or not key or len(key) > 256 or any(ord(char) < 32 for char in key):
         raise IndustrialProvenanceConflict("industrial source key is invalid")
@@ -65,6 +66,8 @@ class Neo4jIndustrialProvenanceStore:
     def persist(self, principal: Principal, metadata: dict[str, Any]) -> None:
         if "knowledge:import" not in principal.capabilities:
             raise PermissionError("industrial source provenance requires knowledge:import")
+        if metadata.get("source_kind") == "USER_UPLOAD":
+            raise IndustrialProvenanceConflict("user uploads require their construction job origin")
         if metadata.get("tenant_id") != principal.tenant_id:
             raise IndustrialProvenanceConflict("source provenance tenant differs")
         _source_facets(metadata)
@@ -73,6 +76,61 @@ class Neo4jIndustrialProvenanceStore:
             raise IndustrialProvenanceConflict("source provenance exceeds byte limit")
         with self.driver.session(database=self.database) as session:
             session.execute_write(self._persist_tx, principal, metadata, encoded)
+
+    def persist_user_upload(self, principal: Principal, metadata: dict[str, Any], *,
+                            snapshot_id: str, context_json: str) -> None:
+        """Separate construct-only path, bound to a server-recorded source job."""
+        if "knowledge:construct" not in principal.capabilities:
+            raise PermissionError("upload provenance requires knowledge:construct")
+        if metadata.get("tenant_id") != principal.tenant_id or metadata.get("source_kind") != "USER_UPLOAD":
+            raise IndustrialProvenanceConflict("upload provenance origin differs")
+        context = metadata.get("construction_context")
+        if (not isinstance(context, dict) or canonical_json(context) != context_json
+                or context.get("principal_id") != principal.principal_id
+                or context.get("source_kind") != "USER_UPLOAD"
+                or context.get("family") != metadata.get("family")
+                or context.get("asset_keys") != metadata.get("asset_keys")
+                or context.get("policy_version") != "industrial-user-upload:v1"
+                or metadata.get("source_origin") != "USER_PROVIDED_NOT_VERIFIED"
+                or metadata.get("policy_version") != context.get("policy_version")
+                or metadata.get("source_key") != "upload:" + str(metadata.get("document_id"))):
+            raise IndustrialProvenanceConflict("upload source origin payload differs")
+        _source_facets(metadata)
+        encoded = canonical_json(metadata)
+        if len(encoded.encode("utf-8")) > MAX_PROVENANCE_BYTES:
+            raise IndustrialProvenanceConflict("source provenance exceeds byte limit")
+        with self.driver.session(database=self.database) as session:
+            session.execute_write(self._persist_upload_tx, principal, metadata, encoded, snapshot_id, context_json)
+
+    @classmethod
+    def _persist_upload_tx(cls, tx: Any, principal: Principal, metadata: dict[str, Any],
+                           encoded: str, snapshot_id: str, context_json: str) -> None:
+        row = tx.run("""
+            MATCH (job:KnowledgeConstructionJob {tenant_id:$tenant,job_id:$job_id})
+            MATCH (document:Document {tenant_id:$tenant,document_id:$document_id})
+            SET document.__industrial_upload_lock = randomUUID()
+            WITH job, document REMOVE document.__industrial_upload_lock
+            WITH job, document
+            MATCH (document)-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+                tenant_id:$tenant,snapshot_id:$snapshot_id,build_state:'PUBLISHED'})
+            MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+                tenant_id:$tenant,version_id:$version_id})
+            MATCH (snapshot)-[:OF_VERSION]->(version)
+            WHERE job.document_id=document.document_id AND job.version_id=version.version_id
+              AND job.snapshot_id=snapshot.snapshot_id AND job.request_fingerprint=$fingerprint
+              AND job.industrial_context_json=$context_json
+              AND job.access_groups=document.access_groups
+              AND job.access_policy_id=document.access_policy_id
+              AND job.access_policy_version=document.access_policy_version
+              AND all(g IN document.access_groups WHERE g IN $groups)
+            RETURN job.job_id AS job_id
+            """, tenant=principal.tenant_id, groups=sorted(principal.groups),
+            job_id=metadata["construction_job_id"], document_id=metadata["document_id"],
+            version_id=metadata["version_id"], snapshot_id=snapshot_id,
+            fingerprint=metadata["construction_request_fingerprint"], context_json=context_json).single()
+        if row is None or metadata.get("construction_context", {}).get("principal_id") != principal.principal_id:
+            raise IndustrialProvenanceConflict("upload source job is unavailable or incompatible")
+        cls._persist_tx(tx, principal, metadata, encoded)
 
     @staticmethod
     def _persist_tx(tx: Any, principal: Principal, metadata: dict[str, Any], encoded: str) -> None:
@@ -123,7 +181,7 @@ class Neo4jIndustrialProvenanceStore:
     def for_chunk(self, principal: Principal, chunk_id: str) -> dict[str, Any] | None:
         with self.driver.session(database=self.database) as session:
             row = session.run(
-                """
+                Query("""
                 MATCH (document:Document {tenant_id:$tenant})-[:ACTIVE_VERSION]->
                       (version:DocumentVersion {tenant_id:$tenant})-[:HAS_CHUNK]->
                       (chunk:Chunk {tenant_id:$tenant,chunk_id:$chunk_id})
@@ -148,8 +206,8 @@ class Neo4jIndustrialProvenanceStore:
                        document.access_policy_id AS access_policy_id,document.access_policy_version AS access_policy_version,
                        document.access_groups AS access_groups,
                        chunk.char_start AS char_start,chunk.char_end AS char_end,
-                       chunk.page_number AS page_number
-                """,
+                       chunk.page_number AS page_number,chunk.ordinal AS ordinal,chunk.section AS section
+                """, timeout=2.0),
                 tenant=principal.tenant_id, chunk_id=chunk_id, groups=sorted(principal.groups),
             ).single()
         if row is None:
@@ -179,4 +237,6 @@ class Neo4jIndustrialProvenanceStore:
         return {
             **metadata, "source_locations": locations, "chunk_id": chunk_id,
             "chunk_char_start": row["char_start"], "chunk_char_end": row["char_end"],
+            "chunk_page_number": row["page_number"], "chunk_ordinal": row["ordinal"],
+            "chunk_section": row["section"], "source_provenance_checksum": row["checksum"],
         }

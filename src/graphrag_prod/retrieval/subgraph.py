@@ -17,6 +17,8 @@ from typing import Any, Iterable, Mapping
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum
+from graphrag_prod.graph.browse_models import GraphReadPin, GraphViewChanged, read_graph_state
+from neo4j import unit_of_work
 from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.knowledge.models import EntityIdentity
 from graphrag_prod.knowledge.trust import (
@@ -582,6 +584,10 @@ MATCH (publication)-[:USES_TBOX_VERSION]->
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(entity_type:TBoxEntityType)
 WHERE chunk.chunk_id IN $chunk_ids
   AND size(chunk.text) <= $max_chunk_chars
+  AND chunk.document_id = document.document_id
+  AND chunk.version_id = version.version_id
+  AND chunk.access_policy_id = document.access_policy_id
+  AND chunk.access_policy_version = document.access_policy_version
   AND mention.authority_level IN $authority_levels
   AND publication.ontology_version_id = tbox.tbox_id
   AND tbox.status IN ['PUBLISHED', 'RETIRED']
@@ -670,6 +676,10 @@ MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(seed_snapshot)
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(seed_type:TBoxEntityType)
 WHERE seed_chunk.chunk_id IN $chunk_ids
   AND size(seed_chunk.text) <= $max_chunk_chars
+  AND seed_chunk.document_id = seed_document.document_id
+  AND seed_chunk.version_id = seed_version.version_id
+  AND seed_chunk.access_policy_id = seed_document.access_policy_id
+  AND seed_chunk.access_policy_version = seed_document.access_policy_version
   AND seed_mention.authority_level IN $authority_levels
   AND publication.ontology_version_id = tbox.tbox_id
   AND tbox.status IN ['PUBLISHED', 'RETIRED']
@@ -749,6 +759,10 @@ WITH publication, tbox, seed_entity, seed_chunk_id, assertion, chunk,
      version, subject_type, object_type
 WHERE (seed_entity = subject OR seed_entity = object)
   AND size(chunk.text) <= $max_chunk_chars
+  AND chunk.document_id = document.document_id
+  AND chunk.version_id = version.version_id
+  AND chunk.access_policy_id = document.access_policy_id
+  AND chunk.access_policy_version = document.access_policy_version
   AND assertion.authority_level IN $authority_levels
   AND subject_mention.authority_level IN $authority_levels
   AND (
@@ -866,13 +880,16 @@ WHERE (seed_entity = subject OR seed_entity = object)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
 WITH publication, assertion, subject, object, subject_mention,
      object_mention, chunk, document, version,
-     min(seed_chunk_id) AS seed_chunk_id,
-     min(seed_entity.entity_id) AS seed_entity_id
+     seed_chunk_id, seed_entity.entity_id AS seed_entity_id
+ORDER BY seed_entity_id, seed_chunk_id
+WITH publication, assertion, subject, object, subject_mention,
+     object_mention, chunk, document, version,
+     head(collect({chunk_id: seed_chunk_id, entity_id: seed_entity_id})) AS seed_pair
 ORDER BY assertion.revision_id
 LIMIT $assertion_limit
 RETURN publication.publication_id AS publication_id,
-       seed_chunk_id,
-       seed_entity_id,
+       seed_pair.chunk_id AS seed_chunk_id,
+       seed_pair.entity_id AS seed_entity_id,
        assertion {.*} AS assertion,
        subject {
            .entity_id, .tenant_id, .entity_type, .canonical_key,
@@ -906,6 +923,41 @@ RETURN publication.publication_id AS publication_id,
 """
 
 
+_SELECTED_SOURCE_QUERY = """
+// governed-subgraph:selected-sources
+UNWIND $chunk_ids AS requested_id
+MATCH (document:Document {tenant_id: $tenant_id})
+      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+      })-[:INCLUDES_CHUNK]->(chunk:Chunk {
+          tenant_id: $tenant_id, chunk_id: requested_id
+      })
+MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
+MATCH (snapshot)-[:OF_VERSION]->(version)
+WHERE chunk.document_id = document.document_id
+  AND chunk.version_id = version.version_id
+  AND chunk.access_policy_id = document.access_policy_id
+  AND chunk.access_policy_version = document.access_policy_version
+  AND any(group IN document.access_groups WHERE group IN $groups)
+  AND any(group IN chunk.access_groups WHERE group IN $groups)
+  AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
+  AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
+  AND ($published_before IS NULL OR version.published_at <= $published_before)
+RETURN DISTINCT chunk.chunk_id AS chunk_id,
+       document.document_id AS document_id, version.version_id AS version_id,
+       snapshot.snapshot_id AS snapshot_id,
+       chunk.checksum AS chunk_checksum, version.checksum AS version_checksum,
+       document.access_policy_id AS document_policy_id,
+       document.access_policy_version AS document_policy_version,
+       document.access_groups AS document_groups,
+       chunk.access_policy_id AS chunk_policy_id,
+       chunk.access_policy_version AS chunk_policy_version,
+       chunk.access_groups AS chunk_groups
+ORDER BY chunk_id
+LIMIT $selected_source_limit
+"""
+
+
 class Neo4jEvidenceSubgraphProjector:
     """Project an authorized 1-hop evidence graph without existence leakage."""
 
@@ -925,12 +977,15 @@ class Neo4jEvidenceSubgraphProjector:
             SubgraphTrustPolicy.PUBLISHED_SECONDARY_INCLUSIVE
         ),
         version_filter: VersionFilter = VersionFilter(),
+        expected_pin: GraphReadPin | None = None,
     ) -> EvidenceSubgraph:
         selected_limits = limits or EvidenceSubgraphLimits()
         if not isinstance(trust_policy, SubgraphTrustPolicy):
             raise TypeError("trust_policy must be SubgraphTrustPolicy")
         if not isinstance(version_filter, VersionFilter):
             raise TypeError("version_filter must be VersionFilter")
+        if expected_pin is not None and not isinstance(expected_pin, GraphReadPin):
+            raise TypeError("expected_pin must be GraphReadPin")
         if version_filter.match_none:
             if selected_chunk_ids:
                 self._chunk_ids(selected_chunk_ids, selected_limits)
@@ -954,6 +1009,10 @@ class Neo4jEvidenceSubgraphProjector:
         with self.driver.session(  # type: ignore[attr-defined]
             database=self.database
         ) as session:
+            if expected_pin is not None:
+                work = unit_of_work(timeout=30.0, metadata={"component": "governed-subgraph-pinned"})(self._project_pinned_tx)
+                return session.execute_read(work, principal, frozenset(chunk_ids), parameters,
+                                            selected_limits, trust_policy, version_filter, expected_pin)
             assertion_rows = tuple(
                 session.run(
                     _ASSERTION_QUERY,
@@ -977,6 +1036,47 @@ class Neo4jEvidenceSubgraphProjector:
             trust_policy,
             version_filter,
         )
+
+    @classmethod
+    def _project_pinned_tx(cls, tx: Any, principal: Principal, chunk_ids: frozenset[str],
+                          parameters: dict[str, object], limits: EvidenceSubgraphLimits,
+                          policy: SubgraphTrustPolicy, version_filter: VersionFilter, expected_pin: GraphReadPin) -> EvidenceSubgraph:
+        if read_graph_state(tx, principal.tenant_id)[0] != expected_pin:
+            raise GraphViewChanged()
+
+        def read_selected_sources() -> tuple[dict[str, Any], ...]:
+            rows = tuple(dict(row) for row in tx.run(
+                _SELECTED_SOURCE_QUERY, **parameters, selected_source_limit=len(chunk_ids) + 1,
+            ))
+            if len(rows) != len(chunk_ids) or {row["chunk_id"] for row in rows} != chunk_ids:
+                raise GraphViewChanged()
+            return rows
+
+        # Some selected evidence has no governed graph records. It must still
+        # remain authorized during this additional response-building phase.
+        selected_sources = read_selected_sources()
+        if expected_pin.publication_id is None:
+            if read_selected_sources() != selected_sources or read_graph_state(tx, principal.tenant_id)[0] != expected_pin:
+                raise GraphViewChanged()
+            return EvidenceSubgraph(policy, (), (), (), (), (), ())
+
+        def read_rows() -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+            return (
+                tuple(dict(row) for row in tx.run(_ASSERTION_QUERY, **parameters, assertion_limit=limits.assertion_row_limit)),
+                tuple(dict(row) for row in tx.run(_MENTION_QUERY, **parameters, mention_limit=limits.mention_row_limit)),
+            )
+
+        assertion_rows, mention_rows = read_rows()
+        if (read_rows() != (assertion_rows, mention_rows)
+                or read_selected_sources() != selected_sources
+                or read_graph_state(tx, principal.tenant_id)[0] != expected_pin):
+            raise GraphViewChanged()
+        result = cls._project_rows(principal, chunk_ids, assertion_rows, mention_rows, limits, policy, version_filter)
+        if any(value != expected_pin.publication_id for value in result.publication_ids) or any(
+            item.evidence.provenance.ontology_version_id != expected_pin.ontology_version_id for item in result.assertions
+        ) or any(item.provenance.ontology_version_id != expected_pin.ontology_version_id for node in result.entities for item in node.evidence):
+            raise GraphViewChanged()
+        return result
 
     @staticmethod
     def _chunk_ids(

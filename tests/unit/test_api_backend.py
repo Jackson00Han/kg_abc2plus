@@ -128,6 +128,11 @@ def _retrieval_result(
         context_chars=sum(len(chunk.text) for chunk in selected),
         limits=limits,
         version_filter=version_filter,
+        knowledge_publication_id="publication-001",
+        knowledge_activation_generation=1,
+        knowledge_publication_generation=1,
+        knowledge_tbox_id="ontology-001",
+        knowledge_tbox_checksum="a" * 64,
     )
     return RetrievalResult(chunks=selected, trace=trace)
 
@@ -421,6 +426,7 @@ class RecordingSubgraphProjector:
         *,
         trust_policy: SubgraphTrustPolicy,
         version_filter: VersionFilter,
+        expected_pin=None,
     ) -> object:
         self.calls.append(
             (principal, selected_chunk_ids, trust_policy, version_filter)

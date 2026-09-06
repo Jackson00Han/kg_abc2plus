@@ -92,7 +92,11 @@ explicitly separated files. The root agent owns commits and service restarts.
   Holdout independently passes; development recall and two incomplete PDF
   contexts remain explicit limitations. See
   `docs/validation/industrial-retrieval.md`.
-- I4–I5: pending; implementation begins after I3 is validated and pushed.
+- I4: complete after I3 commit `8822f8f`; graph/source APIs, industrial runtime
+  and same-port workbench passed 955 unit, 54 security, 16 E2E, 2 regression,
+  14 focused Neo4j tests and the real browser walkthrough. See
+  `docs/validation/industrial-workbench.md`. The focused commit/push records completion.
+- I5: next, after the I4 push; complete baseline maintenance and live walkthrough.
 
 Detailed evidence is recorded under `docs/validation/industrial-*.md`. This plan
 remains as design history; remove only the temporary active-work pointer from
