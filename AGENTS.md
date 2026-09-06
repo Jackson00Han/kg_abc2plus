@@ -1,5 +1,14 @@
 # Production GraphRAG Development Plan
 
+## Active industrial development round
+
+The user authorized the ordered Schneider-oriented industrial work in
+[`docs/industrial_development_plan.md`](docs/industrial_development_plan.md).
+Follow its milestones after preserving the current checkpoint, keep its progress
+current, and continue through a running, browser-validated local service. Preserve
+all completed stages below. Remove this temporary active-work section when the
+industrial round is complete; retain the design and validation records.
+
 ## Goal
 
 Evolve the current GraphRAG teaching project into a production-oriented,
