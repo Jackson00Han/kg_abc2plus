@@ -614,8 +614,8 @@ class KnowledgeConstructionResponse(StrictAPIModel):
 
 class ConstructionJobListRequest(StrictAPIModel):
     statuses: Annotated[
-        tuple[Literal["RUNNING", "RETRY_WAIT", "COMPLETED"], ...],
-        Field(max_length=3),
+        tuple[Literal["RUNNING", "RETRY_WAIT", "COMPLETED", "FAILED"], ...],
+        Field(max_length=4),
     ] = ()
     limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 25
 
@@ -637,7 +637,7 @@ class ConstructionJobResponse(StrictAPIModel):
     version_id: Identifier
     snapshot_id: Identifier
     tbox_id: Identifier
-    status: Literal["RUNNING", "RETRY_WAIT", "COMPLETED"]
+    status: Literal["RUNNING", "RETRY_WAIT", "COMPLETED", "FAILED"]
     expected_chunks: Annotated[int, Field(strict=True, ge=0, le=512)]
     completed_chunks: Annotated[int, Field(strict=True, ge=0, le=512)]
     failed_chunk_id: Identifier | None = None

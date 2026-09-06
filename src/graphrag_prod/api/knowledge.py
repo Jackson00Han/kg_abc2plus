@@ -18,6 +18,7 @@ from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
     ConstructionBudgetExceeded,
     ConstructionConflict,
+    ConstructionIngestionFailed,
     Neo4jConstructionAuditStore,
 )
 from graphrag_prod.domain import Principal, RelationshipPropertyValue, TypedLiteralValue
@@ -147,6 +148,7 @@ from .runtime import (
     AuthorizationError,
     BackendResult,
     ConflictError,
+    ConstructionIngestionFailedError,
     DependencyTimeoutError,
     DependencyUnavailableError,
     RequestValidationError,
@@ -1165,6 +1167,8 @@ class Neo4jKnowledgeOperations:
             raise
         except ConstructionAuthorizationError as error:
             raise ResourceNotFoundError() from error
+        except ConstructionIngestionFailed as error:
+            raise ConstructionIngestionFailedError() from error
         except (ConstructionConflict, IngestionConflict) as error:
             raise ConflictError() from error
         except (ConstructionBudgetExceeded, DocumentParseError) as error:

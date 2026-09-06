@@ -288,6 +288,7 @@ class ErrorCode(str, Enum):
     RATE_LIMITED = "rate_limited"
     DEPENDENCY_TIMEOUT = "dependency_timeout"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
+    CONSTRUCTION_INGESTION_FAILED = "construction_ingestion_failed"
     OVERLOADED = "overloaded"
     RUNTIME_CLOSED = "runtime_closed"
     INTERNAL = "internal_error"
@@ -406,6 +407,12 @@ class RetryableBackendError(ApiRuntimeError):
 
 class DependencyUnavailableError(RetryableBackendError):
     pass
+
+
+class ConstructionIngestionFailedError(ApiRuntimeError):
+    code = ErrorCode.CONSTRUCTION_INGESTION_FAILED
+    status_code = 503
+    default_message = "source preparation failed; retry with a new construction operation after recovery"
 
 
 class DependencyTimeoutError(ApiRuntimeError):

@@ -38,6 +38,10 @@ class PlaygroundDemoUiTests(unittest.TestCase):
                 self.source.index("async function constructKnowledge()"):
                 self.source.index("function reviewEdit(item)")
             ]
+        code += self.source[
+            self.source.index("function constructionFailureMarkup(item)"):
+            self.source.index("async function loadConstructionJobs()")
+        ]
         if detail:
             code += self.source[
                 self.source.index("async function loadConstructionJob(index, button)"):
@@ -74,7 +78,7 @@ const context = vm.createContext({$, fields, kit, source, state, elements, metad
   selectedDocumentAccessGroups: () => ['alpha-finance'], detectedMime: () => 'text/plain',
   bytesToBase64: () => 'bounded-upload',
   constructionFingerprint: async () => JSON.stringify({content_sha256: source.sha256}),
-  nextConstructionOperation: () => 'demo-operation-key', completeConstructionOperation() {},
+  nextConstructionOperation: () => 'demo-operation-key', completeConstructionOperation() {state.completedOperations = (state.completedOperations || 0) + 1;},
   loadConstructionJobs: async () => {}, loadReviews: async () => {},
   loadActiveDocuments: async () => {}, showConstructionFlow() {},
   requirePublishedConstructionOntology: async () => true,
@@ -218,6 +222,28 @@ await pending;
 assert.equal(elements.aboxEditor.value, 'user draft');
 assert.equal(elements.constructionOutput.textContent, 'new identity');
 assert.equal(state.demoSourceBinding, null);
+""", upload=True)
+
+    def test_terminal_ingestion_failure_clears_only_confirmed_operation_without_auto_retry(self) -> None:
+        self.run_js(r"""
+prepareDemoUpload('maintenance_report');
+$('document-file').files = [{size:8, arrayBuffer:async()=>new Uint8Array([1]).buffer}];
+const pending=constructKnowledge(); await flush();
+requests[0].reject(Object.assign(new Error('dependency unavailable'), {code:'construction_ingestion_failed'}));
+await pending;
+assert.equal(requests.length,1);
+assert.equal(state.completedOperations,1);
+assert.equal(state.constructionBusy,false);
+assert.match(elements.constructionOutput.textContent,/本次任务已结束/);
+const markup=constructionFailureMarkup({status:'FAILED',last_finding_codes:['EMBEDDING_CONNECTION_ERROR','INGESTION_ATTEMPTS_EXHAUSTED']});
+assert.match(markup,/向量化服务连接失败/);
+assert.match(markup,/尚未进入本次 LLM 抽取/);
+assert.match(markup,/刷新列表不会自动重试/);
+// Unknown outcomes retain the old key instead of risking duplicate work.
+const unknown=constructKnowledge(); await flush();
+requests[1].reject(new Error('network disconnected')); await unknown;
+assert.equal(state.completedOperations,1);
+assert.equal(requests.length,2);
 """, upload=True)
 
     def test_upload_shows_both_validation_attempts_without_raw_model_response(self) -> None:

@@ -144,6 +144,33 @@ class PlaygroundResumeTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "incompatible"):
                     self._reuse()
 
+    def test_provider_outage_restart_preserves_validation_and_real_provider_operations(self):
+        with (
+            patch.object(run_playground, "_load_corpus") as load,
+            patch.object(run_playground, "_reuse_corpus", return_value=self.fixture) as existing,
+            patch.object(run_playground, "_warm_retrieval") as warm,
+        ):
+            app = run_playground.build_playground_app(
+                self.driver, "neo4j", signing_key=b"unit-test-playground-signing-key-32-bytes",
+                embedder=self.embedder, reuse_existing_corpus=True, skip_provider_warmup=True,
+            )
+            existing.assert_called_once_with(self.driver, "neo4j", self.embedder)
+            load.assert_not_called()
+            warm.assert_not_called()
+            self.embedder.client.embeddings.create.assert_not_called()
+            self.assertEqual(len(app.state.playground_gold_questions), 49)
+        with self.assertRaisesRegex(ValueError, "verified existing corpus"):
+            run_playground.build_playground_app(
+                self.driver, "neo4j", signing_key=b"unit-test-playground-signing-key-32-bytes",
+                embedder=self.embedder, skip_provider_warmup=True,
+            )
+        for args in (
+            ["--skip-provider-warmup"],
+            ["--skip-provider-warmup", "--reuse-existing-corpus", "--check"],
+        ):
+            with patch("sys.argv", ["run_playground", *args]), self.assertRaises(SystemExit):
+                run_playground.main()
+
     def test_cli_and_app_require_explicit_reuse_and_preserve_default_bootstrap(self):
         self.assertFalse(run_playground._parser().parse_args([]).reuse_existing_corpus)
         self.assertTrue(run_playground._parser().parse_args([

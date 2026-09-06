@@ -856,8 +856,8 @@ def create_app(
         request: Request,
         identity: IdentityDependency,
         statuses: Annotated[
-            list[Literal["RUNNING", "RETRY_WAIT", "COMPLETED"]] | None,
-            Query(alias="status", min_length=1, max_length=3),
+            list[Literal["RUNNING", "RETRY_WAIT", "COMPLETED", "FAILED"]] | None,
+            Query(alias="status", min_length=1, max_length=4),
         ] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 25,
     ) -> Any:

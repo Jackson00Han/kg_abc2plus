@@ -2071,10 +2071,20 @@
           elements.constructionJobList.innerHTML = '<div class="output-box">当前身份没有可见的构建任务。</div>';
           return;
         }
-        elements.constructionJobList.innerHTML = state.constructionJobs.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.status)} · ${escapeHtml(shortId(item.job_id))}</strong><p>${escapeHtml(item.completed_chunks)} / ${escapeHtml(item.expected_chunks)} Chunks · document ${escapeHtml(shortId(item.document_id))}<br>updated ${escapeHtml(item.updated_at)}</p></div><span class="trust-badge ${item.status === 'COMPLETED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${item.failed_chunk_id ? `<div class="exact-evidence">failed Chunk ${escapeHtml(shortId(item.failed_chunk_id))} · ${escapeHtml((item.last_finding_codes || []).join(', '))}</div>` : ''}<div class="workbench-actions"><button class="button" type="button" data-construction-job-detail="${index}">查看任务明细</button></div></article>`).join('');
+        elements.constructionJobList.innerHTML = state.constructionJobs.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(({RUNNING:'处理中', RETRY_WAIT:'已中断，等待重试', FAILED:'已失败', COMPLETED:'已完成'})[item.status] || item.status)} · ${escapeHtml(shortId(item.job_id))}</strong><p>${escapeHtml(item.completed_chunks)} / ${escapeHtml(item.expected_chunks)} Chunks · document ${escapeHtml(shortId(item.document_id))}<br>updated ${escapeHtml(item.updated_at)}</p></div><span class="trust-badge ${item.status === 'COMPLETED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${constructionFailureMarkup(item)}<div class="workbench-actions"><button class="button" type="button" data-construction-job-detail="${index}">查看任务明细</button></div></article>`).join('');
         elements.constructionJobList.querySelectorAll('[data-construction-job-detail]').forEach(button => {
           button.addEventListener('click', () => loadConstructionJob(Number(button.dataset.constructionJobDetail), button));
         });
+      }
+
+      function constructionFailureMarkup(item) {
+        const codes = item.last_finding_codes || [];
+        if (!codes.length && !item.failed_chunk_id) return '';
+        const reason = codes.includes('EMBEDDING_CONNECTION_ERROR') ? '向量化服务连接失败，尚未进入本次 LLM 抽取。'
+          : codes.includes('EMBEDDING_TIMEOUT') ? '向量化服务连接或响应超时，尚未进入本次 LLM 抽取。'
+          : codes.includes('SOURCE_INGESTION_FAILED') ? '来源入库阶段失败，尚未进入本次 LLM 抽取。'
+          : '构建已中断，请查看任务明细中的原因。';
+        return `<div class="exact-evidence">${escapeHtml(reason)} ${item.status === 'FAILED' ? '本次任务已结束，旧记录保留。依赖恢复后，请重新提交同一文件以创建新任务；刷新列表不会自动重试。' : '等待依赖恢复后再重试，刷新列表不会执行任务。'}<br>${escapeHtml(codes.join(' · '))}</div>`;
       }
 
       async function loadConstructionJobs() {
@@ -2099,6 +2109,9 @@
           const payload = await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(item.job_id)}`);
           if (identityEpoch !== state.identityEpoch) return;
           showConstructionResult(payload);
+          if (payload.status === 'FAILED' || payload.status === 'RETRY_WAIT') {
+            $('construction-validation-summary').innerHTML = constructionFailureMarkup(payload) + $('construction-validation-summary').innerHTML;
+          }
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
         } finally {
@@ -2186,7 +2199,13 @@
           showToast(extractionMode === 'SOURCE_ONLY' ? `来源入库完成：${payload.chunks.length} Chunks，未调用抽取模型` : hasCandidates ? '已生成可审核记录，请核对抽取结果' : '原文已入库，本次未生成可审核记录');
           await Promise.allSettled([loadConstructionJobs(), loadReviews(), loadActiveDocuments()]);
         } catch (error) {
-          if (identityEpoch === state.identityEpoch) output(elements.constructionOutput, error.message);
+          if (identityEpoch === state.identityEpoch) {
+            if (error.code === 'construction_ingestion_failed') {
+              completeConstructionOperation();
+              output(elements.constructionOutput, '来源入库或向量化失败，本次任务已结束。请查看下方任务原因；依赖恢复后，再点击上传会创建新任务，保留旧任务记录。');
+            } else output(elements.constructionOutput, error.message);
+            await loadConstructionJobs();
+          }
         } finally {
           state.constructionBusy = false;
           $('construct-button').disabled = false;

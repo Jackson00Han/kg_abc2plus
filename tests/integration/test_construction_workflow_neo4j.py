@@ -24,6 +24,7 @@ from graphrag_prod.construction import (
     ConstructionConfig,
     ConstructionMetadata,
     ConstructionConflict,
+    ConstructionIngestionFailed,
     ConstructionBudgetExceeded,
     Neo4jConstructionAuditStore,
     Neo4jKnowledgeConstructionWorkflow,
@@ -317,6 +318,64 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             database_=self.database,
         )
         return dict(rows[0])
+
+    def test_preparation_failure_projection_acl_and_explicit_new_operation_recovery(self) -> None:
+        class APIConnectionError(ConnectionError):
+            pass
+
+        healthy_provider = self.workflow.embedding_provider
+
+        def unavailable(**kwargs):
+            raise APIConnectionError("private provider detail")
+
+        self.workflow.embedding_provider = unavailable
+        metadata = replace(self.metadata, max_attempts=1)
+        with self.assertRaises(ConstructionIngestionFailed):
+            self.workflow.run(self.principal, SOURCE, metadata)
+        audit = self.workflow.audit_store
+        jobs = audit.list_jobs(self.principal, statuses=("FAILED",))
+        self.assertEqual(len(jobs), 1)
+        failed = jobs[0]
+        self.assertEqual(failed.completed_chunks, 0)
+        self.assertEqual(failed.last_finding_codes, (
+            "EMBEDDING_CONNECTION_ERROR", "INGESTION_ATTEMPTS_EXHAUSTED",
+        ))
+        self.assertEqual(audit.list_jobs(self.principal, statuses=("RUNNING",)), ())
+        self.assertEqual(self.completions.calls, [])
+        for forbidden in (
+            replace(self.principal, tenant_id="other-tenant"),
+            replace(self.principal, groups=frozenset({"public"})),
+        ):
+            self.assertIsNone(audit.get_job(forbidden, failed.job_id))
+            self.assertEqual(audit.list_jobs(forbidden), ())
+            self.assertIsNone(audit.sync_preparation_failure(forbidden, failed.job_id))
+
+        # Old interrupted parent rows must read correctly without a GET mutation.
+        self.driver.execute_query(
+            "MATCH (j:KnowledgeConstructionJob {job_id:$id}) "
+            "SET j.status='RUNNING', j.last_finding_codes=[]",
+            id=failed.job_id, database_=self.database,
+        )
+        self.assertEqual(audit.get_job(self.principal, failed.job_id).status, "FAILED")
+        self.assertEqual(len(audit.list_jobs(self.principal, statuses=("FAILED",))), 1)
+        rows, _, _ = self.driver.execute_query(
+            "MATCH (j:KnowledgeConstructionJob {job_id:$id}) RETURN j.status AS status",
+            id=failed.job_id, database_=self.database,
+        )
+        self.assertEqual(rows[0]["status"], "RUNNING")
+        self.assertEqual(audit.sync_preparation_failure(self.principal, failed.job_id), "FAILED")
+
+        self.workflow.embedding_provider = healthy_provider
+        # An exhausted operation cannot silently reset its attempt budget.
+        with self.assertRaises(ConstructionIngestionFailed):
+            self.workflow.run(self.principal, SOURCE, metadata)
+        recovered = self.workflow.run(
+            self.principal, SOURCE, replace(metadata, operation_key="explicit-retry"),
+        )
+        self.assertEqual(audit.get_job(self.principal, recovered.job_id).status, "COMPLETED")
+        self.assertIsNone(audit.sync_preparation_failure(self.principal, recovered.job_id))
+        self.assertEqual(audit.get_job(self.principal, failed.job_id).status, "FAILED")
+        self.assertEqual(len(audit.list_jobs(self.principal)), 2)
 
     def test_validation_feedback_retains_rejection_before_candidate_and_replays_with_acl(self) -> None:
         completions = self._enable_validation_feedback("invalid", "valid")

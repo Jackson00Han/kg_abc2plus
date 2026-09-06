@@ -321,6 +321,7 @@
         "test_bulk_initial_load_neo4j.Neo4jBulkInitialLoadIntegrationTests.test_interrupted_transaction_rolls_back_and_exact_retry_recovers",
         "test_bulk_initial_load_neo4j.Neo4jBulkInitialLoadIntegrationTests.test_loader_does_not_replace_managed_incremental_ingestion",
         "test_bulk_initial_load_neo4j.Neo4jBulkInitialLoadIntegrationTests.test_stable_id_conflict_rolls_back_the_document_transaction",
+        "test_construction_workflow_neo4j.Neo4jConstructionWorkflowIntegrationTests.test_preparation_failure_projection_acl_and_explicit_new_operation_recovery",
         "test_construction_workflow_neo4j.Neo4jConstructionWorkflowIntegrationTests.test_real_upload_candidate_review_queue_replay_and_acl",
         "test_construction_workflow_neo4j.Neo4jConstructionWorkflowIntegrationTests.test_source_only_evidence_supports_explicit_authoritative_import_and_publish",
         "test_construction_workflow_neo4j.Neo4jConstructionWorkflowIntegrationTests.test_source_only_resume_and_mode_conflict_preserve_completed_source",
@@ -738,6 +739,7 @@
         "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_missing_or_cross_tenant_tbox_stops_before_ingestion",
         "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_outcome_identity_conflict_raises_inside_transaction_for_rollback",
         "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_preflight_budgets_stop_before_ingestion_or_provider_calls",
+        "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_preparation_failure_requires_durable_terminal_evidence_before_new_operation",
         "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_provider_failure_remains_retryable_and_is_not_cached_as_rejection",
         "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_provider_timeout_must_fit_inside_workflow_deadline",
         "test_construction_workflow.KnowledgeConstructionWorkflowTests.test_request_policy_is_stable_and_changes_cannot_replay_completed_outcomes",
@@ -1053,6 +1055,7 @@
         "test_playground_demo_ui.PlaygroundDemoUiTests.test_mode_limits_and_legacy_or_source_only_results_remain_explicit",
         "test_playground_demo_ui.PlaygroundDemoUiTests.test_prefill_selects_mode_but_leaves_file_and_all_writes_to_user",
         "test_playground_demo_ui.PlaygroundDemoUiTests.test_source_binding_uses_real_ids_and_never_imports_or_publishes",
+        "test_playground_demo_ui.PlaygroundDemoUiTests.test_terminal_ingestion_failure_clears_only_confirmed_operation_without_auto_retry",
         "test_playground_demo_ui.PlaygroundDemoUiTests.test_upload_captures_source_mode_and_blocks_duplicate_submission",
         "test_playground_demo_ui.PlaygroundDemoUiTests.test_upload_shows_both_validation_attempts_without_raw_model_response",
         "test_playground_flow.PlaygroundFlowUiTests.test_expert_import_requires_explicit_scoped_publication_and_keeps_business_selection",
@@ -1098,6 +1101,7 @@
         "test_playground_resolution.PlaygroundResolutionTests.test_same_revision_cache_is_reused_until_explicit_refresh",
         "test_playground_resolution.PlaygroundResolutionTests.test_stale_identity_publication_results_cannot_refresh_or_clear_new_form",
         "test_playground_resume.PlaygroundResumeTests.test_cli_and_app_require_explicit_reuse_and_preserve_default_bootstrap",
+        "test_playground_resume.PlaygroundResumeTests.test_provider_outage_restart_preserves_validation_and_real_provider_operations",
         "test_playground_resume.PlaygroundResumeTests.test_refuses_invalid_schema_or_unready_corpus_without_loading_data",
         "test_playground_resume.PlaygroundResumeTests.test_rejects_changed_vector_space_tenant_or_generation_metadata",
         "test_playground_resume.PlaygroundResumeTests.test_rejects_missing_or_mismatched_physical_index_configuration",
@@ -1256,8 +1260,8 @@
   },
   "gold_version": "2.0.0",
   "profile_id": "dev-mini",
-  "rationale": "Reviewed local Playground full-reset maintenance: exclusive request admission, fail-closed reset and retry behavior, deliberate browser confirmation, and complete restoration of the locked public fixture from verified cached embeddings without provider calls. All 922 prior tests remain; 24 unit and 2 real-Neo4j tests were added, for 948 passing tests in one complete capture. All 160 case digests, 20 contract metrics, 27 diagnostics and 8 identity domains remain exact. The reset implementation and tests remained frozen throughout the complete capture. Two report replays reuse that captured evidence and do not represent two complete suite runs; the baseline version change is additionally checked by focused evaluation gates. See docs/validation/playground-reset.md. Dev-mini performance and cost are non-qualifying observations.",
+  "rationale": "Reviewed construction preparation-failure recovery: durable terminal status, tenant-bound legacy read projection, safe manual retry key rotation, and explicit verified-corpus startup during provider outages. All 948 previous tests remain, with three unit and one real-Neo4j recovery tests added. Case digests, contract metrics, diagnostics and identity domains are unchanged. See docs/validation/construction-ingestion-failure.md.",
   "schema_version": "evaluation-baseline-v1",
-  "semantic_digest": "a879f0ff312069a0e126bc0328036ed590a960ca5bd387122fbb02163befbe78",
-  "version": "1.8.0"
+  "semantic_digest": "8c03cd166a6fc218c4bcd10c19bf4d6ea59152e8302bea72d4be2941f53af094",
+  "version": "1.9.0"
 }

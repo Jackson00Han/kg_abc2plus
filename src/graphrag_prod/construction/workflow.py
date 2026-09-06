@@ -363,7 +363,7 @@ class ConstructionJobView:
             "status",
         ):
             object.__setattr__(self, name, _required(getattr(self, name), name))
-        if self.status not in {"RUNNING", "RETRY_WAIT", "COMPLETED"}:
+        if self.status not in {"RUNNING", "RETRY_WAIT", "COMPLETED", "FAILED"}:
             raise ValueError("unsupported construction job status")
         for name in ("expected_chunks", "completed_chunks"):
             value = getattr(self, name)
@@ -381,6 +381,10 @@ class ConstructionJobView:
         _aware(self.updated_at, "updated_at")
         _aware(self.completed_at, "completed_at")
         _extraction_mode(self.extraction_mode)
+
+
+class ConstructionIngestionFailed(RuntimeError):
+    """The preparation operation has durably exhausted its retry budget."""
 
 
 class ConstructionConflict(RuntimeError):
@@ -541,6 +545,37 @@ class ConstructionAuditStore(Protocol):
         failed_at: datetime,
     ) -> None: ...
 
+    def sync_preparation_failure(self, principal: Principal, job_id: str) -> str | None: ...
+
+
+_PREPARATION_STATUS = """
+    OPTIONAL MATCH (preparation:IngestionJob {
+        tenant_id: $tenant_id, operation: 'PREPARE_UPSERT',
+        idempotency_key: 'knowledge-construction:' + job.operation_key
+    })
+    WHERE preparation.operation_key = 'knowledge-construction:' + job.operation_key
+      AND preparation.document_id = job.document_id
+      AND preparation.target_version_id = job.version_id
+      AND preparation.target_snapshot_id = job.snapshot_id
+      AND preparation.source_generation = job.source_generation
+      AND preparation.expected_active_snapshot_id = job.expected_active_snapshot_id
+    WITH job, result_jsons, preparation,
+         CASE WHEN job.status = 'COMPLETED' THEN 'COMPLETED'
+              WHEN preparation.status = 'FAILED_PERMANENT' THEN 'FAILED'
+              WHEN preparation.status = 'RETRY_WAIT' THEN 'RETRY_WAIT'
+              ELSE job.status END AS job_status
+    WITH job, result_jsons, job_status,
+         CASE WHEN job.status <> 'COMPLETED'
+                    AND preparation.status IN ['FAILED_PERMANENT', 'RETRY_WAIT']
+              THEN [CASE preparation.last_error_code
+                        WHEN 'APIConnectionError' THEN 'EMBEDDING_CONNECTION_ERROR'
+                        WHEN 'APITimeoutError' THEN 'EMBEDDING_TIMEOUT'
+                        ELSE 'SOURCE_INGESTION_FAILED' END]
+                   + CASE WHEN preparation.status = 'FAILED_PERMANENT'
+                          THEN ['INGESTION_ATTEMPTS_EXHAUSTED'] ELSE [] END
+              ELSE coalesce(job.last_finding_codes, []) END AS failure_codes
+"""
+
 
 class Neo4jConstructionAuditStore:
     """Durable, tenant-scoped construction jobs, artifacts, and outcomes."""
@@ -618,7 +653,9 @@ class Neo4jConstructionAuditStore:
                     job.status <> 'COMPLETED'
                     OR job.expected_chunks = size(result_jsons)
                   )
-                RETURN job {.*} AS job, result_jsons
+                """ + _PREPARATION_STATUS + """
+                RETURN job {.*, status: job_status,
+                            last_finding_codes: failure_codes} AS job, result_jsons
                 LIMIT 1
                 """,
                 tenant_id=principal.tenant_id,
@@ -641,8 +678,8 @@ class Neo4jConstructionAuditStore:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         normalized_statuses = tuple(statuses)
-        if len(normalized_statuses) > 3 or any(
-            value not in {"RUNNING", "RETRY_WAIT", "COMPLETED"}
+        if len(normalized_statuses) > 4 or any(
+            value not in {"RUNNING", "RETRY_WAIT", "COMPLETED", "FAILED"}
             for value in normalized_statuses
         ):
             raise ValueError("unsupported construction job status filter")
@@ -651,8 +688,12 @@ class Neo4jConstructionAuditStore:
                 """
                 MATCH (job:KnowledgeConstructionJob {tenant_id: $tenant_id})
                 WHERE any(group IN $groups WHERE group IN job.access_groups)
-                  AND (size($statuses) = 0 OR job.status IN $statuses)
-                RETURN job {.*} AS job, [] AS result_jsons
+                WITH job, [] AS result_jsons
+                """ + _PREPARATION_STATUS + """
+                WITH job, job_status, failure_codes
+                WHERE size($statuses) = 0 OR job_status IN $statuses
+                RETURN job {.*, status: job_status,
+                            last_finding_codes: failure_codes} AS job, [] AS result_jsons
                 ORDER BY job.updated_at DESC, job.job_id
                 LIMIT $limit
                 """,
@@ -662,6 +703,31 @@ class Neo4jConstructionAuditStore:
                 limit=limit,
             )
             return tuple(_construction_job_view(row) for row in rows)
+
+    def sync_preparation_failure(self, principal: Principal, job_id: str) -> str | None:
+        """Persist an observed preparation failure without downgrading success.
+
+        Read projections use the same source for legacy interrupted jobs. The
+        indexed preparation identity and lifecycle fields must all match.
+        """
+        _require_construction_capability(principal)
+        with self.driver.session(database=self.database) as session:
+            row = session.execute_write(lambda tx: tx.run(
+                """
+                MATCH (job:KnowledgeConstructionJob {tenant_id: $tenant_id, job_id: $job_id})
+                WHERE any(group IN $groups WHERE group IN job.access_groups)
+                SET job.__construction_status_lock = randomUUID()
+                REMOVE job.__construction_status_lock
+                WITH job, [] AS result_jsons
+                """ + _PREPARATION_STATUS + """
+                WITH job, job_status, failure_codes
+                WHERE job_status IN ['FAILED', 'RETRY_WAIT']
+                SET job.status = job_status, job.last_finding_codes = failure_codes
+                RETURN job.status AS status
+                """, tenant_id=principal.tenant_id, job_id=_required(job_id, 'job_id'),
+                groups=sorted(principal.groups),
+            ).single())
+        return None if row is None else row['status']
 
     def observe_document(
         self,
@@ -1138,6 +1204,8 @@ class Neo4jConstructionAuditStore:
                     WHERE completed = job.expected_chunks
                       AND artifact_backed = job.expected_chunks
                     SET job.status = 'COMPLETED',
+                        job.last_finding_codes = [],
+                        job.failed_chunk_id = null,
                         job.completed_chunks = completed,
                         job.completed_at = coalesce(job.completed_at, $completed_at),
                         job.updated_at = $completed_at
@@ -1984,11 +2052,24 @@ class Neo4jKnowledgeConstructionWorkflow:
             ingestion_profile,
             job,
         )
-        ingestion = self.pipeline.run(
-            ingestion_request,
-            _empty_canonical_extraction,
-            self.embedding_provider,
-        )
+        try:
+            ingestion = self.pipeline.run(
+                ingestion_request,
+                _empty_canonical_extraction,
+                self.embedding_provider,
+            )
+        except Exception as error:
+            # The preparation job owns its retry budget and fencing. Never
+            # relabel a concurrent active worker, or reset an exhausted budget.
+            try:
+                status = self.audit_store.sync_preparation_failure(principal, job.job_id)
+            except Exception:
+                # Preserve the original failure if the audit database is also
+                # unavailable. Read projection reconciles it after recovery.
+                status = None
+            if status == 'FAILED':
+                raise ConstructionIngestionFailed('source preparation failed') from error
+            raise
         self._require_deadline(deadline)
         document, version, chunks = ingestion_request.domain_inputs()
         results: list[ConstructionChunkResult] = []

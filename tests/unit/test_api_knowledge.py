@@ -2267,6 +2267,8 @@ class KnowledgeAdapterTests(unittest.TestCase):
             )
 
     def test_construction_failures_use_runtime_error_taxonomy(self) -> None:
+        from graphrag_prod.construction import ConstructionIngestionFailed
+        from graphrag_prod.api.runtime import ConstructionIngestionFailedError
         principal = Principal(
             "expert-1",
             "tenant-alpha",
@@ -2275,6 +2277,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
         )
         request = KnowledgeConstructionRequest.model_validate(_construct_payload())
         cases = (
+            (ConstructionIngestionFailed('private'), ConstructionIngestionFailedError),
             (TimeoutError("provider timeout detail"), DependencyTimeoutError),
             (
                 ExtractionRejected(

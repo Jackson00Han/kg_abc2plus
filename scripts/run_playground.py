@@ -760,11 +760,16 @@ def build_playground_app(
     extraction_model: str = "qwen-plus",
     reuse_existing_corpus: bool = False,
     enable_reset: bool = False,
+    skip_provider_warmup: bool = False,
 ):
     if not isinstance(reuse_existing_corpus, bool):
         raise ValueError("reuse_existing_corpus must be a boolean")
     if not isinstance(enable_reset, bool):
         raise ValueError("enable_reset must be a boolean")
+    if not isinstance(skip_provider_warmup, bool):
+        raise ValueError("skip_provider_warmup must be a boolean")
+    if skip_provider_warmup and not reuse_existing_corpus:
+        raise ValueError("skip_provider_warmup requires a verified existing corpus")
     fixture = (
         _reuse_corpus(driver, database, embedder)
         if reuse_existing_corpus
@@ -805,7 +810,14 @@ def build_playground_app(
         database,
         transaction_timeout_seconds=30.0,
     )
-    _warm_retrieval(retrieval_engine, fixture, embedder)
+    if skip_provider_warmup:
+        print(
+            "[4/5] External provider warm-up explicitly skipped; connectivity is "
+            "unverified. Uploads and queries still require the real provider.",
+            flush=True,
+        )
+    else:
+        _warm_retrieval(retrieval_engine, fixture, embedder)
     query_operations = GraphRAGQueryOperations(
         retrieval_engine,
         embedder,
@@ -1114,6 +1126,11 @@ def _parser() -> argparse.ArgumentParser:
         help="verify and reuse an initialized local database without loading fixture data",
     )
     parser.add_argument(
+        "--skip-provider-warmup",
+        action="store_true",
+        help="open a verified existing corpus during a provider outage; not allowed with --check",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="run the authenticated HTTP smoke suite and exit",
@@ -1123,6 +1140,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _parser().parse_args()
+    if args.skip_provider_warmup and (not args.reuse_existing_corpus or args.check):
+        raise SystemExit("--skip-provider-warmup requires --reuse-existing-corpus and cannot use --check")
     host = require_loopback_host(args.host)
     if not 1 <= args.port <= 65_535:
         raise SystemExit("--port must be between 1 and 65535")
@@ -1199,6 +1218,7 @@ def main() -> None:
             embedder=embedder,
             extraction_model=extraction_model,
             reuse_existing_corpus=args.reuse_existing_corpus,
+            skip_provider_warmup=args.skip_provider_warmup,
             # main() already requires a loopback URI and the explicit disposable
             # database opt-in. Production create_app() never installs this API.
             enable_reset=True,

@@ -16,6 +16,7 @@ from graphrag_prod.construction import (
     ConstructionBudgetExceeded,
     ConstructionConfig,
     ConstructionConflict,
+    ConstructionIngestionFailed,
     ConstructionDeadlineExceeded,
     ConstructionChunkResult,
     ConstructionMetadata,
@@ -513,6 +514,38 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
             frozenset({"knowledge:construct"}),
         )
 
+    def test_preparation_failure_requires_durable_terminal_evidence_before_new_operation(self) -> None:
+        for persisted_status in ("FAILED", "RETRY_WAIT", None, "audit unavailable"):
+            with self.subTest(persisted_status=persisted_status):
+                extractor = _Extractor(_tbox())
+                workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
+                failure = ConnectionError("private provider detail")
+                synced = []
+
+                def fail(*args):
+                    raise failure
+
+                def sync(principal, job_id):
+                    synced.append((principal, job_id))
+                    if persisted_status == "audit unavailable":
+                        raise ConnectionError("audit unavailable")
+                    return persisted_status
+
+                pipeline.run = fail
+                audit.sync_preparation_failure = sync
+                expected = ConstructionIngestionFailed if persisted_status == "FAILED" else ConnectionError
+                with self.assertRaises(expected) as caught:
+                    workflow.run(self.principal, SOURCE, _metadata())
+                if persisted_status == "FAILED":
+                    self.assertIs(caught.exception.__cause__, failure)
+                    self.assertNotIn("private", str(caught.exception))
+                else:
+                    self.assertIs(caught.exception, failure)
+                self.assertEqual(len(synced), 1)
+                self.assertEqual(synced[0][0], self.principal)
+                self.assertEqual(extractor.calls, 0)
+                self.assertEqual(knowledge.candidate_writes, 0)
+
     def test_upload_publishes_only_empty_canonical_graph_then_candidate_abox(self) -> None:
         extractor = _Extractor(_tbox())
         workflow, audit, knowledge, pipeline = _workflow(extractor=extractor)
@@ -784,7 +817,9 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         self.assertEqual(detail_parameters["tenant_id"], self.principal.tenant_id)
         self.assertEqual(detail_parameters["groups"], ["engineers"])
         list_query, list_parameters = driver.value.calls[1]
-        self.assertLess(list_query.index("job.status IN $statuses"), list_query.index("LIMIT $limit"))
+        self.assertLess(list_query.index("job_status IN $statuses"), list_query.index("LIMIT $limit"))
+        self.assertIn("idempotency_key: 'knowledge-construction:' + job.operation_key", list_query)
+        self.assertIn("preparation.target_snapshot_id = job.snapshot_id", list_query)
         self.assertEqual(list_parameters["limit"], 10)
 
         with self.assertRaisesRegex(ValueError, "between"):
