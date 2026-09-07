@@ -76,6 +76,21 @@ class GraphBrowsingTests(unittest.TestCase):
         self.assertEqual(parsed_evidence.items[0].evidence.citation.chunk_text, fixture.CHUNK_TEXT)
         self.assertEqual(parsed_evidence.items[0].applicability.sme_review_state, "NOT_RECORDED")
 
+    def test_typed_chinese_literal_and_source_text_roundtrip_through_browser_api(self):
+        from graphrag_prod.domain.models import TypedLiteralValue
+        text = "Pump-7 对应项目模拟配置。"
+        semantics = TypedLiteralValue(datatype="STRING", typed_value="项目模拟配置",
+                                      raw_value="项目模拟配置", canonical_value="项目模拟配置")
+        self.driver.mentions, self.driver.assertions = fixture._literal_source_rows(text, semantics.raw_value, semantics)
+        result = self.browser.query(PRINCIPAL, GraphBrowseQuery())
+        parsed = GraphBrowseResponse.model_validate(result)
+        self.assertEqual(parsed.literals[0].value, semantics.raw_value)
+        self.assertEqual(parsed.literals[0].semantics.datatype, "STRING")
+        evidence = self.browser.evidence(PRINCIPAL, ("pressure-published",), view_token=result["view_token"])
+        parsed_evidence = GraphEvidenceResponseEnvelope.model_validate(evidence)
+        self.assertEqual(parsed_evidence.items[0].evidence.quoted_text, text)
+        self.assertEqual(parsed_evidence.items[0].evidence.citation.chunk_text, text)
+
     def test_cursor_has_no_skips_or_repeated_assertion_ids_and_binds_query(self):
         query = GraphBrowseQuery(page_size=1)
         result = self.browser.query(PRINCIPAL, query)

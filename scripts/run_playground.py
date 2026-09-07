@@ -93,7 +93,7 @@ _PLAYGROUND_CONSTRUCTION_LIMITS = {
     "per_model_call_timeout_seconds": 30.0,
     "max_model_output_tokens": 2_048,
 }
-_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v5-endpoint-context"
+_PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v6-exact-json-spans"
 
 
 def _build_playground_extractor(client, model, tbox):
@@ -103,7 +103,7 @@ def _build_playground_extractor(client, model, tbox):
         model=model,
         active_tbox=tbox,
         prompt_version=_PLAYGROUND_EXTRACTION_PROMPT,
-        response_format_mode="none",
+        response_format_mode="json_object",
         seed=None,
         enable_thinking=False,
         include_span_hints=True,
@@ -820,6 +820,8 @@ def build_playground_app(
                 "purpose": "ontology-constrained extraction only",
                 "enable_thinking": False,
                 "span_hints": "unicode-token-spans-v1",
+                "response_format": "json_object",
+                "prompt_version": _PLAYGROUND_EXTRACTION_PROMPT,
             },
             "construction_limits": dict(_PLAYGROUND_CONSTRUCTION_LIMITS),
         },
@@ -884,7 +886,7 @@ def build_playground_app(
         industrial_upload_policy=Neo4jIndustrialUploadPolicy(driver, database) if enable_industrial else None,
         industrial_parser=industrial_upload_parser() if enable_industrial else None,
         config=ConstructionConfig(
-            extractor_signature=f"openai-compatible:{extraction_model}:v2",
+            extractor_signature=f"openai-compatible:{extraction_model}:v3",
             prompt_signature=prompt_signature,
             max_chunks=_PLAYGROUND_CONSTRUCTION_LIMITS["max_chunks"],
             max_model_calls=_PLAYGROUND_CONSTRUCTION_LIMITS["max_model_calls"],

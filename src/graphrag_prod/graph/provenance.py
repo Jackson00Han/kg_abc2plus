@@ -26,32 +26,11 @@ from graphrag_prod.domain.models import (
     Entity,
     EntityMention,
 )
+from graphrag_prod.domain.source_tokens import contains_exact_token as _contains_exact_token
 
 
 class SessionDriver(Protocol):
     def session(self, **kwargs: object) -> Any: ...
-
-
-def _contains_exact_token(evidence: str, token: str) -> bool:
-    start = 0
-    while True:
-        index = evidence.find(token, start)
-        if index < 0:
-            return False
-        end = index + len(token)
-        left_ok = (
-            not token[0].isalnum()
-            or index == 0
-            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
-        )
-        right_ok = (
-            not token[-1].isalnum()
-            or end == len(evidence)
-            or not (evidence[end].isalnum() or evidence[end] == "_")
-        )
-        if left_ok and right_ok:
-            return True
-        start = index + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +222,10 @@ class ProvenanceBundle:
                 and not _contains_exact_token(
                     evidence_text,
                     assertion.literal_value,
+                    allow_cjk_adjacency=(
+                        assertion.literal_semantics is not None
+                        and assertion.literal_semantics.datatype == "STRING"
+                    ),
                 )
             ):
                 raise ValueError("literal assertion object is absent from its evidence span")
@@ -256,8 +239,14 @@ class ProvenanceBundle:
                 )
                 if any(
                     token is not None
-                    and not _contains_exact_token(evidence_text, token)
-                    for token in exact_tokens
+                    and not _contains_exact_token(
+                        evidence_text, token,
+                        allow_cjk_adjacency=(
+                            index == 0
+                            and assertion.literal_semantics.datatype == "STRING"
+                        ),
+                    )
+                    for index, token in enumerate(exact_tokens)
                 ):
                     raise ValueError(
                         "typed literal source tokens are absent from its evidence span"

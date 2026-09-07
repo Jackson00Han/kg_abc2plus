@@ -84,6 +84,8 @@ globalThis.document={
 globalThis.Option=class extends TestNode {
   constructor(text,value){super('option');this.textContent=text;this.value=value;}
 };
+const stored=new Map();
+globalThis.sessionStorage={getItem:key=>stored.get(key)??null,setItem:(key,value)=>stored.set(key,value)};
 // Notification timers must not keep an otherwise finished Node scenario alive.
 const nativeTimeout=globalThis.setTimeout;
 globalThis.setTimeout=(...args)=>{const timer=nativeTimeout(...args);timer.unref();return timer;};
@@ -99,6 +101,109 @@ const clickLabel=(card,label)=>{
 };
 const client={epoch:1,session:{identity:{id:'engineer',groups:['engineering']}},hasScope:()=>true};
 """ + scenario)
+
+    def run_upload(self, scenario: str) -> None:
+        self.run_construction(r"""
+const calls=[],outcomes=[];
+const chunk=(status,mentions=[],assertions=[])=>({status,mention_record_ids:mentions,assertion_record_ids:assertions});
+client.request=async(path,body)=>{
+  calls.push({path,body});
+  if(path.startsWith('/v1/knowledge/construction-jobs'))return {items:[]};
+  assert.equal(path,'/v1/knowledge:construct');
+  const value=outcomes.shift();if(value instanceof Error)throw value;return value;
+};
+const ui=new construction.ConstructionWorkbench(client);
+const bytes=new TextEncoder().encode('合成登记：母线 QA-01 位于演示站点。');
+nodes.get('upload-file').files=[{name:'inspection.txt',size:bytes.length,arrayBuffer:async()=>bytes.buffer}];
+document.getElementById('upload-title').value='合成检查记录';
+document.getElementById('upload-family').value='canalis-kt';
+document.getElementById('upload-mode').value='LLM';
+document.getElementById('upload-group').value='engineering';
+const submit=()=>ui.upload({preventDefault(){}});
+const writes=()=>calls.filter(call=>call.body);
+const flatten=node=>[node.textContent,...node.children.map(flatten)].join(' ');
+""" + scenario)
+
+    def test_upload_zero_candidates_distinguishes_rejection_service_empty_and_source_only(self) -> None:
+        self.run_upload(r"""
+for(const [status,mode,expected] of [
+  ['REJECTED','LLM','抽取校验未通过'],
+  ['PROVIDER_ERROR','LLM','抽取服务失败'],
+  ['EMPTY','LLM','未提取到可用事实'],
+  ['SOURCE_ONLY','SOURCE_ONLY','未执行抽取'],
+]) {
+  nodes.get('upload-mode').value=mode;
+  outcomes.push({job_id:'retained-'+status,extraction_mode:mode,chunks:[chunk(status)]});
+  const count=writes().length;await submit();await flush();
+  assert.equal(writes().length,count+1,'Terminal results must not trigger automatic retries');
+  for(const node of [nodes.get('upload-status'),nodes.get('toast')]) {
+    assert.ok(node.textContent.includes('来源'));
+    assert.ok(node.textContent.includes('已入库'));
+    assert.ok(node.textContent.includes(expected));
+    assert.ok(node.textContent.includes('0 条候选记录'));
+    assert.ok(!node.textContent.includes('复核后发布'));
+    assert.ok(!node.textContent.includes('批准后才能发布'));
+  }
+  assert.ok(nodes.get('upload-status').textContent.includes('已留存'));
+  assert.ok(nodes.get('upload-status').textContent.includes('复用本次操作'));
+  assert.equal(ui.busy,false);
+}
+""")
+
+    def test_upload_mixed_candidates_reports_partial_rejection_and_actual_record_count(self) -> None:
+        self.run_upload(r"""
+outcomes.push({job_id:'mixed',extraction_mode:'LLM',chunks:[
+  chunk('CANDIDATE',['mention-one'],['assertion-one']),
+  chunk('CANDIDATE',['mention-one'],[]),chunk('REJECTED'),
+]});
+await submit();
+const text=nodes.get('upload-status').textContent;
+assert.ok(text.includes('已生成 2 条待复核候选记录'));
+assert.ok(text.includes('抽取校验未通过 1 个片段'));
+assert.ok(text.includes('独立复核，批准后才能发布'));
+assert.ok(!text.includes('已发布'));
+assert.equal(writes().length,1);
+""")
+
+    def test_upload_quarantined_records_do_not_become_publishable_candidates(self) -> None:
+        self.run_upload(r"""
+outcomes.push({job_id:'quarantined',extraction_mode:'LLM',chunks:[chunk('QUARANTINED',['isolated-one'])]});
+await submit();
+const text=nodes.get('upload-status').textContent;
+assert.ok(text.includes('0 条候选记录；1 条隔离记录'));
+assert.ok(text.includes('需核对来源与校验问题'));
+assert.ok(!text.includes('批准后才能发布'));
+""")
+
+    def test_upload_unknown_network_and_terminal_rejection_preserve_exact_operation(self) -> None:
+        self.run_upload(r"""
+outcomes.push(new Error('网络响应中断'));
+await submit();
+assert.equal(writes().length,1);
+assert.ok(!nodes.get('upload-status').textContent.includes('来源资料已入库'));
+assert.ok(nodes.get('upload-status').textContent.includes('查看任务记录'));
+const original=writes()[0].body;
+for(let i=0;i<2;i++) {
+  outcomes.push({job_id:'same-failed-job',extraction_mode:'LLM',chunks:[chunk('REJECTED')]});
+  await submit();
+  assert.deepEqual(writes().at(-1).body,original);
+}
+assert.equal(writes().length,3,'Only explicit submissions may write');
+assert.equal(stored.size,1);
+""")
+
+    def test_completed_job_list_shows_rejected_extraction_as_zero_candidates(self) -> None:
+        self.run_construction(r"""
+client.request=async()=>({items:[{job_id:'failed-extraction',status:'COMPLETED',
+  created_at:'2026-09-06T18:12:41Z',expected_chunks:1,completed_chunks:1,extraction_mode:'LLM',
+  chunks:[{status:'REJECTED',mention_record_ids:[],assertion_record_ids:[]}]}]});
+const ui=new construction.ConstructionWorkbench(client);await ui.loadJobs();
+const flatten=node=>[node.textContent,...node.children.map(flatten)].join(' ');
+const text=flatten(nodes.get('construction-jobs'));
+assert.ok(text.includes('处理结束 · 1/1 片段'));
+assert.ok(text.includes('来源已入库；抽取校验未通过，0 条候选记录'));
+assert.ok(!text.includes('批准后才能发布'));
+""")
 
     def test_review_refresh_during_resolution_releases_lock_for_next_card(self) -> None:
         self.run_construction(r"""

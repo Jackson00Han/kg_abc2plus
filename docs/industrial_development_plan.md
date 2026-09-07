@@ -96,7 +96,15 @@ explicitly separated files. The root agent owns commits and service restarts.
   and same-port workbench passed 955 unit, 54 security, 16 E2E, 2 regression,
   14 focused Neo4j tests and the real browser walkthrough. See
   `docs/validation/industrial-workbench.md`. The focused commit/push records completion.
-- I5: next, after the I4 push; complete baseline maintenance and live walkthrough.
+- I5: complete; two complete executions each passed 1237 tests with matching
+  semantic reports and reviewed baseline 1.10.0. The real upload, saved-response
+  recovery, AI development review and explicit publication flow passed; final
+  main-directory restart preserves existing data and all 210 published records.
+  The 27-check final browser walkthrough and separate source/ACL checks passed.
+  Service: `http://127.0.0.1:8002/industrial`. See
+  `docs/validation/industrial-final.md` and
+  `docs/validation/industrial-final-regression.md`. The focused I5 commit/push
+  records delivery; enterprise SME review and recorded retrieval limits remain.
 
 Detailed evidence is recorded under `docs/validation/industrial-*.md`. This plan
 remains as design history; remove only the temporary active-work pointer from

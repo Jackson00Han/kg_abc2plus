@@ -403,3 +403,72 @@ class ConstructionValidationFeedbackTests(unittest.TestCase):
         source = replace(result, status="SOURCE_ONLY", finding_codes=(), mention_record_ids=(), assertion_record_ids=())
         with self.assertRaises(ValidationError):
             ConstructionChunkResponse.model_validate(_construction_chunk_payload(source))
+
+
+class ExactQuoteFeedbackTests(unittest.TestCase):
+    def feedback(self, code, path, source, payload):
+        from graphrag_prod.construction.extraction import ExtractionFinding, _contains_exact_token
+        from graphrag_prod.construction.validation_feedback import build_validation_feedback
+        return json.loads(build_validation_feedback((ExtractionFinding(code, "REJECT", path, "exact span differs"),),
+            source=source, payload=payload, contains_token=_contains_exact_token))
+
+    def test_mention_quote_coordinates_do_not_repair_without_a_new_valid_response(self):
+        invalid = _valid_payload()
+        invalid["entities"][0]["mentions"][0]["start"] = 1
+        original = copy.deepcopy(invalid)
+        extractor, client = _feedback_extractor([invalid, invalid, _valid_payload()])
+        attempts = []
+        with self.assertRaises(ExtractionRejected):
+            extractor.extract_audited_bounded(artifact_id="mention-spans", input_hash="mention-spans",
+                chunk=_chunk(), profile=_profile(), on_validation_attempt=attempts.append)
+        feedback = json.loads(client.calls[1]["messages"][-1]["content"])
+        hint = feedback["findings"][0]["quote_coordinates"]
+        self.assertEqual(hint["quote"], "Acme")
+        self.assertEqual(hint["occurrences"], [{"start": 0, "end": 4}])
+        self.assertFalse(hint["occurrences_truncated"])
+        self.assertEqual(invalid, original)
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual([a.status for a in attempts], ["REJECTED", "REJECTED"])
+        self.assertEqual(len(client.responses), 1)
+
+    def test_nested_relationship_property_and_entity_fact_paths_are_supported(self):
+        payload = {"relationships": [{"properties": [{"evidence": {"text": "owns", "start": 4, "end": 8}}]}],
+                   "property_facts": [{"evidence": {"text": "Acme owns", "start": 1, "end": 9}}]}
+        for path, expected in (("$.relationships[0].properties[0].evidence", [{"start": 5, "end": 9}]),
+                               ("$.property_facts[0].evidence", [{"start": 0, "end": 9}])):
+            with self.subTest(path=path):
+                value = self.feedback("EVIDENCE_SPAN_MISMATCH", path, _chunk().text, payload)["findings"][0]["quote_coordinates"]
+                self.assertEqual(value["occurrences"], expected)
+                self.assertEqual(value["hint_kind"], "exact_quote_coordinates_only_not_verified_entailment")
+                self.assertNotIn("selected_span", value)
+
+    def test_repeated_overlapping_occurrences_are_bounded_and_never_selected(self):
+        source = "a" * 30
+        payload = {"relationships": [{"evidence": {"text": "aa", "start": 0, "end": 1}}]}
+        value = self.feedback("EVIDENCE_SPAN_MISMATCH", "$.relationships[0].evidence", source, payload)["findings"][0]["quote_coordinates"]
+        self.assertEqual(value["occurrences"], [{"start": i, "end": i + 2} for i in range(8)])
+        self.assertTrue(value["occurrences_truncated"])
+        self.assertNotIn("selected_span", value)
+
+    def test_missing_quote_has_no_fuzzy_match_and_invalid_or_large_paths_have_no_hint(self):
+        payload = {"relationships": [{"evidence": {"text": "Owns", "start": 5, "end": 9}}]}
+        value = self.feedback("EVIDENCE_SPAN_MISMATCH", "$.relationships[0].evidence", _chunk().text, payload)["findings"][0]["quote_coordinates"]
+        self.assertEqual(value["occurrences"], [])
+        self.assertFalse(value["occurrences_truncated"])
+        for path in ("$.relationships[-1].evidence", "$.relationships[999999].evidence", "$.relationships[0].evidence.text",
+                     "$.relationships[" + "9" * 300 + "].evidence"):
+            self.assertNotIn("quote_coordinates", self.feedback("EVIDENCE_SPAN_MISMATCH", path, _chunk().text, payload)["findings"][0])
+        payload["relationships"][0]["evidence"]["text"] = "a" * 513
+        self.assertNotIn("quote_coordinates", self.feedback("EVIDENCE_SPAN_MISMATCH", "$.relationships[0].evidence", "a" * 1000, payload)["findings"][0])
+
+    def test_quote_diagnostics_and_findings_keep_complete_feedback_under_8192_chars(self):
+        from graphrag_prod.construction.extraction import ExtractionFinding, _contains_exact_token
+        from graphrag_prod.construction.validation_feedback import build_validation_feedback
+        payload = {"property_facts": [{"evidence": {"text": "x" * 500, "start": 1, "end": 501}} for _ in range(40)]}
+        findings = tuple(ExtractionFinding("EVIDENCE_SPAN_MISMATCH", "REJECT", f"$.property_facts[{i}].evidence", "detail" * 100) for i in range(40))
+        before = copy.deepcopy(payload)
+        raw = build_validation_feedback(findings, source="x" * 1500, payload=payload, contains_token=_contains_exact_token)
+        self.assertLessEqual(len(raw), 8192)
+        self.assertLessEqual(len(json.loads(raw)["findings"]), 32)
+        self.assertEqual(json.loads(raw)["total_findings"], 40)
+        self.assertEqual(payload, before)

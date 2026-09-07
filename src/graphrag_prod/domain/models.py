@@ -18,6 +18,7 @@ from .ids import (
     pipeline_profile_id,
     relationship_property_value_id,
 )
+from .source_tokens import contains_exact_token as _contains_exact_token
 
 
 def _text(value: str, name: str) -> str:
@@ -31,30 +32,6 @@ def _exact_text(value: str, name: str) -> str:
     if value == "":
         raise ValueError(f"{name} must not be empty")
     return value
-
-
-def _contains_exact_token(evidence: str, token: str) -> bool:
-    """Return whether a source token occurs on lexical boundaries."""
-
-    start = 0
-    while True:
-        index = evidence.find(token, start)
-        if index < 0:
-            return False
-        end = index + len(token)
-        left_ok = (
-            not token[0].isalnum()
-            or index == 0
-            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
-        )
-        right_ok = (
-            not token[-1].isalnum()
-            or end == len(evidence)
-            or not (evidence[end].isalnum() or evidence[end] == "_")
-        )
-        if left_ok and right_ok:
-            return True
-        start = index + 1
 
 
 def _aware(value: datetime, name: str) -> datetime:
@@ -759,8 +736,13 @@ class RelationshipPropertyValue:
             self.literal_semantics.raw_observed_at,
         )
         if any(
-            token is not None and not _contains_exact_token(evidence_text, token)
-            for token in source_tokens
+            token is not None and not _contains_exact_token(
+                evidence_text, token,
+                allow_cjk_adjacency=(
+                    index == 0 and self.literal_semantics.datatype == "STRING"
+                ),
+            )
+            for index, token in enumerate(source_tokens)
         ):
             raise ValueError(
                 "relationship-property source tokens must occur in exact evidence"

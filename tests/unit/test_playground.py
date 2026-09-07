@@ -418,7 +418,11 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertEqual(extractor.model, "qwen3.8-max")
         self.assertFalse(extractor.enable_thinking)
         self.assertTrue(extractor.include_span_hints)
-        self.assertEqual(extractor.response_format_mode, "none")
+        self.assertEqual(extractor.response_format_mode, "json_object")
+        self.assertEqual(
+            extractor.prompt_version,
+            "industrial-property-graph-extraction:v6-exact-json-spans",
+        )
         self.assertEqual(extractor.limits.max_output_tokens, 2048)
         self.assertEqual(extractor.limits.max_response_chars, 16384)
         self.assertEqual(extractor.limits.timeout_seconds, 30.0)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 import hashlib
@@ -11,6 +12,7 @@ import json
 import os
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 import neo4j
@@ -35,7 +37,9 @@ from graphrag_prod.construction.extraction import (
     ExtractionLimits,
     ExtractionRejected,
 )
+from graphrag_prod.construction.workflow import ConstructionAuthorizationError
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.domain.ids import derivation_artifact_id
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.ingestion.pipeline import (
     EmbeddingProfile,
@@ -49,6 +53,7 @@ from graphrag_prod.ontology import (
     TBoxStatus,
     TBoxVersion,
 )
+from graphrag_prod.ontology.models import Cardinality, PropertyDataType, PropertyDefinition
 
 
 NOW = datetime(2026, 9, 4, 9, 0, tzinfo=UTC)
@@ -115,9 +120,12 @@ class _FeedbackCompletions(_Completions):
         super().__init__()
         self.steps = steps
         self.before_response: Callable[[int], None] | None = None
+        self.payload: dict[str, object] | None = None
 
     def create(self, **kwargs: object) -> dict[str, object]:
         response = super().create(**kwargs)
+        if self.payload is not None:
+            response["choices"][0]["message"]["content"] = json.dumps(self.payload)
         number = len(self.calls)
         if self.before_response is not None:
             self.before_response(number)
@@ -129,9 +137,10 @@ class _FeedbackCompletions(_Completions):
             payload = json.loads(message["content"])
             # An exact substring still cannot support a relation whose Company
             # endpoint lies outside it. The model must correct the evidence.
-            payload["relationships"][0]["evidence"] = {
-                "text": "Pump-7", "start": 10, "end": 16,
-            }
+            relation = payload["relationships"][0]
+            endpoint = next(item for item in payload["entities"]
+                            if item["ref"] == relation["target_ref"])["mentions"][0]
+            relation["evidence"] = {key: endpoint[key] for key in ("text", "start", "end")}
             message["content"] = json.dumps(payload)
         elif step != "valid":
             raise AssertionError(f"unknown scripted response: {step}")
@@ -318,6 +327,195 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             database_=self.database,
         )
         return dict(rows[0])
+
+    def _interrupt_parent_assembly(self, source: bytes = SOURCE):
+        """Fail after both immutable responses, before any parent or proposal."""
+        # These recovery fixtures include cold source preparation. Match the
+        # industrial online 90-second envelope; retain the 15-second DB and
+        # 1-second model limits and existing 30-second feedback/deadline tests.
+        self.workflow.config = replace(self.workflow.config, deadline_seconds=90.0)
+        captured = {}
+
+        def fail_assembly(_result, **kwargs):
+            captured["chunk"] = kwargs["chunk"]
+            raise RuntimeError("deliberate final audit assembly interruption")
+
+        with patch("graphrag_prod.construction.workflow._audited_payload", side_effect=fail_assembly) as assembly:
+            with self.assertRaisesRegex(RuntimeError, "deliberate final audit"):
+                self.workflow.run(self.principal, source, self.metadata)
+        self.assertEqual(assembly.call_count, 1)
+        self.assertEqual(len(self.completions.calls), 2)
+        self.assertEqual(self.embedding_calls, 1)
+        audits = self._extraction_audits()
+        attempts = sorted(((key, json.loads(raw)) for key, raw in audits.items()),
+                          key=lambda item: item[1]["attempt"])
+        self.assertEqual([item[1]["status"] for item in attempts], ["REJECTED", "CANDIDATE"])
+        self.assertTrue(all(item[1]["audit_type"] == "VALIDATION_ATTEMPT" for item in attempts))
+        self.assertNotIn(attempts[0][1]["parent_artifact_id"], audits)
+        self.assertEqual(self._proposal_and_outcome_counts(), {"mentions": 0, "assertions": 0, "outcomes": 0})
+        self.assertEqual(self.workflow.audit_store.get_job(self.principal, attempts[0][1]["job_id"]).completed_chunks, 0)
+        rows, _, _ = self.driver.execute_query(
+            "MATCH (d:Document {document_id:$document})-[:ACTIVE_VERSION]->(v:DocumentVersion {version_id:$version}) "
+            "MATCH (d)-[:ACTIVE_SNAPSHOT]->(s:KnowledgeSnapshot {build_state:'PUBLISHED'})-[:OF_VERSION]->(v) "
+            "MATCH (s)-[:INCLUDES_CHUNK]->(c:Chunk {chunk_id:$chunk})-[:HAS_EMBEDDING]->(e:ChunkEmbedding) "
+            "RETURN count(DISTINCT d) AS documents,count(DISTINCT c) AS chunks,count(DISTINCT e) AS embeddings",
+            document=captured["chunk"].document_id, version=captured["chunk"].version_id,
+            chunk=captured["chunk"].chunk_id, database_=self.database,
+        )
+        self.assertEqual(dict(rows[0]), {"documents": 1, "chunks": 1, "embeddings": 1})
+        return captured["chunk"], audits, attempts
+
+    def _rewrite_saved_attempt(self, artifact_id: str, payload: dict, *, keep_original: bool = False) -> str:
+        """Simulate a storage attacker who recomputes every public digest/ID."""
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        new_id = derivation_artifact_id(self.tenant_id, "ONTOLOGY_EXTRACTION_AUDIT", digest, payload["profile_id"])
+        if keep_original:
+            self.workflow.audit_store.persist_artifact(
+                tenant_id=self.tenant_id, artifact_id=new_id, input_hash=digest,
+                profile_id=payload["profile_id"], payload=payload, created_at=NOW,
+            )
+        else:
+            self.driver.execute_query(
+                "MATCH (a:DerivationArtifact {artifact_id:$old}) "
+                "SET a.artifact_id=$new,a.input_hash=$digest,a.output_checksum=$digest,a.payload_json=$payload",
+                old=artifact_id, new=new_id, digest=digest, payload=encoded, database_=self.database,
+            )
+        return new_id
+
+    def test_interrupted_parent_assembly_recovers_saved_chinese_literal_without_provider_recall(self) -> None:
+        original = self.tbox
+        draft = replace(original, version=2, status=TBoxStatus.DRAFT,
+                        entity_types=(original.entity_types[0], replace(original.entity_types[1], properties=(
+                            PropertyDefinition("kind", PropertyDataType.STRING, False, Cardinality.ZERO_OR_ONE),
+                        ))))
+        store = Neo4jTBoxStore(self.driver, self.database)
+        store.import_version(draft)
+        self.tbox = store.publish(self.tenant_id, draft.tbox_id, expected_active_tbox_id=original.tbox_id)
+        source = "Acme owns JB-7. 记录写明JB-7的类别为连接块。"
+        payload = {
+            "entities": [
+                {"ref": "company", "type": "Company", "mentions": [
+                    {"text": "Acme", "start": 0, "end": 4, "confidence": 0.98}]},
+                {"ref": "asset", "type": "Asset", "mentions": [
+                    {"text": "JB-7", "start": 10, "end": 14, "confidence": 0.98}]},
+            ],
+            "relationships": [{"type": "OWNS", "source_ref": "company", "target_ref": "asset",
+                               "evidence": {"text": source[:15], "start": 0, "end": 15}, "confidence": 0.97}],
+            "property_facts": [{"entity_ref": "asset", "property": "kind", "raw_literal": "连接块", "unit": None,
+                                "valid_from": None, "valid_to": None, "observed_at": None,
+                                "evidence": {"text": source, "start": 0, "end": len(source)}, "confidence": 0.97}],
+        }
+        completions = self._enable_validation_feedback("invalid", "valid")
+        completions.payload = payload
+        _chunk, retained, attempts = self._interrupt_parent_assembly(source.encode("utf-8"))
+        recovered = self.workflow.run(self.principal, source.encode("utf-8"), self.metadata)
+        self.assertEqual(recovered.job_id, attempts[0][1]["job_id"])
+        self.assertEqual(recovered.chunks[0].status, "CANDIDATE")
+        self.assertEqual([(attempt.attempt, attempt.status) for attempt in recovered.chunks[0].validation_attempts],
+                         [(1, "REJECTED"), (2, "CANDIDATE")])
+        self.assertEqual(len(completions.calls), 2)
+        self.assertEqual(self.embedding_calls, 1)
+        self.assertEqual(self._proposal_and_outcome_counts(), {"mentions": 2, "assertions": 2, "outcomes": 1})
+        audits = self._extraction_audits()
+        self.assertTrue(retained.items() <= audits.items())
+        self.assertEqual(len(audits), 3)
+        parent = json.loads(audits[recovered.chunks[0].artifact_id])
+        self.assertEqual([ref["artifact_id"] for ref in parent["validation_attempt_artifacts"]],
+                         [item[0] for item in attempts])
+        records = Neo4jKnowledgeReviewService(self.driver, self.database).review_queue(self.principal)
+        literal = next(item.record for item in records if getattr(item.record, "literal_value", None) == "连接块")
+        self.assertEqual(literal.literal_semantics.datatype, "STRING")
+        self.assertEqual(literal.literal_semantics.raw_value, "连接块")
+        self.assertEqual(literal.evidence.quoted_text, source)
+        self.assertEqual(literal.trust.status.value, "CANDIDATE")
+        self.assertEqual(literal.trust.authority.value, "SECONDARY")
+        repeated = self.workflow.run(self.principal, source.encode("utf-8"), self.metadata)
+        self.assertTrue(repeated.chunks[0].replayed)
+        self.assertEqual(repeated.chunks[0].validation_attempts, recovered.chunks[0].validation_attempts)
+        self.assertEqual(self._extraction_audits(), audits)
+        self.assertEqual(len(completions.calls), 2)
+        self.assertEqual(self.embedding_calls, 1)
+
+    def test_interrupted_parent_recovery_rejects_corrupt_resigned_and_competing_attempts(self) -> None:
+        completions = self._enable_validation_feedback("invalid", "valid")
+        _chunk, retained, attempts = self._interrupt_parent_assembly()
+        terminal_id, original = attempts[-1]
+        for mode in ("checksum", "predecessor", "unsupported_response", "competing_terminal"):
+            with self.subTest(mode=mode):
+                changed = deepcopy(original)
+                current_id = terminal_id
+                if mode == "checksum":
+                    changed["response"] = "corrupt saved response"
+                    self.driver.execute_query(
+                        "MATCH (a:DerivationArtifact {artifact_id:$id}) SET a.payload_json=$payload",
+                        id=terminal_id, payload=json.dumps(changed), database_=self.database)
+                else:
+                    if mode == "predecessor":
+                        changed["previous_attempt_artifact_id"] = "missing-predecessor"
+                    elif mode == "unsupported_response":
+                        response = json.loads(changed["response"])
+                        response["relationships"][0]["evidence"] = {"text": "Pump-7", "start": 10, "end": 16}
+                        changed["response"] = json.dumps(response)
+                        changed["response_checksum"] = hashlib.sha256(changed["response"].encode()).hexdigest()
+                        changed["response_chars"] = len(changed["response"])
+                    else:
+                        changed["provider_seconds"] += 0.001
+                    current_id = self._rewrite_saved_attempt(
+                        terminal_id, changed, keep_original=mode == "competing_terminal")
+                try:
+                    with self.assertRaises(ConstructionConflict):
+                        self.workflow.run(self.principal, SOURCE, self.metadata)
+                    self.assertEqual(len(completions.calls), 2)
+                    self.assertEqual(self.embedding_calls, 1)
+                    self.assertEqual(self._proposal_and_outcome_counts(), {"mentions": 0, "assertions": 0, "outcomes": 0})
+                    self.assertNotIn(original["parent_artifact_id"], self._extraction_audits())
+                finally:
+                    if mode == "competing_terminal":
+                        self.driver.execute_query("MATCH (a:DerivationArtifact {artifact_id:$id}) DETACH DELETE a",
+                                                  id=current_id, database_=self.database)
+                    elif mode == "checksum":
+                        self.driver.execute_query("MATCH (a:DerivationArtifact {artifact_id:$id}) SET a.payload_json=$payload",
+                                                  id=terminal_id, payload=retained[terminal_id], database_=self.database)
+                    else:
+                        self.assertEqual(self._rewrite_saved_attempt(current_id, original), terminal_id)
+                self.assertEqual(self._extraction_audits(), retained)
+
+    def test_interrupted_attempt_recovery_requires_current_job_document_and_chunk_acl(self) -> None:
+        completions = self._enable_validation_feedback("invalid", "valid")
+        chunk, retained, attempts = self._interrupt_parent_assembly()
+        scope = attempts[0][1]
+        kwargs = {"job_id": scope["job_id"], "chunk": chunk,
+                  "parent_artifact_id": scope["parent_artifact_id"], "profile_id": scope["profile_id"]}
+        audit = self.workflow.audit_store
+        self.assertEqual(len(audit.read_validation_attempts(self.principal, **kwargs)), 2)
+        for outsider in (replace(self.principal, tenant_id="other-tenant"),
+                         replace(self.principal, groups=frozenset({"public"})),
+                         replace(self.principal, capabilities=frozenset())):
+            with self.assertRaises(ConstructionAuthorizationError):
+                audit.read_validation_attempts(outsider, **kwargs)
+        for label, key, value in (("Document", "document_id", chunk.document_id),
+                                  ("Chunk", "chunk_id", chunk.chunk_id),
+                                  ("KnowledgeConstructionJob", "job_id", scope["job_id"])):
+            with self.subTest(revoked=label):
+                self.driver.execute_query(f"MATCH (n:{label} {{{key}:$id}}) SET n.access_groups=['restricted']",
+                                          id=value, database_=self.database)
+                try:
+                    with self.assertRaises(ConstructionAuthorizationError):
+                        audit.read_validation_attempts(self.principal, **kwargs)
+                    with self.assertRaises((ConstructionAuthorizationError, ConstructionConflict, ConstructionIngestionFailed)):
+                        self.workflow.run(self.principal, SOURCE, self.metadata)
+                    self.assertEqual(len(completions.calls), 2)
+                    self.assertEqual(self._proposal_and_outcome_counts(), {"mentions": 0, "assertions": 0, "outcomes": 0})
+                finally:
+                    self.driver.execute_query(f"MATCH (n:{label} {{{key}:$id}}) SET n.access_groups=['board']",
+                                              id=value, database_=self.database)
+                self.assertEqual(self._extraction_audits(), retained)
+        recovered = self.workflow.run(self.principal, SOURCE, self.metadata)
+        self.assertEqual(recovered.job_id, scope["job_id"])
+        self.assertEqual(recovered.chunks[0].status, "CANDIDATE")
+        self.assertEqual(len(completions.calls), 2)
+        self.assertEqual(self.embedding_calls, 1)
 
     def test_preparation_failure_projection_acl_and_explicit_new_operation_recovery(self) -> None:
         class APIConnectionError(ConnectionError):

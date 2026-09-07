@@ -20,6 +20,7 @@ from graphrag_prod.domain.ids import content_checksum
 from graphrag_prod.graph.browse_models import GraphReadPin, GraphViewChanged, read_graph_state
 from neo4j import unit_of_work
 from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
+from graphrag_prod.domain.source_tokens import contains_exact_token
 from graphrag_prod.knowledge.models import EntityIdentity
 from graphrag_prod.knowledge.trust import (
     AuthorityLevel,
@@ -64,28 +65,6 @@ def _required_text(value: object, name: str) -> str:
     if not normalized:
         raise ValueError(f"{name} must not be empty")
     return normalized
-
-
-def _contains_exact_token(evidence: str, token: str) -> bool:
-    start = 0
-    while True:
-        index = evidence.find(token, start)
-        if index < 0:
-            return False
-        end = index + len(token)
-        left_ok = (
-            not token[0].isalnum()
-            or index == 0
-            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
-        )
-        right_ok = (
-            not token[-1].isalnum()
-            or end == len(evidence)
-            or not (evidence[end].isalnum() or evidence[end] == "_")
-        )
-        if left_ok and right_ok:
-            return True
-        start = index + 1
 
 
 def _positive_integer(value: object, name: str, maximum: int) -> int:
@@ -441,9 +420,13 @@ class SubgraphAssertion:
                 "literal_value",
                 _required_text(self.literal_value, "literal_value"),
             )
-            if not _contains_exact_token(
+            if not contains_exact_token(
                 self.evidence.quoted_text,
                 self.literal_value,
+                allow_cjk_adjacency=(
+                    isinstance(self.literal_semantics, TypedLiteralValue)
+                    and self.literal_semantics.datatype == "STRING"
+                ),
             ):
                 raise ValueError("literal value must occur in assertion evidence")
             if self.literal_semantics is not None:
@@ -461,7 +444,7 @@ class SubgraphAssertion:
                 )
                 if any(
                     token is not None
-                    and not _contains_exact_token(self.evidence.quoted_text, token)
+                    and not contains_exact_token(self.evidence.quoted_text, token)
                     for token in source_tokens
                 ):
                     raise ValueError(
@@ -518,6 +501,15 @@ class SubgraphPath:
                 "literal_value",
                 _required_text(self.literal_value, "literal_value"),
             )
+            if not contains_exact_token(
+                self.evidence.quoted_text,
+                self.literal_value,
+                allow_cjk_adjacency=(
+                    isinstance(self.literal_semantics, TypedLiteralValue)
+                    and self.literal_semantics.datatype == "STRING"
+                ),
+            ):
+                raise ValueError("path literal value must occur in assertion evidence")
             if self.literal_semantics is not None:
                 if not isinstance(self.literal_semantics, TypedLiteralValue):
                     raise TypeError("literal_semantics must be TypedLiteralValue")
@@ -533,7 +525,7 @@ class SubgraphPath:
                 )
                 if any(
                     token is not None
-                    and not _contains_exact_token(self.evidence.quoted_text, token)
+                    and not contains_exact_token(self.evidence.quoted_text, token)
                     for token in source_tokens
                 ):
                     raise ValueError(

@@ -20,6 +20,7 @@ from graphrag_prod.domain.models import (
     TypedLiteralValue,
     canonical_relationship_object_reference,
 )
+from graphrag_prod.domain.source_tokens import contains_exact_token as _contains_exact_token
 
 from .trust import (
     AuthorityLevel,
@@ -77,28 +78,6 @@ def _confidence(value: object) -> float:
     if not 0.0 <= result <= 1.0:
         raise ValueError("confidence must be between zero and one")
     return result
-
-
-def _contains_exact_token(evidence: str, token: str) -> bool:
-    start = 0
-    while True:
-        index = evidence.find(token, start)
-        if index < 0:
-            return False
-        end = index + len(token)
-        left_ok = (
-            not token[0].isalnum()
-            or index == 0
-            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
-        )
-        right_ok = (
-            not token[-1].isalnum()
-            or end == len(evidence)
-            or not (evidence[end].isalnum() or evidence[end] == "_")
-        )
-        if left_ok and right_ok:
-            return True
-        start = index + 1
 
 
 def _groups(values: object) -> frozenset[str]:
@@ -412,12 +391,20 @@ class AssertionRecord:
                     "literal assertion must not carry relationship properties"
                 )
             literal = _required_text(self.literal_value, "literal_value")
-            if not _contains_exact_token(self.evidence.quoted_text, literal):
+            if self.literal_semantics is not None and not isinstance(
+                self.literal_semantics, TypedLiteralValue
+            ):
+                raise TypeError("literal_semantics must be TypedLiteralValue")
+            if not _contains_exact_token(
+                self.evidence.quoted_text, literal,
+                allow_cjk_adjacency=(
+                    self.literal_semantics is not None
+                    and self.literal_semantics.datatype == "STRING"
+                ),
+            ):
                 raise ValueError("literal_value must occur in the exact evidence text")
             object.__setattr__(self, "literal_value", literal)
             if self.literal_semantics is not None:
-                if not isinstance(self.literal_semantics, TypedLiteralValue):
-                    raise TypeError("literal_semantics must be TypedLiteralValue")
                 if self.literal_semantics.raw_value != literal:
                     raise ValueError("literal_value must equal typed raw_value")
                 tokens = (

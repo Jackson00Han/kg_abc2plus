@@ -883,5 +883,140 @@ class ConstructionExtractionTests(unittest.TestCase):
         self.assertIn("LOW_PROPERTY_CONFIDENCE", {item.code for item in result.findings})
 
 
+
+class ExtractionProtocolBoundaryTests(unittest.TestCase):
+    def test_local_reference_schema_matches_existing_validator_for_every_ref_field(self):
+        import re
+        extractor, _ = _extractor(_valid_payload())
+        properties = extractor.response_schema()["properties"]
+        reference_shapes = (
+            properties["entities"]["items"]["properties"]["ref"],
+            properties["relationships"]["items"]["properties"]["source_ref"],
+            properties["relationships"]["items"]["properties"]["target_ref"],
+            properties["property_facts"]["items"]["properties"]["entity_ref"],
+        )
+        for shape in reference_shapes:
+            for value in ("e1", "e_2", "Canalis-KT", "ref:3"):
+                self.assertIsNotNone(re.fullmatch(shape["pattern"], value))
+            for value in ("Canalis KT", "产品族", "_e1", "e" * 129, "e1\n"):
+                self.assertIsNone(re.fullmatch(shape["pattern"], value))
+        bad = _valid_payload()
+        bad["entities"][0]["ref"] = "Canalis KT"
+        extractor, _ = _extractor(bad)
+        with self.assertRaises(ExtractionRejected) as error:
+            extractor.extract_audited(artifact_id="bad-ref", input_hash="bad-ref", chunk=_chunk(), profile=_profile())
+        self.assertIn("INVALID_LOCAL_REFERENCE", {finding.code for finding in error.exception.findings})
+        prompt = extractor._messages(_chunk(), response_schema=extractor.response_schema())[0]["content"]
+        self.assertIn("opaque ASCII refs", prompt)
+        self.assertIn("Ontology descriptions and example values are schema guidance, never source evidence", prompt)
+
+    def test_single_attempt_policy_cannot_reuse_pre_fix_request_identity(self):
+        import hashlib
+        from dataclasses import asdict
+        from unittest.mock import patch
+        extractor, _ = _extractor(_valid_payload())
+        prior = {
+            "version": "ontology-extraction-request-v1", "mention_boundary_policy": "compact-source-name-or-code-v1",
+            "model": extractor.model, "prompt_version": extractor.prompt_version, "limits": asdict(extractor.limits),
+            "provisional_namespace": extractor.provisional_namespace, "response_format_mode": extractor.response_format_mode,
+            "seed": extractor.seed, "enable_thinking": extractor.enable_thinking, "span_hints": None, "temperature": 0,
+        }
+        old_signature = hashlib.sha256(json.dumps(prior, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        current = extractor.request_policy_signature
+        self.assertEqual(extractor.max_validation_attempts, 1)
+        self.assertNotEqual(current, old_signature)
+        with patch("graphrag_prod.construction.extraction.unicodedata.unidata_version", "future-unicode"):
+            self.assertNotEqual(current, extractor.request_policy_signature)
+
+    def test_cjk_ideograph_literals_allow_verbatim_adjacency_without_normalizing_text(self):
+        from graphrag_prod.construction.extraction import _contains_exact_token
+        for token in ("项目模拟配置", "㐀值", "𠀀值", "\U00030000值", "\uf900值", "\U0002f800值"):
+            with self.subTest(token=token):
+                self.assertTrue(_contains_exact_token("前" + token + "后", token, allow_cjk_adjacency=True))
+        self.assertFalse(_contains_exact_token("项目模拟配置", "项目模擬配置"))
+        self.assertFalse(_contains_exact_token("项目模拟配置", ""))
+        # Presence remains lexical evidence only; negation is not adjudicated here.
+        self.assertTrue(_contains_exact_token("设备未损坏", "损坏", allow_cjk_adjacency=True))
+
+    def test_numeric_code_unit_datetime_and_non_han_boundaries_do_not_widen(self):
+        from graphrag_prod.construction.extraction import _contains_exact_token, _is_cjk_ideograph
+        import unicodedata
+        rejected = (
+            ("1000 kPa", "100"), ("00100", "100"), ("P7-42X", "P7-42"),
+            ("MPa", "Pa"), ("kW", "W"), ("2026-01-01T00:00:00Z", "2026-01-01"),
+            ("12026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+            ("设备A123", "A123"), ("甲A123乙", "甲A123"), ("前甲A123乙后", "甲A123乙"),
+            ("X项目配置", "项目配置"), ("项目配置2", "项目配置"), ("_项目配置", "项目配置"),
+            ("前カタカナ後", "カタカナ"), ("あ設定い", "設定"), ("앞설정뒤", "설정"),
+            ("ατιμήβ", "τιμή"), ("префиксзначениесуффикс", "значение"),
+        )
+        for evidence, token in rejected:
+            with self.subTest(evidence=evidence, token=token):
+                self.assertFalse(_contains_exact_token(evidence, token))
+                self.assertFalse(_contains_exact_token(evidence, token, allow_cjk_adjacency=True))
+        for evidence, token in (("100 kPa", "100"), ("100 kPa", "kPa"), ("设备：A123。", "A123"),
+                                ("日期：2026-01-01T00:00:00Z。", "2026-01-01T00:00:00Z")):
+            self.assertTrue(_contains_exact_token(evidence, token))
+        unassigned = next(chr(code) for code in range(0xF900, 0xFB00) if not unicodedata.name(chr(code), ""))
+        self.assertFalse(_is_cjk_ideograph(unassigned))
+        self.assertFalse(_contains_exact_token("前" + unassigned + "值后", unassigned + "值"))
+
+    def test_verbatim_chinese_property_reaches_domain_output_with_exact_evidence(self):
+        source = "Pump-7 对应项目模拟配置。"
+        chunk = replace(_chunk(), text=source, checksum=content_checksum(source), char_start=0, char_end=len(source))
+        original = _tbox()
+        tbox = replace(original, entity_types=(original.entity_types[0], replace(original.entity_types[1], properties=(
+            PropertyDefinition("kind", PropertyDataType.STRING, False, Cardinality.ZERO_OR_ONE),
+        ))))
+        payload = {"entities": [{"ref": "e1", "type": "Asset", "mentions": [
+            {"text": "Pump-7", "start": 0, "end": 6, "confidence": 1.0},
+        ]}], "relationships": [], "property_facts": [{
+            "entity_ref": "e1", "property": "kind", "raw_literal": "项目模拟配置", "unit": None,
+            "valid_from": None, "valid_to": None, "observed_at": None,
+            "evidence": {"text": source, "start": 0, "end": len(source)}, "confidence": 1.0,
+        }]}
+        calls = FakeCompletions(payload)
+        extractor = OpenAICompatibleOntologyExtractor(client=SimpleNamespace(chat=SimpleNamespace(completions=calls)),
+            model="fixture", active_tbox=tbox, prompt_version="fixture")
+        result = extractor.extract_audited(artifact_id="cjk-value", input_hash="cjk-value", chunk=chunk, profile=_profile())
+        self.assertEqual(result.status, GovernanceStatus.CANDIDATE)
+        assertion = result.output.assertions[0]
+        self.assertEqual(assertion.literal_value, "项目模拟配置")
+        self.assertEqual((assertion.evidence_char_start, assertion.evidence_char_end), (0, len(source)))
+        self.assertEqual(chunk.text[assertion.evidence_char_start:assertion.evidence_char_end], source)
+        payload["property_facts"][0]["evidence"]["start"] = 1
+        with self.assertRaises(ExtractionRejected) as error:
+            extractor.extract_audited(artifact_id="bad-cjk-span", input_hash="bad-cjk-span", chunk=chunk, profile=_profile())
+        self.assertIn("EVIDENCE_SPAN_MISMATCH", {finding.code for finding in error.exception.findings})
+
+    def test_chinese_unit_substring_is_rejected_in_entity_and_relationship_facts(self):
+        from graphrag_prod.construction.extraction import _contains_exact_token
+        self.assertFalse(_contains_exact_token("兆帕", "帕"))
+        source = PROPERTY_SOURCE.replace("psi", "兆帕")
+        chunk = replace(_property_chunk(), text=source, checksum=content_checksum(source), char_end=200 + len(source))
+        payload = _property_payload()
+        payload["property_facts"][0]["unit"] = "帕"
+        payload["property_facts"][0]["evidence"] = {"text": source, "start": 0, "end": len(source)}
+        extractor, _ = _extractor(payload)
+        with self.assertRaises(ExtractionRejected) as error:
+            extractor.extract_audited(artifact_id="unit-substring", input_hash="unit-substring", chunk=chunk, profile=_profile())
+        self.assertIn(("FACT_TOKEN_OUTSIDE_EVIDENCE", "$.property_facts[0].unit"),
+                      {(finding.code, finding.path) for finding in error.exception.findings})
+        relation_source = "Acme owns Pump-7 at 100 兆帕."
+        relation_chunk = replace(_chunk(), text=relation_source, checksum=content_checksum(relation_source),
+                                 char_end=_chunk().char_start + len(relation_source))
+        relation = _valid_payload()
+        relation["relationships"][0]["evidence"] = {"text": relation_source, "start": 0, "end": len(relation_source)}
+        relation["relationships"][0]["properties"] = [{
+            "property": "basis", "raw_literal": "owns", "unit": "帕", "valid_from": None,
+            "valid_to": None, "observed_at": None, "confidence": 1.0,
+            "evidence": {"text": relation_source, "start": 0, "end": len(relation_source)},
+        }]
+        extractor, _ = _extractor(relation)
+        with self.assertRaises(ExtractionRejected) as error:
+            extractor.extract_audited(artifact_id="relation-unit", input_hash="relation-unit", chunk=relation_chunk, profile=_profile())
+        self.assertIn(("FACT_TOKEN_OUTSIDE_EVIDENCE", "$.relationships[0].properties[0].unit"),
+                      {(finding.code, finding.path) for finding in error.exception.findings})
+
 if __name__ == "__main__":
     unittest.main()

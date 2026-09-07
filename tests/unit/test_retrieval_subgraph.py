@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import unittest
@@ -245,6 +246,22 @@ def _assertion_rows() -> tuple[dict[str, object], ...]:
     )
 
 
+def _literal_source_rows(text: str, raw_value: str, semantics: TypedLiteralValue | None):
+    citation = {**_citation(), "chunk_text": text, "chunk_checksum": content_checksum(text),
+                "char_end": len(text)}
+    mention = {**PUMP_PRESSURE_MENTION, "evidence_char_start": 0, "evidence_char_end": 6,
+               "evidence_text": "Pump-7"}
+    original = _assertion_rows()[1]
+    assertion = {**original["assertion"], "predicate": "KIND", "literal_value": raw_value,
+                 "evidence_char_start": 0, "evidence_char_end": len(text), "evidence_text": text}
+    if semantics is not None:
+        assertion.update(semantics.to_flat_properties())
+    mentions = ({"publication_id": original["publication_id"], "entity": PUMP,
+                 "mention": mention, "citation": citation},)
+    assertions = ({**original, "assertion": assertion, "subject_mention": mention, "citation": citation},)
+    return mentions, assertions
+
+
 class _Result:
     def __init__(self, rows: tuple[dict[str, object], ...]) -> None:
         self.rows = rows
@@ -425,6 +442,54 @@ class EvidenceSubgraphProjectionTests(unittest.TestCase):
             item for item in result.paths if item.literal_value is not None
         )
         self.assertEqual(literal_path.literal_semantics, semantics)
+
+    def test_typed_chinese_value_survives_projection_paths_and_api_response(self) -> None:
+        from graphrag_prod.api.backend import _subgraph_payload
+        from graphrag_prod.api.contracts import EvidenceSubgraphResponse
+        text = "Pump-7 对应项目模拟配置。"
+        semantics = TypedLiteralValue(datatype="STRING", typed_value="项目模拟配置",
+                                      raw_value="项目模拟配置", canonical_value="项目模拟配置")
+        mentions, assertions = _literal_source_rows(text, semantics.raw_value, semantics)
+        result = Neo4jEvidenceSubgraphProjector(
+            _Driver(_Session(mention_rows=mentions, assertion_rows=assertions))
+        ).project(_principal(), (CHUNK_ID,))
+        self.assertEqual(result.literal_assertions[0].literal_semantics, semantics)
+        self.assertEqual(result.paths[0].literal_semantics, semantics)
+        parsed = EvidenceSubgraphResponse.model_validate(_subgraph_payload(result))
+        self.assertEqual(parsed.literal_assertions[0].literal_value, semantics.raw_value)
+        self.assertEqual(parsed.paths[0].literal_value, semantics.raw_value)
+        self.assertEqual(parsed.literal_assertions[0].evidence.quoted_text, text)
+        self.assertEqual(parsed.literal_assertions[0].evidence.citation.chunk_text, text)
+        self.assertEqual(parsed.literal_assertions[0].evidence.provenance.authority, "SECONDARY")
+
+    def test_projection_keeps_untyped_codes_and_chinese_units_strict(self) -> None:
+        cases = (
+            ("Pump-7 对应项目模拟配置。", "项目模拟配置", None),
+            ("Pump-7 配置甲A123乙后。", "甲A123乙", TypedLiteralValue(
+                datatype="STRING", typed_value="甲A123乙", raw_value="甲A123乙", canonical_value="甲A123乙")),
+            ("Pump-7 pressure 100 兆帕。", "100", TypedLiteralValue(
+                datatype="DECIMAL", typed_value="100", raw_value="100", raw_unit="帕",
+                canonical_value="100", canonical_unit="Pa")),
+        )
+        for text, raw, semantics in cases:
+            with self.subTest(text=text):
+                mentions, assertions = _literal_source_rows(text, raw, semantics)
+                with self.assertRaises(SubgraphProjectionError):
+                    Neo4jEvidenceSubgraphProjector(
+                        _Driver(_Session(mention_rows=mentions, assertion_rows=assertions))
+                    ).project(_principal(), (CHUNK_ID,))
+
+    def test_projected_literal_path_rejects_missing_or_untyped_substring_value(self) -> None:
+        semantics = TypedLiteralValue(datatype="STRING", typed_value="项目模拟配置",
+                                      raw_value="项目模拟配置", canonical_value="项目模拟配置")
+        mentions, assertions = _literal_source_rows("Pump-7 对应项目模拟配置。", semantics.raw_value, semantics)
+        result = Neo4jEvidenceSubgraphProjector(
+            _Driver(_Session(mention_rows=mentions, assertion_rows=assertions))
+        ).project(_principal(), (CHUNK_ID,))
+        with self.assertRaises(ValueError):
+            replace(result.paths[0], literal_semantics=None)
+        with self.assertRaises(ValueError):
+            replace(result.paths[0], literal_semantics=None, literal_value="未出现的事实")
 
     def test_relationship_properties_are_projected_with_exact_evidence(self) -> None:
         literal = TypedLiteralValue(

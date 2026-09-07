@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import ipaddress
 import os
@@ -19,7 +20,7 @@ from graphrag_prod.domain.ids import (
     entity_id,
     version_id,
 )
-from graphrag_prod.domain.models import Chunk, Document, DocumentVersion
+from graphrag_prod.domain.models import Chunk, Document, DocumentVersion, TypedLiteralValue
 from graphrag_prod.graph.provenance import Neo4jProvenanceStore, ProvenanceBundle
 from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.knowledge.models import (
@@ -83,6 +84,7 @@ def _pressure_property() -> PropertyDefinition:
 
 def _source_bundles(
     tenant_id: str,
+    *, restricted_text: str = "Acme owns Pump-7. Pump-7 pressure is 12 bar.",
 ) -> tuple[tuple[ProvenanceBundle, ...], Chunk, Chunk]:
     chunk_specs = (
         (
@@ -93,7 +95,7 @@ def _source_bundles(
         ),
         (
             "restricted",
-            "Acme owns Pump-7. Pump-7 pressure is 12 bar.",
+            restricted_text,
             frozenset({RESTRICTED_GROUP}),
             "Asset facts",
         ),
@@ -656,6 +658,91 @@ class Neo4jEvidenceSubgraphIntegrationTests(unittest.TestCase):
             expected_active_publication_id=None,
             published_at=PUBLISHED_AT,
         )
+
+    def test_typed_chinese_candidate_review_publication_and_projection_preserve_exact_source(self) -> None:
+        from graphrag_prod.api.backend import _subgraph_payload
+        from graphrag_prod.api.contracts import EvidenceSubgraphResponse
+        from graphrag_prod.retrieval.subgraph import SubgraphProjectionError
+        tenant = "tenant-subgraph-chinese"
+        principal = Principal("reviewer:chinese", tenant, frozenset({RESTRICTED_GROUP}),
+                              frozenset({KNOWLEDGE_REVIEW_CAPABILITY, KNOWLEDGE_PUBLISH_CAPABILITY}))
+        property_definition = PropertyDefinition("KIND", PropertyDataType.STRING, False, Cardinality.ZERO_OR_ONE)
+        original = _tbox(tenant)
+        tbox = replace(original, entity_types=(original.entity_types[0], replace(
+            original.entity_types[1], properties=(property_definition,),
+        )))
+        tboxes = Neo4jTBoxStore(self.driver, self.database)
+        tboxes.import_version(tbox)
+        tboxes.publish(tenant, tbox.tbox_id, expected_active_tbox_id=None)
+        source = "Pump-7 对应项目模拟配置，压力为 100 兆帕。"
+        bundles, _, chunk = _source_bundles(tenant, restricted_text=source)
+        Neo4jProvenanceStore(self.driver, self.database).write_bundle(bundles[1])
+        self.driver.execute_query(
+            "MATCH (d:Document {tenant_id:$tenant,document_id:$document})-[:ACTIVE_VERSION]->"
+            "(v:DocumentVersion {version_id:$version})-[:HAS_CHUNK]->(c:Chunk {chunk_id:$chunk}) "
+            "CREATE (s:KnowledgeSnapshot {snapshot_id:$snapshot,tenant_id:$tenant,document_id:$document,"
+            "version_id:$version,profile_id:'subgraph-integration:v1',build_state:'PUBLISHED',created_at:$now}) "
+            "CREATE (s)-[:OF_VERSION]->(v) CREATE (s)-[:INCLUDES_CHUNK]->(c) CREATE (d)-[:ACTIVE_SNAPSHOT]->(s)",
+            tenant=tenant, document=chunk.document_id, version=chunk.version_id, chunk=chunk.chunk_id,
+            snapshot=f"{tenant}:snapshot", now=CREATED_AT, database_=self.database,
+        )
+        candidate_identity = _identity(tenant, "Asset", "llm-candidate:chinese-pump", "Pump-7")
+        resolved_identity = _identity(tenant, "Asset", "asset-id:CHINESE-P7", "Pump-7")
+        trust = llm_candidate_trust(ontology_version_id=tbox.tbox_id, extractor_version="fixture-chinese:v1",
+                                    prompt_version="fixture-chinese:v1", extracted_at=CREATED_AT)
+        mention = _mention(tenant_id=tenant, source_key="chinese:mention", entity=candidate_identity,
+                           evidence=_evidence(chunk, 0, 6), trust=trust)
+        literal = TBoxLiteralNormalizer().normalize(property_definition, raw_value="项目模拟配置", raw_unit=None,
+                                                    valid_from=None, valid_to=None, observed_at=None)
+        assertion = AssertionRecord(
+            revision=RecordRevision.next(knowledge_record_id(tenant, "ASSERTION", "chinese:kind"), 0),
+            tenant_id=tenant, subject=candidate_identity, predicate="KIND", evidence=_evidence(chunk, 0, len(source)),
+            subject_mention_revision_id=mention.revision_id, literal_value=literal.raw_value, literal_semantics=literal,
+            confidence=0.9, trust=trust, created_at=CREATED_AT,
+        )
+        Neo4jKnowledgeStore(self.driver, self.database).persist_llm_candidates(ABoxRecordBatch(tenant, (mention,), (assertion,)))
+        reviewed = Neo4jKnowledgeReviewService(self.driver, self.database).review_batch(principal, (
+            ReviewRequest(ReviewRecordKind.ENTITY_MENTION, mention.record_id, 1, GovernanceStatus.APPROVED,
+                          REVIEWED_AT, "Fixture identity and source checked.", MentionEdit(resolved_identity, 1.0)),
+            ReviewRequest(ReviewRecordKind.ASSERTION, assertion.record_id, 1, GovernanceStatus.APPROVED,
+                          REVIEWED_AT, "Exact Chinese string evidence checked.", AssertionEdit(
+                              resolved_identity, "KIND", mention.revision_id, 0.9,
+                              literal_value=literal.raw_value, literal_semantics=literal)),
+        ))
+        Neo4jKnowledgePublicationService(self.driver, self.database).publish(
+            principal, tuple(item.revision_id for item in reviewed.outcomes),
+            expected_active_publication_id=None, published_at=PUBLISHED_AT,
+        )
+        projector = Neo4jEvidenceSubgraphProjector(self.driver, self.database)
+        graph = projector.project(principal, (chunk.chunk_id,))
+        parsed = EvidenceSubgraphResponse.model_validate(_subgraph_payload(graph))
+        self.assertEqual(len(parsed.literal_assertions), 1)
+        self.assertEqual(parsed.literal_assertions[0].literal_value, "项目模拟配置")
+        self.assertEqual(parsed.paths[0].literal_value, "项目模拟配置")
+        self.assertEqual(parsed.literal_assertions[0].evidence.citation.chunk_text, source)
+        self.assertEqual(parsed.literal_assertions[0].evidence.quoted_text, source)
+        self.assertEqual(parsed.literal_assertions[0].evidence.provenance.authority, "SECONDARY")
+        self.assertEqual(projector.project(Principal("public", tenant, frozenset({PUBLIC_GROUP})),
+                                           (chunk.chunk_id,)).literal_assertions, ())
+        # A stored Chinese unit fragment must not gain the STRING-value exception.
+        bad_unit = TypedLiteralValue(datatype="DECIMAL", typed_value="100", raw_value="100", raw_unit="帕",
+                                     canonical_value="100", canonical_unit="Pa")
+        changed, _, _ = self.driver.execute_query(
+            "MATCH (:KnowledgePublicationState {tenant_id:$tenant})-[:ACTIVE_KNOWLEDGE_PUBLICATION]->"
+            "(:KnowledgePublication)-[:PUBLISHES_KNOWLEDGE_REVISION]->"
+            "(r:GovernedAssertionRevision {tenant_id:$tenant,revision_id:$revision}) "
+            "SET r.literal_value='100', r += $semantics "
+            "RETURN r.revision_id AS revision_id, r.literal_value AS literal_value, r.literal_raw_unit AS raw_unit",
+            tenant=tenant, revision=parsed.literal_assertions[0].revision_id,
+            semantics=bad_unit.to_flat_properties(), database_=self.database,
+        )
+        self.assertEqual([row.data() for row in changed], [{
+            "revision_id": parsed.literal_assertions[0].revision_id,
+            "literal_value": "100", "raw_unit": "帕",
+        }])
+        with self.assertRaises(SubgraphProjectionError) as error:
+            projector.project(principal, (chunk.chunk_id,))
+        self.assertIn("typed literal source tokens", str(error.exception.__cause__))
 
     def test_cross_chunk_one_hop_and_trust_filter_use_exact_evidence(self) -> None:
         projector = Neo4jEvidenceSubgraphProjector(self.driver, self.database)

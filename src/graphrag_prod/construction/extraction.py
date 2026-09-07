@@ -13,6 +13,7 @@ import json
 import math
 import re
 import time
+import unicodedata
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Literal, Mapping
 
@@ -32,6 +33,11 @@ from graphrag_prod.domain.models import (
     TypedLiteralValue,
     canonical_relationship_object_reference,
 )
+from graphrag_prod.domain.source_tokens import (
+    LITERAL_BOUNDARY_POLICY,
+    contains_exact_token as _contains_exact_token,
+    is_cjk_ideograph as _is_cjk_ideograph,
+)
 from graphrag_prod.graph.governance import normalize_display_name
 from graphrag_prod.ingestion.pipeline import ExtractionOutput
 from graphrag_prod.knowledge.trust import (
@@ -40,7 +46,7 @@ from graphrag_prod.knowledge.trust import (
     KnowledgeOrigin,
     SYSTEM_CANDIDATE_NAMESPACE,
 )
-from graphrag_prod.ontology.models import Cardinality, TBoxStatus, TBoxVersion
+from graphrag_prod.ontology.models import Cardinality, PropertyDataType, TBoxStatus, TBoxVersion
 
 from .literals import LiteralNormalizationError, TBoxLiteralNormalizer
 from .provider_errors import provider_failure_code
@@ -308,30 +314,6 @@ def _optional_exact_string(
     return value
 
 
-def _contains_exact_token(evidence: str, token: str) -> bool:
-    """Require a verbatim token occurrence, not a substring inside another word."""
-
-    start = 0
-    while True:
-        index = evidence.find(token, start)
-        if index < 0:
-            return False
-        end = index + len(token)
-        left_ok = (
-            not token[0].isalnum()
-            or index == 0
-            or not (evidence[index - 1].isalnum() or evidence[index - 1] == "_")
-        )
-        right_ok = (
-            not token[-1].isalnum()
-            or end == len(evidence)
-            or not (evidence[end].isalnum() or evidence[end] == "_")
-        )
-        if left_ok and right_ok:
-            return True
-        start = index + 1
-
-
 def _offset(
     value: object,
     *,
@@ -518,7 +500,15 @@ class OpenAICompatibleOntologyExtractor:
     def request_policy_signature(self) -> str:
         """Bind reusable artifacts/jobs to the actual secret-free call policy."""
         policy = {
-            "version": "ontology-extraction-request-v1",
+            "version": "ontology-extraction-request-v2",
+            "local_reference_policy": {
+                "version": "ascii-local-reference-v1", "pattern": _LOCAL_REFERENCE.pattern,
+            },
+            "literal_boundary_policy": {
+                "version": LITERAL_BOUNDARY_POLICY,
+                "scope": "raw_literal_of_declared_STRING_properties_only",
+                "unicode_version": unicodedata.unidata_version,
+            },
             "mention_boundary_policy": "compact-source-name-or-code-v1",
             "model": self.model,
             "prompt_version": self.prompt_version,
@@ -686,6 +676,26 @@ class OpenAICompatibleOntologyExtractor:
             findings, source=chunk.text, payload=payload, contains_token=_contains_exact_token,
         )
 
+    def revalidate_saved_response(
+        self, content: str, *, chunk: Chunk, profile: GraphPipelineProfile,
+    ) -> AuditedExtraction:
+        """Validate unchanged saved response text without calling the provider.
+
+        Artifact identity, checksums, and attempt lineage remain the caller's
+        responsibility. This applies all current structural and source checks;
+        it neither repairs the response nor trusts a saved success label.
+        """
+        if type(content) is not str or not content:
+            raise ValueError("saved response must be a non-empty string")
+        if len(content) > self.limits.max_response_chars:
+            raise ExtractionRejected((ExtractionFinding(
+                "RESPONSE_TOO_LARGE", "REJECT", "$",
+                "model response exceeds the configured character limit",
+            ),))
+        if chunk.tenant_id != self.active_tbox.tenant_id:
+            raise ValueError("chunk tenant does not match the active T-Box")
+        return self._validate_content(content, chunk=chunk, profile=profile)
+
     def _validate_content(
         self, content: str, *, chunk: Chunk, profile: GraphPipelineProfile,
     ) -> AuditedExtraction:
@@ -770,6 +780,11 @@ class OpenAICompatibleOntologyExtractor:
         }
         if relationship_property_names:
             relationship_property_name_schema["enum"] = relationship_property_names
+        local_reference_schema = {
+            "type": "string", "minLength": 1, "maxLength": 128,
+            "pattern": _LOCAL_REFERENCE.pattern,
+            "description": "Opaque response-local ASCII reference such as e1 or e2; not an entity display name.",
+        }
         return {
             "type": "object",
             "additionalProperties": False,
@@ -783,7 +798,7 @@ class OpenAICompatibleOntologyExtractor:
                         "additionalProperties": False,
                         "required": ["ref", "type", "mentions"],
                         "properties": {
-                            "ref": {"type": "string", "minLength": 1, "maxLength": 128},
+                            "ref": dict(local_reference_schema),
                             "type": {"type": "string", "enum": entity_types},
                             "mentions": {
                                 "type": "array",
@@ -824,8 +839,8 @@ class OpenAICompatibleOntologyExtractor:
                         ],
                         "properties": {
                             "type": {"type": "string", "enum": relationship_types},
-                            "source_ref": {"type": "string"},
-                            "target_ref": {"type": "string"},
+                            "source_ref": dict(local_reference_schema),
+                            "target_ref": dict(local_reference_schema),
                             "evidence": {
                                 "type": "object",
                                 "additionalProperties": False,
@@ -938,11 +953,7 @@ class OpenAICompatibleOntologyExtractor:
                             "confidence",
                         ],
                         "properties": {
-                            "entity_ref": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 128,
-                            },
+                            "entity_ref": dict(local_reference_schema),
                             "property": property_name_schema,
                             "raw_literal": {
                                 "type": "string",
@@ -1066,11 +1077,16 @@ class OpenAICompatibleOntologyExtractor:
             "and every non-null temporal qualifier must be exact RFC3339 text present "
             "inside the fact evidence. Do not infer time from document metadata. A fact "
             "evidence span must enclose its entity mention and every literal, unit, and "
-            "temporal token. Return JSON matching "
+            "temporal token. Ontology descriptions and example values are schema "
+            "guidance, never source evidence. Do not copy, translate, or infer a "
+            "literal value from an ontology example; omit unsupported optional "
+            "property facts. A quoted value alone does not establish an affirmative "
+            "claim: preserve source negation and uncertainty. Return JSON matching "
             "the response schema. Never return database IDs, canonical IDs, keys, "
             "undeclared property bags, commentary, or Markdown. Local ref values only "
-            "connect items "
-            "inside this one response. An empty extraction is valid when unsupported.\n"
+            "connect items inside this one response. Use opaque ASCII refs such as "
+            "e1 and e2 matching the schema pattern, rather than display names that "
+            "may contain spaces or non-ASCII characters. An empty extraction is valid when unsupported.\n"
             + json.dumps(ontology, ensure_ascii=False, sort_keys=True)
         )
         if self.response_format_mode != "schema":
@@ -1754,7 +1770,13 @@ class OpenAICompatibleOntologyExtractor:
                 ("valid_to", valid_to),
                 ("observed_at", observed_at),
             ):
-                if token is not None and not _contains_exact_token(quoted_text, token):
+                if token is not None and not _contains_exact_token(
+                    quoted_text, token,
+                    allow_cjk_adjacency=(
+                        token_name == "raw_literal" and property_definition is not None
+                        and property_definition.datatype is PropertyDataType.STRING
+                    ),
+                ):
                     findings.append(
                         ExtractionFinding(
                             "FACT_TOKEN_OUTSIDE_EVIDENCE",
@@ -2025,7 +2047,13 @@ class OpenAICompatibleOntologyExtractor:
                 ("valid_to", valid_to),
                 ("observed_at", observed_at),
             ):
-                if token is not None and not _contains_exact_token(evidence_text, token):
+                if token is not None and not _contains_exact_token(
+                    evidence_text, token,
+                    allow_cjk_adjacency=(
+                        token_name == "raw_literal" and definition is not None
+                        and definition.datatype is PropertyDataType.STRING
+                    ),
+                ):
                     findings.append(
                         ExtractionFinding(
                             "FACT_TOKEN_OUTSIDE_EVIDENCE",

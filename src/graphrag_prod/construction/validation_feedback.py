@@ -9,7 +9,14 @@ import json
 import re
 from typing import Any, Callable, Iterable
 
-FEEDBACK_VERSION = "strict-validation-feedback-v2-endpoint-context"
+FEEDBACK_VERSION = "strict-validation-feedback-v3-exact-quote-spans"
+MAX_QUOTE_CHARS = 512
+MAX_QUOTE_OCCURRENCES = 8
+_SPAN_PATH = re.compile(
+    r"^\$\.(?:entities\[\d+\]\.mentions\[\d+\]|"
+    r"(?:relationships\[\d+\](?:\.properties\[\d+\])?|property_facts\[\d+\])\.evidence)$"
+)
+_PATH_STEP = re.compile(r"\.([a-z_]+)|\[(\d+)\]")
 MAX_FEEDBACK_CHARS = 8192
 _ENDPOINT_PATH = re.compile(
     r"^\$\.(property_facts|relationships)\[(\d+)\]\."
@@ -94,6 +101,47 @@ def _endpoint_context(
     return context
 
 
+def _quote_coordinates(path: str, payload: object, source: str) -> dict[str, Any] | None:
+    """Locate the model's unchanged quote, never choose or repair a span."""
+    if len(path) > 256 or _SPAN_PATH.fullmatch(path) is None:
+        return None
+    value = payload
+    for match in _PATH_STEP.finditer(path):
+        key, index = match.groups()
+        if key is not None:
+            if not isinstance(value, dict) or key not in value:
+                return None
+            value = value[key]
+        else:
+            offset = int(index)
+            if not isinstance(value, list) or offset >= len(value):
+                return None
+            value = value[offset]
+    if not isinstance(value, dict):
+        return None
+    quote = value.get("text")
+    if not isinstance(quote, str) or not 0 < len(quote) <= MAX_QUOTE_CHARS:
+        return None
+    positions: list[dict[str, int]] = []
+    cursor = 0
+    while len(positions) <= MAX_QUOTE_OCCURRENCES:
+        start = source.find(quote, cursor)
+        if start < 0:
+            break
+        positions.append({"start": start, "end": start + len(quote)})
+        cursor = start + 1
+    context: dict[str, Any] = {
+        "quote": quote,
+        "occurrences": positions[:MAX_QUOTE_OCCURRENCES],
+        "occurrences_truncated": len(positions) > MAX_QUOTE_OCCURRENCES,
+        "hint_kind": "exact_quote_coordinates_only_not_verified_entailment",
+    }
+    start, end = value.get("start"), value.get("end")
+    if (type(start) is int and type(end) is int and 0 <= start < end <= len(source)
+            and end - start <= MAX_QUOTE_CHARS):
+        context["supplied_span"] = {"start": start, "end": end, "source_text": source[start:end]}
+    return context
+
 def build_validation_feedback(
     findings: Iterable[Any], *, source: str, payload: object,
     contains_token: Callable[[str, str], bool],
@@ -116,7 +164,12 @@ def build_validation_feedback(
             "ownership or entailment. Check the source meaning and both relationship "
             "endpoints yourself. Do not invent evidence or change source text. Omit "
             "unsupported claims. Recheck all mention/evidence enclosures before returning "
-            "JSON, with no explanation."
+            "JSON, with no explanation. quote_coordinates lists exact occurrences "
+            "of your unchanged quote in the original Chunk; it does not choose an "
+            "occurrence or verify a claim. Repeated occurrences remain ambiguous. "
+            "Select only the source occurrence that supports the claim and encloses "
+            "the declared endpoints; never change source text or trust a hint as "
+            "semantic evidence."
         ),
         "findings": [], "total_findings": len(findings),
     }
@@ -126,6 +179,12 @@ def build_validation_feedback(
         if len(json.dumps(feedback, ensure_ascii=False)) > MAX_FEEDBACK_CHARS:
             feedback["findings"].pop()
             break
+        if finding.code in {"MENTION_SPAN_MISMATCH", "EVIDENCE_SPAN_MISMATCH"}:
+            context = _quote_coordinates(finding.path, payload, source)
+            if context is not None:
+                entry["quote_coordinates"] = context
+                if len(json.dumps(feedback, ensure_ascii=False)) > MAX_FEEDBACK_CHARS:
+                    del entry["quote_coordinates"]
         if finding.code == "ENDPOINT_OUTSIDE_EVIDENCE":
             context = _endpoint_context(finding.path, payload, source, contains_token)
             if context is not None:

@@ -969,6 +969,129 @@ class Neo4jConstructionAuditStore:
             raise ConstructionConflict("ontology extraction artifact checksum is invalid")
         return payload
 
+    def read_validation_attempts(
+        self, principal: Principal, *, job_id: str, chunk: Chunk,
+        parent_artifact_id: str, profile_id: str,
+    ) -> list[dict[str, Any]]:
+        """Scan complete bounded legacy audit envelopes before selecting a run.
+
+        Payload formatting is not an index. Unreadable or oversized audit data
+        fails closed, even when it cannot be attributed to this specific job.
+        The 256-artifact compatibility ceiling requires an explicit indexed
+        migration at larger scales; exceeding it never starts another provider.
+        """
+        _require_construction_capability(principal)
+        authorization_query = """
+                MATCH (job:KnowledgeConstructionJob {tenant_id: $tenant_id, job_id: $job_id})
+                WITH job
+                MATCH (document:Document {tenant_id: $tenant_id, document_id: job.document_id})
+                WITH job, document
+                MATCH (version:DocumentVersion {tenant_id: $tenant_id, version_id: job.version_id})
+                WITH job, document, version
+                MATCH (snapshot:KnowledgeSnapshot {
+                    tenant_id: $tenant_id, snapshot_id: job.snapshot_id, build_state: 'PUBLISHED'})
+                WITH job, document, version, snapshot
+                MATCH (chunk:Chunk {tenant_id: $tenant_id, chunk_id: $chunk_id})
+                WHERE any(g IN $groups WHERE g IN job.access_groups)
+                  AND EXISTS { MATCH (document)-[:HAS_VERSION]->(version) }
+                  AND EXISTS { MATCH (version)-[:HAS_CHUNK]->(chunk) }
+                  AND EXISTS { MATCH (document)-[:ACTIVE_VERSION]->(version) }
+                  AND EXISTS { MATCH (document)-[:ACTIVE_SNAPSHOT]->(snapshot) }
+                  AND EXISTS { MATCH (snapshot)-[:OF_VERSION]->(version) }
+                  AND EXISTS { MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk) }
+                  AND any(g IN $groups WHERE g IN document.access_groups)
+                  AND any(g IN $groups WHERE g IN chunk.access_groups)
+                  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                  AND coalesce(snapshot.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                  AND document.retirement_id IS NULL AND document.retired_at IS NULL
+                  AND version.retirement_id IS NULL AND version.retired_at IS NULL
+                  AND snapshot.retirement_id IS NULL AND snapshot.retired_at IS NULL
+                  AND size([(document)-[:ACTIVE_VERSION]->(v) | v]) = 1
+                  AND size([(document)-[:ACTIVE_SNAPSHOT]->(s) | s]) = 1
+                  AND snapshot.document_id = document.document_id
+                  AND snapshot.version_id = version.version_id
+                  AND chunk.document_id = document.document_id
+                  AND chunk.version_id = version.version_id
+                  AND chunk.checksum = $chunk_checksum AND chunk.text = $chunk_text
+                  AND chunk.access_policy_id = document.access_policy_id
+                  AND chunk.access_policy_version = document.access_policy_version
+                  AND chunk.access_groups = document.access_groups
+                  AND chunk.access_policy_id = $access_policy_id
+                  AND chunk.access_policy_version = $access_policy_version
+                  AND chunk.access_groups = $access_groups
+                RETURN chunk.chunk_id AS authorized_chunk_id
+                LIMIT 2
+        """
+        authorization_parameters = {
+            "tenant_id": principal.tenant_id, "job_id": job_id,
+            "chunk_id": chunk.chunk_id, "groups": sorted(principal.groups),
+            "chunk_checksum": chunk.checksum, "chunk_text": chunk.text,
+            "access_policy_id": chunk.access_policy_id,
+            "access_policy_version": chunk.access_policy_version,
+            "access_groups": sorted(chunk.access_groups),
+        }
+        with self.driver.session(
+            database=self.database, default_access_mode="READ", fetch_size=1,
+        ) as session:
+            with session.begin_transaction(timeout=15.0) as tx:
+                def require_current_source() -> None:
+                    authorized = list(tx.run(authorization_query, **authorization_parameters))
+                    if len(authorized) != 1 or authorized[0]["authorized_chunk_id"] != chunk.chunk_id:
+                        raise ConstructionAuthorizationError("current recovery source is unavailable")
+
+                require_current_source()
+                rows = tx.run("""
+                    MATCH (artifact:DerivationArtifact {
+                        tenant_id: $tenant_id, kind: $kind, profile_id: $profile_id})
+                    RETURN artifact.artifact_id AS artifact_id,
+                           artifact.tenant_id AS tenant_id, artifact.kind AS kind,
+                           artifact.profile_id AS profile_id, artifact.input_hash AS input_hash,
+                           artifact.output_checksum AS output_checksum,
+                           size(toStringOrNull(artifact.payload_json)) AS payload_chars,
+                           CASE WHEN size(toStringOrNull(artifact.payload_json)) <= $max_payload_chars
+                                THEN artifact.payload_json ELSE null END AS payload_json
+                    LIMIT $row_limit
+                """, tenant_id=principal.tenant_id, kind=AUDIT_ARTIFACT_KIND,
+                    profile_id=profile_id, row_limit=257,
+                    max_payload_chars=8 * 1024 * 1024)
+                result = []
+                seen_ids = set()
+                total_bytes = 0
+                for index, row in enumerate(rows):
+                    if index >= 256:
+                        raise ConstructionConflict("legacy recovery audit exceeds 256-artifact scan limit")
+                    raw = row["payload_json"]
+                    if (not isinstance(raw, str) or type(row["payload_chars"]) is not int
+                            or len(raw) != row["payload_chars"]):
+                        raise ConstructionConflict("legacy recovery audit text is invalid or oversized")
+                    try:
+                        payload_bytes = len(raw.encode("utf-8"))
+                    except UnicodeError as error:
+                        raise ConstructionConflict("legacy recovery audit text is invalid") from error
+                    total_bytes += payload_bytes
+                    if payload_bytes > 8 * 1024 * 1024 or total_bytes > 32 * 1024 * 1024:
+                        raise ConstructionConflict("legacy recovery audit exceeds byte scan limit")
+                    payload = _decode_recovery_audit_envelope(
+                        row, tenant_id=principal.tenant_id, profile_id=profile_id,
+                    )
+                    if row["artifact_id"] in seen_ids:
+                        raise ConstructionConflict("legacy recovery audit identity is duplicated")
+                    seen_ids.add(row["artifact_id"])
+                    if payload.get("audit_type") != "VALIDATION_ATTEMPT":
+                        continue
+                    scope = (payload["job_id"], payload["chunk_id"], payload["parent_artifact_id"])
+                    expected_scope = (job_id, chunk.chunk_id, parent_artifact_id)
+                    if scope[2] == parent_artifact_id or scope[:2] == expected_scope[:2]:
+                        if scope != expected_scope:
+                            raise ConstructionConflict("interrupted validation audit scope conflicts")
+                        result.append({"artifact_id": row["artifact_id"],
+                                       "input_hash": row["input_hash"], "payload": payload})
+                        if len(result) > 32:
+                            raise ConstructionConflict("interrupted validation audit exceeds 32-attempt recovery limit")
+                require_current_source()
+                return result
+
     def persist_artifact(
         self,
         *,
@@ -1271,6 +1394,54 @@ class Neo4jConstructionAuditStore:
                 failed_at=failed_at,
             ).consume()
 
+
+
+def _decode_recovery_audit_envelope(
+    row: Any, *, tenant_id: str, profile_id: str,
+) -> dict[str, Any]:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate audit JSON key")
+            result[key] = value
+        return result
+
+    def reject_nonfinite(_value: str) -> None:
+        raise ValueError("non-finite audit JSON value")
+
+    try:
+        payload = json.loads(row["payload_json"], object_pairs_hook=unique_object,
+                             parse_constant=reject_nonfinite)
+        if (row["tenant_id"] != tenant_id or row["kind"] != AUDIT_ARTIFACT_KIND
+                or row["profile_id"] != profile_id or not isinstance(payload, dict)
+                or _fingerprint(payload) != row["output_checksum"]
+                or derivation_artifact_id(tenant_id, AUDIT_ARTIFACT_KIND,
+                                          row["input_hash"], profile_id) != row["artifact_id"]):
+            raise ValueError("audit envelope identity mismatch")
+        if type(payload.get("format_version")) is not int or payload["format_version"] != 1:
+            raise ValueError("unknown audit format")
+        if payload.get("audit_type") == "VALIDATION_ATTEMPT":
+            if (row["input_hash"] != row["output_checksum"]
+                    or any(not isinstance(payload.get(key), str) or not payload[key]
+                           for key in ("job_id", "chunk_id", "parent_artifact_id"))):
+                raise ValueError("invalid validation-attempt identity")
+        elif "audit_type" in payload:
+            raise ValueError("unknown audit type")
+        elif payload.get("disposition") in {"CANDIDATE", "QUARANTINED", "REJECTED"}:
+            if (not {"ontology_version_id", "ontology_checksum", "extractor_version",
+                     "prompt_version", "model", "extracted_at", "findings"} <= payload.keys()
+                    or not isinstance(payload["findings"], list)
+                    or (payload["disposition"] != "REJECTED" and not isinstance(payload.get("output"), dict))):
+                raise ValueError("invalid completed audit structure")
+        elif payload.get("status") == payload.get("extraction_mode") == "SOURCE_ONLY":
+            if not {"chunk_id", "chunk_checksum", "document_id", "version_id", "model_calls"} <= payload.keys():
+                raise ValueError("invalid source-only audit structure")
+        else:
+            raise ValueError("unrecognized legacy audit structure")
+    except (KeyError, TypeError, ValueError, RecursionError) as error:
+        raise ConstructionConflict("legacy recovery audit JSON or identity is invalid") from error
+    return payload
 
 def _native_datetime(value: object, name: str) -> datetime:
     if hasattr(value, "to_native"):
@@ -2078,6 +2249,10 @@ class Neo4jKnowledgeConstructionWorkflow:
             ),
             expected_chunks=len(parsed.chunks),
         )
+        # A persisted operation may have lost access since its source was
+        # prepared. Reject before replaying the ingestion job or any provider.
+        if job.tenant_id != principal.tenant_id or not job.access_groups.intersection(principal.groups):
+            raise ConstructionAuthorizationError("construction job is unavailable")
         self._require_deadline(deadline)
         ingestion_request = self._ingestion_request(
             metadata,
@@ -2281,6 +2456,141 @@ class Neo4jKnowledgeConstructionWorkflow:
             max_attempts=metadata.max_attempts,
         )
 
+    def _recover_validation_payload(
+        self, *, principal: Principal, job: ConstructionJobState, tbox: TBoxVersion,
+        extractor: OntologyExtractor, profile: GraphPipelineProfile,
+        document: Document, version: DocumentVersion, chunk: Chunk,
+        artifact_id: str,
+    ) -> dict[str, Any] | None:
+        """Revalidate a uniquely complete saved run without another model call."""
+        reader = getattr(self.audit_store, "read_validation_attempts", None)
+        if not callable(reader):
+            return None  # Legacy injected stores have no interrupted-run reader.
+        rows = reader(principal, job_id=job.job_id, chunk=chunk,
+                      parent_artifact_id=artifact_id, profile_id=profile.profile_id)
+        if not rows:
+            return None
+        scope = {
+            "format_version": 1, "audit_type": "VALIDATION_ATTEMPT",
+            "tenant_id": principal.tenant_id, "job_id": job.job_id,
+            "document_id": chunk.document_id, "version_id": chunk.version_id,
+            "chunk_id": chunk.chunk_id, "chunk_checksum": chunk.checksum,
+            "access_policy_id": chunk.access_policy_id,
+            "access_policy_version": chunk.access_policy_version,
+            "access_groups": sorted(chunk.access_groups),
+            "ontology_version_id": tbox.tbox_id, "ontology_checksum": tbox.checksum,
+            "profile_id": profile.profile_id, "extractor_version": profile.extractor_signature,
+            "prompt_version": profile.prompt_signature, "model": extractor.model,
+            "parent_artifact_id": artifact_id,
+        }
+        by_id = {}
+        positions = set()
+        terminals = []
+        for row in rows:
+            item = row["payload"]
+            if any(item.get(key) != value for key, value in scope.items()):
+                raise ConstructionConflict("interrupted validation scope conflicts")
+            if (row["artifact_id"] in by_id or type(item.get("attempt")) is not int
+                    or item["attempt"] not in (1, 2)
+                    or not isinstance(item.get("status"), str)
+                    or item["status"] not in {"CANDIDATE", "QUARANTINED", "REJECTED", "PROVIDER_ERROR"}
+                    or not isinstance(item.get("findings"), list)
+                    or not isinstance(item.get("finding_codes"), list)
+                    or not isinstance(item.get("validation_run_id"), str)
+                    or not item["validation_run_id"]
+                    or not {"response", "response_checksum", "response_chars", "recorded_at",
+                            "previous_attempt_artifact_id"} <= item.keys()
+                    or not all(isinstance(finding, dict) and isinstance(finding.get("code"), str)
+                               for finding in item["findings"])
+                    or item["finding_codes"] != [finding["code"] for finding in item["findings"]]):
+                raise ConstructionConflict("interrupted validation sequence conflicts")
+            position = (item["validation_run_id"], item["attempt"])
+            if position in positions:
+                raise ConstructionConflict("interrupted validation has competing attempts")
+            positions.add(position)
+            raw = item["response"]
+            if raw is None:
+                if (item["status"] != "PROVIDER_ERROR" or item["response_checksum"] is not None
+                        or item["response_chars"] is not None):
+                    raise ConstructionConflict("saved terminal response is unavailable for revalidation")
+            elif (not isinstance(raw, str) or content_checksum(raw) != item["response_checksum"]
+                  or type(item["response_chars"]) is not int or len(raw) != item["response_chars"]):
+                raise ConstructionConflict("interrupted validation response checksum conflicts")
+            by_id[row["artifact_id"]] = row
+            if (item["status"] in {"CANDIDATE", "QUARANTINED"}
+                    or (item["status"] == "REJECTED"
+                        and item["attempt"] == getattr(extractor, "max_validation_attempts", 1))):
+                terminals.append(row)
+        for row in rows:
+            item = row["payload"]
+            previous = item["previous_attempt_artifact_id"]
+            if item["attempt"] == 1:
+                if previous is not None:
+                    raise ConstructionConflict("first validation attempt has a predecessor")
+            elif (not isinstance(previous, str) or previous not in by_id
+                  or by_id[previous]["payload"]["attempt"] != 1
+                  or by_id[previous]["payload"]["status"] != "REJECTED"
+                  or by_id[previous]["payload"]["validation_run_id"] != item["validation_run_id"]):
+                raise ConstructionConflict("interrupted validation predecessor conflicts")
+        if not terminals:
+            return None  # An incomplete/provider-failed run retains its old audit.
+        if len(terminals) != 1:
+            raise ConstructionConflict("multiple completed validation runs require review")
+        terminal = terminals[0]
+        chain = []
+        current = terminal
+        while current is not None:
+            if len(chain) >= 2 or current in chain:
+                raise ConstructionConflict("interrupted validation chain is invalid")
+            chain.append(current)
+            predecessor = current["payload"].get("previous_attempt_artifact_id")
+            if predecessor is None:
+                break
+            if predecessor not in by_id:
+                raise ConstructionConflict("interrupted validation predecessor is missing")
+            current = by_id[predecessor]
+        chain.reverse()
+        refs = [{"artifact_id": row["artifact_id"], "input_hash": row["input_hash"],
+                 "summary": {key: row["payload"][key] for key in
+                             ("attempt", "status", "finding_codes", "response_checksum")}}
+                for row in chain]
+        saved = terminal["payload"]
+        manifest = {
+            "ontology_version_id": tbox.tbox_id, "ontology_checksum": tbox.checksum,
+            "extractor_version": profile.extractor_signature,
+            "prompt_version": profile.prompt_signature, "model": extractor.model,
+            "disposition": saved["status"], "validation_attempt_artifacts": refs,
+            "validation_attempts": [row["summary"] for row in refs],
+        }
+        try:
+            self._verify_validation_attempts(payload=manifest, job=job, chunk=chunk,
+                                             profile=profile, artifact_id=artifact_id)
+            extracted_at = _native_datetime(saved["recorded_at"], "recorded_at")
+        except (KeyError, TypeError, ValueError) as error:
+            raise ConstructionConflict("interrupted validation audit metadata is invalid") from error
+        validator = getattr(extractor, "revalidate_saved_response", None)
+        if not callable(validator):
+            raise ConstructionConflict("extractor cannot revalidate an interrupted response")
+        try:
+            audited = validator(saved["response"], chunk=chunk, profile=profile)
+        except ExtractionRejected as error:
+            if (saved["status"] != "REJECTED"
+                    or [asdict(item) for item in error.findings] != saved["findings"]):
+                raise ConstructionConflict("saved validation no longer matches strict validation") from error
+            payload = _rejected_payload(error.findings, tbox=tbox, extractor=extractor,
+                                        profile=profile, rejected_at=extracted_at)
+        except (TypeError, ValueError) as error:
+            raise ConstructionConflict("saved validation response is invalid") from error
+        else:
+            if (audited.status.value != saved["status"]
+                    or [asdict(item) for item in audited.findings] != saved["findings"]):
+                raise ConstructionConflict("saved validation disposition conflicts")
+            payload = _audited_payload(audited, document=document, version=version,
+                                       chunk=chunk, extracted_at=extracted_at)
+        payload["validation_attempts"] = manifest["validation_attempts"]
+        payload["validation_attempt_artifacts"] = refs
+        return payload
+
     def _process_chunk(
         self,
         *,
@@ -2319,6 +2629,18 @@ class Neo4jKnowledgeConstructionWorkflow:
             input_hash=input_hash,
             profile_id=profile.profile_id,
         )
+        if payload is None and completed is None and uses_feedback:
+            payload = self._recover_validation_payload(
+                principal=principal, job=job, tbox=tbox, extractor=extractor,
+                profile=profile, document=document, version=version, chunk=chunk,
+                artifact_id=artifact_id,
+            )
+            if payload is not None:
+                self.audit_store.persist_artifact(
+                    tenant_id=principal.tenant_id, artifact_id=artifact_id,
+                    input_hash=input_hash, profile_id=profile.profile_id,
+                    payload=payload, created_at=_native_datetime(payload["extracted_at"], "extracted_at"),
+                )
         if payload is None:
             if completed is not None:
                 raise ConstructionConflict("completed validation audit is missing")

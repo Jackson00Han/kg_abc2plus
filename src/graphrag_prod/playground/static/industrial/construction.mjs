@@ -78,6 +78,42 @@ function recordTitle(item) {
     return `${TYPE_LABELS[item.entity.entity_type] || item.entity.entity_type} · ${item.entity.canonical_name}`;
   return `${item.subject?.canonical_name || "未知实体"} — ${PREDICATE_LABELS[item.predicate] || item.predicate} → ${item.object_entity?.canonical_name || item.literal_value || ""}`;
 }
+function constructionSummary(chunks, mode) {
+  const stats = {};
+  const records = { CANDIDATE: new Set(), QUARANTINED: new Set() };
+  for (const chunk of chunks) {
+    stats[chunk.status] = (stats[chunk.status] || 0) + 1;
+    for (const id of [
+      ...(chunk.mention_record_ids || []),
+      ...(chunk.assertion_record_ids || []),
+    ])
+      records[chunk.status]?.add(id);
+  }
+  const labels = {
+    CANDIDATE: "产生待复核候选",
+    QUARANTINED: "抽取记录已隔离",
+    REJECTED: "抽取校验未通过",
+    PROVIDER_ERROR: "抽取服务失败",
+    EMPTY: "未提取到可用事实",
+    SOURCE_ONLY: "仅保留来源，未执行抽取",
+  };
+  const details = Object.entries(stats)
+    .map(([status, count]) => `${labels[status] || status} ${count} 个片段`)
+    .join("；");
+  let outcome;
+  if (mode === "SOURCE_ONLY") outcome = "本次未执行抽取，0 条候选记录。";
+  else if (records.CANDIDATE.size)
+    outcome = `已生成 ${records.CANDIDATE.size} 条待复核候选记录，需独立复核，批准后才能发布。`;
+  else if (records.QUARANTINED.size)
+    outcome = `0 条候选记录；${records.QUARANTINED.size} 条隔离记录需核对来源与校验问题。`;
+  else {
+    const reasons = ["REJECTED", "PROVIDER_ERROR", "EMPTY"]
+      .filter((status) => stats[status])
+      .map((status) => labels[status]);
+    outcome = `${reasons.join("；") || "未产生可用抽取结果"}，0 条候选记录。`;
+  }
+  return { details, outcome };
+}
 
 export class ConstructionWorkbench {
   constructor(client, { onPublished = () => {} } = {}) {
@@ -249,22 +285,13 @@ export class ConstructionWorkbench {
         content_base64: base64(bytes),
       });
       if (!this.ownsOperation(pending)) return;
-      const stats = result.chunks.reduce((counts, c) => {
-        counts[c.status] = (counts[c.status] || 0) + 1;
-        return counts;
-      }, {});
-      $("upload-status").textContent =
-        `已处理 ${result.chunks.length} 个片段。${Object.entries(stats)
-          .map(
-            ([status, count]) =>
-              `${STATUS_LABELS[status] || { EMPTY: "无可提取事实", SOURCE_ONLY: "仅保留来源", PROVIDER_ERROR: "抽取服务失败" }[status] || status} ${count}`,
-          )
-          .join("；")}\n任务 ${result.job_id}`;
-      toast(
-        metadata.extraction_mode === "SOURCE_ONLY"
-          ? "来源资料已入库。"
-          : "候选处理完成，可在独立复核后发布。",
+      const summary = constructionSummary(
+        result.chunks,
+        result.extraction_mode,
       );
+      $("upload-status").textContent =
+        `来源资料已入库，共 ${result.chunks.length} 个片段。\n${summary.outcome}\n${summary.details}\n任务 ${result.job_id} 已留存；相同资料和设置再次提交会复用本次操作，不会新建抽取任务。`;
+      toast(`来源已入库；${summary.outcome}`);
       void this.loadJobs();
     } catch (error) {
       if (!this.ownsOperation(pending)) return;
@@ -304,7 +331,7 @@ export class ConstructionWorkbench {
           element(
             "strong",
             "",
-            `${STATUS_LABELS[job.status] || { COMPLETED: "已完成", RETRY_WAIT: "等待恢复" }[job.status] || job.status} · ${job.completed_chunks}/${job.expected_chunks} 片段`,
+            `${STATUS_LABELS[job.status] || { COMPLETED: "处理结束", RETRY_WAIT: "等待恢复" }[job.status] || job.status} · ${job.completed_chunks}/${job.expected_chunks} 片段`,
           ),
           element(
             "p",
@@ -312,6 +339,13 @@ export class ConstructionWorkbench {
             `${dateLabel(job.created_at)} · ${shortId(job.job_id)}`,
           ),
         );
+        if (job.status === "COMPLETED" && job.chunks?.length) {
+          const summary = constructionSummary(job.chunks, job.extraction_mode);
+          item.append(
+            element("p", "", `来源已入库；${summary.outcome}`),
+            element("p", "muted", summary.details),
+          );
+        }
         if (job.last_finding_codes?.length)
           item.append(
             element("p", "danger-text", job.last_finding_codes.join("、")),

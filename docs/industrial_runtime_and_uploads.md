@@ -80,11 +80,78 @@ industrial search scope until recovery. Metadata already attached to a version
 cannot be reassigned to another context or operation.
 
 `SOURCE_ONLY` records audited evidence and makes no extraction calls. `LLM`
-uses the active composed industrial TBox and creates governed candidates;
+uses the active composed industrial TBox and creates governed candidates only
+when extraction validation permits them;
 existing review/publication rules still apply and approved extracted knowledge
 remains secondary. Publishing an accepted new batch uses the existing complete
 manifest and compare-and-swap path, preserving the seed records. A user upload
 never automatically publishes graph facts or becomes company-approved.
+
+## Extraction outcomes and recovery
+
+Source publication precedes extraction. A completed construction response with
+a `REJECTED` chunk can therefore have a current, searchable source and zero
+candidate records. Its job status `COMPLETED` means processing reached a
+terminal result, not that extraction succeeded. The workbench displays source
+ingestion separately from candidate counts and per-chunk outcomes. Rejected
+extraction, provider failure, empty extraction and deliberate `SOURCE_ONLY`
+remain distinct; quarantined records are identified separately. Only actual
+`CANDIDATE` records receive guidance to proceed to independent review and, after
+approval, publication. A network error alone does not establish whether source
+publication completed: inspect the retained task first.
+
+The local runtime uses prompt version
+`industrial-property-graph-extraction:v6-exact-json-spans` and requests
+`response_format={"type":"json_object"}`. This does not certify that returned
+facts or source spans are valid. The existing budgets remain unchanged: at most
+two LLM-mode chunks, two validation attempts per chunk, four model calls per
+construction, and a 30-second limit per call. `max_attempts` in the construction
+request controls ingestion attempts, not the separate validation-correction
+budget. No terminal result triggers an automatic fresh construction request.
+
+Within the same browser tab and identity, an unchanged file and form metadata
+reuse the saved operation key and source URI. An exact replay of a completed
+rejection reads the original outcome; it is not a new model run. The UI retains
+that operation identity after rejection and uncertain network errors. Changing
+the extractor profile under the same key conflicts with the original request
+fingerprint. The API does not offer an in-place re-extraction operation.
+
+For an explicit development verification of a corrected profile, use a new
+operation key **and a new source URI**, retaining the original job, source and
+immutable validation artifacts. A new operation with the same URI and bytes
+is insufficient: the existing version's industrial provenance is bound to its
+original construction job and request fingerprint and cannot be reassigned.
+Do not describe the new run as repair of the old job. This workbench adds no
+new re-extraction button and does not silently duplicate or remove sources.
+
+An administrator with `knowledge:lifecycle` may explicitly withdraw a failed
+test source from active retrieval through the existing document lifecycle UI
+or `GET /v1/knowledge/documents` followed by
+`POST /v1/knowledge/documents/{document_id}:retire`. The latter uses a fresh
+operation key and the inventory's current snapshot ID and source generation.
+Existing publication, review and running-job blockers still apply. Logical
+retirement retains source versions, chunks, construction jobs and extraction
+audits; it is not physical deletion. The maintenance persona lacks this
+capability, and `/industrial` has no new retirement control.
+
+## Interrupted validation recovery
+
+If the model response and its validation attempts were durably stored but
+parent assembly was interrupted, resubmitting the original request can recover
+that complete chain without another model call. Current source permissions and
+lifecycle, artifact identity and checksum, request scope, predecessor links and
+strict response validation must all still pass. Final rejection remains a
+rejection. A valid incomplete provider-failed chain permits a fresh attempt
+within the existing request budget; damaged or competing chains fail closed.
+
+Legacy attempt artifacts have no separate parent lookup fields. Recovery
+therefore validates a complete, bounded set for the current tenant, audit kind
+and extraction profile before selecting the requested chain. It does not use
+JSON whitespace or property ordering to decide whether an attempt exists.
+This compatibility path is limited to 256 artifacts, eight MiB per artifact,
+32 MiB in aggregate and 32 attempts for one chain. Exceeding a bound requires
+an explicitly designed index migration; it never silently starts another model
+call. These are recovery limits, separate from corpus and graph-view limits.
 
 ## Authorized source reading
 
