@@ -202,9 +202,7 @@
       line-height: 1.55;
     }
     .query-input:focus { border-color: var(--teal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 12%, transparent); }
-    .composer-bottom { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-top: 14px; }
-    .persona-field { min-width: 260px; }
-    .persona-field select { width: 100%; height: 39px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; outline: none; background: var(--surface); font-size: 11px; }
+    .composer-bottom { display: flex; align-items: end; justify-content: flex-end; gap: 16px; margin-top: 14px; }
     .actions { display: flex; gap: 8px; }
     .button { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--strong); font-size: 11px; font-weight: 720; }
     .button:hover:not(:disabled) { border-color: var(--teal); }
@@ -449,7 +447,6 @@
       .main { padding: 18px; }
       .main-inner { width: 100%; }
       .composer-bottom { align-items: stretch; flex-direction: column; }
-      .persona-field { min-width: 0; }
       .actions { justify-content: flex-end; }
       .governance-workspace { padding: 18px; }
       .governance-grid { grid-template-columns: 1fr; }
@@ -531,11 +528,6 @@
           <label class="query-label" for="query-input">问题</label>
           <textarea class="query-input" id="query-input" maxlength="2000" placeholder="选择预置问题，或输入自然语言问题进行混合检索"></textarea>
           <div class="composer-bottom">
-            <div class="persona-field">
-              <label class="query-label" for="persona-select">测试身份（决定租户与访问组）</label>
-              <select id="persona-select" aria-describedby="persona-help"></select>
-              <span class="sr-only" id="persona-help">切换身份后可观察同一问题的权限隔离效果</span>
-            </div>
             <div class="actions">
               <button class="button primary" id="retrieve-button" type="button">检索相关上下文</button>
             </div>
@@ -865,7 +857,7 @@
       const elements = {
         connection: $('connection'), connectionLabel: $('connection-label'), questionList: $('question-list'),
         questionCount: $('question-count'), search: $('question-search'), classFilter: $('class-filter'),
-        resultFilter: $('result-filter'), query: $('query-input'), persona: $('persona-select'),
+        resultFilter: $('result-filter'), query: $('query-input'),
         modePill: $('mode-pill'), modeNote: $('mode-note'), retrieve: $('retrieve-button'),
         shell: $('result-shell'), initial: $('initial-state'), loading: $('loading-state'), loadingTitle: $('loading-title'),
         error: $('error-state'), errorMessage: $('error-message'), view: $('result-view'),
@@ -915,14 +907,11 @@
       }
 
       function currentPersona() {
-        if (state.view === 'governance') {
-          const required = ['ontology:write', 'ontology:publish', 'knowledge:import',
-            'knowledge:construct', 'knowledge:review', 'knowledge:publish',
-            'knowledge:quality', 'knowledge:lifecycle'];
-          return state.bootstrap?.personas.find(item =>
-            required.every(scope => (item.scopes || []).includes(scope))) || null;
-        }
-        return state.bootstrap?.personas.find(item => item.id === elements.persona.value) || null;
+        const required = ['retrieval:read', 'ontology:write', 'ontology:publish',
+          'knowledge:import', 'knowledge:construct', 'knowledge:review',
+          'knowledge:publish', 'knowledge:quality', 'knowledge:lifecycle'];
+        return state.bootstrap?.personas.find(item =>
+          required.every(scope => (item.scopes || []).includes(scope))) || null;
       }
 
       function renderDocumentAccessGroups() {
@@ -962,17 +951,17 @@
         const match = state.bootstrap.questions.find(item => item.query === query) || null;
         state.selectedQuestion = match;
         const reviewed = Boolean(match);
-        const recommendedIdentity = reviewed && match.recommended_persona_id === elements.persona.value;
+        const recommendedIdentity = reviewed && match.recommended_persona_id === currentPersona()?.id;
         elements.modePill.textContent = recommendedIdentity
           ? 'Reviewed hybrid'
-          : reviewed ? 'ACL experiment' : 'Custom hybrid';
+          : reviewed ? 'Hybrid' : 'Custom hybrid';
         elements.modePill.classList.toggle('custom', false);
         elements.modePill.classList.toggle('experiment', reviewed && !recommendedIdentity);
         elements.retrieve.disabled = !query || state.busy;
         elements.modeNote.innerHTML = recommendedIdentity
           ? '预置问题运行 <strong style="color:var(--green)">Vector + BM25 + RRF + RA</strong>，返回相关 Chunks 与完整 Trace。'
           : reviewed
-            ? '<strong>ACL 实验：</strong>问题仍使用审定向量，但当前身份已偏离 Gold 场景；可观察跨租户或访问组拒绝行为。'
+            ? '预置问题在当前账号可访问的知识库中检索，返回相关 Chunks 与完整 Trace。'
           : '<strong>自定义模式：</strong>运行阿里 Embedding + ACL + Vector + BM25 + RRF + RA 图扩展。';
         renderQuestions();
       }
@@ -1009,16 +998,11 @@
         if (state.busy) return;
         const question = state.bootstrap?.questions.find(item => item.id === id);
         if (!question) return;
-        const identityChanged = elements.persona.value !== question.recommended_persona_id;
         state.selectedQuestion = question;
         elements.query.value = question.query;
-        elements.persona.value = question.recommended_persona_id;
-        if (identityChanged) handleIdentityChange();
-        else {
-          resetRetrievalResult();
-          renderIdentity();
-          updateMode();
-        }
+        resetRetrievalResult();
+        renderIdentity();
+        updateMode();
         if (closeDrawer) {
           document.body.classList.remove('questions-open');
           $('questions-button')?.setAttribute('aria-expanded', 'false');
@@ -1408,8 +1392,12 @@
           showToast(error.message);
           return;
         }
-        const personaId = elements.persona.value;
-        const identity = state.bootstrap.personas.find(item => item.id === personaId);
+        const identity = currentPersona();
+        if (!identity) {
+          showToast('当前工作台账号不可用，请重新加载页面。');
+          return;
+        }
+        const personaId = identity.id;
         const requestEpoch = ++state.retrievalEpoch;
         const controller = new AbortController();
         state.retrievalController = controller;
@@ -1591,16 +1579,13 @@
       }
 
       function switchWorkspace(view) {
-        const previousPersonaId = currentPersona()?.id;
         state.view = view;
         const governance = view === 'governance';
         $('retrieval-workspace').classList.toggle('hidden', governance);
         $('governance-workspace').classList.toggle('hidden', !governance);
         $('retrieval-nav').classList.toggle('active', !governance);
         $('governance-nav').classList.toggle('active', governance);
-        if (previousPersonaId !== currentPersona()?.id) {
-          handleIdentityChange();
-        } else if (governance) {
+        if (governance) {
           Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         }
       }
@@ -3347,7 +3332,6 @@
           $('stat-chunks').textContent = number(counts.active_chunks);
           $('stat-entities').textContent = number(counts.entities);
           $('stat-tenants').textContent = number(counts.tenants);
-          elements.persona.innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
           resetRetrievalControls();
           const classes = [...new Set(bootstrap.questions.map(item => item.question_class))];
           elements.classFilter.insertAdjacentHTML('beforeend', classes.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(classLabels[value] || value)}</option>`).join(''));
@@ -3357,9 +3341,6 @@
             resetReturn = JSON.parse(sessionStorage.getItem(RESET_RETURN_KEY) || 'null');
             sessionStorage.removeItem(RESET_RETURN_KEY);
           } catch (_) {}
-          if (resetReturn && bootstrap.personas.some(item => item.id === resetReturn.persona_id)) {
-            elements.persona.value = resetReturn.persona_id;
-          }
           renderQuestions(); renderIdentity(); updateMode();
           initializeLocalReset(bootstrap.local_reset);
           if (state.localReset?.blocked || state.localReset?.reloading) return;
@@ -3390,7 +3371,6 @@
         if (state.retrieval || state.raw) resetRetrievalResult();
         updateMode();
       });
-      elements.persona.addEventListener('change', handleIdentityChange);
       elements.retrieve.addEventListener('click', () => run());
       retrievalControls().forEach(input => input.addEventListener('change', () => {
         if (state.retrieval || state.raw) resetRetrievalResult();

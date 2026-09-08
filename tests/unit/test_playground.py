@@ -629,10 +629,8 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("const controller = new AbortController()", source)
         self.assertIn("state.retrievalController?.abort()", source)
         self.assertIn("if (requestEpoch !== state.retrievalEpoch) return", source)
-        self.assertIn(
-            "elements.persona.addEventListener('change', handleIdentityChange)",
-            source,
-        )
+        self.assertNotIn("elements.persona", source)
+        self.assertIn("const identity = currentPersona();", source)
         self.assertIn("if (identityEpoch !== state.identityEpoch) return", source)
         self.assertIn("activeOntology(item.key)?.tbox_id", source)
         self.assertIn('data-load-tbox="${index}"', source)
@@ -1051,7 +1049,8 @@ for (const [status, expected] of [[403, '全部 ACL'], [404, '未找到'], [409,
         self.assertNotIn("生成有据回答", page.text)
         self.assertIn("自定义文本使用阿里 Embedding", page.text)
         self.assertNotIn("自定义文本当前只启用 BM25", page.text)
-        self.assertIn("ACL experiment", page.text)
+        self.assertNotIn("ACL experiment", page.text)
+        self.assertNotIn('id="persona-select"', page.text)
         self.assertNotIn("https://", page.text)
         self.assertEqual(page.headers["cache-control"], "no-store")
         self.assertIn("frame-ancestors 'none'", page.headers["content-security-policy"])
