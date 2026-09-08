@@ -144,3 +144,18 @@ available to the computer-use tool. HTTP and executed-JavaScript checks passed;
 these do not substitute for a visual check. Existing constraints on ordinary
 entity-edit revision dependencies and the independent industrial workbench's
 locked upload policy remain as documented in the operation guides.
+
+Navigation follow-up (2026-09-08): the shared review completion button had
+hardcoded the business flow, moving authoritative step 03 to business step 07.
+It now retains the current construction flow: authoritative 03 → 04 and
+business 06 → 07. The existing executable workflow check now clicks the actual
+bound handler in both flows and verifies the publication container, number,
+title, scrolling, preserved selection and absence of API writes. It reproduced
+the baseline-to-business failure before the fix. All 102 `test_playground*.py`
+unit checks passed afterwards (`uv run --locked python -m unittest discover
+-s tests/unit -t . -p 'test_playground*.py' -q`), as did JavaScript syntax,
+Python AST, whitespace and changed-file secret checks. No test IDs or backend
+contracts changed. The port 8000 UI service was restarted with existing-corpus
+reuse because its HTML is cached at startup; an HTTP read confirmed the fixed
+handler and the existing graph remained at 109 nodes across restart. This is
+executed-JavaScript and HTTP evidence; no browser visual check was performed.

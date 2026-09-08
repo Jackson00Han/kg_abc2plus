@@ -55,6 +55,10 @@ class PlaygroundFlowUiTests(unittest.TestCase):
             self.source.index("function refreshABoxPreparation("):
             self.source.index("function clearDemoSourceBinding()")
         ]
+        code += self.source[
+            self.source.index("function bindReviewActions(container)"):
+            self.source.index("function updateReviewAvailability(item)")
+        ]
         harness = r"""
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
@@ -96,6 +100,7 @@ const requests = [];
 const context = vm.createContext({$, fields, document, state, elements, assert, requests,
   parseJsonEditor: element => JSON.parse(element.value),
   renderOntologies() {}, showToast() {}, invalidateInventory() {}, refreshReviewResolutions() {},
+  bindResolutionActions() {}, makeNode,
   output: (element, value) => {element.textContent = typeof value === 'string' ? value : JSON.stringify(value);},
   loadPublicationCandidates: async () => {}, loadHistory: async () => {},
   loadInventory: async () => {}, loadQuality: async () => {},
@@ -165,6 +170,8 @@ assert.equal($('manual-output').textContent,'new identity'); assert.equal(state.
         self.assertEqual([ids.index(step) for step in steps], sorted(ids.index(step) for step in steps))
         self.run_js(r"""
 const upload = $('upload-card');
+const next = makeNode();
+bindReviewActions({querySelectorAll: selector => selector === '[data-review-next]' ? [next] : []});
 showConstructionFlow('baseline');
 assert.equal(upload.parent, $('source-upload-slot'));
 assert.equal($('step-ontology').hidden, false);
@@ -172,6 +179,13 @@ assert.equal($('step-review').hidden, false);
 assert.equal($('step-review').parent, $('step-abox'));
 assert.equal($('step-publication').parent, $('baseline-publication-slot'));
 assert.equal($('document-extraction-mode').value, 'LLM');
+next.click();
+assert.equal(state.constructionFlow, 'baseline');
+assert.equal($('step-publication').parent, $('baseline-publication-slot'));
+assert.equal($('step-publication').querySelector('.step-chip').textContent, '04');
+assert.equal($('step-publication').querySelector('h2').textContent, '发布权威图谱');
+assert.equal($('step-publication').scrolled, true);
+$('step-publication').scrolled = false;
 $('document-file').value = 'expert.txt';
 showConstructionFlow('business', 'step-review');
 assert.equal($('upload-card'), upload);
@@ -184,6 +198,14 @@ assert.equal($('document-file').value, '');
 assert.equal($('upload-step-number').textContent, '05');
 assert.equal($('step-review').parent, $('business-review-slot'));
 assert.equal($('step-publication').parent, $('business-publication-slot'));
+next.click();
+assert.equal(state.constructionFlow, 'business');
+assert.equal($('step-publication').parent, $('business-publication-slot'));
+assert.equal($('step-publication').querySelector('.step-chip').textContent, '07');
+assert.equal($('step-publication').querySelector('h2').textContent, '发布业务知识');
+assert.equal($('step-publication').scrolled, true);
+assert.equal(elements.publicationRevisions.value, 'unrelated-approved');
+assert.equal(state.approvedRevisions.has('unrelated-approved'), true);
 state.constructionBusy = true;
 showConstructionFlow('baseline');
 assert.equal(state.constructionFlow, 'business');

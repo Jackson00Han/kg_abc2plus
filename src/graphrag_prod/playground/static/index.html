@@ -2506,7 +2506,7 @@
         }));
         container.querySelectorAll('[data-review-save-draft]').forEach(button=>button.addEventListener('click',()=>submitReviews('QUARANTINED',[Number(button.dataset.reviewSaveDraft)],true)));
         container.querySelectorAll('[data-review-pending-only]').forEach(button=>button.addEventListener('click',()=>loadReviews({candidatesOnly:true})));
-        container.querySelectorAll('[data-review-next]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow('business','step-publication')));
+        container.querySelectorAll('[data-review-next]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'step-publication')));
         container.querySelectorAll('[data-review-dependency]').forEach(button=>button.addEventListener('click',()=> {
           if ([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled)) { showToast('请先保存或取消当前编辑'); return; }
           const target=state.reviews.find(item=>item.record_id === button.dataset.reviewDependency);
