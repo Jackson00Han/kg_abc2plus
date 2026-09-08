@@ -641,7 +641,9 @@ class Neo4jKnowledgeStore:
             raise KnowledgeSchemaError(
                 "one A-Box write must use exactly one knowledge origin"
             )
-        model_derived = next(iter(origins)) is KnowledgeOrigin.LLM_EXTRACTED
+        model_derived = next(iter(origins)) in {
+            KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED
+        }
         for entity in entities.values():
             contract = entity_contracts.get(entity.entity_type)
             if contract is None:

@@ -498,6 +498,7 @@ class IndustrialConstructionContextRequest(StrictAPIModel):
 
 
 class KnowledgeConstructionRequest(StrictAPIModel):
+    knowledge_scope: Literal["BUSINESS", "AUTHORITATIVE"] = "BUSINESS"
     industrial_context: IndustrialConstructionContextRequest | None = None
     extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
     operation_key: Annotated[
@@ -749,7 +750,7 @@ class EvidenceResponse(StrictAPIModel):
 
 class TrustResponse(StrictAPIModel):
     origin: Literal[
-        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "RULE_DERIVED", "FIXTURE"
+        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
     ]
     authority: Literal["AUTHORITATIVE", "SECONDARY"]
     status: Literal[
@@ -1534,7 +1535,7 @@ class ActivePublicationInventoryItemResponse(StrictAPIModel):
     record_kind: Literal["ENTITY_MENTION", "ASSERTION"]
     governance_status: Literal["PUBLISHED"]
     origin: Literal[
-        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "RULE_DERIVED", "FIXTURE"
+        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
     ]
     authority_level: Literal["AUTHORITATIVE", "SECONDARY"]
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]

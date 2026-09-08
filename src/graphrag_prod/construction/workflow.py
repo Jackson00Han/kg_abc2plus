@@ -9,7 +9,7 @@ stop at audited source evidence, ready for a separate expert-instance import.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 import json
 import math
@@ -88,6 +88,7 @@ KNOWLEDGE_CONSTRUCTION_CAPABILITY = "knowledge:construct"
 CANONICAL_EMPTY_EXTRACTOR_SIGNATURE = "canonical-empty-extraction:v1"
 CANONICAL_EMPTY_PROMPT_SIGNATURE = "no-model-prompt:v1"
 SOURCE_ONLY_AUDIT_SIGNATURE = "source-only-evidence:v1"
+AUTHORITATIVE_PROFILE_SUFFIX = ":authoritative-document:v1"
 MAX_CONSTRUCTION_CHUNKS = 512
 MAX_CONSTRUCTION_MODEL_CALLS = 512
 MAX_CONSTRUCTION_EXTRACTION_CHARS = 5 * 1024 * 1024
@@ -157,6 +158,7 @@ class ConstructionMetadata:
     published_at: datetime | None = None
     max_attempts: int = 3
     extraction_mode: str = "LLM"
+    knowledge_scope: str = "BUSINESS"
     industrial_context: IndustrialUploadContext | None = None
 
     def __post_init__(self) -> None:
@@ -178,6 +180,10 @@ class ConstructionMetadata:
         object.__setattr__(self, "access_groups", groups)
         _aware(self.published_at, "published_at")
         _extraction_mode(self.extraction_mode)
+        if self.knowledge_scope not in {"BUSINESS", "AUTHORITATIVE"}:
+            raise ValueError("knowledge_scope must be BUSINESS or AUTHORITATIVE")
+        if self.knowledge_scope == "AUTHORITATIVE" and self.extraction_mode != "LLM":
+            raise ValueError("authoritative document construction requires extraction")
         if self.industrial_context is not None and not isinstance(self.industrial_context, IndustrialUploadContext):
             raise TypeError("industrial_context must be IndustrialUploadContext")
         if (
@@ -1754,6 +1760,7 @@ def _to_abox_batch(
     *,
     chunk: Chunk,
     extracted_at: datetime,
+    authoritative: bool = False,
 ) -> ABoxRecordBatch | None:
     if not audited.output.mentions:
         if audited.output.entities or audited.output.assertions:
@@ -1775,6 +1782,10 @@ def _to_abox_batch(
         )
     else:
         raise ConstructionConflict("only candidate or quarantined output can form A-Box records")
+
+    if authoritative:
+        trust = replace(trust, origin=KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
+                        authority=AuthorityLevel.AUTHORITATIVE)
 
     entities = {item.entity_id: _identity(item) for item in audited.output.entities}
     mentions: list[EntityMentionRecord] = []
@@ -2081,6 +2092,8 @@ class Neo4jKnowledgeConstructionWorkflow:
         _require_construction_capability(principal)
         if not isinstance(metadata, ConstructionMetadata):
             raise TypeError("metadata must be ConstructionMetadata")
+        if metadata.knowledge_scope == "AUTHORITATIVE" and "knowledge:import" not in principal.capabilities:
+            raise ConstructionAuthorizationError("authoritative construction requires knowledge:import")
         if not metadata.access_groups <= principal.groups:
             raise ConstructionAuthorizationError(
                 "source access groups must be a principal-group subset"
@@ -2145,6 +2158,8 @@ class Neo4jKnowledgeConstructionWorkflow:
             ):
                 raise ConstructionConflict("corrective extraction requires bounded call hooks")
             extractor_signature = self._bound_extractor_signature(extractor)
+            if metadata.knowledge_scope == "AUTHORITATIVE":
+                extractor_signature += AUTHORITATIVE_PROFILE_SUFFIX
             prompt_signature = self.config.prompt_signature
         self._require_deadline(deadline)
 
@@ -2778,7 +2793,10 @@ class Neo4jKnowledgeConstructionWorkflow:
         batch = (
             None
             if audited is None
-            else _to_abox_batch(audited, chunk=chunk, extracted_at=extracted_at)
+            else _to_abox_batch(
+                audited, chunk=chunk, extracted_at=extracted_at,
+                authoritative=profile.extractor_signature.endswith(AUTHORITATIVE_PROFILE_SUFFIX),
+            )
         )
         status = (
             GovernanceStatus.REJECTED.value

@@ -283,6 +283,24 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             database_=self.database,
         )
 
+    def test_authoritative_document_candidates_keep_source_authority_and_acl(self) -> None:
+        principal = replace(self.principal, capabilities=self.principal.capabilities | {"knowledge:import"})
+        metadata = replace(self.metadata, knowledge_scope="AUTHORITATIVE")
+        first = self.workflow.run(principal, SOURCE, metadata)
+        review = Neo4jKnowledgeReviewService(self.driver, self.database)
+        queue = review.review_queue(principal)
+        self.assertEqual(len(queue), 3)
+        for item in queue:
+            self.assertEqual(item.record.trust.origin.value, "AUTHORITATIVE_EXTRACTED")
+            self.assertEqual(item.record.trust.authority.value, "AUTHORITATIVE")
+            self.assertEqual(item.record.trust.status.value, "CANDIDATE")
+        self.assertEqual(review.review_queue(replace(principal, groups=frozenset({"public"}))), ())
+        replay = self.workflow.run(principal, SOURCE, metadata)
+        self.assertEqual(replay.job_id, first.job_id)
+        self.assertEqual(len(self.completions.calls), 1)
+        with self.assertRaises(ConstructionConflict):
+            self.workflow.run(principal, SOURCE, self.metadata)
+
     def _enable_validation_feedback(self, *steps: str) -> _FeedbackCompletions:
         completions = _FeedbackCompletions(*steps)
         self.completions = completions

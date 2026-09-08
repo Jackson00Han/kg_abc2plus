@@ -21,6 +21,8 @@ class KnowledgeOrigin(StrEnum):
     EXPERT_IMPORT = "EXPERT_IMPORT"
     EXPERT_CREATED = "EXPERT_CREATED"
     LLM_EXTRACTED = "LLM_EXTRACTED"
+    AUTHORITATIVE_EXTRACTED = "AUTHORITATIVE_EXTRACTED"
+    HUMAN_SUPPLEMENT = "HUMAN_SUPPLEMENT"
     RULE_DERIVED = "RULE_DERIVED"
     FIXTURE = "FIXTURE"
 
@@ -47,6 +49,8 @@ _ALLOWED_AUTHORITY_BY_ORIGIN: dict[KnowledgeOrigin, AuthorityLevel] = {
     KnowledgeOrigin.EXPERT_IMPORT: AuthorityLevel.AUTHORITATIVE,
     KnowledgeOrigin.EXPERT_CREATED: AuthorityLevel.AUTHORITATIVE,
     KnowledgeOrigin.LLM_EXTRACTED: AuthorityLevel.SECONDARY,
+    KnowledgeOrigin.AUTHORITATIVE_EXTRACTED: AuthorityLevel.AUTHORITATIVE,
+    KnowledgeOrigin.HUMAN_SUPPLEMENT: AuthorityLevel.SECONDARY,
     KnowledgeOrigin.RULE_DERIVED: AuthorityLevel.SECONDARY,
     KnowledgeOrigin.FIXTURE: AuthorityLevel.SECONDARY,
 }
@@ -122,6 +126,10 @@ def _aware_datetime(value: object, name: str) -> datetime:
     return value
 
 
+def authority_for_origin(origin: KnowledgeOrigin) -> AuthorityLevel:
+    return _ALLOWED_AUTHORITY_BY_ORIGIN[_require_enum(origin, KnowledgeOrigin, "origin")]
+
+
 def allowed_governance_transitions(
     status: GovernanceStatus,
 ) -> frozenset[GovernanceStatus]:
@@ -152,8 +160,9 @@ class TrustMetadata:
 
     ``authority`` describes the source, while ``status`` describes whether the
     record has completed governance. Those dimensions are intentionally kept
-    separate: a model-extracted assertion remains secondary even after an
-    expert approves and publishes it.
+    separate: business-document extraction remains secondary after review;
+    authoritative-document extraction is authoritative from creation. Review
+    never promotes authority. Human additions without document support are secondary.
     """
 
     origin: KnowledgeOrigin

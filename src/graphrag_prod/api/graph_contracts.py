@@ -20,7 +20,7 @@ from .knowledge_contracts import OntologyEntityType, OntologyHierarchy, Ontology
 
 GraphToken = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=MAX_GRAPH_TOKEN_CHARS)]
 GraphAuthority = Literal["AUTHORITATIVE", "SECONDARY"]
-GraphOrigin = Literal["EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "RULE_DERIVED", "FIXTURE"]
+GraphOrigin = Literal["EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"]
 SourceKind = Literal["CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD", "USER_UPLOAD"]
 
 

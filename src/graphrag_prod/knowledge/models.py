@@ -538,8 +538,11 @@ class ABoxRecordBatch:
         for record in (*self.mentions, *self.assertions):
             trust = record.trust
             if (
-                trust.origin is not KnowledgeOrigin.LLM_EXTRACTED
-                or trust.authority is not AuthorityLevel.SECONDARY
+                trust.origin not in {KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED}
+                or trust.authority is not (
+                    AuthorityLevel.AUTHORITATIVE if trust.origin is KnowledgeOrigin.AUTHORITATIVE_EXTRACTED
+                    else AuthorityLevel.SECONDARY
+                )
                 or trust.status is not GovernanceStatus.CANDIDATE
                 or trust.extractor_version is None
                 or trust.prompt_version is None
@@ -555,8 +558,11 @@ class ABoxRecordBatch:
         for record in (*self.mentions, *self.assertions):
             trust = record.trust
             if (
-                trust.origin is not KnowledgeOrigin.LLM_EXTRACTED
-                or trust.authority is not AuthorityLevel.SECONDARY
+                trust.origin not in {KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED}
+                or trust.authority is not (
+                    AuthorityLevel.AUTHORITATIVE if trust.origin is KnowledgeOrigin.AUTHORITATIVE_EXTRACTED
+                    else AuthorityLevel.SECONDARY
+                )
                 or trust.status is not GovernanceStatus.QUARANTINED
                 or trust.extractor_version is None
                 or trust.prompt_version is None

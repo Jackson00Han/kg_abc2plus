@@ -741,7 +741,7 @@ class GraphProvenanceResponse(StrictAPIModel):
     origin: Literal[
         "EXPERT_IMPORT",
         "EXPERT_CREATED",
-        "LLM_EXTRACTED",
+        "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT",
         "RULE_DERIVED",
         "FIXTURE",
     ]
@@ -753,7 +753,7 @@ class GraphProvenanceResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_origin_authority(self) -> Self:
-        expert = self.origin in {"EXPERT_IMPORT", "EXPERT_CREATED"}
+        expert = self.origin in {"EXPERT_IMPORT", "EXPERT_CREATED", "AUTHORITATIVE_EXTRACTED"}
         if expert != (self.authority == "AUTHORITATIVE"):
             raise ValueError("graph origin and authority are inconsistent")
         return self

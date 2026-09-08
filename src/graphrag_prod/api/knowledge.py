@@ -1140,6 +1140,8 @@ class Neo4jKnowledgeOperations:
         self, principal: Principal, request: KnowledgeConstructionRequest
     ) -> BackendResult:
         _require_capability(principal, "knowledge:construct")
+        if request.knowledge_scope == "AUTHORITATIVE":
+            _require_capability(principal, "knowledge:import")
         if not frozenset(request.access_groups) <= principal.groups:
             raise AuthorizationError()
         try:
@@ -1155,6 +1157,7 @@ class Neo4jKnowledgeOperations:
                 published_at=request.published_at,
                 max_attempts=request.max_attempts,
                 extraction_mode=request.extraction_mode,
+                knowledge_scope=request.knowledge_scope,
                 industrial_context=None if request.industrial_context is None else request.industrial_context.to_domain(),
             )
             content = request.decoded_content()

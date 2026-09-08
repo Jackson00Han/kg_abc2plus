@@ -20,8 +20,11 @@ introduce RDF or OWL. The governed construction path is:
   or schema checks fail;
 - rejection and supersession are terminal audit outcomes.
 
-Expert approval does not rewrite an LLM record as authoritative. This preserves
-the distinction between source quality and workflow state.
+Business-document approval does not rewrite a record as authoritative. The
+explicit authoritative-document flow records `AUTHORITATIVE_EXTRACTED` with
+`AUTHORITATIVE` from extraction onward, independently of review. Human additions
+without document support use `HUMAN_SUPPLEMENT` with `SECONDARY`. See
+[the revised construction workflow](knowledge_construction_workflow.md).
 
 ## T-Box contract
 

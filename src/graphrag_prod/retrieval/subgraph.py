@@ -262,11 +262,13 @@ class SubgraphProvenance:
         if self.authority is AuthorityLevel.AUTHORITATIVE and self.origin not in {
             KnowledgeOrigin.EXPERT_IMPORT,
             KnowledgeOrigin.EXPERT_CREATED,
+            KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
         }:
             raise ValueError("authoritative subgraph data requires an expert origin")
         if self.authority is AuthorityLevel.SECONDARY and self.origin in {
             KnowledgeOrigin.EXPERT_IMPORT,
             KnowledgeOrigin.EXPERT_CREATED,
+            KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
         }:
             raise ValueError("secondary subgraph data cannot claim an expert origin")
         object.__setattr__(self, "confidence", _bounded_confidence(self.confidence))
