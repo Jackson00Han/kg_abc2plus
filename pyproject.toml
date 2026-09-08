@@ -1,13 +1,13 @@
 [project]
 name = "sample-graphrag"
 version = "0.1.0"
-description = "Standalone GraphRAG demo using neo4j-graphrag and OpenAI"
+description = "Governed Neo4j GraphRAG workbench with traceable sources and bounded retrieval"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116.0,<1.0.0",
     "httpx>=0.28.1,<1.0.0",
     "neo4j>=5.28.0,<7.0.0",
-    "neo4j-graphrag[openai]>=1.14.0",
+    "openai>=1.109.1,<2.0.0",
     "pdfplumber>=0.11.0,<0.12.0",
     "pint>=0.25.2,<1.0.0",
     "pyjwt>=2.10.1,<3.0.0",

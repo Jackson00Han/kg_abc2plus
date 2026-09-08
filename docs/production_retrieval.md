@@ -1,8 +1,7 @@
 # Production Retrieval Engine
 
-Stage 5 turns the retrieval methods demonstrated in `06_graph_expanded_rag.py`
-into the reusable `graphrag_prod.retrieval` package. The numbered script stays
-as a learning artifact and now imports the same standard RRF implementation.
+The reusable `graphrag_prod.retrieval` package implements vector and lexical
+recall, standard RRF fusion, graph expansion and adjacent-chunk completion.
 
 ## Retrieval pipeline
 

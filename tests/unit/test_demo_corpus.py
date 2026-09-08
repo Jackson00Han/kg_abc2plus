@@ -98,7 +98,12 @@ class DemoCorpusTests(unittest.TestCase):
         excluded = set(inventory['excluded_files'])
         active = set(inventory['active_sources'] + inventory['manual_construction_sources'])
         self.assertFalse(excluded.intersection(active))
-        self.assertIn('data/apple_10k_excerpt.txt', excluded)
+        dataset_files = {
+            str(p.relative_to(root))
+            for p in (root / 'datasets').rglob('*')
+            if p.is_file() and p.name != '.DS_Store'
+        }
+        self.assertEqual(excluded, dataset_files)
         self.assertTrue(any(p.startswith('datasets/industrial-v1/') for p in excluded))
         self.assertEqual(len(inventory['active_sources']), 4)
         for filename in excluded | active:

@@ -8,8 +8,8 @@
 
 完整逐文件清单见 [隔离清单](playground-demo-isolation.v1.json)。
 `datasets/dev-corpus-v1/`、`datasets/industrial-v1/`、`datasets/load-v1/`
-和 `data/apple_10k_excerpt.txt` 已退出默认旧版的加载路径。
-这些文件原位保留，用于教学、自动化回归和独立工业服务；不会在最小演示中
+不进入默认演示的加载路径。
+这些文件原位保留，用于自动化回归和独立工业服务；不会在最小演示中
 上传、嵌入或发送给模型。隔离通过显式语料配置和独立数据库实现，不移动已锁定的测试文件。
 
 ## 保留的最小资料

@@ -1,9 +1,8 @@
 {
   "schema": "playground-demo-isolation-v1",
   "active_profile": "demo-mini-zh-v1",
-  "isolation": "Excluded from default Playground runtime; retained in place for teaching, regression and the independent industrial service.",
+  "isolation": "Excluded from default Playground runtime; retained for regression and the independent industrial service.",
   "excluded_files": [
-    "data/apple_10k_excerpt.txt",
     "datasets/dev-corpus-v1/NOTICE.txt",
     "datasets/dev-corpus-v1/answers.jsonl",
     "datasets/dev-corpus-v1/chunks.jsonl",

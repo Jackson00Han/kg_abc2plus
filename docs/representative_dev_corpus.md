@@ -1,7 +1,7 @@
 # Representative Development Corpus
 
-`dev-corpus-v1` is the bounded corpus used between the minimal teaching
-fixture and the production-reference validation workload. It exists to expose
+`dev-corpus-v1` is the bounded corpus used between the minimal unit
+fixtures and the production-reference validation workload. It exists to expose
 multi-document, temporal, identity, and authorization failures early without
 making every development check depend on provider calls or a deployment-sized
 database.

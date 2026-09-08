@@ -1,490 +1,110 @@
-# sample-graphrag
+# Neo4j GraphRAG Workbench
 
-Build a knowledge graph from an SEC filing and query it with progressively richer retrieval strategies, from basic vector search to full GraphRAG question answering.
+当前项目是基于 Neo4j 的知识构建、审核发布、图谱浏览和证据检索工作台。
+应用代码位于 `src/graphrag_prod/`，通过版本化文档、精确 Chunk 坐标、
+受治理的实体和关系，将检索结果追溯到原文。
 
-This project uses the [neo4j-graphrag-python](https://github.com/neo4j/neo4j-graphrag-python) library, OpenAI for LLM and embeddings, and Neo4j for graph storage. Six scripts walk through progressively richer GraphRAG retrieval and question-answering patterns.
+默认中文演示使用 4 份文档、6 个 Chunk。独立工业工作台支持 Canalis KT
+和 EvoPacT HVX 的代表性语料、图谱探索与受控上传。模型抽取产生待审核候选，
+人工审核和发布后才能用于相应的已发布图谱。
 
-The tutorial scripts are followed by a staged production-candidate roadmap in
-[`AGENTS.md`](AGENTS.md). Its measurable scope and quality gates are defined in
-[`docs/acceptance_contract.md`](docs/acceptance_contract.md).
+## 本地启动
 
-Local validation defaults to the resource-bounded `dev-mini` profile (100
-Chunks and two retrieval clients). The full production-scale values remain in
-`contracts/acceptance.v1.json` and can be resolved and checked with
-`python3 scripts/validate_acceptance_contract.py --profile production-reference`.
-A `dev-mini` result exercises the complete workflow but is not production
-qualification evidence.
+需要 Python 3.12+、uv、Docker，以及已配置的 OpenAI-compatible embedding
+和 chat provider。默认启动器使用真实 provider，并将 Neo4j 限制为 1 CPU / 1.5 GiB。
 
-The profile command validates and previews the declared workload; it does not
-run a load test. Stage 5A materializes the bounded development corpus described
-below. Stage 8 provides the unified, versioned `dev-mini` evaluation and CI
-regression gate documented in
-[`docs/automated_evaluation.md`](docs/automated_evaluation.md); Stage 9 performs
-the production-reference load and recovery qualification documented in
-[`docs/production_candidate_validation.md`](docs/production_candidate_validation.md).
-Disposable Neo4j runners enforce the checked local resource cap.
+```sh
+uv sync --locked
+# 尚未创建 .env 时复制；已有配置不要覆盖。
+cp -n .env.example .env
+# 按下方运行说明配置 provider、模型、向量维度和凭据。
+./scripts/run_playground.sh
+```
 
-Stage 5A adds a separate, versioned `dev-corpus-v1`: 10 deterministic
-synthetic filings across two tenants and five company identities, with 120
-exact Chunks and all seven question classes. It complements rather than
-replaces the one-file teaching sample. Its construction, provenance boundary,
-checks, and limitations are documented in
-[`docs/representative_dev_corpus.md`](docs/representative_dev_corpus.md), with
-the repeatable evidence recorded in
-[`docs/validation/stage-5a.md`](docs/validation/stage-5a.md).
+默认入口：<http://127.0.0.1:8000/playground>。启动器创建独立临时 Neo4j，
+退出时移除自己的临时数据库。运行中的工业库与该演示分开管理。
 
-The production implementation is developed separately under
-`src/graphrag_prod`. Its stable identity, source provenance, access boundary,
-and Neo4j model are documented in
-[`docs/provenance_model.md`](docs/provenance_model.md); completed stage evidence
-is recorded under [`docs/validation`](docs/validation). The resumable provider,
-snapshot publication, deletion, and vector-generation lifecycle is documented
-in [`docs/incremental_ingestion.md`](docs/incremental_ingestion.md). Versioned
-graph schema rules, conservative entity resolution, quarantine, and quality
-reports are documented in
-[`docs/graph_quality_governance.md`](docs/graph_quality_governance.md).
-The bounded, permission-safe retrieval engine is documented in
-[`docs/production_retrieval.md`](docs/production_retrieval.md). Grounded answer
-generation, server-owned citations, refusal behavior, and the provider-neutral
-model boundary are documented in
-[`docs/grounded_answer_generation.md`](docs/grounded_answer_generation.md).
-The authenticated API boundary, bounded execution and retries, Neo4j resource
-lifecycle, error taxonomy, protected-content-safe logs, and aggregate metrics
-are documented in
-[`docs/api_security_reliability.md`](docs/api_security_reliability.md).
-The governed industrial property-graph loop—versioned T-Box, authoritative
-A-Box, document construction, human review, publication/rollback, and
-trust-aware evidence subgraphs—is documented in
-[`docs/industrial_knowledge_governance.md`](docs/industrial_knowledge_governance.md),
-with its authenticated routes and request boundaries in
-[`docs/industrial_knowledge_api.md`](docs/industrial_knowledge_api.md).
-For a guided browser exercise, use the bundled pump-maintenance source files,
-expert instances, and [Chinese construction walkthrough](docs/industrial_demo_walkthrough.md).
-The workbench can ingest an expert source without LLM extraction and computes
-entity-resolution suggestions automatically while retaining explicit review
-and publication.
-The complete active-publication integrity audit and its source-text-free output
-boundary are documented in
-[`docs/published_graph_quality.md`](docs/published_graph_quality.md).
-Extraction precision, exact-evidence, typed temporal-property, entity-resolution,
-human-review, and drift gates are documented in
-[`docs/knowledge_extraction_quality_gates.md`](docs/knowledge_extraction_quality_gates.md).
-Automated gold/result separation, metrics, baselines, and the two-run workflow
-are documented in
-[`docs/automated_evaluation.md`](docs/automated_evaluation.md). Run the complete
-Stage 8 gate with:
+- [中文最小演示、数据库隔离与重置](docs/playground_mini_demo.md)
+- [运行配置、provider 限制和故障处理](docs/local_playground.md)
+- [知识构建操作指南](docs/industrial_demo_walkthrough.md)
+- [工业工作台使用指南](docs/industrial_workbench.md)
+- [复用已有工业数据库与上传恢复](docs/industrial_runtime_and_uploads.md)
 
-```bash
+默认启动器校验官方 DashScope HTTPS endpoint，`.env.example` 与此保持一致。
+请填写自己的密钥并确认模型权限；API 核心通过依赖注入接入 provider。
+Playground 的检索页面返回 Chunk、出处、子图和检索轨迹；最终回答生成未在该页面启用。
+构建页面按需调用 chat model 抽取候选。
+
+## 项目结构
+
+| 目录 | 当前用途 |
+| --- | --- |
+| `src/graphrag_prod/` | 领域模型、摄取、知识治理、检索、生成、API、工作台及评估实现 |
+| `scripts/` | 启动、语料构建、导入、专项检查和自动化验证入口 |
+| `tests/` | 单元、真实 Neo4j 集成、HTTP E2E、安全及回归测试和固定夹具 |
+| `contracts/` | 验收、治理、工业领域契约与工作负载上限 |
+| `datasets/` | 可复现的开发、工业及生产参考验证语料 |
+| `evaluation/` | Gold 标注、冻结预测、质量门槛及已审核基线 |
+| `docs/` | 当前设计、操作说明及历史验证证据 |
+
+默认应用只加载最小演示语料。其他语料仍被集成测试、工业导入或质量评估使用，
+并非默认发送给模型的内容。其隔离范围由
+[语料隔离清单](docs/playground-demo-isolation.v1.json)和自动化测试核对。
+
+## 验证
+
+不需要 provider 或数据库的检查：
+
+```sh
+uv run --locked python -m unittest discover -s tests/unit -t . -q
+uv run --locked python -m unittest discover -s tests/e2e -t . -q
+uv run --locked python -m unittest discover -s tests/security -t . -q
+uv run --locked python -m unittest discover -s tests/regression -t . -q
+uv run --locked python scripts/build_dev_corpus.py --check
+uv run --locked python scripts/build_evaluation_gold.py --check
+uv run --locked python scripts/validate_acceptance_contract.py
+```
+
+完整开发回归需要 Docker，使用临时 Neo4j，并生成两轮可比较报告：
+
+```sh
 ./scripts/run_stage8_validation.sh \
   --repeat 2 \
   --baseline evaluation/baselines/dev-mini.v1.json \
   --output-dir /tmp/sample-graphrag-stage8
 ```
 
-Run the Stage 9 production-reference qualification from a clean committed
-revision, with Docker available and a new output directory outside the
-repository:
+详见[自动评估说明](docs/automated_evaluation.md)。`dev-mini` 缩小规模、时长和
+重复次数，保留身份、权限、出处、正确性及生命周期检查；结果不代表生产规模验证。
+`run_stage2`–`run_stage7` 是仍可执行的阶段专项 Neo4j 检查；工业评估中的
+`industrial_legacy_retrieval_worker.py` 用于独立基线比较，仍是评估依赖。
 
-```bash
+生产参考验证从干净的已提交版本运行，使用新的仓库外输出目录：
+
+```sh
 ./scripts/run_stage9_validation.sh \
   --output-dir /tmp/sample-graphrag-stage9
 ```
 
-The Stage 9 command is intentionally a five-minute-plus integrated run. It
-rebuilds the 24,000-Chunk corpus, drives sustained retrieval from the
-manifest's 64 versioned query anchors, independently recomputes all metrics
-from prose-redacted, checksum-committed evidence for the 49 adjudicated quality
-cases, exercises real API timeout deadlines, and binds the exact Neo4j dump
-bytes used by the restore check into the report evidence.
-
-Its ingestion-rate metric covers the bounded bulk graph-write interval; index
-activation and time-to-query-ready are separate observations and are not part
-of that throughput number. The reference envelope uses deterministic local
-providers, one five-minute loopback window, and one Neo4j Community container.
-Neo4j is resource-capped, while the API and load-generator processes use the
-recorded host-default-unbounded limits. A passing result therefore validates
-only that envelope, not a live deployment or an external model provider.
-
-Stage 9 completed for implementation commit
-`7142fa331f74ecd868a5ba20d343c787e2f9d367`. The authoritative report returned
-`passed: true` and `production_candidate_eligible: true` with semantic digest
-`71d67bee2c155656cb663f602e92fe30aa2e5f58a35d8848847a7bdc24b4d575` under
-the fixed `production-reference` envelope. See the measured evidence and
-decision in [`docs/validation/stage-9.md`](docs/validation/stage-9.md), and the
-remaining improvements and deployment prerequisites in
-[`docs/validation/process-improvements.md`](docs/validation/process-improvements.md).
-This is production-candidate validation of the recorded reference envelope,
-not approval or evidence of a live production deployment.
-
-## Local Playground
-
-The industrial workbench for Canalis KT and EvoPacT HVX is available at
-`/industrial` on an industrial-enabled service (the retained development
-instance uses <http://127.0.0.1:8002/industrial>). It combines separate physical,
-classification and diagnostic graph views with exact source inspection,
-industrial retrieval, and governed upload/review/publication. Start with the
-[Chinese workbench guide](docs/industrial_workbench.md) and
-[retained-database runtime instructions](docs/industrial_runtime_and_uploads.md).
-
-To try the completed knowledge-base retrieval and authorization pipeline in a
-browser, run:
-
-```bash
-./scripts/run_playground.sh
-```
-
-The default is a [minimal Chinese demo](docs/playground_mini_demo.md) with
-4 documents / 6 Chunks and a top-bar reset button. Larger corpora are isolated
-from its default runtime.
-
-It opens <http://127.0.0.1:8000/playground>, starts a disposable local Neo4j,
-and loads the six-Chunk Chinese demo corpus. It embeds the corpus
-and every query using the OpenAI-compatible embedding provider configured in
-`.env`, then exercises Vector + BM25 + RRF + graph expansion. The Playground
-returns Chunks, provenance, an authorized knowledge subgraph, and a Retrieval
-Trace for downstream model orchestration; it does not generate final answers.
-Its knowledge-construction workbench does use the configured OpenAI-compatible
-chat model to propose T-Box-constrained entities, relationships, and typed
-entity-property facts. Those proposals remain secondary candidates until the
-explicit human review and publication steps. Press Ctrl-C to remove the
-temporary database.
-
-See [`docs/local_playground.md`](docs/local_playground.md) for capabilities,
-limitations, ports, and focused checks.
-The latest workbench validation and its unresolved live-provider/browser
-acceptance checks are recorded in
-[`docs/validation/governance-workbench-completion.md`](docs/validation/governance-workbench-completion.md).
-
-## Prerequisites
-
-- **Python 3.12+**
-- **uv** for the locked Python environment
-- **An OpenAI-compatible provider credential and HTTPS endpoint**, an embedding
-  model with a known output dimension, and a chat-completions model for
-  ontology-constrained extraction. Provider clients are injected at the
-  production boundaries; extraction can use JSON Schema, JSON-object, or plain
-  JSON response modes and is always validated server-side.
-- **A Neo4j instance with APOC Core** -- either a local install or the free
-  [Neo4j Aura](https://neo4j.com/cloud/aura-free/) tier. The one-command local
-  Playground instead requires Docker with at least 1.5 GiB available and
-  manages its own disposable Neo4j instance.
-
-The numbered tutorial scripts default to OpenAI `gpt-5-mini` and
-`text-embedding-3-small`. The bundled Playground profile is currently validated
-against Alibaba Cloud Model Studio's official OpenAI-compatible endpoint with
-Qwen plus `text-embedding-v4`; the launcher deliberately allowlists those
-official DashScope hosts. See
-[`docs/local_playground.md`](docs/local_playground.md) for the exact `.env`
-variables, supported dimensions, provider timeouts, and local cost bounds.
-
-## Setting Up uv
-
-[uv](https://docs.astral.sh/uv/) is a fast Python package manager that replaces pip, venv, and pip-tools. If you haven't used it before:
-
-```bash
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Or with Homebrew on macOS
-brew install uv
-```
-
-Once installed, `uv sync` reads `pyproject.toml`, creates a `.venv`, and installs all dependencies in one step. Run any project script with `uv run python <script>` -- it automatically activates the virtual environment.
-
-Key runtime packages include:
-
-- `neo4j-graphrag[openai]` -- the official Neo4j GraphRAG library with OpenAI integration
-- `neo4j`, `fastapi`, and `uvicorn` -- graph, API, and local serving boundaries
-- `httpx`, `pyjwt`, and `pint` -- provider transport, authentication, and typed-unit normalization
-- `python-dotenv` -- loads credentials from `.env`
-
-## Setting Up Neo4j
-
-You need a running Neo4j instance. Two options:
-
-**Option A: Neo4j Aura (cloud, free tier)**
-
-1. Go to [neo4j.com/cloud/aura-free](https://neo4j.com/cloud/aura-free/) and create a free instance
-2. Copy the connection URI (starts with `neo4j+s://`) and password
-3. Put them in your `.env` file
-
-**Option B: Local Neo4j (Docker)**
-
-```bash
-docker run -d --name neo4j \
-  --memory 1536m --memory-swap 1536m --cpus 1 \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/your-password-here \
-  -e NEO4J_server_memory_heap_initial__size=256m \
-  -e NEO4J_server_memory_heap_max__size=512m \
-  -e NEO4J_server_memory_pagecache_size=128m \
-  -e 'NEO4J_PLUGINS=["apoc"]' \
-  neo4j:5.26.12-community
-```
-
-Then set `NEO4J_URI=neo4j://localhost:7687` in your `.env`. APOC Core is
-required for dynamic relationship creation and entity resolution.
-These local limits match the default `dev-mini` profile; they cap Neo4j at
-1.5 GiB and one CPU without changing the graph schema or code paths.
-
-## Quick Start
-
-Once you have Python, uv, the provider settings required by the workflow you
-want to run, and a Neo4j instance ready:
-
-```bash
-git clone <this-repo> && cd sample-graphrag
-
-# 1. Install dependencies
-uv sync
-
-# 2. Configure credentials
-cp .env.example .env
-# Edit .env with provider/model settings, NEO4J_URI, and NEO4J_PASSWORD
-
-# 3. Run the pipeline
-uv run python src/01_build_knowledge_graph.py
-uv run python src/02_vector_retriever.py
-uv run python src/03_vector_cypher_retriever.py
-uv run python src/04_hybrid_cypher_retriever.py
-uv run python src/05_graphrag_qa.py
-uv run python src/06_graph_expanded_rag.py
-```
-
-## How GraphRAG Works
-
-The diagram below shows the full retrieval flow this project implements:
-
-![SEC 10-K GraphRAG Retrieval Flow](graph-enriched-retrieval.png)
-
-**Left side -- Retrieval Pipeline:** A user question is embedded and matched against chunk vectors (and optionally fulltext keywords). The `VectorCypherRetriever` then traverses the graph from matched chunks to related entities, building graph-enriched context. That context feeds the LLM to produce a grounded answer.
-
-**Right side -- Neo4j Knowledge Graph:** The graph has two layers. The *lexical layer* consists of `Chunk` nodes (with vector and fulltext indexes) linked to their parent `Document` via `FROM_DOCUMENT`. The *semantic layer* consists of extracted entities -- `Company`, `Product`, `RiskFactor` -- connected by typed relationships like `OFFERS` and `FACES_RISK`. Entities link back to the chunks they were extracted from via `FROM_CHUNK`.
-
-The key insight: when a chunk matches a query by vector similarity, traversing to its linked entities surfaces structured facts that the embedding alone cannot capture. A question about "risk factors" returns not just the relevant text but also named `RiskFactor` entities and the `Company` they belong to.
-
----
-
-## Tutorial Walkthrough
-
-### Step 1: Build the Knowledge Graph
-
-```bash
-uv run python src/01_build_knowledge_graph.py
-```
-
-This script takes an Apple 10-K SEC filing excerpt (`data/apple_10k_excerpt.txt`) and transforms it into a queryable knowledge graph using `SimpleKGPipeline`.
-
-**What happens under the hood:**
-
-1. **Text splitting** -- The filing is split into ~500-character chunks with 100-character overlap, using `FixedSizeSplitter`. Smaller chunks ensure that different queries match different sections of the filing.
-
-2. **Embedding** -- Each chunk is embedded with `text-embedding-3-small` (1536 dimensions) and stored on the `Chunk` node.
-
-3. **Entity extraction** -- The LLM (`gpt-5-mini`) reads each chunk and extracts entities according to a schema you define:
-
-   ```python
-   NODE_TYPES = [
-       {"label": "Company", "properties": [{"name": "ticker", "type": "STRING"}]},
-       {"label": "Product", "description": "A product or service offered by a company", ...},
-       {"label": "RiskFactor", "description": "A business risk faced by a company", ...},
-   ]
-
-   PATTERNS = [
-       ("Company", "OFFERS", "Product"),
-       ("Company", "FACES_RISK", "RiskFactor"),
-   ]
-   ```
-
-   The schema tells the LLM *what* to look for. Without it, extraction produces noisy, inconsistent results. With it, you get a clean graph with typed entities and relationships.
-
-4. **Entity resolution** -- `SimpleKGPipeline` merges entities with the same label and name, preventing duplicates like "Apple" and "Apple Inc." from cluttering the graph.
-
-5. **Index creation** -- A vector index (`chunkEmbeddings`) for semantic search and a fulltext index (`chunkFulltext`) for keyword search are created on the `Chunk` nodes.
-
-**Expected output:**
-
-```
-=== Nodes ===
-  Chunk: 8
-  Company: 1
-  Document: 1
-  Product: 30
-  RiskFactor: 13
-
-=== Relationships ===
-  FROM_CHUNK: 46
-  FROM_DOCUMENT: 8
-  NEXT_CHUNK: 7
-  OFFERS: 14
-```
-
-You now have a two-layer knowledge graph: 8 text chunks linked to 1 document, with 44 extracted entities and their relationships.
-
----
-
-### Step 2: Vector Retriever (Baseline)
-
-```bash
-uv run python src/02_vector_retriever.py
-```
-
-The simplest retrieval pattern. `VectorRetriever` embeds your query and finds the most similar chunks by cosine distance:
-
-```python
-retriever = VectorRetriever(
-    driver=driver,
-    index_name=VECTOR_INDEX_NAME,
-    embedder=embedder,
-)
-results = retriever.search(query_text="What products does Apple sell?", top_k=3)
-```
-
-Each result is a chunk with a similarity score. The "products" query returns the product-description chunk (score ~0.83), the wearables/services chunk (score ~0.80), and the iPhone/Mac chunk (score ~0.80).
-
-**What you see:** Raw text chunks ranked by semantic similarity. No graph structure, no entity names -- just the text that was embedded.
-
-**What's missing:** If you ask "What are the key risk factors?", you get back text chunks, but nothing tells you that the graph contains 13 named `RiskFactor` entities linked to a `Company` node. That's what the next step adds.
-
----
-
-### Step 3: Vector Cypher Retriever (Graph-Enriched)
-
-```bash
-uv run python src/03_vector_cypher_retriever.py
-```
-
-`VectorCypherRetriever` does the same vector search as step 2, then executes a Cypher query to traverse from matched chunks into the surrounding graph:
-
-```python
-RETRIEVAL_QUERY = """
-WITH node AS chunk, score
-OPTIONAL MATCH (chunk)-[:FROM_DOCUMENT]->(doc:Document)
-OPTIONAL MATCH (entity)-[:FROM_CHUNK]->(chunk)
-...
-RETURN chunk.text AS text, score, doc.source AS source, entities
-"""
-```
-
-For each matched chunk, the query collects:
-- The parent **Document** (via `FROM_DOCUMENT`)
-- All **entities** extracted from that chunk (via `FROM_CHUNK`), with their labels and names
-
-**What changes:** Results now include lines like:
-
-```
-Related entities: Product: iPad, Product: Apple Watch, Product: AirPods,
-                  Product: HomePod, Product: Beats, Product: AppleCare, ...
-Source: SEC EDGAR
-```
-
-The risk factors query surfaces `RiskFactor: Inflation`, `RiskFactor: Supply chain disruptions`, and other named entities alongside the text. This is the graph enrichment -- structured facts that vector similarity alone cannot surface.
-
-A custom `formatter` function shapes each Neo4j record into a `RetrieverResultItem`, controlling exactly what the downstream LLM sees.
-
----
-
-### Step 4: Hybrid Cypher Retriever
-
-```bash
-uv run python src/04_hybrid_cypher_retriever.py
-```
-
-`HybridCypherRetriever` combines two search strategies before traversing the graph:
-
-- **Vector search** -- semantic similarity over embeddings (catches paraphrases and conceptual matches)
-- **Fulltext search** -- keyword matching over chunk text (catches exact terms like "iPhone" or "$391.0 billion")
-
-```python
-retriever = HybridCypherRetriever(
-    driver=driver,
-    vector_index_name=VECTOR_INDEX_NAME,
-    fulltext_index_name=FULLTEXT_INDEX_NAME,
-    retrieval_query=RETRIEVAL_QUERY,
-    result_formatter=formatter,
-    embedder=embedder,
-)
-```
-
-The scores are fused (notice results at 1.0000 vs the ~0.83 from pure vector search). Hybrid retrieval is more robust for production use -- vector search handles semantic variation while fulltext search ensures exact keyword matches aren't missed.
-
----
-
-### Step 5: GraphRAG Question Answering
-
-```bash
-uv run python src/05_graphrag_qa.py
-```
-
-The final step composes a retriever with an LLM to answer natural language questions:
-
-```python
-rag = GraphRAG(retriever=retriever, llm=llm)
-
-result = rag.search(
-    query_text="What products and services does Apple offer?",
-    return_context=True,
-)
-print(result.answer)
-```
-
-`GraphRAG` takes the graph-enriched context from the retriever and feeds it to the LLM as grounding material. The LLM generates an answer that cites specific facts from the knowledge graph rather than relying on its training data.
-
-Four sample questions demonstrate the system end to end:
-
-| Question | What the graph adds |
-|---|---|
-| "What products and services does Apple offer?" | Named `Product` entities from multiple chunks |
-| "What are the main risk factors?" | Named `RiskFactor` entities with descriptions |
-| "Summarize Apple's financial performance in FY2024." | Financial data chunks with `Product: iPhone`, `Product: Services` context |
-| "What is Apple's fastest growing business segment?" | Retrieves the specific chunk with 13% growth figure |
-
-Setting `return_context=True` lets you inspect exactly what the LLM was given, making the full pipeline transparent.
-
----
-
-## Production reference implementation
-
-The numbered examples remain learning artifacts. Production-oriented packages
-under `src/graphrag_prod/` now cover provenance, incremental ingestion, graph
-governance, and bounded retrieval. Stage 5 retrieval uses stable IDs, active
-versions, tenant and access-group filters on every path, standard RRF and RA,
-whole-Chunk context budgets, exact citations, and a structured trace.
-
-See `docs/production_retrieval.md` for the retrieval design and
-`docs/validation/stage-5.md` for repeatable validation evidence.
-
----
-
-## Project Structure
-
-```
-sample-graphrag/
-    pyproject.toml                      # Dependencies
-    .env.example                        # Credential template
-    graph-enriched-retrieval.png        # Architecture diagram
-    data/
-        apple_10k_excerpt.txt           # Sample Apple 10-K filing
-    src/
-        config.py                       # Driver, LLM, embedder, index names
-        shared.py                       # Retrieval query and formatter
-        01_build_knowledge_graph.py     # Text -> knowledge graph
-        02_vector_retriever.py          # Pure vector search
-        03_vector_cypher_retriever.py   # Vector + graph traversal
-        04_hybrid_cypher_retriever.py   # Hybrid + graph traversal
-        05_graphrag_qa.py               # Full RAG question answering
-        06_graph_expanded_rag.py         # RRF + RA graph-expanded RAG
-```
-
-## Key Concepts
-
-| Concept | Where it appears | Why it matters |
-|---|---|---|
-| **Schema-guided extraction** | `01_build_knowledge_graph.py` | Tells the LLM what entities and relationships to look for, producing a clean, typed graph |
-| **Two-layer graph** | Neo4j after step 1 | Lexical layer (chunks) for retrieval, semantic layer (entities) for structured context |
-| **Entity resolution** | `SimpleKGPipeline` | Merges duplicate entities automatically |
-| **Vector index** | `chunkEmbeddings` | Enables semantic similarity search over chunk embeddings |
-| **Fulltext index** | `chunkFulltext` | Enables keyword search, complements vector search |
-| **Graph traversal** | `RETRIEVAL_QUERY` in `shared.py` | Walks from matched chunks to related entities via Cypher |
-| **Hybrid retrieval** | `HybridCypherRetriever` | Fuses vector + fulltext scores for more robust matching |
-| **Grounded generation** | `GraphRAG` | LLM answers are based on retrieved graph context, not training data |
+该流程包括 24,000-Chunk 语料、持续负载和备份恢复，详见
+[生产候选验证说明](docs/production_candidate_validation.md)。历史 Stage 9 资格绑定
+`7142fa331f74ecd868a5ba20d343c787e2f9d367`，不自动覆盖后续改动，也不等同于上线许可。
+现有证据和限制见 [Stage 9 报告](docs/validation/stage-9.md)。
+
+## 设计与维护
+
+- [来源与数据模型](docs/provenance_model.md)、[增量摄取](docs/incremental_ingestion.md)
+- [知识治理](docs/industrial_knowledge_governance.md)、[治理 API](docs/industrial_knowledge_api.md)
+- [检索引擎](docs/production_retrieval.md)、[有依据的回答生成](docs/grounded_answer_generation.md)
+- [API、安全与可靠性](docs/api_security_reliability.md)、[图谱浏览](docs/graph_browsing.md)
+- [抽取质量门槛](docs/knowledge_extraction_quality_gates.md)、[验收契约](docs/acceptance_contract.md)
+- [未完成事项](to_do_list.md)、[开发规则与阶段记录](AGENTS.md)
+
+2026-09-08 按维护范围清理：移除独立编号教程及其配置、Apple 样例和流程图；
+删除仅供教程使用的 `neo4j-graphrag` 依赖，直接声明当前 provider 使用的 OpenAI SDK。
+过时展示报告和零散修复记录已删除或合并，保留关键约束与验证证据。
+
+本次清理检查通过：1,007 unit、16 HTTP E2E、54 security、2 regression；
+开发语料与 Gold 确定性重建、验收契约、Python/shell 语法、文档链接、依赖锁定、
+差异格式及新增内容凭据模式扫描通过。现存依赖版本未升级。
+未重跑真实 Neo4j 集成、外部 provider 或 Stage 9 负载验证；历史资格不变。

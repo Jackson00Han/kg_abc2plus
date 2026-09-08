@@ -188,8 +188,15 @@ from the corrected-code verification.
 Corrected-code verification on the same data returned HTTP 200, all four
 records and the exact DECIMAL 11 kW fact, without source text in the inventory.
 The focused real-Neo4j inventory suite passed four tests, including the new
-mixed-publication test and post-audit tampering rejection. See
-`inventory-literal-correction.md`.
+mixed-publication test and post-audit tampering rejection (157.232 seconds).
+Literal objects require zero OBJECT edges and both entity-ID properties absent;
+empty or fabricated IDs are rejected. Entity objects require an equal ID and
+one authorized OBJECT edge. The regression rejects extra edges and missing
+entity-object IDs even after a successful independent quality audit. The
+focused unit suite passed 11 tests; the corrected live read took 684 ms,
+without rebuilding or mutating the publication. Post-fix checks passed 631
+unit, 15 HTTP E2E, 33 security and two regression tests; the complete replay
+and final database totals are recorded earlier in this report.
 
 ## Startup recovery
 
@@ -200,8 +207,14 @@ same read-only request after `RetrievalBackendTimeout`. It preserves the
 request, vector, ACL, limits and per-transaction deadline, does not repeat the
 Embedding call, and propagates any second timeout or other error. All 34
 focused startup/Playground tests passed, including five new recovery checks.
-This does not retry or extend the independent LLM-extraction timeout. See
-`playground-warmup-recovery.md`.
+The successful retry still requires the expected tenant and nonempty context.
+Provider failures are not retried; the observation does not distinguish query
+execution from compilation. This does not retry or extend the independent
+LLM-extraction timeout. Reproduce the focused checks with:
+
+```sh
+uv run --locked python -m unittest tests.unit.test_playground_warmup tests.unit.test_playground -v
+```
 
 The previous disposable database contained only the ten committed fixture
 documents and the synthetic QA source above. It was stopped and removed during

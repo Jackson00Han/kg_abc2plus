@@ -11,9 +11,11 @@ The system must preserve this evidence chain:
 > trusted source -> versioned document -> traceable chunk -> governed graph
 > -> bounded retrieval -> cited answer -> measurable validation
 
-The existing numbered examples (`02` through `06`) remain as learning
-artifacts. Production code must be organized into focused packages instead of
-continuing to add all behavior to one numbered script.
+The repository owner superseded tutorial retention on 2026-09-08: remove the
+standalone numbered examples and their unused assets/dependencies, and keep
+the current Neo4j application plus its development and validation dependencies.
+Production code remains organized into focused packages. The completed stages
+below record historical deliverables; their validation evidence is retained.
 
 ## Non-negotiable Working Rules
 
@@ -192,8 +194,9 @@ before Stage 6 begins.
   unauthorized material, and unanswerable questions.
 - Preserve source text, immutable checksums, exact Chunk ranges, provenance,
   and a reproducible offline build/check command.
-- Keep the original teaching sample and fast unit fixtures; do not require
-  provider calls during routine validation.
+- Keep fast unit fixtures; do not require provider calls during routine
+  validation. The original teaching sample was retired in the authorized
+  2026-09-08 repository cleanup.
 
 ### Checks
 

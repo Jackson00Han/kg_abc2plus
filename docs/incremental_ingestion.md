@@ -1,9 +1,8 @@
 # Idempotent Incremental Ingestion
 
 Stage 3 adds the production ingestion boundary under
-`src/graphrag_prod/ingestion`. The numbered tutorial scripts remain examples;
-they do not provide the lifecycle, authorization, or recovery guarantees
-described here.
+`src/graphrag_prod/ingestion`, which owns the lifecycle, authorization and
+recovery guarantees described here.
 
 ## First Principles
 

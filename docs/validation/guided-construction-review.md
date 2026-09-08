@@ -202,3 +202,85 @@ were left intact. The final read-only verification is in the local
 Manual instructions are in [the revised walkthrough](../industrial_demo_walkthrough.md).
 The deferred redesign item was removed from `to_do_list.md`; the independent
 cross-mention identity propagation item remains.
+
+## Consolidated review-editor maintenance evidence
+
+These 2026-09-06 frontend checks are historical development evidence, not a
+new Stage 8/9 qualification. They consolidate the earlier edit-contract and
+edit-mode records; their temporary preview instructions are retired.
+
+Generated review edits formerly copied server-owned `entity_id` fields from
+queue responses and returned HTTP 422. Input identities now map only entity
+type, canonical key/name and aliases. Literal values, units, times and evidence
+remain source-owned raw inputs; the server owns normalized semantics and IDs.
+Queue responses are not mutated, and manually supplied readonly fields remain
+invalid. Status-only decisions, linking, revision checks and publication retain
+their contracts; approval does not deduplicate facts.
+
+The editor is hidden and disabled until explicitly opened. Cancel restores
+the original JSON without changing batch selection or sending a request. Only
+explicit save-and-approve sends edits; invalid JSON sends nothing. Batch review
+rejects a selection containing an open draft. The executable Node UI-to-HTTP
+test covers mentions, literal facts, relationship endpoints/properties, raw
+units/times/evidence, unchanged queue objects, status-only reviews, readonly
+field rejection and edit/cancel/batch behavior. Generated edits changed from
+422 to 200 while manual readonly-field submissions still return 422.
+
+Both maintenance runs passed 707 unit, 15 HTTP E2E and 33 security tests.
+Unit/E2E/security times were respectively 111.929/1.010/1.907 seconds for
+serialization and 152.394/1.510/2.769 seconds for edit mode. Compilation, inline
+JavaScript syntax, diff and staged-secret checks passed. Existing test IDs
+were strengthened; persistence was unchanged and Neo4j integration was not
+rerun for these frontend corrections. Repeatable commands:
+
+```sh
+uv run --locked python -m unittest discover -s tests/unit -t . -q
+uv run --locked python -m unittest discover -s tests/e2e -t . -q
+uv run --locked python -m unittest discover -s tests/security -t . -q
+uv run --locked python -m compileall -q src tests scripts
+git diff --check
+```
+
+Chromium intercepted review POSTs before backend writes: a real 37.5 kW
+record retained revision 1, and three later mock-card requests passed
+`ReviewBatchRequest`. Desktop/editor screenshots and browser errors were
+checked. Temporary evidence directories were
+`/tmp/graphrag-review-fix-preview-20260906` and
+`/tmp/graphrag-review-edit-mode-qa/`; they are not durable repository artifacts.
+The temporary 8003 proxy was subsequently stopped. At the user's request the
+8002 disposable demo was restarted with a fresh baseline; unrelated older
+17692/17693 containers were left unchanged. A first cold 15-second read probe
+timed out; a later read succeeded, without establishing a latency baseline.
+These are past observations, not instructions to reset an existing database.
+
+## Consolidated expert-draft prefill correction
+
+A direct upload of the original authority file used a normal controlled-upload
+URI; ingestion and checksum verification succeeded, but prefill incorrectly
+required the kit URI and silently left the draft empty. Eligibility now uses
+exact source bytes and the demo ontology key, independent of URI/title/name.
+The template binds the upload response's document/version/Chunk/ontology IDs
+and still requires one source-only Chunk, complete IDs and no candidates.
+Prefill triggers no extraction, import or publication. Mismatches explain why
+the draft is empty; import stays disabled, and the UI offers a return to 02.
+Identity changes clear drafts; changed imported drafts invalidate receipts.
+An unchanged upload can be resubmitted idempotently without resetting data.
+
+Extended UI checks cover normal upload URIs, seven generated records, actual
+response IDs, stale message replacement, mismatches, disabled empty imports,
+cross-identity/partial-response guards and publication receipts. Checks passed
+760 unit (144.329 s), 16 E2E (1.317 s), 33 security (2.593 s) and two regression
+tests (0.029 s), plus compilation/diff checks. Test IDs and baseline inventory
+were unchanged. The 137 unchanged Neo4j tests were not rerun; prior complete
+evidence remains in [the reset report](playground-reset.md). Use the unit,
+E2E and security commands above and the equivalent `tests/regression` discovery.
+
+Standalone and served-page Chromium checks verified three mentions and four
+assertions from direct selection, mismatch rejection and desktop/narrow layout
+without JavaScript errors. Real authenticated reads were used, while business
+writes were intercepted; this was not a new ingestion/import/publication run.
+Reload with `--reuse-existing-corpus` preserved all properties on 1,063 nodes
+and 2,035 relationships. Temporary evidence: `/tmp/graphrag-step03-qa`,
+`/tmp/graphrag-step03-*` logs, and `step03-before.json`/`step03-after.json` in
+`/tmp/graphrag-reset-delivery-20260906`. Production contracts, algorithms and
+qualification remain unchanged.

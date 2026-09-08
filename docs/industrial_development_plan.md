@@ -5,8 +5,8 @@
 Build on the existing local service (currently `http://127.0.0.1:8002/playground`)
 so a user can build, retrieve, and visually explore industrial knowledge. Start
 with Canalis busbar trunking, then use EvoPacT HVX vacuum circuit breakers as a
-second domain. Preserve the numbered teaching examples, published validation
-history, and existing user data. This is development validation, not approval
+second domain. Preserve published validation history and existing user data.
+The standalone teaching examples were retired by the owner on 2026-09-08. This is development validation, not approval
 for live electrical operations or a Schneider-certified diagnostic product.
 
 ## Invariants
@@ -77,7 +77,7 @@ explicitly separated files. The root agent owns commits and service restarts.
 
 - I0: checks passed; checkpoint commit/push records completion. Starting revision
   `260307d`; current service and its database are retained. Only `to_do_list.md`
-  was modified before this task. See `docs/validation/industrial-checkpoint.md`.
+  was modified before this task. See the checkpoint evidence below.
 - I0 checkpoint: `fd6dd13`, pushed to `origin/main`.
 - I1: complete; official catalog, development contract, bounded PDF parsing,
   external-cache acquisition and exact normalization passed their checks. See
@@ -109,3 +109,16 @@ explicitly separated files. The root agent owns commits and service restarts.
 Detailed evidence is recorded under `docs/validation/industrial-*.md`. This plan
 remains as design history; remove only the temporary active-work pointer from
 `AGENTS.md` at completion.
+
+## Historical I0 checkpoint evidence
+
+At checkpoint `fd6dd13`, starting from `260307d`, only the deferred
+`to_do_list.md` note and planning documentation were involved; no implementation
+source changed and the existing service/database were retained. Checks passed:
+763 unit, 16 HTTP E2E, 33 security and two regression tests; locked dependency
+and acceptance-contract validation, Python compilation, diff and staged-file
+secret/artifact checks. Results were recorded at
+`/tmp/graphrag-industrial-checkpoint-20260906/run-1/suites` (temporary evidence).
+An overbroad two-run Stage 8 command was stopped during its first Neo4j suite;
+that partial run is not passing database evidence. Later I1–I5 reports retain
+the complete implementation and final validation results.

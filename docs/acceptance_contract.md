@@ -20,8 +20,9 @@ is derived navigation data; source chunks are evidence.
 
 The repository owner has explicitly required the following:
 
-- Preserve the progressive tutorial examples while building separate
-  production-oriented modules.
+- Maintain focused production-oriented modules. The owner retired standalone
+  tutorial examples on 2026-09-08; current runtime and validation corpora remain
+  supported. This repository-scope change does not alter acceptance metrics.
 - Use established retrieval and graph methods instead of unvalidated custom
   scoring formulas.
 - Include vector and lexical retrieval, graph expansion, and grounded answer

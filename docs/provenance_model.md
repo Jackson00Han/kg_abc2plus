@@ -1,8 +1,7 @@
 # Production Provenance Model
 
 Stage 2 introduces the first production package under `src/graphrag_prod`.
-The numbered scripts remain tutorial examples and do not define the production
-data contract.
+This package defines the current production data contract.
 
 ## First Principle
 
