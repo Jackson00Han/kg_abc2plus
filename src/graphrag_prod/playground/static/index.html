@@ -414,11 +414,6 @@
     .stat { padding: 8px; border-radius: 7px; background: var(--surface-2); }
     .stat strong { display: block; color: var(--strong); font-family: var(--mono); font-size: 12px; }
     .stat span { color: var(--quiet); font-size: 8px; }
-    .identity-card { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-    .identity-card strong { display: block; color: var(--strong); font-size: 11px; }
-    .identity-card > span { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 8px; }
-    .group-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
-    .group-tag { padding: 3px 6px; border-radius: 5px; color: var(--purple); background: var(--purple-soft); font-family: var(--mono); font-size: 8px; }
     .pipeline-list { position: relative; margin: 0; padding: 0; list-style: none; }
     .pipeline-list::before { content: ""; position: absolute; top: 13px; bottom: 13px; left: 11px; width: 1px; background: var(--line-strong); }
     .pipeline-list li { position: relative; display: grid; grid-template-columns: 23px 1fr; gap: 9px; align-items: start; margin: 0 0 10px; }
@@ -618,10 +613,6 @@
             </div>
             <div class="exact-evidence">以上为静态启动 fixture，不随上传或撤回变化；当前身份的实时授权数量见“活动文档”。</div>
           </div>
-        </section>
-        <section class="inspector-section">
-          <div class="inspector-title">当前身份 <span>JWT + ACL</span></div>
-          <div class="identity-card"><strong id="identity-label">等待选择</strong><span id="identity-tenant">—</span><div class="group-list" id="identity-groups"></div></div>
         </section>
         <section class="inspector-section">
           <div class="inspector-title">真实执行路径 <span>BOUNDED</span></div>
@@ -933,18 +924,6 @@
           .map(input => input.value);
       }
 
-      function renderIdentity() {
-        const persona = currentPersona();
-        if (!persona) return;
-        $('identity-label').textContent = persona.label;
-        $('identity-tenant').textContent = persona.tenant_id;
-        $('identity-groups').innerHTML = [
-          ...persona.groups.map(group => `<span class="group-tag">${escapeHtml(group)}</span>`),
-          ...(persona.scopes || []).map(scope => `<span class="group-tag">${escapeHtml(scope)}</span>`),
-        ].join('');
-        renderDocumentAccessGroups();
-      }
-
       function updateMode() {
         if (!state.bootstrap) return;
         const query = elements.query.value.trim();
@@ -1001,7 +980,7 @@
         state.selectedQuestion = question;
         elements.query.value = question.query;
         resetRetrievalResult();
-        renderIdentity();
+        renderDocumentAccessGroups();
         updateMode();
         if (closeDrawer) {
           document.body.classList.remove('questions-open');
@@ -1377,7 +1356,7 @@
         elements.documentLifecycleSummary.textContent = '实时授权视图尚未加载。';
         elements.documentLifecycleList.innerHTML = '<div class="output-box">活动文档尚未加载。</div>';
         resetRetrievalResult();
-        renderIdentity();
+        renderDocumentAccessGroups();
         updateMode();
         if (state.view === 'governance') Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
       }
@@ -3341,7 +3320,7 @@
             resetReturn = JSON.parse(sessionStorage.getItem(RESET_RETURN_KEY) || 'null');
             sessionStorage.removeItem(RESET_RETURN_KEY);
           } catch (_) {}
-          renderQuestions(); renderIdentity(); updateMode();
+          renderQuestions(); renderDocumentAccessGroups(); updateMode();
           initializeLocalReset(bootstrap.local_reset);
           if (state.localReset?.blocked || state.localReset?.reloading) return;
           if (resetReturn) {

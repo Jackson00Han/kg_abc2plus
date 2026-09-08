@@ -42,7 +42,7 @@ const state = {bootstrap: input.bootstrap, view: 'governance'};
 const elements = {query: {value: ''}};
 eval(input.code);
 function resetRetrievalResult() {}
-function renderIdentity() {}
+function renderDocumentAccessGroups() {}
 function updateMode() {}
 const operator = currentPersona();
 assert.ok(operator);
@@ -78,6 +78,9 @@ assert.equal(currentPersona(), null);
         self.assertNotIn("governance-scope-note", self.source)
         self.assertNotIn("persona-select", self.source)
         self.assertNotIn("elements.persona", self.source)
+        for removed in ("identity-card", "identity-label", "identity-tenant",
+                        "identity-groups", "renderIdentity"):
+            self.assertNotIn(removed, self.source)
 
     def run_js(self, scenario: str, *, upload: bool = False, detail: bool = False) -> None:
         node = shutil.which("node")
