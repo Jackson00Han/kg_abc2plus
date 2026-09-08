@@ -129,6 +129,7 @@ from .knowledge_contracts import (
     PublicationHistoryResponse,
     PublicationCandidatesRequest,
     PublicationCandidatesResponse,
+    PublicationPreviewResponse,
     PublicationRequest,
     PublicationResponse,
     PublishedGraphQualityResponse,
@@ -1698,10 +1699,15 @@ class Neo4jKnowledgeOperations:
         )
 
     def publish(
-        self, principal: Principal, request: PublicationRequest
+        self, principal: Principal, request: PublicationRequest, *, preview_only: bool = False
     ) -> BackendResult:
         _require_capability(principal, "knowledge:publish")
         try:
+            options = {}
+            if preview_only:
+                options["preview_only"] = True
+            if request.expected_preview_hash is not None:
+                options["expected_preview_hash"] = request.expected_preview_hash
             result = self.publications.publish(
                 principal,
                 request.approved_revision_ids,
@@ -1711,6 +1717,7 @@ class Neo4jKnowledgeOperations:
                 published_at=self._now(),
                 remove_record_ids=request.remove_record_ids,
                 replace_record_ids=request.replace_record_ids,
+                **options,
             )
         except ApiRuntimeError:
             raise
@@ -1726,6 +1733,8 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         except Exception as error:
             raise DependencyUnavailableError() from error
+        if preview_only:
+            return BackendResult(_outbound(PublicationPreviewResponse, result))
         try:
             payload = _publication_payload(result)
         except (AttributeError, TypeError, ValueError) as error:

@@ -1,0 +1,134 @@
+"""Deterministic, source-preserving projection of a publication transaction."""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from datetime import datetime
+from enum import Enum
+import hashlib
+import json
+from typing import Any
+
+from .models import AssertionRecord, EntityMentionRecord
+
+
+def json_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {key: json_value(item) for key, item in value.items()}
+    if isinstance(value, (set, frozenset)):
+        return sorted(json_value(item) for item in value)
+    if isinstance(value, (tuple, list)):
+        return [json_value(item) for item in value]
+    return value
+
+
+def standardized_record(record: EntityMentionRecord | AssertionRecord) -> dict[str, Any]:
+    """Readable business fields with immutable revision and source references."""
+    evidence_id = record.revision_id
+    common = {
+        "record_id": record.record_id,
+        "revision_id": record.revision_id,
+        "revision": record.revision.revision,
+        "authority_level": record.trust.authority.value,
+        "origin": record.trust.origin.value,
+        "evidence_ids": [evidence_id],
+    }
+    if isinstance(record, EntityMentionRecord):
+        return dict(common, kind="ENTITY", entity_id=record.entity.entity_id,
+                    entity_type=record.entity.entity_type,
+                    standard_name=record.entity.canonical_name,
+                    aliases=list(record.entity.aliases))
+    if record.object_entity is not None:
+        return dict(common, kind="RELATIONSHIP", relationship_id=record.record_id,
+                    source_entity_id=record.subject.entity_id,
+                    relationship_type=record.predicate,
+                    target_entity_id=record.object_entity.entity_id,
+                    properties=json_value([asdict(item) for item in record.relationship_properties]))
+    literal = record.literal_semantics
+    return dict(common, kind="PROPERTY", property_id=record.record_id,
+                entity_id=record.subject.entity_id, property_name=record.predicate,
+                value=literal.canonical_value if literal else record.literal_value,
+                unit=literal.canonical_unit if literal else None,
+                literal=json_value(asdict(literal)) if literal else None)
+
+
+def entity_views(records: tuple) -> dict[str, dict]:
+    """Aggregate source mentions by identity without assigning a global grade."""
+    result = {}
+    for record in sorted(records, key=lambda r: r.revision_id):
+        if not isinstance(record, EntityMentionRecord):
+            continue
+        identity = record.entity
+        item = result.setdefault(identity.entity_id, {
+            "entity_id": identity.entity_id, "entity_type": identity.entity_type,
+            "standard_name": identity.canonical_name, "aliases": [],
+            "knowledge_layers": [], "evidence_ids": [], "mention_revision_ids": [],
+        })
+        item["aliases"] = sorted(set(item["aliases"]) | set(identity.aliases))
+        item["knowledge_layers"] = sorted(set(item["knowledge_layers"]) | {record.trust.authority.value})
+        item["evidence_ids"].append(record.revision_id)
+        item["mention_revision_ids"].append(record.revision_id)
+    return result
+
+
+def publication_preview(*, publication_id: str, ontology_version_id: str,
+                        manifest_hash: str, base_publication_id: str | None,
+                        before: tuple, after: tuple, source_revision_ids: tuple[str, ...],
+                        removed_record_ids: tuple[str, ...], replaced_record_ids: tuple[str, ...]) -> dict:
+    previous = {item.record_id: item for item in before}
+    final = {item.record_id: item for item in after}
+    payload = {
+        "schema": "graphrag-publication-preview-v1",
+        "publication_id": publication_id,
+        "ontology_version_id": ontology_version_id,
+        "base_publication_id": base_publication_id,
+        "manifest_hash": manifest_hash,
+        "source_revision_ids": list(source_revision_ids),
+        "removed_record_ids": list(removed_record_ids),
+        "replaced_record_ids": list(replaced_record_ids),
+        "entity_changes": [], "property_changes": [], "relationship_changes": [],
+        # All records, including unchanged records and exact endpoint revisions,
+        # make the final manifest auditable without fetching a truncated queue.
+        "records_after": [json_value(asdict(item)) for item in sorted(after, key=lambda r: r.revision_id)],
+        "evidence": [],
+    }
+    for record_id in sorted(set(previous) | set(final)):
+        old, new = previous.get(record_id), final.get(record_id)
+        if old and new and old.revision_id == new.revision_id:
+            continue
+        record = new or old
+        if isinstance(record, EntityMentionRecord):
+            continue
+        kind = "relationship" if record.object_entity is not None else "property"
+        payload[f"{kind}_changes"].append({
+            "operation": "CREATE" if old is None else "REMOVE" if new is None else "UPDATE",
+            "record_id": record_id,
+            "before": standardized_record(old) if old else None,
+            "after": standardized_record(new) if new else None,
+        })
+    old_entities, new_entities = entity_views(before), entity_views(after)
+    for entity_id in sorted(set(old_entities) | set(new_entities)):
+        old, new = old_entities.get(entity_id), new_entities.get(entity_id)
+        if old == new:
+            continue
+        payload["entity_changes"].append({
+            "operation": "CREATE" if old is None else "REMOVE" if new is None else "UPDATE",
+            "entity_id": entity_id, "before": old, "after": new,
+            "changes": {
+                "aliases_added": sorted(set((new or {}).get("aliases", [])) - set((old or {}).get("aliases", []))),
+                "aliases_removed": sorted(set((old or {}).get("aliases", [])) - set((new or {}).get("aliases", []))),
+            },
+        })
+    payload["entities_after"] = list(new_entities.values())
+    for record in sorted(after, key=lambda r: r.revision_id):
+        payload["evidence"].append(dict(
+            json_value(asdict(record.evidence)), evidence_id=record.revision_id,
+            origin=record.trust.origin.value, authority_level=record.trust.authority.value))
+    payload["preview_hash"] = hashlib.sha256(json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode()).hexdigest()
+    return payload

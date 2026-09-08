@@ -74,7 +74,7 @@ assert.ok(assessmentMarkup(fact,1).includes('data-review-dependency="pump"'));
 state.reviewAssessments.get('fact').status='READY';
 assert.equal(reviewApproval(fact).allowed,true);
 state.reviewAssessments.get('fact').status='DUPLICATE';
-assert.equal(reviewApproval(fact).allowed,false);
+assert.equal(reviewApproval(fact).allowed,true);
 state.reviewAssessments.get('fact').status='CONFLICT';
 assert.equal(reviewApproval(fact).allowed,false);
 ''')
@@ -131,7 +131,7 @@ const html=elements.reviewList.innerHTML;
 assert.ok(html.includes('review-facts'));
 assert.ok(html.includes('额定功率：37.5 kW'));
 assert.ok(html.includes('2026-12-31'));
-assert.ok(html.includes('保留已有事实，不重复入图'));
+assert.ok(html.includes('确认并追加来源'));
 assert.ok(html.includes('<details class="review-technical"'));
 assert.ok(html.includes('data-review-editor="0" disabled'));
 ''')

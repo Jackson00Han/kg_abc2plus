@@ -28,7 +28,7 @@ class PlaygroundResolutionTests(unittest.TestCase):
             page.index("async function publishOntology(") : page.index("async function importABox(")
         ]
         source += page[
-            page.index("async function publishKnowledge(") : page.index("async function init(")
+            page.index("function publicationSelection(") : page.index("async function init(")
         ]
         badge_start = page.index("function provenanceBadges(")
         source += page[badge_start:page.index("\n      function ", badge_start)]
@@ -371,6 +371,7 @@ Object.assign(draft, {editor: 'retained review', selected: true});
 const writes = elements.reviewList.writes;
 for (const action of [() => publishOntology(0), () => publishKnowledge(), () => rollbackPublication(1)]) {
   elements.publicationRevisions.value = 'approved-1';
+  state.publicationPreview={selection:publicationSelection(),selectionKey:JSON.stringify(publicationSelection()),preview:{preview_hash:'verified'}};
   const before = requests.length;
   const mutation = action();
   assert.equal(requests[before].options.method, 'POST');
@@ -390,6 +391,7 @@ for (const action of [() => publishOntology(0), () => publishKnowledge(), () => 
         self.run_ui(r"""
 for (const action of [() => publishOntology(0), () => publishKnowledge(), () => rollbackPublication(1)]) {
   elements.publicationRevisions.value = 'old-approved';
+  state.publicationPreview={selection:publicationSelection(),selectionKey:JSON.stringify(publicationSelection()),preview:{preview_hash:'verified'}};
   const before = requests.length;
   const mutation = action();
   state.identityEpoch += 1;

@@ -62,6 +62,7 @@ from .knowledge_contracts import (
     OntologyVersionResponse,
     PublicationHistoryResponse,
     PublicationCandidatesResponse,
+    PublicationPreviewResponse,
     PublicationRequest,
     PublicationResponse,
     PublishedGraphQualityResponse,
@@ -992,6 +993,15 @@ def create_app(
             request,
             identity,
             OperationKind.KNOWLEDGE_REVIEW_BATCH,
+            body.model_dump(mode="python"),
+        )
+
+    @app.post("/v1/knowledge/publications:preview", response_model=PublicationPreviewResponse)
+    async def preview_knowledge_publication(
+        request: Request, body: PublicationRequest, identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request, identity, OperationKind.KNOWLEDGE_PUBLICATION_PREVIEW,
             body.model_dump(mode="python"),
         )
 

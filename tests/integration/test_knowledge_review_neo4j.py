@@ -279,7 +279,7 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
                 tuple(item.revision_id for item in (*mentions, forward, reverse)),
                 expected_active_publication_id=None, published_at=PUBLISHED_AT,
             )
-        self.assertIsNone(self.publication.active(self.principal))
+        self.assertEqual(self.publication.history(self.principal), ())
         rows, _, _ = self.driver.execute_query(
             "MATCH (revision:GovernedAssertionRevision {record_id: $record_id}) "
             "RETURN collect(revision.governance_status) AS statuses",
@@ -928,6 +928,87 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
                 expected_active_publication_id=None,
                 published_at=PUBLISHED_AT,
             )
+
+    def _database_snapshot(self):
+        from graphrag_prod.knowledge.publication_preview import json_value
+        nodes, _, _ = self.driver.execute_query(
+            "MATCH (n) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties ORDER BY id",
+            database_=self.database,
+        )
+        edges, _, _ = self.driver.execute_query(
+            "MATCH (a)-[r]->(b) RETURN elementId(r) AS id, elementId(a) AS source, "
+            "elementId(b) AS target, type(r) AS type, properties(r) AS properties ORDER BY id",
+            database_=self.database,
+        )
+        return json_value([list(map(dict, nodes)), list(map(dict, edges))])
+
+    def test_reopening_entity_invalidates_dependent_approval_without_publishing(self):
+        self._approve_all()
+        mention = self.store.get_entity_mention(self.principal, self.batch.mentions[0].record_id,
+            statuses=(GovernanceStatus.APPROVED,))
+        self.review.quarantine(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+            record_id=mention.record_id, expected_revision=mention.revision.revision,
+            reviewed_at=REVIEWED_AT, notes="Return from preview to correct identity.")
+        fact = self.store.get_assertion(self.principal, self.batch.assertions[0].record_id,
+            statuses=(GovernanceStatus.QUARANTINED,))
+        self.assertIsNotNone(fact)
+        self.assertEqual(fact.trust.authority, self.batch.assertions[0].trust.authority)
+        self.assertEqual(fact.evidence, self.batch.assertions[0].evidence)
+        current = self.store.get_entity_mention(self.principal, mention.record_id,
+            statuses=(GovernanceStatus.QUARANTINED,))
+        self.assertEqual(fact.subject_mention_revision_id, current.revision_id)
+        self.assertEqual(self.publication.history(self.principal), ())
+
+    def test_publication_preview_rolls_back_and_matches_exact_published_manifest(self):
+        revisions = self._approve_all()
+        before = self._database_snapshot()
+        kwargs = dict(expected_active_publication_id=None, published_at=PUBLISHED_AT)
+        preview = self.publication.publish(self.principal, revisions, preview_only=True, **kwargs)
+        self.assertEqual(self._database_snapshot(), before)
+        repeated = self.publication.publish(self.principal, revisions, preview_only=True,
+            expected_active_publication_id=None, published_at=PUBLISHED_AT + timedelta(minutes=1))
+        self.assertEqual(preview, repeated)
+        self.assertEqual(len(preview["entity_changes"]), 2)
+        self.assertEqual(len(preview["relationship_changes"]), 1)
+        self.assertEqual(len(preview["records_after"]), 3)
+        self.assertTrue(all(row["quoted_text"] for row in preview["evidence"]))
+        published = self.publication.publish(self.principal, revisions,
+            expected_preview_hash=preview["preview_hash"], **kwargs)
+        self.assertEqual(published.manifest_hash, preview["manifest_hash"])
+        self.assertEqual(set(published.published_revision_ids), {
+            row["revision"]["revision_id"] for row in preview["records_after"]})
+        replay = self.publication.publish(self.principal, revisions,
+            expected_preview_hash=preview["preview_hash"], **kwargs)
+        self.assertEqual(replay.publication_id, published.publication_id)
+
+    def test_publication_preview_mismatch_and_missing_dependencies_leave_no_writes(self):
+        revisions = self._approve_all()
+        before = self._database_snapshot()
+        for values, options in [(revisions, {"expected_preview_hash": "0" * 64}),
+                                ((revisions[-1],), {"preview_only": True})]:
+            with self.assertRaises(KnowledgePublicationConflict):
+                self.publication.publish(self.principal, values,
+                    expected_active_publication_id=None, published_at=PUBLISHED_AT, **options)
+            self.assertEqual(self._database_snapshot(), before)
+
+    def test_publication_preview_removal_preserves_other_records_and_source_history(self):
+        revisions = self._approve_all()
+        first = self.publication.publish(self.principal, revisions,
+            expected_active_publication_id=None, published_at=PUBLISHED_AT)
+        before = self._database_snapshot()
+        preview = self.publication.publish(self.principal, (), preview_only=True,
+            expected_active_publication_id=first.publication_id, published_at=PUBLISHED_AT,
+            remove_record_ids=(self.batch.assertions[0].record_id,))
+        self.assertEqual(self._database_snapshot(), before)
+        self.assertEqual(preview["entity_changes"], [])
+        self.assertEqual(preview["relationship_changes"][0]["operation"], "REMOVE")
+        self.assertEqual(len(preview["records_after"]), 2)
+        outsider = dataclasses.replace(self.principal, groups=frozenset({"other"}))
+        with self.assertRaises((KnowledgePublicationConflict, KnowledgeReviewUnavailable, KnowledgeAuthorizationError)):
+            self.publication.publish(outsider, (), preview_only=True,
+                expected_active_publication_id=first.publication_id, published_at=PUBLISHED_AT,
+                remove_record_ids=(self.batch.assertions[0].record_id,))
+        self.assertEqual(self._database_snapshot(), before)
 
     def test_publish_materializes_only_approved_exact_navigation(self) -> None:
         with self.assertRaises(KnowledgeReviewUnavailable):

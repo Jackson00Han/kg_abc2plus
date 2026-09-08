@@ -704,7 +704,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
             )
         ]
         publication = source[
-            source.index("async function publishKnowledge") : source.index(
+            source.index("function publicationSelection") : source.index(
                 "async function init"
             )
         ]
@@ -851,6 +851,7 @@ state.publications = [{publication_id: 'active'}, {publication_id: 'previous'}];
 state.activeInventory = snapshot('active');
 state.selectedInventoryRevisions.add('revision-1');
 addInventoryRemovals();
+state.publicationPreview={selection:publicationSelection(),selectionKey:JSON.stringify(publicationSelection()),preview:{preview_hash:"verified"}};
 const publishing = publishKnowledge();
 assert.equal(state.activeInventory, null);
 assert.equal(state.selectedInventoryRevisions.size, 0);
@@ -1021,7 +1022,7 @@ for (const [status, expected] of [[403, '全部 ACL'], [404, '未找到'], [409,
         self.assertIn('id="publication-removals"', page.text)
         self.assertIn("remove_record_ids: removeRecordIds", page.text)
         self.assertIn("!revisionIds.length && !removeRecordIds.length", page.text)
-        self.assertIn("同一 record 不能同时移除和替换", page.text)
+        self.assertIn("同一记录不能同时移除和替换", page.text)
         self.assertIn("不会删除 source", page.text)
         self.assertIn('id="inventory-list"', page.text)
         self.assertIn('id="inventory-summary"', page.text)

@@ -464,14 +464,14 @@ WITH DISTINCT entity, tbox, mention, document, version, chunk,
 ORDER BY mention.created_at DESC, mention.revision_id ASC
 LIMIT 5
 WITH entity, tbox, matched_value,
-     collect({_EVIDENCE_PROJECTION}) AS evidence
+     collect({_EVIDENCE_PROJECTION}) AS evidence, collect(mention.aliases) AS alias_lists
 RETURN {{
     entity_id: entity.entity_id,
     tenant_id: entity.tenant_id,
     entity_type: entity.entity_type,
     canonical_key: entity.canonical_key,
     canonical_name: entity.canonical_name,
-    aliases: entity.aliases,
+    aliases: reduce(acc = [], names IN alias_lists | acc + [name IN names WHERE NOT name IN acc]),
     ontology_version_id: tbox.tbox_id,
     matched_value: matched_value,
     evidence: evidence
@@ -480,7 +480,7 @@ RETURN {{
     return count_query, target_query
 
 _ALIAS_PREDICATE = """any(
-    alias IN coalesce(entity.aliases, [])
+    alias IN coalesce(mention.aliases, [])
     WHERE any(
         pattern IN $alias_patterns
         WHERE normalize(alias, NFKC) =~ pattern
@@ -494,7 +494,7 @@ _EXACT_CANONICAL_KEY_QUERIES = _exact_authority_queries(
 
 _EXACT_GOVERNED_ALIAS_QUERIES = _exact_authority_queries(
     _ALIAS_PREDICATE,
-    "head([alias IN entity.aliases WHERE "
+    "head([alias IN mention.aliases WHERE "
     "any(pattern IN $alias_patterns WHERE normalize(alias, NFKC) =~ pattern)])",
 )
 
@@ -560,13 +560,13 @@ _AUTHORIZED_ENTITY_QUERY = f"""
 {_ACTIVE_AUTHORITY_MATCH}
 WITH DISTINCT entity, tbox, mention, document, version, chunk
 ORDER BY entity.entity_id, mention.created_at DESC, mention.revision_id ASC
-WITH entity, tbox, collect({_EVIDENCE_PROJECTION})[0..5] AS evidence
+WITH entity, tbox, collect({_EVIDENCE_PROJECTION})[0..5] AS evidence, collect(mention.aliases) AS alias_lists
 RETURN entity.entity_id AS entity_id,
        entity.tenant_id AS tenant_id,
        entity.entity_type AS entity_type,
        entity.canonical_key AS canonical_key,
        entity.canonical_name AS canonical_name,
-       entity.aliases AS aliases,
+       reduce(acc = [], names IN alias_lists | acc + [name IN names WHERE NOT name IN acc]) AS aliases,
        tbox.tbox_id AS ontology_version_id,
        evidence
 ORDER BY entity.entity_id

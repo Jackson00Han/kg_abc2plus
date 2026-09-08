@@ -12,7 +12,7 @@ import base64
 import binascii
 from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, Field, StringConstraints, field_validator, model_validator
+from pydantic import JsonValue, AwareDatetime, Field, StringConstraints, field_validator, model_validator
 
 from .contracts import (
     GroupName,
@@ -1177,6 +1177,7 @@ class ReviewBatchResponse(StrictAPIModel):
 
 
 class PublicationRequest(StrictAPIModel):
+    expected_preview_hash: Digest | None = None
     approved_revision_ids: Annotated[
         tuple[Identifier, ...], Field(max_length=MAX_PUBLICATION_RECORDS)
     ] = ()
@@ -1212,6 +1213,24 @@ class PublicationRequest(StrictAPIModel):
         if self.replace_record_ids and not self.approved_revision_ids:
             raise ValueError("replacement requires approved revisions")
         return self
+
+
+class PublicationPreviewResponse(StrictAPIModel):
+    schema_name: Literal["graphrag-publication-preview-v1"] = Field(alias="schema")
+    publication_id: Identifier
+    ontology_version_id: Identifier
+    base_publication_id: Identifier | None
+    manifest_hash: Digest
+    preview_hash: Digest
+    source_revision_ids: list[Identifier]
+    removed_record_ids: list[Identifier]
+    replaced_record_ids: list[Identifier]
+    entity_changes: list[dict[str, JsonValue]]
+    property_changes: list[dict[str, JsonValue]]
+    relationship_changes: list[dict[str, JsonValue]]
+    entities_after: list[dict[str, JsonValue]]
+    records_after: list[dict[str, JsonValue]]
+    evidence: list[dict[str, JsonValue]]
 
 
 class RollbackRequest(StrictAPIModel):

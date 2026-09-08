@@ -70,6 +70,14 @@ class KnowledgeReviewUnavailable(KnowledgeStoreError):
     """The target is absent, unauthorized, or bound to stale evidence."""
 
 
+class _PublicationPreviewReady(Exception):
+    """Abort the simulated publication transaction without committing writes."""
+
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        super().__init__("publication preview complete; rollback required")
+
+
 class KnowledgePublicationConflict(KnowledgeStoreError):
     """A publication CAS, manifest, or immutable identity conflicts."""
 
@@ -829,6 +837,11 @@ class Neo4jKnowledgeReviewService:
         if current.entity.entity_type != target.entity_type:
             raise KnowledgeReviewUnavailable("review target is unavailable")
 
+        source_names = {current.entity.canonical_name, *current.entity.aliases}
+        target = dataclasses.replace(target, aliases=tuple(sorted(
+            set(target.aliases) | (source_names - {target.canonical_name})
+        )))
+        mention_request = dataclasses.replace(mention_request, edit=MentionEdit(target, current.confidence))
         rows = tuple(
             tx.run(
                 _DEPENDENT_ASSERTION_QUERY,
@@ -1064,6 +1077,10 @@ class Neo4jKnowledgeReviewService:
                     link_canonical_entity=False,
                 )
                 kind = ReviewRecordKind.ENTITY_MENTION
+                if request.decision is GovernanceStatus.QUARANTINED and (
+                    request.edit is not None or current.trust.status is GovernanceStatus.APPROVED
+                ):
+                    cls._rebind_edited_mention_tx(tx, principal, current, updated, request)
             else:
                 Neo4jKnowledgeStore._create_assertion_revision_tx(
                     tx,
@@ -1082,6 +1099,41 @@ class Neo4jKnowledgeReviewService:
                 )
             )
         return tuple(outcomes)
+
+    @classmethod
+    def _rebind_edited_mention_tx(cls, tx, principal, current, updated, request):
+        """Rebind pending facts atomically and invalidate previous approvals."""
+        revision_ids = [row["revision_id"] for row in tx.run(
+            "MATCH (r:GovernedEntityMentionRevision {tenant_id:$tenant_id, record_id:$record_id}) "
+            "RETURN r.revision_id AS revision_id",
+            tenant_id=principal.tenant_id, record_id=current.record_id,
+        )]
+        query = _DEPENDENT_ASSERTION_QUERY.replace(
+            "['CANDIDATE', 'QUARANTINED']", "['CANDIDATE', 'QUARANTINED', 'APPROVED']"
+        ).replace("= $mention_revision_id", "IN $mention_revision_ids")
+        rows = list(tx.run(query, tenant_id=principal.tenant_id, groups=sorted(principal.groups),
+                           ontology_version_id=current.trust.ontology_version_id,
+                           mention_revision_ids=revision_ids, limit=MAX_REVIEW_BATCH))
+        if len(rows) >= MAX_REVIEW_BATCH:
+            raise KnowledgeConflict("entity edit exceeds dependent-fact limit")
+        for row in rows:
+            fact = _stored_assertion(dict(row["revision"]))
+            cls._lock_review_head_tx(tx, principal, ReviewRequest(
+                ReviewRecordKind.ASSERTION, fact.record_id, fact.revision.revision,
+                GovernanceStatus.QUARANTINED, request.reviewed_at, request.notes))
+            values = {}
+            if fact.subject_mention_revision_id in revision_ids:
+                values.update(subject=updated.entity, subject_mention_revision_id=updated.revision_id)
+            if fact.object_mention_revision_id in revision_ids:
+                values.update(object_entity=updated.entity, object_mention_revision_id=updated.revision_id)
+            trust = fact.trust
+            if trust.status is not GovernanceStatus.QUARANTINED:
+                trust = trust.transition_to(GovernanceStatus.QUARANTINED,
+                    reviewed_by=principal.principal_id, reviewed_at=request.reviewed_at,
+                    review_notes="关联实体已修改，请重新审核此事实。")
+            revised = dataclasses.replace(fact, **values, trust=trust,
+                revision=RecordRevision.next(fact.record_id, fact.revision.revision))
+            Neo4jKnowledgeStore._create_assertion_revision_tx(tx, revised, link_canonical_entities=False)
 
     @staticmethod
     def _lock_tenant_corpus_tx(
@@ -1517,7 +1569,9 @@ class Neo4jKnowledgePublicationService:
         published_at: datetime,
         remove_record_ids: tuple[str, ...] = (),
         replace_record_ids: tuple[str, ...] = (),
-    ) -> KnowledgePublicationView:
+        expected_preview_hash: str | None = None,
+        preview_only: bool = False,
+    ) -> KnowledgePublicationView | dict:
         """Atomically activate a complete, immutable knowledge-set manifest.
 
         The named revisions are current ``APPROVED`` records to publish or
@@ -1574,17 +1628,16 @@ class Neo4jKnowledgePublicationService:
             removed_ids,
             replaced_ids,
         )
-        with self.driver.session(database=self.database) as session:
-            session.execute_write(
-                self._publish_tx,
-                principal,
-                source_ids,
-                publication_id,
-                expected,
-                published_at,
-                removed_ids,
-                replaced_ids,
-            )
+        try:
+            with self.driver.session(database=self.database) as session:
+                session.execute_write(
+                    self._publish_tx, principal, source_ids, publication_id, expected,
+                    published_at, removed_ids, replaced_ids, expected_preview_hash, preview_only,
+                )
+        except _PublicationPreviewReady as preview:
+            # execute_write rolls back the entire transaction on this exception,
+            # including materialization, counters, heads and first-time state nodes.
+            return preview.payload
         result = self.get(principal, publication_id)
         if result is None:
             raise KnowledgePublicationConflict(
@@ -1941,6 +1994,8 @@ class Neo4jKnowledgePublicationService:
         now: datetime,
         removed_record_ids: tuple[str, ...],
         replaced_record_ids: tuple[str, ...],
+        expected_preview_hash: str | None = None,
+        preview_only: bool = False,
     ) -> None:
         Neo4jKnowledgeReviewService._lock_tenant_corpus_tx(
             tx,
@@ -1966,6 +2021,10 @@ class Neo4jKnowledgePublicationService:
         ).single()["publication"]
         if existing is not None:
             existing = dict(existing)
+            if preview_only:
+                raise KnowledgePublicationConflict("change set is already published; refresh candidates")
+            if expected_preview_hash is not None and existing.get("preview_hash") != expected_preview_hash:
+                raise KnowledgePublicationConflict("publication preview no longer matches")
             if (
                 tuple(existing.get("source_revision_ids", ())) != source_ids
                 or tuple(existing.get("removed_record_ids", ()))
@@ -2106,7 +2165,7 @@ class Neo4jKnowledgePublicationService:
                         GovernanceStatus.PUBLISHED
                     ),
                 )
-                Neo4jKnowledgeStore._merge_entity_tx(tx, published.entity)
+                Neo4jKnowledgeStore._merge_entity_tx(tx, published.entity, source_aliases=True)
                 Neo4jKnowledgeStore._create_mention_revision_tx(
                     tx,
                     published,
@@ -2156,11 +2215,12 @@ class Neo4jKnowledgePublicationService:
                         GovernanceStatus.PUBLISHED
                     ),
                 )
-                Neo4jKnowledgeStore._merge_entity_tx(tx, published.subject)
+                Neo4jKnowledgeStore._merge_entity_tx(tx, published.subject, source_aliases=True)
                 if published.object_entity is not None:
                     Neo4jKnowledgeStore._merge_entity_tx(
                         tx,
                         published.object_entity,
+                        source_aliases=True,
                     )
                 Neo4jKnowledgeStore._create_assertion_revision_tx(
                     tx,
@@ -2304,6 +2364,25 @@ class Neo4jKnowledgePublicationService:
             now,
             action="PUBLISH",
         )
+        from .publication_preview import publication_preview
+
+        preview = publication_preview(
+            publication_id=publication_id, ontology_version_id=ontology_version_id,
+            manifest_hash=manifest_hash, base_publication_id=current_id,
+            before=tuple(record for record, _ in carried_entries), after=tuple(published_records),
+            source_revision_ids=source_ids, removed_record_ids=removed_record_ids,
+            replaced_record_ids=replaced_record_ids,
+        )
+        if expected_preview_hash is not None and preview["preview_hash"] != expected_preview_hash:
+            raise KnowledgePublicationConflict("publication preview changed; review a fresh preview")
+        if preview_only:
+            raise _PublicationPreviewReady(preview)
+        tx.run(
+            "MATCH (p:KnowledgePublication {tenant_id: $tenant_id, publication_id: $publication_id}) "
+            "SET p.preview_hash = $preview_hash",
+            tenant_id=principal.tenant_id, publication_id=publication_id,
+            preview_hash=preview["preview_hash"],
+        ).consume()
 
     @classmethod
     def _rollback_tx(

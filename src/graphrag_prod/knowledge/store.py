@@ -842,6 +842,8 @@ class Neo4jKnowledgeStore:
     def _merge_entity_tx(
         tx: Any,
         entity: EntityIdentity,
+        *,
+        source_aliases: bool = False,
     ) -> None:
         row = tx.run(
             """
@@ -869,7 +871,7 @@ class Neo4jKnowledgeStore:
         stored_aliases = row["aliases"]
         if stored_name is not None and stored_name != entity.canonical_name:
             raise KnowledgeConflict("authoritative Entity canonical name conflicts")
-        if stored_aliases is not None and tuple(stored_aliases) != entity.aliases:
+        if not source_aliases and stored_aliases is not None and tuple(stored_aliases) != entity.aliases:
             raise KnowledgeConflict("authoritative Entity aliases conflict")
         if stored_name is None or stored_aliases is None:
             tx.run(

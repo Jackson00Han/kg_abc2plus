@@ -142,8 +142,9 @@ independent industrial service at port 8002 was left running.
 Browser visual acceptance remains unverified because no browser surface was
 available to the computer-use tool. HTTP and executed-JavaScript checks passed;
 these do not substitute for a visual check. Existing constraints on ordinary
-entity-edit revision dependencies and the independent industrial workbench's
-locked upload policy remain as documented in the operation guides.
+entity-edit revision dependencies applied to that release; the dependency
+handling is updated below. The independent industrial workbench's locked
+upload policy remains as documented in the operation guides.
 
 Navigation follow-up (2026-09-08): the shared review completion button had
 hardcoded the business flow, moving authoritative step 03 to business step 07.
@@ -159,3 +160,123 @@ contracts changed. The port 8000 UI service was restarted with existing-corpus
 reuse because its HTML is cached at startup; an HTTP read confirmed the fixed
 handler and the existing graph remained at 109 nodes across restart. This is
 executed-JavaScript and HTTP evidence; no browser visual check was performed.
+
+## Standardized review and complete publication preview
+
+The next maintenance change keeps joint extraction and separates review into
+entity identity confirmation and fact review. It does not run a second model
+extraction after entity confirmation. The fact phase has property and
+relationship tabs, with neither tab requiring completion of the other.
+
+Each entity mention has three aligned disclosures: source text, identity
+matching/disambiguation, and **标准化实体**. Matching suggestions and targets are
+inside one disclosure. Confirming an existing identity reuses its application
+ID and canonical name, retains source evidence and accumulates accepted names
+as aliases. It does not approve dependent properties or relationships.
+Aliases are stored on governed source revisions, and the publication view
+aggregates them across mentions. The existing canonical Entity node is not
+overwritten with a global alias union. Authoritative alias matching reads only
+visible authoritative mentions, preserving authority and access boundaries.
+
+The editable JSON is deliberately limited to business fields:
+
+| Editor | Editable fields | System-maintained fields |
+| --- | --- | --- |
+| 标准化实体 | `entity_type`, `standard_name`, `aliases` | `entity_id`, `evidence_ids` |
+| 标准化属性 | confirmed `entity_id`, `property_name`, raw `value`, `unit`, validity/observation times | `property_id`, `evidence_ids` |
+| 标准化关系 | confirmed source/target IDs, `relationship_type`, existing relationship-property names/values/units/times | `relationship_id`, `evidence_ids` |
+
+Endpoint selectors are restricted to available confirmed mentions in the
+same source chunk; the server still validates their exact revision and evidence
+dependencies. IDs and evidence references cannot be forged through the editor.
+The original quote remains in the source disclosure. Confidence, source grade,
+revision counters and extraction metadata are not editable business inputs.
+Values and units are normalized by the backend from edited raw inputs.
+An empty alias or relationship-property list remains empty unless supported
+content is explicitly supplied; the UI does not invent missing facts.
+
+Saving an edit requires a new validation and review. Returning an approved
+entity to editing atomically creates a new mention revision, rebinds pending
+dependent facts and withdraws their prior approvals. Their source grades and
+evidence remain unchanged. Approved records can be returned to step 03 from
+the publication candidate list. Historical published revisions remain immutable.
+Same-value facts from a second source can be accepted as additional evidence;
+their source records and grades remain separate rather than replacing the
+earlier source. Conflicting values still require the existing assessment and
+ontology cardinality checks.
+
+Step 04 first calls `POST /v1/knowledge/publications:preview`. It displays
+CREATE/UPDATE/REMOVE cards for entities, properties and relationships, including
+the previous value on updates, and a complete read-only JSON projection:
+
+- `entity_changes`, `property_changes`, `relationship_changes`: changes against
+  the active publication, with before/after values.
+- `entities_after`: final entity identities, combined aliases, source grades
+  and mention/evidence references.
+- `records_after`: every immutable governed record in the resulting manifest,
+  including unchanged records, full typed literals and exact endpoint revisions.
+- `evidence`: complete source document/version/chunk/range/quote and access
+  metadata for each final record, plus source origin and grade.
+- publication, ontology and base-publication IDs, selected revisions,
+  removals/replacements, `manifest_hash` and `preview_hash`.
+
+This is the application's governed publication format, not a claim that Neo4j
+defines a universal JSON import schema. The existing Neo4j materializer builds
+navigation nodes/edges from these records; source chunks remain answer evidence.
+Evidence IDs in this projection are the immutable record revision IDs. Entity
+grade lists summarize contributing sources and do not promote secondary facts.
+
+Preview runs the actual publication transaction through validation and graph
+materialization, then deliberately rolls it back before returning the result.
+It commits no publication, revision, state counter or navigation changes. It
+uses write transaction locks temporarily, so its cost is comparable to
+publication rather than a lightweight list query. The page sends the resulting
+`expected_preview_hash` on publication. A changed selection, review, active
+publication or manifest invalidates the preview; a mismatching hash rejects
+the transaction. The server regenerates the final records, never accepts
+client-edited preview JSON as graph writes. Older API callers can still omit
+the hash for compatibility; the normal page requires it.
+
+These controls improve traceability and prevent stale/unreviewed publication;
+they do not prove semantic entailment or guarantee extraction precision.
+Reviewers must check names, identity, values, units, direction and source text.
+Changes beyond documentary evidence use the explicit human-source workflow
+and remain secondary. Existing canonical-identity conflicts remain blocked;
+this change does not introduce a global rename or unrestricted graph editor.
+
+### Validation for standardized review/publication (2026-09-09)
+
+The final suites passed without skips: 1,027 unit, 173 disposable-Neo4j
+integration, 17 HTTP E2E, 54 security and two regression tests (1,273 total).
+The complete integration run used deterministic providers and the unchanged
+1 CPU / 1.5 GiB dev-mini cap. It checks complete database rollback after
+preview, deterministic repeat previews, exact manifest equality on publication,
+hash mismatch rejection, missing dependencies, source access, retained records,
+removal, and invalidation of dependent approvals when an entity is reopened.
+Executed page JavaScript and HTTP checks cover protected editor fields, raw
+literal conversion, the two fact tabs, preview-required publication, changed
+selections, duplicate clicks and the preview API contract.
+
+Baseline 1.12.0 retains every 1.11.0 test ID and adds four unit, four Neo4j and
+one HTTP E2E checks. All case digests, contract metrics, quality diagnostics
+and configuration identities are exactly unchanged. Semantic digest:
+`e524c30d084437a06f688c57893ec0d59b361ad47624bda2d709d387ba785311`.
+The operational observations remain deterministic fixtures; this change makes
+no new performance or production-scale qualification claim.
+
+Reproducible commands remain in README. This run's full suite receipts,
+retrieval/answer/conflict observations and unified report are under
+`/tmp/standardized-validation`. The fixed knowledge-quality gate, required
+security-test manifest, corpus/gold rebuild checks and acceptance contracts
+also pass. An initial unit/HTTP run exposed outdated editor and publication
+expectations; those were corrected and their complete suites rerun. No tests
+were removed or skipped to produce the final reports.
+
+The port 8000 workbench was restarted with existing-corpus reuse and provider
+warmup disabled. Live HTML/OpenAPI and authenticated review/candidate reads
+passed. The graph had 97 nodes before and after restart; no source upload,
+review mutation or publication was performed against the user's database.
+The independent industrial workbench on port 8002 remains untouched.
+Browser visual acceptance is still unverified because no browser surface or
+local browser test package was available. HTTP and executed-JavaScript checks
+do not substitute for that visual check.

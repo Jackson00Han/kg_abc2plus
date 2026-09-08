@@ -97,6 +97,7 @@ from .knowledge_contracts import (
     PublicationHistoryResponse,
     PublicationCandidatesRequest,
     PublicationCandidatesResponse,
+    PublicationPreviewResponse,
     PublicationRequest,
     PublicationResponse,
     PublishedGraphQualityResponse,
@@ -325,7 +326,7 @@ class KnowledgeOperations(Protocol):
     ) -> BackendResult: ...
 
     def publish(
-        self, principal: Principal, request: PublicationRequest
+        self, principal: Principal, request: PublicationRequest, *, preview_only: bool = False
     ) -> BackendResult: ...
 
     def rollback(
@@ -1220,6 +1221,7 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT,
             OperationKind.ENTITY_RESOLUTION_APPLY,
             OperationKind.KNOWLEDGE_PUBLISH,
+            OperationKind.KNOWLEDGE_PUBLICATION_PREVIEW,
             OperationKind.KNOWLEDGE_ROLLBACK,
             OperationKind.KNOWLEDGE_HISTORY,
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
@@ -1325,6 +1327,12 @@ class GraphRAGApplicationBackend:
                 return _response(
                     self._knowledge.apply_resolution(principal, request),
                     EntityResolutionApplyResponse,
+                )
+            if envelope.operation is OperationKind.KNOWLEDGE_PUBLICATION_PREVIEW:
+                request = _validated(PublicationRequest, envelope.payload)
+                return _response(
+                    self._knowledge.publish(principal, request, preview_only=True),
+                    PublicationPreviewResponse,
                 )
             if envelope.operation is OperationKind.KNOWLEDGE_PUBLISH:
                 request = _validated(PublicationRequest, envelope.payload)

@@ -35,6 +35,7 @@ from graphrag_prod.api.knowledge_contracts import (
     PublicationHistoryResponse,
     PublicationCandidatesResponse,
     PublicationResponse,
+    PublicationPreviewResponse,
     PublishedGraphQualityResponse,
     ReviewBatchResponse,
     ReviewQueueResponse,
@@ -434,8 +435,16 @@ class _Knowledge:
             )
         )
 
-    def publish(self, principal: object, request: object) -> BackendResult:
-        self._record("publish", principal, request)
+    def publish(self, principal: object, request: object, *, preview_only: bool = False) -> BackendResult:
+        self._record("preview" if preview_only else "publish", principal, request)
+        if preview_only:
+            from graphrag_prod.knowledge.publication_preview import publication_preview
+            from tests.fixtures.knowledge import make_knowledge_batch
+            batch = make_knowledge_batch()
+            return BackendResult(PublicationPreviewResponse.model_validate(publication_preview(
+                publication_id="publication", ontology_version_id="tbox-1", manifest_hash="a" * 64,
+                base_publication_id=None, before=(), after=(*batch.mentions, *batch.assertions),
+                source_revision_ids=request.approved_revision_ids, removed_record_ids=(), replaced_record_ids=())))
         return BackendResult(_publication())
 
     def rollback(
@@ -474,6 +483,28 @@ class _Knowledge:
 
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
+    def test_publication_preview_is_authenticated_complete_and_hash_bound(self):
+        knowledge = _Knowledge()
+        backend = GraphRAGApplicationBackend(documents=_Documents(), queries=_Queries(),
+            readiness=_Readiness(), knowledge=knowledge)
+        app = create_app(backend=backend, authenticator=JWTAuthenticator(JWTAuthConfig(
+            issuer=ISSUER, audience=AUDIENCE, secret=SECRET)))
+        with TestClient(app) as client:
+            body = {"approved_revision_ids": ["revision-1"]}
+            self.assertEqual(client.post("/v1/knowledge/publications:preview", json=body).status_code, 401)
+            response = client.post("/v1/knowledge/publications:preview", headers=_headers(), json=body)
+            self.assertEqual(response.status_code, 200, response.text)
+            preview = response.json()
+            self.assertEqual(preview["schema"], "graphrag-publication-preview-v1")
+            self.assertEqual(len(preview["records_after"]), 3)
+            self.assertEqual(len(preview["evidence"]), 3)
+            body["expected_preview_hash"] = preview["preview_hash"]
+            response = client.post("/v1/knowledge/publications:publish", headers=_headers(), json=body)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(knowledge.calls[-1][2].expected_preview_hash, preview["preview_hash"])
+            body["expected_preview_hash"] = "invalid"
+            self.assertEqual(client.post("/v1/knowledge/publications:publish", headers=_headers(), json=body).status_code, 422)
+
     def test_publication_accepts_removal_only_and_rejects_remove_replace_overlap(
         self,
     ) -> None:
@@ -759,6 +790,7 @@ const context = {
     return {outcomes: []};
   },
   showToast: text => toasts.push(text), loadReviews: async () => {}, loadActiveDocuments: async () => {},
+  invalidatePublicationPreview() {}, loadPublicationCandidates: async () => {},
 };
 vm.createContext(context);
 for (const [start, end] of [
@@ -796,7 +828,16 @@ for (const [start, end] of [
   for (let i = 0; i < records.length; i++) {
     vm.runInContext(`setReviewEditing(${i}, true)`, context);
     const edit = JSON.parse(editors[i].value);
+    // Confidence and evidence are protected; edit business fields instead.
     edit.confidence = 0.87;
+    editors[i].value = JSON.stringify(edit);
+    const before=requests.length;
+    await vm.runInContext(`submitReviews('QUARANTINED', [${i}], true)`, context);
+    assert.equal(requests.length,before,'readonly metadata must not submit');
+    delete edit.confidence;
+    if(i===0) edit.standard_name='Pump-7 corrected';
+    if(i===1) edit.value='101';
+    if(i===2) edit.properties[0].value='101';
     editors[i].value = JSON.stringify(edit);
     await vm.runInContext(`submitReviews('QUARANTINED', [${i}], true)`, context);
     vm.runInContext(`setReviewEditing(${i}, false)`, context);
@@ -834,11 +875,11 @@ for (const [start, end] of [
         self.assertEqual(len(knowledge.calls), 5)
         decisions = [call[2].decisions[0] for call in knowledge.calls[1:4]]
         self.assertEqual(decisions[0].mention_edit.entity.aliases, ("P7",))
-        self.assertEqual(decisions[0].mention_edit.confidence, 0.87)
-        self.assertEqual(decisions[1].assertion_edit.confidence, 0.87)
-        self.assertEqual(decisions[2].assertion_edit.confidence, 0.87)
+        self.assertEqual(decisions[0].mention_edit.confidence, 0.99)
+        self.assertEqual(decisions[1].assertion_edit.confidence, 0.99)
+        self.assertEqual(decisions[2].assertion_edit.confidence, 0.99)
         self.assertEqual(decisions[1].assertion_edit.literal.raw_unit, "psi")
-        self.assertEqual(decisions[1].assertion_edit.literal.raw_literal, "100")
+        self.assertEqual(decisions[1].assertion_edit.literal.raw_literal, "101")
         self.assertEqual(
             decisions[1].assertion_edit.literal.raw_observed_at,
             "2025-01-02T03:04:05Z",
