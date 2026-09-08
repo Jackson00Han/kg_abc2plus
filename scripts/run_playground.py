@@ -79,6 +79,7 @@ from graphrag_prod.retrieval import (
     RetrievalRequest as DomainRetrievalRequest,
 )
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
+from graphrag_prod.playground.demo_corpus import load_demo_corpus
 from scripts.playground_reset_store import capture_reset_embeddings, reset_playground_corpus
 
 
@@ -527,13 +528,22 @@ def _empty_database(driver: neo4j.Driver, database: str) -> None:
         )
 
 
+def _corpus_fixture(profile: str):
+    if profile == "demo-mini-zh-v1":
+        return load_demo_corpus()
+    if profile == "dev-corpus-v1":
+        return load_dev_corpus_fixture()
+    raise ValueError("unknown Playground corpus profile")
+
+
 def _load_corpus(
     driver: neo4j.Driver,
     database: str,
     embedder: _OpenAICompatibleEmbedder,
+    *, corpus_profile: str = "dev-corpus-v1",
 ):
-    print("[1/5] Verifying the versioned dev-corpus-v1 fixture", flush=True)
-    fixture = load_dev_corpus_fixture()
+    print(f"[1/5] Verifying the versioned {corpus_profile} corpus", flush=True)
+    fixture = _corpus_fixture(corpus_profile)
 
     print("[2/5] Applying the production graph schema", flush=True)
     _empty_database(driver, database)
@@ -543,7 +553,8 @@ def _load_corpus(
     if errors:
         raise RuntimeError("Playground schema verification failed: " + "; ".join(errors))
 
-    print("[3/5] Ingesting 10 documents and 120 traceable Chunks", flush=True)
+    counts = fixture.build.manifest["counts"]
+    print(f"[3/5] Ingesting {counts['documents']} documents and {counts['active_chunks']} traceable Chunks", flush=True)
     service = Neo4jIngestionService(
         driver,
         database,
@@ -609,10 +620,11 @@ def _reuse_corpus(
     driver: neo4j.Driver,
     database: str,
     embedder: _OpenAICompatibleEmbedder,
+    *, corpus_profile: str = "dev-corpus-v1",
 ):
     """Resume an initialized local corpus without changing any stored data."""
-    print("[1/5] Verifying the versioned dev-corpus-v1 fixture", flush=True)
-    fixture = load_dev_corpus_fixture()
+    print(f"[1/5] Verifying the versioned {corpus_profile} corpus", flush=True)
+    fixture = _corpus_fixture(corpus_profile)
     print("[2/5] Verifying the existing production graph schema", flush=True)
     if verify_schema(driver, database):
         raise RuntimeError("existing Playground schema is incomplete or invalid")
@@ -764,6 +776,7 @@ def build_playground_app(
     enable_reset: bool = False,
     skip_provider_warmup: bool = False,
     enable_industrial: bool = False,
+    corpus_profile: str = "dev-corpus-v1",
 ):
     if type(enable_industrial) is not bool:
         raise ValueError("enable_industrial must be boolean")
@@ -780,10 +793,13 @@ def build_playground_app(
         raise ValueError("skip_provider_warmup must be a boolean")
     if skip_provider_warmup and not reuse_existing_corpus:
         raise ValueError("skip_provider_warmup requires a verified existing corpus")
+    if enable_industrial and corpus_profile != "dev-corpus-v1":
+        raise ValueError("industrial service requires its retained regression corpus")
+    corpus_options = {} if corpus_profile == "dev-corpus-v1" else {"corpus_profile": corpus_profile}
     fixture = (
-        _reuse_corpus(driver, database, embedder)
+        _reuse_corpus(driver, database, embedder, **corpus_options)
         if reuse_existing_corpus
-        else _load_corpus(driver, database, embedder)
+        else _load_corpus(driver, database, embedder, **corpus_options)
     )
     from graphrag_prod.playground.industrial_runtime import (
         INDUSTRIAL_TENANT, TenantQueryOperations, build_industrial_query_operations,
@@ -1114,7 +1130,7 @@ def _run_http_check(app: Any) -> None:
             "/v1/retrieval",
             headers=headers,
             json={
-                "query_text": "Northstar revenue 2024",
+                "query_text": default_question["query"],
                 "limits": bootstrap["defaults"]["retrieval_limits"],
             },
         )
@@ -1159,6 +1175,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--corpus-profile", choices=("demo-mini-zh-v1", "dev-corpus-v1"),
+                        help="default: minimal Chinese demo; industrial mode retains dev-corpus-v1")
     parser.add_argument("--enable-industrial", action="store_true", help="reuse the loaded industrial corpus with governed graph UI and industrial reranking")
     parser.add_argument("--no-open", action="store_true", help="do not open a browser")
     parser.add_argument(
@@ -1260,6 +1278,7 @@ def main() -> None:
             extraction_model=extraction_model,
             reuse_existing_corpus=args.reuse_existing_corpus,
             enable_industrial=args.enable_industrial,
+            corpus_profile=args.corpus_profile or ("dev-corpus-v1" if args.enable_industrial else "demo-mini-zh-v1"),
             skip_provider_warmup=args.skip_provider_warmup,
             # main() already requires a loopback URI and the explicit disposable
             # database opt-in. Production create_app() never installs this API.
@@ -1270,10 +1289,10 @@ def main() -> None:
         raise
 
     if args.check:
-        print("[5/5] Running all 49 reviewed HTTP cases", flush=True)
+        print("[5/5] Running the selected corpus HTTP cases", flush=True)
         _run_http_check(app)
         print(
-            "Playground check passed: 49/49 HTTP cases, provider smoke metrics, "
+            "Playground check passed: selected HTTP cases, provider smoke metrics, "
             "hybrid recall, and ACL",
             flush=True,
         )

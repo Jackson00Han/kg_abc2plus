@@ -489,13 +489,14 @@
     <div class="brand">
       <button class="top-button mobile-questions" id="questions-button" type="button" aria-expanded="false" aria-controls="question-sidebar">☰ 题库</button>
       <div class="brand-mark" aria-hidden="true">GR</div>
-      <div class="brand-copy"><strong>GraphRAG Local Playground</strong><span>Evidence-first reference runtime · <a href="/industrial">工业知识工作台 ↗</a></span></div>
+      <div class="brand-copy"><strong>GraphRAG Local Playground</strong><span>Evidence-first reference runtime · <a id="industrial-link" href="/industrial" hidden>工业知识工作台 ↗</a></span></div>
     </div>
     <div class="top-actions">
       <div class="connection" id="connection"><span class="connection-dot"></span><span id="connection-label">正在连接内核</span></div>
       <button class="top-button active" id="retrieval-nav" type="button">检索台</button>
       <button class="top-button" id="governance-nav" type="button">知识构建</button>
       <a class="top-button api-link" href="/docs" target="_blank" rel="noreferrer">API Docs ↗</a>
+      <button class="top-button" id="local-reset-button" type="button" hidden>一键重置演示</button>
       <button class="top-button" id="theme-button" type="button" aria-label="切换明暗主题">◐</button>
     </div>
   </header>
@@ -506,7 +507,7 @@
         <div class="sidebar-head">
           <span class="overline">Reviewed query suite</span>
           <h1>测试题库</h1>
-          <p>49 个版本化问题，覆盖 7 类检索与安全场景。</p>
+          <p id="question-summary">中文小样本，按需运行检索与安全场景。</p>
         </div>
         <div class="search-box"><span class="search-icon" aria-hidden="true">⌕</span><label class="sr-only" for="question-search">搜索问题</label><input id="question-search" type="search" placeholder="搜索问题或 ID…" autocomplete="off"></div>
         <div class="filter-row">
@@ -516,7 +517,7 @@
           <select id="result-filter"><option value="all">全部结果</option><option value="answerable">可回答</option><option value="refusal">应拒答</option></select>
         </div>
         <ol class="question-list" id="question-list" aria-label="问题列表"><li class="question-empty">正在读取题库…</li></ol>
-        <div class="sidebar-foot"><span id="question-count">0 / 49</span><span>gold-v1</span></div>
+        <div class="sidebar-foot"><span id="question-count">0 / 0</span><span>演示问题</span></div>
       </div>
     </aside>
 
@@ -616,7 +617,7 @@
         <section class="inspector-section">
           <div class="inspector-title">知识库启动基线 <span>FIXTURE</span></div>
           <div class="corpus-card">
-            <div class="corpus-name"><div class="corpus-icon">KG</div><div><strong id="dataset-name">dev-corpus-v1</strong><span id="dataset-version">loading</span></div></div>
+            <div class="corpus-name"><div class="corpus-icon">KG</div><div><strong id="dataset-name">演示资料</strong><span id="dataset-version">loading</span></div></div>
             <div class="stats-grid">
               <div class="stat"><strong id="stat-documents">—</strong><span>基线 Documents</span></div>
               <div class="stat"><strong id="stat-chunks">—</strong><span>基线 Chunks</span></div>
@@ -657,7 +658,6 @@
           <div class="field"><label for="governance-persona-select">当前治理身份（JWT tenant / groups / scopes）</label><select id="governance-persona-select"></select></div>
           <div class="capability-list" id="capability-list" aria-label="工作台能力" style="margin-top:9px"></div>
           <p id="governance-scope-note" style="font-family:var(--mono);font-size:8px;text-align:right"></p>
-          <div class="workbench-actions"><button class="button danger" id="local-reset-button" type="button" hidden>全部重新开始</button></div>
         </div>
       </div>
 
@@ -801,7 +801,7 @@
   <dialog class="reset-dialog" id="local-reset-dialog" aria-labelledby="local-reset-title" aria-describedby="local-reset-description">
     <h2 id="local-reset-title">全部重新开始</h2>
     <p id="local-reset-description">将清空本地演示环境所有身份的本体、权威实例、上传文档、抽取结果、审核、发布及历史记录，恢复初始状态。此操作无法撤销。</p>
-    <p id="local-reset-retained">自带的 10 份文档、120 个 Chunk 检索示例将保留；已下载到电脑的文件不受影响。</p>
+    <p id="local-reset-retained">将恢复当前演示集的初始文档和片段，不调用模型；已下载到电脑的文件不受影响。</p>
     <p id="local-reset-status" role="status" aria-live="polite"></p>
     <div class="workbench-actions">
       <button class="button" id="local-reset-cancel" type="button">取消</button>
@@ -1517,7 +1517,7 @@
 
       function graphMarkup() {
         const graph = state.retrieval?.graph;
-        if (!graph) return '<div class="initial-state"><div class="initial-icon">KG</div><h3>当前检索没有可投影的治理图</h3><p>dev-corpus-v1 的旧 fixture 仍可用于检索测试；通过“知识构建”工作台审核并发布的新实例，才会按 active T-Box、publication 和 ACL 出现在这里。</p></div>';
+        if (!graph) return '<div class="initial-state"><div class="initial-icon">KG</div><h3>当前检索没有可投影的治理图</h3><p>初始资料仅提供原文检索；通过“知识构建”工作台审核并发布的新实例，才会按 active T-Box、publication 和 ACL 出现在这里。</p></div>';
         const entities = Array.isArray(graph.entities) ? graph.entities : [];
         const relationships = Array.isArray(graph.relationship_assertions) ? graph.relationship_assertions : [];
         const literals = Array.isArray(graph.literal_assertions) ? graph.literal_assertions : [];
@@ -3333,6 +3333,9 @@
           updateConstructionMode();
           setConnection('ready', '内核已连接');
           const counts = bootstrap.dataset.counts;
+          $('question-summary').textContent = `${bootstrap.questions.length} 个示例问题，覆盖检索与权限场景；点击检索才调用模型。`;
+          $('local-reset-retained').textContent = `恢复自带的 ${counts.documents} 份文档、${counts.active_chunks} 个 Chunk，不调用模型；已下载到电脑的文件不受影响。`;
+          $('industrial-link').hidden = !bootstrap.industrial?.enabled;
           $('dataset-name').textContent = bootstrap.dataset.id;
           $('dataset-version').textContent = `启动基线 · version ${bootstrap.dataset.version} · ${bootstrap.dataset.embedding.model}`;
           $('stat-documents').textContent = number(counts.documents);
@@ -3363,7 +3366,12 @@
             showToast('已恢复初始状态，请从 01 开始。');
             return;
           }
-          await run();
+          if (bootstrap.dataset.id === 'demo-mini-zh-v1') {
+            switchWorkspace('governance');
+            showConstructionFlow('baseline', 'step-ontology');
+          } else {
+            await run();
+          }
         } catch (error) {
           setConnection('error', '内核不可用');
           elements.initial.classList.add('hidden');

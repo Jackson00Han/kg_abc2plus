@@ -82,7 +82,8 @@ vm.runInContext('(async () => {' + input.scenario + '})()', context)
         self.assertEqual(ids.count("local-reset-button"), 1)
         self.assertLess(ids.index("local-reset-button"), ids.index("step-ontology"))
         self.assertIn("所有身份的本体、权威实例、上传文档", self.source)
-        self.assertIn("10 份文档、120 个 Chunk", self.source)
+        self.assertIn("${counts.documents} 份文档、${counts.active_chunks} 个 Chunk", self.source)
+        self.assertIn("一键重置演示", self.source)
         self.assertIn("已下载到电脑的文件不受影响", self.source)
         self.run_js(r"""
 initializeLocalReset(undefined);

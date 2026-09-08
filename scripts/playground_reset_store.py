@@ -17,10 +17,16 @@ from graphrag_prod.domain import ChunkEmbedding
 from graphrag_prod.domain.ids import chunk_embedding_id, content_checksum
 
 
-def _require_startup_chunks(chunks: tuple[Any, ...]) -> None:
+def _require_startup_chunks(chunks: tuple[Any, ...], dataset_id: str = "dev-corpus-v1") -> None:
     from tests.fixtures.dev_corpus import load_dev_corpus_fixture
 
-    fixture = load_dev_corpus_fixture()
+    if dataset_id == "dev-corpus-v1":
+        fixture = load_dev_corpus_fixture()
+    elif dataset_id == "demo-mini-zh-v1":
+        from graphrag_prod.playground.demo_corpus import load_demo_corpus
+        fixture = load_demo_corpus()
+    else:
+        raise ValueError("unknown reset corpus")
     expected = tuple(bundle.chunk for plan in fixture.plans for bundle in plan.bundles)
     if chunks != expected:
         raise ValueError("reset requires the complete unchanged startup fixture")
@@ -36,6 +42,7 @@ class CachedFixtureEmbedder:
     embedding_space_id: str
     chunks: tuple[Any, ...]
     vectors: Mapping[str, tuple[float, ...]]
+    dataset_id: str = "dev-corpus-v1"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "chunks", tuple(self.chunks))
@@ -45,7 +52,7 @@ class CachedFixtureEmbedder:
         self.validate()
 
     def validate(self) -> None:
-        _require_startup_chunks(self.chunks)
+        _require_startup_chunks(self.chunks, self.dataset_id)
         if (not self.chunks or type(self.dimensions) is not int
                 or len({chunk.chunk_id for chunk in self.chunks}) != len(self.chunks)
                 or set(self.vectors) != {chunk.text for chunk in self.chunks}):
@@ -75,7 +82,8 @@ class CachedFixtureEmbedder:
 def capture_reset_embeddings(driver, database: str, fixture, embedder) -> CachedFixtureEmbedder:
     """Read and validate only the versioned fixture's vectors, before deletion."""
     chunks = tuple(bundle.chunk for plan in fixture.plans for bundle in plan.bundles)
-    _require_startup_chunks(chunks)
+    dataset_id = fixture.build.manifest["dataset_id"]
+    _require_startup_chunks(chunks, dataset_id)
     expected = {chunk.chunk_id: chunk for chunk in chunks}
     if len(expected) != len(chunks) or not chunks:
         raise ValueError("reset fixture contains invalid chunk identities")
@@ -127,7 +135,7 @@ def capture_reset_embeddings(driver, database: str, fixture, embedder) -> Cached
             raise ValueError("identical fixture text has conflicting vectors")
         seen.add(chunk.chunk_id)
         vectors[chunk.text] = embedding.vector
-    return CachedFixtureEmbedder(chunks=chunks, vectors=vectors, **profile)
+    return CachedFixtureEmbedder(chunks=chunks, vectors=vectors, dataset_id=dataset_id, **profile)
 
 
 def reset_playground_corpus(driver, database: str, cached: CachedFixtureEmbedder) -> None:
@@ -138,5 +146,6 @@ def reset_playground_corpus(driver, database: str, cached: CachedFixtureEmbedder
     from scripts.run_playground import _load_corpus, _reuse_corpus
 
     driver.execute_query(Query("MATCH (node) DETACH DELETE node", timeout=30.0), database_=database)
-    _load_corpus(driver, database, cached)
-    _reuse_corpus(driver, database, cached)
+    options = {} if cached.dataset_id == "dev-corpus-v1" else {"corpus_profile": cached.dataset_id}
+    _load_corpus(driver, database, cached, **options)
+    _reuse_corpus(driver, database, cached, **options)

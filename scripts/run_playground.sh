@@ -6,7 +6,7 @@ repo_root=$(dirname "$script_dir")
 cd "$repo_root"
 
 image="neo4j:5.26.12-community"
-bolt_port="${PLAYGROUND_BOLT_PORT:-17692}"
+bolt_port="${PLAYGROUND_BOLT_PORT:-17693}"
 container_memory="1536m"
 container_cpus="1"
 heap_initial="256m"

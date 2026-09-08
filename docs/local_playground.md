@@ -1,5 +1,10 @@
 # Local GraphRAG Retrieval and Knowledge-Governance Playground
 
+> 默认演示已切换到中文 `demo-mini-zh-v1`（4 份文档 / 6 个片段）。
+> 当前入口、资料隔离和重置操作见 [中文最小演示](playground_mini_demo.md)。
+> 下文涉及 120 Chunks / 49 questions 的说明仅适用于显式指定
+> `--corpus-profile dev-corpus-v1` 的完整回归模式。
+
 The local Playground is a one-command, browser-based way to exercise the
 validated GraphRAG retrieval and governed property-graph construction paths. It
 runs against a new disposable Neo4j container, loads the committed
@@ -46,11 +51,11 @@ browser should not be opened automatically:
 ./scripts/run_playground.sh --no-open --port 8080
 ```
 
-Set `PLAYGROUND_BOLT_PORT` only when the default local Neo4j port `17692` is
+Set `PLAYGROUND_BOLT_PORT` only when the default local Neo4j port `17693` is
 already occupied:
 
 ```bash
-PLAYGROUND_BOLT_PORT=17693 ./scripts/run_playground.sh
+PLAYGROUND_BOLT_PORT=17694 ./scripts/run_playground.sh
 ```
 
 Startup includes provider calls to embed all 120 Chunks, so its duration depends

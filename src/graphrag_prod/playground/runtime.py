@@ -212,6 +212,9 @@ def require_loopback_host(host: str) -> str:
 
 
 def _persona_label(tenant_id: str, groups: tuple[str, ...]) -> str:
+    if tenant_id in {"demo-a", "demo-b"}:
+        labels = {"public": "公开阅读", "maintenance": "维护上传", "reviewer": "知识复核", "administrator": "知识管理员"}
+        return f"{'一号泵站' if tenant_id == 'demo-a' else '二号泵站（独立租户）'} · " + " / ".join(labels[group] for group in groups)
     tenant = tenant_id.removeprefix("tenant-").replace("-", " ").title()
     names = [group.split("-", 1)[-1].replace("-", " ").title() for group in groups]
     return f"Tenant {tenant} · {' + '.join(names)}"
@@ -222,6 +225,14 @@ def _persona_scopes(tenant_id: str, groups: tuple[str, ...]) -> tuple[str, ...]:
 
     selected = {"retrieval:read", "ontology:read"}
     group_set = frozenset(groups)
+    if tenant_id == "demo-a":
+        if "administrator" in group_set:
+            selected.update(PLAYGROUND_SCOPES)
+        elif "maintenance" in group_set:
+            selected.add("knowledge:construct")
+        elif "reviewer" in group_set:
+            selected.add("knowledge:review")
+        return tuple(scope for scope in PLAYGROUND_SCOPES if scope in selected)
     is_alpha_steward = tenant_id == "tenant-alpha" and {
         "alpha-finance",
         "alpha-legal",
@@ -358,7 +369,8 @@ class PlaygroundCatalog:
                 "question_id": "single_chunk-success-01",
                 "retrieval_limits": asdict(PLAYGROUND_RETRIEVAL_LIMITS),
                 "industrial_tbox_template": deepcopy(
-                    DEFAULT_INDUSTRIAL_TBOX_TEMPLATE
+                    get_industrial_demo_kit()["ontology"] if manifest["dataset_id"] == "demo-mini-zh-v1"
+                    else DEFAULT_INDUSTRIAL_TBOX_TEMPLATE
                 ),
                 "industrial_demo": get_industrial_demo_kit(),
             },

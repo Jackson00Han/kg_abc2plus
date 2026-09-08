@@ -1,0 +1,58 @@
+{
+  "dataset_id": "demo-mini-zh-v1",
+  "version": "1.0.0",
+  "documents": [
+    {
+      "filename": "pump-guide.txt",
+      "title": "循环水泵演示说明",
+      "tenant_id": "demo-a",
+      "groups": [
+        "public"
+      ],
+      "sha256": "33985e3ea421bdd8e998cb57ca5a9400c38bfc9ac30216d2fa9b02b603210b23",
+      "chunk_lengths": [
+        46,
+        67
+      ]
+    },
+    {
+      "filename": "inspection.txt",
+      "title": "循环水泵巡检与复查",
+      "tenant_id": "demo-a",
+      "groups": [
+        "public"
+      ],
+      "sha256": "9ca17e48d0eca266a5197a79e56f1cc4b1012c64a12c7d20ebfcbfcf940f5372",
+      "chunk_lengths": [
+        53,
+        56
+      ]
+    },
+    {
+      "filename": "maintenance-private.txt",
+      "title": "维护岗位内部记录",
+      "tenant_id": "demo-a",
+      "groups": [
+        "maintenance",
+        "reviewer",
+        "administrator"
+      ],
+      "sha256": "de84dd5e61b105e1c0ef06377a891e735c8e69c9bfd90c1898e6b55da8793a38",
+      "chunk_lengths": [
+        54
+      ]
+    },
+    {
+      "filename": "other-site.txt",
+      "title": "二号场所同名设备",
+      "tenant_id": "demo-b",
+      "groups": [
+        "public"
+      ],
+      "sha256": "f30097180014ad5a8402ba0df956cc1e4d75b8e9abce8b2dfeb5121d1b25bbd6",
+      "chunk_lengths": [
+        65
+      ]
+    }
+  ]
+}

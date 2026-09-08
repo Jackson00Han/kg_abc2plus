@@ -133,8 +133,12 @@ browser, run:
 ./scripts/run_playground.sh
 ```
 
+The default is a [minimal Chinese demo](docs/playground_mini_demo.md) with
+4 documents / 6 Chunks and a top-bar reset button. Larger corpora are isolated
+from its default runtime.
+
 It opens <http://127.0.0.1:8000/playground>, starts a disposable local Neo4j,
-and loads the deterministic 120-Chunk development corpus. It embeds the corpus
+and loads the six-Chunk Chinese demo corpus. It embeds the corpus
 and every query using the OpenAI-compatible embedding provider configured in
 `.env`, then exercises Vector + BM25 + RRF + graph expansion. The Playground
 returns Chunks, provenance, an authorized knowledge subgraph, and a Retrieval
