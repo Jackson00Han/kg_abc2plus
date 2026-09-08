@@ -30,6 +30,8 @@ class PlaygroundResolutionTests(unittest.TestCase):
         source += page[
             page.index("async function publishKnowledge(") : page.index("async function init(")
         ]
+        badge_start = page.index("function provenanceBadges(")
+        source += page[badge_start:page.index("\n      function ", badge_start)]
         harness = r"""
 const vm = require('node:vm');
 const assert = require('node:assert/strict');

@@ -546,6 +546,7 @@ class CitationResponse(StrictAPIModel):
     document_id: Identifier
     canonical_uri: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=2_048)]
     source_name: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=256)]
+    source_kind: Literal["DOCUMENT", "HUMAN_RECORD"] | None = None
     version_id: Identifier
     version_checksum: Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
     version_number: Annotated[int, Field(strict=True, ge=1)]
@@ -571,6 +572,10 @@ class CitationResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_range(self) -> Self:
+        actual_kind = "HUMAN_RECORD" if self.canonical_uri.startswith("urn:graphrag:human:") else "DOCUMENT"
+        if self.source_kind is not None and self.source_kind != actual_kind:
+            raise ValueError("citation source kind disagrees with its source URI")
+        object.__setattr__(self, "source_kind", actual_kind)
         if self.char_end <= self.char_start:
             raise ValueError("citation character range is invalid")
         return self

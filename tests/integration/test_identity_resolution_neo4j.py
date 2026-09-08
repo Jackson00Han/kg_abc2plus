@@ -163,6 +163,7 @@ class Neo4jIdentityResolutionIntegrationTests(unittest.TestCase):
                      "char_end": source["characters"], "text": source["text"]}],
         )
         self.operations = Neo4jKnowledgeOperations(
+            allow_legacy_authoritative_import=True,
             driver=self.driver, database=self.database, construction=workflow, clock=lambda: NOW
         )
         self.publication_id = None

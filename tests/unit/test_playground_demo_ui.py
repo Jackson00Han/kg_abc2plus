@@ -136,7 +136,7 @@ const context = vm.createContext({$, fields, kit, source, state, elements, metad
   constructionFingerprint: async () => JSON.stringify({content_sha256: source.sha256}),
   nextConstructionOperation: () => 'demo-operation-key', completeConstructionOperation() {state.completedOperations = (state.completedOperations || 0) + 1;},
   loadConstructionJobs: async () => {}, loadReviews: async () => {},
-  loadActiveDocuments: async () => {}, showConstructionFlow() {},
+  loadActiveDocuments: async () => {}, showConstructionFlow(flow) {state.constructionFlow = flow;},
   requirePublishedConstructionOntology: async () => true,
   apiRequest: (url, options) => new Promise((resolve, reject) => requests.push({url, options, resolve, reject})),
   flush: () => new Promise(resolve => setImmediate(resolve)),
@@ -225,10 +225,10 @@ assert.equal($('abox-prepare-button').hidden, false);
     def test_prefill_selects_mode_but_leaves_file_and_all_writes_to_user(self) -> None:
         self.run_js(r"""
 prepareDemoUpload('authoritative_source');
-assert.equal($('document-extraction-mode').value, 'SOURCE_ONLY');
+assert.equal($('document-extraction-mode').value, 'LLM');
 assert.equal($('document-uri').value, source.metadata.canonical_uri);
 assert.equal($('document-file').value, '');
-assert.match($('construct-button').textContent, /不抽取/);
+assert.match($('construct-button').textContent, /抽取/);
 prepareDemoUpload('maintenance_report');
 assert.equal($('document-extraction-mode').value, 'LLM');
 loadDemoOntology();
@@ -254,14 +254,15 @@ const first = constructKnowledge();
 const duplicate = constructKnowledge();
 await flush();
 assert.equal(requests.length, 1);
-assert.equal(JSON.parse(requests[0].options.body).extraction_mode, 'SOURCE_ONLY');
+assert.equal(JSON.parse(requests[0].options.body).extraction_mode, 'LLM');
+assert.equal(JSON.parse(requests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
 requests[0].resolve(result());
 await Promise.all([first, duplicate]);
-assert.equal(JSON.parse(elements.aboxEditor.value).document_id, undefined);
-assert.equal(JSON.parse(elements.aboxEditor.value).mentions[0].evidence.document_id, 'real-document');
+assert.equal(elements.aboxEditor.value, 'user draft');
+assert.equal(state.demoSourceBinding, null);
 assert.equal(state.constructionBusy, false);
 assert.equal($('construct-button').disabled, false);
-assert.match($('construction-next-note').textContent, /配套专家实例已填入 03/);
+assert.match($('construction-next-note').textContent, /未抽取到可审核/);
 """, upload=True)
 
     def test_identity_change_discards_inflight_upload_result_and_generated_draft(self) -> None:
@@ -344,8 +345,8 @@ assert.match($('construction-mode-note').textContent, /最多 2 Chunks/);
 assert.match($('construction-mode-note').textContent, /最多自动纠正一次/);
 assert.match($('construction-mode-note').textContent, /超时不自动重试/);
 prepareDemoUpload('authoritative_source');
-assert.match($('construction-mode-note').textContent, /最多 4 Chunks/);
-assert.match($('construction-mode-note').textContent, /不执行 LLM 抽取或自动纠正/);
+assert.match($('construction-mode-note').textContent, /最多 2 Chunks/);
+assert.match($('construction-mode-note').textContent, /最多自动纠正一次/);
 showConstructionResult(result());
 assert.match($('construction-validation-summary').innerHTML, /未执行 LLM 抽取/);
 const legacy = result(); legacy.extraction_mode = 'LLM'; legacy.chunks[0].status = 'CANDIDATE';
@@ -398,12 +399,11 @@ assert.match($('construction-next-note').textContent, /已生成可审核记录/
 assert.match($('construction-next-note').textContent, /另有 1 个片段抽取未通过校验/);
 await uploadAndFinish(legacy);
 assert.equal($('construction-next-button').hidden, true);
-// Source-only completion deliberately proceeds to expert import without candidates.
+// Historical source-only responses never fabricate or prefill expert instances.
 prepareDemoUpload('authoritative_source');
 await uploadAndFinish(result());
-assert.equal($('construction-next-button').hidden, false);
-assert.match($('construction-next-button').textContent, /导入并发布专家实例/);
-assert.match($('construction-next-note').textContent, /权威来源入库完成/);
+assert.equal($('construction-next-button').hidden, true);
+assert.match($('construction-next-note').textContent, /未抽取到可审核/);
 """, upload=True)
 
     def test_job_details_share_validation_summary_and_discard_old_identity_result(self) -> None:

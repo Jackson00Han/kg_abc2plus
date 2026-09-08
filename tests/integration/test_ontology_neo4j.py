@@ -133,6 +133,19 @@ class Neo4jTBoxStoreIntegrationTests(unittest.TestCase):
             database_=self.database,
         )
 
+    def test_atomic_save_activate_replay_and_conflict_rollback(self) -> None:
+        first = _tbox()
+        active = self.store.save_and_activate(first)
+        self.assertEqual(active.status, TBoxStatus.PUBLISHED)
+        self.assertEqual(self.store.save_and_activate(first), active)
+        next_version = TBoxVersion.from_mapping(_mapping(version=2))
+        with self.assertRaises(TBoxConflict):
+            self.store.save_and_activate(next_version, expected_active_tbox_id="stale-version")
+        self.assertEqual(self.store.list(first.tenant_id), (active,))
+        updated = self.store.save_and_activate(next_version, expected_active_tbox_id=active.tbox_id)
+        self.assertEqual(updated.status, TBoxStatus.PUBLISHED)
+        self.assertEqual(self.store.active(first.tenant_id, first.key), updated)
+
     def test_schema_is_structurally_valid_and_online(self) -> None:
         self.assertEqual(verify_schema(self.driver, self.database), [])
 

@@ -26,6 +26,7 @@ cp -n .env.example .env
 
 - [中文最小演示、数据库隔离与重置](docs/playground_mini_demo.md)
 - [运行配置、provider 限制和故障处理](docs/local_playground.md)
+- [知识构建流程与来源等级](docs/knowledge_construction_workflow.md)
 - [知识构建操作指南](docs/industrial_demo_walkthrough.md)
 - [工业工作台使用指南](docs/industrial_workbench.md)
 - [复用已有工业数据库与上传恢复](docs/industrial_runtime_and_uploads.md)

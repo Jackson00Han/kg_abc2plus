@@ -17,6 +17,9 @@ import time
 from uuid import uuid4
 from typing import Any, Callable, Protocol
 
+from .manual import (HUMAN_SOURCE_PREFIX, MANUAL_PROFILE_PREFIX, MANUAL_PROMPT_VERSION,
+                     ManualRecordValidator, PreparedManualRecord)
+
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import (
     canonicalize_uri,
@@ -111,8 +114,8 @@ def _aware(value: datetime | None, name: str) -> datetime | None:
 
 
 def _extraction_mode(value: object) -> str:
-    if value not in ("LLM", "SOURCE_ONLY"):
-        raise ValueError("extraction_mode must be LLM or SOURCE_ONLY")
+    if value not in ("LLM", "SOURCE_ONLY", "MANUAL"):
+        raise ValueError("extraction_mode must be LLM, SOURCE_ONLY or MANUAL")
     return str(value)
 
 
@@ -159,6 +162,7 @@ class ConstructionMetadata:
     max_attempts: int = 3
     extraction_mode: str = "LLM"
     knowledge_scope: str = "BUSINESS"
+    manual_record: PreparedManualRecord | None = None
     industrial_context: IndustrialUploadContext | None = None
 
     def __post_init__(self) -> None:
@@ -184,6 +188,10 @@ class ConstructionMetadata:
             raise ValueError("knowledge_scope must be BUSINESS or AUTHORITATIVE")
         if self.knowledge_scope == "AUTHORITATIVE" and self.extraction_mode != "LLM":
             raise ValueError("authoritative document construction requires extraction")
+        if (self.extraction_mode == "MANUAL") != isinstance(self.manual_record, PreparedManualRecord):
+            raise ValueError("manual construction requires an explicit human record")
+        if self.canonical_uri.startswith(HUMAN_SOURCE_PREFIX) != (self.extraction_mode == "MANUAL"):
+            raise ValueError("human source namespace is reserved for explicit manual input")
         if self.industrial_context is not None and not isinstance(self.industrial_context, IndustrialUploadContext):
             raise TypeError("industrial_context must be IndustrialUploadContext")
         if (
@@ -449,6 +457,8 @@ class OntologyExtractor(Protocol):
 
 
 class KnowledgeStore(Protocol):
+    def persist_manual_candidates(self, batch: ABoxRecordBatch) -> object: ...
+
     def persist_llm_candidates(self, batch: ABoxRecordBatch) -> object: ...
 
     def persist_llm_quarantined(self, batch: ABoxRecordBatch) -> object: ...
@@ -1709,7 +1719,8 @@ def _decode_audited_payload(
         raise ConstructionConflict("ontology extraction audit output is invalid") from exc
     audited = AuditedExtraction(
         output=ExtractionOutput(entities, mentions, assertions),
-        origin=KnowledgeOrigin.LLM_EXTRACTED,
+        origin=(KnowledgeOrigin.HUMAN_SUPPLEMENT if getattr(extractor, "is_manual", False)
+                else KnowledgeOrigin.LLM_EXTRACTED),
         authority=AuthorityLevel.SECONDARY,
         status=disposition,
         ontology_version_id=tbox.tbox_id,
@@ -1761,6 +1772,7 @@ def _to_abox_batch(
     chunk: Chunk,
     extracted_at: datetime,
     authoritative: bool = False,
+    manual: bool = False,
 ) -> ABoxRecordBatch | None:
     if not audited.output.mentions:
         if audited.output.entities or audited.output.assertions:
@@ -1783,6 +1795,11 @@ def _to_abox_batch(
     else:
         raise ConstructionConflict("only candidate or quarantined output can form A-Box records")
 
+    if manual:
+        if authoritative:
+            raise ConstructionConflict("human additions cannot claim document authority")
+        trust = replace(trust, origin=KnowledgeOrigin.HUMAN_SUPPLEMENT,
+                        extractor_version=None, prompt_version=None)
     if authoritative:
         trust = replace(trust, origin=KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
                         authority=AuthorityLevel.AUTHORITATIVE)
@@ -2113,6 +2130,8 @@ class Neo4jKnowledgeConstructionWorkflow:
                                else metadata.industrial_context.identity(principal))
         self._require_deadline(deadline)
         selected_parser = self.industrial_parser if industrial and self.industrial_parser is not None else self.parser
+        if metadata.manual_record is not None and payload != metadata.manual_record.text.encode('utf-8'):
+            raise ConstructionConflict("manual source content differs from submitted facts")
         parsed = selected_parser.parse(payload, mime_type=metadata.mime_type)
         self._preflight_budget(parsed, extraction_mode=metadata.extraction_mode)
         if industrial:
@@ -2131,6 +2150,13 @@ class Neo4jKnowledgeConstructionWorkflow:
         provider_timeout = 0.0
         extractor_signature = SOURCE_ONLY_AUDIT_SIGNATURE
         prompt_signature = CANONICAL_EMPTY_PROMPT_SIGNATURE
+        if metadata.extraction_mode == "MANUAL":
+            assert metadata.manual_record is not None
+            if len(parsed.chunks) != 1 or parsed.normalized_text != metadata.manual_record.text:
+                raise ConstructionBudgetExceeded("manual input must fit one exact record")
+            extractor = ManualRecordValidator(tbox, metadata.manual_record)
+            extractor_signature = metadata.manual_record.signature
+            prompt_signature = MANUAL_PROMPT_VERSION
         if metadata.extraction_mode == "LLM":
             extractor = self.extractor_factory(tbox)
             if (
@@ -2733,7 +2759,8 @@ class Neo4jKnowledgeConstructionWorkflow:
                         on_validation_attempt=retain_attempt,
                     )
                 else:
-                    before_model_call()
+                    if not getattr(extractor, "is_manual", False):
+                        before_model_call()
                     audited = extractor.extract_audited(
                         artifact_id=artifact_id, input_hash=input_hash,
                         chunk=chunk, profile=profile,
@@ -2796,6 +2823,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             else _to_abox_batch(
                 audited, chunk=chunk, extracted_at=extracted_at,
                 authoritative=profile.extractor_signature.endswith(AUTHORITATIVE_PROFILE_SUFFIX),
+                manual=profile.extractor_signature.startswith(MANUAL_PROFILE_PREFIX),
             )
         )
         status = (
@@ -2823,7 +2851,9 @@ class Neo4jKnowledgeConstructionWorkflow:
             principal,
             batch,
         ):
-            if audited is not None and audited.status is GovernanceStatus.CANDIDATE:
+            if profile.extractor_signature.startswith(MANUAL_PROFILE_PREFIX):
+                self.knowledge_store.persist_manual_candidates(batch)
+            elif audited is not None and audited.status is GovernanceStatus.CANDIDATE:
                 self.knowledge_store.persist_llm_candidates(batch)
             elif audited is not None and audited.status is GovernanceStatus.QUARANTINED:
                 self.knowledge_store.persist_llm_quarantined(batch)

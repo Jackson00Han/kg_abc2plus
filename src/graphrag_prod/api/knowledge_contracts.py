@@ -255,6 +255,8 @@ class OntologyHierarchy(StrictAPIModel):
 
 
 class OntologyImportRequest(StrictAPIModel):
+    activate: bool = False
+    expected_active_tbox_id: Identifier | None = None
     key: OntologyKey
     version: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
     entity_types: Annotated[
@@ -497,10 +499,33 @@ class IndustrialConstructionContextRequest(StrictAPIModel):
         return IndustrialUploadContext(self.family, self.asset_keys)
 
 
+class ManualEntityInput(StrictAPIModel):
+    entity_type: TypeName
+    canonical_name: ShortText
+
+
+class ManualFactInput(StrictAPIModel):
+    kind: Literal["ENTITY", "PROPERTY", "RELATIONSHIP"]
+    subject: ManualEntityInput
+    predicate: TypeName | None = None
+    object_entity: ManualEntityInput | None = None
+    literal: RawLiteralInput | None = None
+
+    def to_record(self):
+        from graphrag_prod.construction.manual import prepare_manual_record
+        return prepare_manual_record(self.model_dump(mode="python", exclude_none=True))
+
+    @model_validator(mode="after")
+    def validate_record(self) -> Self:
+        self.to_record()
+        return self
+
+
 class KnowledgeConstructionRequest(StrictAPIModel):
     knowledge_scope: Literal["BUSINESS", "AUTHORITATIVE"] = "BUSINESS"
+    manual_fact: ManualFactInput | None = None
     industrial_context: IndustrialConstructionContextRequest | None = None
-    extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
+    extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
     operation_key: Annotated[
         str,
         StringConstraints(
@@ -547,7 +572,7 @@ class KnowledgeConstructionRequest(StrictAPIModel):
             max_length=MAX_BASE64_DOCUMENT_CHARS,
             pattern=r"^[A-Za-z0-9+/]*={0,2}$",
         ),
-    ]
+    ] | None = None
 
     @field_validator("canonical_uri")
     @classmethod
@@ -576,7 +601,9 @@ class KnowledgeConstructionRequest(StrictAPIModel):
 
     @field_validator("content_base64")
     @classmethod
-    def canonical_base64(cls, value: str) -> str:
+    def canonical_base64(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         try:
             decoded = base64.b64decode(value, validate=True)
         except (ValueError, binascii.Error) as error:
@@ -587,7 +614,23 @@ class KnowledgeConstructionRequest(StrictAPIModel):
             raise ValueError("content_base64 must be canonical base64")
         return value
 
+    @model_validator(mode="after")
+    def validate_source_mode(self) -> Self:
+        from graphrag_prod.construction.manual import HUMAN_SOURCE_PREFIX
+        if self.extraction_mode == "MANUAL":
+            if (self.manual_fact is None or self.content_base64 is not None
+                    or self.knowledge_scope != "BUSINESS" or self.industrial_context is not None
+                    or self.canonical_uri != HUMAN_SOURCE_PREFIX + self.operation_key
+                    or self.source_name != "人工补充记录" or self.mime_type != "text/plain"):
+                raise ValueError("manual records require explicit human facts and their reserved source identity")
+        elif self.manual_fact is not None or self.content_base64 is None or self.canonical_uri.startswith(HUMAN_SOURCE_PREFIX):
+            raise ValueError("document upload requires content and cannot impersonate manual input")
+        return self
+
     def decoded_content(self) -> bytes:
+        if self.manual_fact is not None:
+            return self.manual_fact.to_record().text.encode('utf-8')
+        assert self.content_base64 is not None
         return base64.b64decode(self.content_base64, validate=True)
 
 
@@ -639,7 +682,7 @@ class ConstructionChunkResponse(StrictAPIModel):
 
 
 class KnowledgeConstructionResponse(StrictAPIModel):
-    extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
+    extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
     job_id: Identifier
     document_id: Identifier
     version_id: Identifier
@@ -684,7 +727,7 @@ class ConstructionJobListRequest(StrictAPIModel):
 
 
 class ConstructionJobResponse(StrictAPIModel):
-    extraction_mode: Literal["LLM", "SOURCE_ONLY"] = "LLM"
+    extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
     job_id: Identifier
     document_id: Identifier
     version_id: Identifier

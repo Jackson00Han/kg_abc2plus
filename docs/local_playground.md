@@ -214,41 +214,27 @@ import or extraction, review, and publication flow.
 The [pump-maintenance walkthrough](industrial_demo_walkthrough.md) provides
 three downloadable, checksum-bound source files, a matching T-Box, and expert
 instances. The page's demo kit only downloads materials and prefills forms.
-Its authoritative source uses `SOURCE_ONLY`: parse/chunk/embed and source
-audit, without constructing an extractor, calling the extraction LLM, or
-creating candidates. The exact original file plus the successful runtime IDs
-fill an editable A-Box draft; importing and publishing remain explicit actions.
-These files are a fictional, agreed expert baseline for this project.
+Its authoritative source is now processed by the actual ontology-constrained
+extractor. See [the workflow contract](knowledge_construction_workflow.md) for
+fixed source grades and provenance. Templates never substitute for extraction.
 
 Use the **知识构建** view for the complete property-graph governance loop:
 
-1. Edit and import the visible default industrial T-Box JSON. This creates a
-   draft only; a human must explicitly publish it. Existing versions can be
-   loaded with their checksum for exact replay validation, copied to the next
-   unused version for editing, or downloaded as a self-describing JSON
-   artifact. Each starter entity type declares both its expert-managed
-   namespace and the explicit
-   `llm-candidate` provisional namespace required for reviewable model
-   proposals. Approval never silently promotes that namespace to expert truth;
-   authority and origin remain separate governed fields.
-2. Optionally import expert-controlled A-Box records. Every record must bind to
-   an active document version and an exact, ACL-authorized Chunk substring.
-   Typed literal assertions accept only source-owned `raw_literal`, optional
-   raw unit, and optional raw temporal strings; datatype parsing, unit
-   canonicalization, canonical values, and normalized timestamps are generated
-   by the server from the published T-Box and are never trusted from a client.
-3. Upload one UTF-8 `txt`, `md`, `csv`, or `json` document (maximum 5 MiB),
-   select a non-empty subset of the current persona's access groups plus a
-   published T-Box key, and run construction. The UI defaults to one narrow
-   group rather than silently broadening document visibility. The server parses
-   and chunks the document, embeds each Chunk in the configured vector space,
-   and, in the default `LLM` mode, asks the configured LLM for T-Box-constrained
-   proposals. `SOURCE_ONLY` ends after evidence ingestion and its audit so an
-   expert can import source-backed instances separately. It retains the character
-   and deadline bounds and permits four Chunks; LLM mode permits two to reserve
-   correction capacity. Embedding provider usage still applies.
-   Mode belongs to operation identity; changing it needs a new operation key.
-   A later LLM operation can reuse the same source, Chunks and embeddings.
+1. Enter the application T-Box and save/activate it atomically. Existing versions
+   can be replayed with their checksum, copied forward or exported as JSON.
+2. Upload authoritative documents, extract candidates, edit/confirm their
+   identities and facts, then explicitly publish the authority graph.
+3. Upload business documents in the separate secondary flow. Both document
+   flows accept bounded UTF-8 txt/md/csv/json inputs and require an active
+   ontology and a non-empty subset of the caller's access groups. Business
+   facts remain secondary after human review. Explicit human supplements use
+   a typed form and an immutable human input record; they are secondary and
+   never impersonate a documentary quote. Only complete active publication
+   makes their source text eligible for retrieval.
+   The legacy SOURCE_ONLY API remains available for source lifecycle callers;
+   the ordinary page no longer selects it. Legacy expert-import creation is
+   disabled in the normal adapter and requires explicit offline compatibility
+   opt-in. Existing published expert revisions remain readable.
    The page shows
    the server-advertised Chunk/model-call/deadline cost boundaries when present.
    The 5 MiB transport limit is not a promise that a large file will pass these

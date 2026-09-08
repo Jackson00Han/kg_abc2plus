@@ -301,6 +301,50 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
         with self.assertRaises(ConstructionConflict):
             self.workflow.run(principal, SOURCE, self.metadata)
 
+    def test_manual_source_requires_complete_active_publication_and_keeps_provenance(self) -> None:
+        from graphrag_prod.construction.manual import prepare_manual_record
+        from graphrag_prod.knowledge.review import ReviewRecordKind
+        from graphrag_prod.retrieval.engine import HYDRATE_QUERY, _ACTIVE_CORPUS_GUARD
+        record = prepare_manual_record({"kind": "RELATIONSHIP",
+            "subject": {"entity_type": "Company", "canonical_name": "Acme"},
+            "predicate": "OWNS", "object_entity": {"entity_type": "Asset", "canonical_name": "Pump-7"}})
+        metadata = replace(self.metadata, operation_key="manual-1", canonical_uri="urn:graphrag:human:manual-1",
+                           source_name="人工补充记录", extraction_mode="MANUAL", manual_record=record)
+        result = self.workflow.run(self.principal, record.text.encode(), metadata)
+        self.assertEqual(self.completions.calls, [])
+        self.assertEqual(self.workflow.run(self.principal, record.text.encode(), metadata).job_id, result.job_id)
+        self.assertEqual(self.embedding_calls, 1)
+        query = HYDRATE_QUERY.replace(_ACTIVE_CORPUS_GUARD, "")
+        def visible(groups=("board",)):
+            rows, _, _ = self.driver.execute_query(query, tenant_id=self.tenant_id, groups=list(groups),
+                chunk_ids=[result.chunks[0].chunk_id], document_ids=[], version_ids=[], published_before=None,
+                database_=self.database)
+            return rows
+        self.assertEqual(visible(), [])
+        service = Neo4jKnowledgeReviewService(self.driver, self.database)
+        approved = []
+        for kind in (ReviewRecordKind.ENTITY_MENTION, ReviewRecordKind.ASSERTION):
+            for item in service.review_queue(self.principal):
+                if item.record_kind != kind:
+                    continue
+                self.assertEqual(item.record.trust.origin.value, "HUMAN_SUPPLEMENT")
+                self.assertEqual(item.record.trust.authority.value, "SECONDARY")
+                outcome = service.approve(self.principal, record_kind=kind, record_id=item.record.record_id,
+                    expected_revision=item.record.revision.revision, reviewed_at=NOW, notes="Confirm human input")
+                approved.append(outcome.revision_id)
+        self.assertEqual(len(approved), 3)
+        self.assertEqual(visible(), [])
+        principal = replace(self.principal, capabilities=self.principal.capabilities | {"knowledge:publish"})
+        adapter = Neo4jKnowledgeOperations(driver=self.driver, database=self.database, construction=self.workflow, clock=lambda: NOW)
+        published = adapter.publish(principal, PublicationRequest(approved_revision_ids=approved)).payload
+        self.assertEqual(len(visible()), 1)
+        self.assertEqual(visible(("public",)), [])
+        self.assertEqual(visible()[0]["source_name"], "人工补充记录")
+        # A partial record must never expose the complete human statement.
+        self.driver.execute_query("MATCH (p:KnowledgePublication {publication_id:$id})-[r:PUBLISHES_KNOWLEDGE_REVISION]->(:GovernedAssertionRevision) DELETE r",
+                                  id=published.publication_id, database_=self.database)
+        self.assertEqual(visible(), [])
+
     def _enable_validation_feedback(self, *steps: str) -> _FeedbackCompletions:
         completions = _FeedbackCompletions(*steps)
         self.completions = completions
@@ -963,6 +1007,7 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             capabilities=self.principal.capabilities | {"knowledge:import", "knowledge:publish"},
         )
         adapter = Neo4jKnowledgeOperations(
+            allow_legacy_authoritative_import=True,
             driver=self.driver, database=self.database, construction=self.workflow,
             clock=lambda: NOW,
         )

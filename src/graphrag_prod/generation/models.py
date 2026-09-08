@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from graphrag_prod.retrieval.models import Citation, RetrievedChunk
 
 
-PROMPT_VERSION = "grounded-answer-v1.3.0"
+PROMPT_VERSION = "grounded-answer-v1.4.0"
 OUTPUT_SCHEMA_VERSION = "grounded-answer-output-v1.0.0"
 REFUSAL_ANSWER = "I don't have enough cited context to answer this question."
 _INLINE_CITATION = re.compile(r"\[S[1-9][0-9]*\]")

@@ -24,8 +24,8 @@ assert.ok(!elements.reviewList.innerHTML.includes('data-review-next'));
 // An empty queue is not evidence that any knowledge was reviewed or approved.
 state.reviews=[];
 renderReviews();
-assert.ok(elements.reviewList.innerHTML.includes('当前没有待审核记录'));
-assert.ok(elements.reviewList.innerHTML.includes('04 上传业务文档'));
+assert.ok(elements.reviewList.innerHTML.includes('当前没有待确认记录'));
+assert.ok(elements.reviewList.innerHTML.includes('请先上传文档并抽取'));
 assert.ok(!elements.reviewList.innerHTML.includes('data-review-next'));
 assert.ok(!elements.reviewList.innerHTML.includes('class="review-complete"'));
 // Deferred records need investigation and alone do not justify a publish action.
@@ -43,7 +43,7 @@ assert.ok(elements.reviewList.innerHTML.includes('暂缓记录仍需核查'));
 state.reviews=[];
 renderReviews();
 assert.ok(elements.reviewList.innerHTML.includes('data-review-next'));
-assert.ok(!elements.reviewList.innerHTML.includes('当前没有待审核记录'));
+assert.ok(!elements.reviewList.innerHTML.includes('当前没有待确认记录'));
 // Existing approvals must not suggest skipping other still-actionable records.
 for (const pending of [item('pending-entity'),item('pending-fact',1,'ASSERTION')]) {
   state.reviews=[pending]; state.reviewPhase='identities';
@@ -53,7 +53,7 @@ for (const pending of [item('pending-entity'),item('pending-fact',1,'ASSERTION')
 state.reviews=[]; state.approvedRevisions.clear();
 renderReviews();
 assert.ok(!elements.reviewList.innerHTML.includes('data-review-next'));
-assert.ok(elements.reviewList.innerHTML.includes('当前没有待审核记录'));
+assert.ok(elements.reviewList.innerHTML.includes('当前没有待确认记录'));
 ''')
 
     def test_approval_requires_current_identity_or_ready_fact_assessment(self) -> None:

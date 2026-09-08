@@ -145,7 +145,7 @@ class AuditedExtraction:
     findings: tuple[ExtractionFinding, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.origin is not KnowledgeOrigin.LLM_EXTRACTED:
+        if self.origin not in {KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.HUMAN_SUPPLEMENT}:
             raise ValueError("model extraction origin must be LLM_EXTRACTED")
         if self.authority is not AuthorityLevel.SECONDARY:
             raise ValueError("model extraction authority must be SECONDARY")

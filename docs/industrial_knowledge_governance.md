@@ -68,13 +68,11 @@ unverifiable property bag on a canonical Entity.
 
 ## Document and extraction boundary
 
-Expert initialization may use the governed construction API in `SOURCE_ONLY`
-mode. This creates the traceable source and vector representation without LLM
-extraction; expert instances must then be explicitly imported and published.
-The source-only audit has its own profile and operation identity, preserving
-the same immutable source/Chunk identities and all normal authorization,
-lifecycle, resource and recovery checks. It does not create authoritative
-facts just because the document has been described as authoritative.
+The normal authoritative flow extracts actual documents under an active ontology,
+then permits human correction and explicit publication. Source scope fixes the
+grade before review. The legacy SOURCE_ONLY mode only persists source evidence;
+normal runtimes disable the former expert-import minting path. Existing expert
+revisions remain compatible. See [the current workflow](knowledge_construction_workflow.md).
 
 The construction layer accepts bytes, not filesystem paths. Its built-in
 allowlist covers UTF-8 plain text, Markdown, CSV, and JSON with pre- and

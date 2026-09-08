@@ -182,6 +182,25 @@ WHERE embedding.embedding_space_id = active_embedding_space_id
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
+  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
 WITH DISTINCT chunk, embedding
 WITH chunk, vector.similarity.cosine(embedding.vector, $query_vector) AS score
 WHERE score >= $minimum_score
@@ -216,6 +235,25 @@ WHERE chunk:Chunk
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
+  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
 RETURN DISTINCT chunk.chunk_id AS chunk_id, score
 ORDER BY score DESC, chunk_id
 LIMIT $limit
@@ -247,6 +285,25 @@ WHERE any(group IN seed_document.access_groups WHERE group IN $groups)
   AND (size($document_ids) = 0 OR seed_document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR seed_version.version_id IN $version_ids)
   AND ($published_before IS NULL OR seed_version.published_at <= $published_before)
+  AND (NOT seed_document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = seed_version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = seed_version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
   AND coalesce(entity.governance_status, 'ACCEPTED') IN
       ['ACCEPTED', 'ACCEPTED_BY_REVIEW']
 WITH DISTINCT seed, entity, seed_membership.confidence AS mention_confidence
@@ -275,6 +332,25 @@ CALL (entity) {
       AND (size($document_ids) = 0 OR degree_document.document_id IN $document_ids)
       AND (size($version_ids) = 0 OR degree_version.version_id IN $version_ids)
       AND ($published_before IS NULL OR degree_version.published_at <= $published_before)
+  AND (NOT degree_document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = degree_version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = degree_version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
     RETURN count(DISTINCT linked) AS entity_degree
 }
 MATCH (candidate_document:Document {tenant_id: $tenant_id})
@@ -300,6 +376,25 @@ WHERE candidate.chunk_id <> seed.chunk_id
   AND (size($document_ids) = 0 OR candidate_document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR candidate_version.version_id IN $version_ids)
   AND ($published_before IS NULL OR candidate_version.published_at <= $published_before)
+  AND (NOT candidate_document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = candidate_version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = candidate_version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
 RETURN DISTINCT candidate.chunk_id AS chunk_id,
        entity.entity_id AS entity_id,
        entity.canonical_name AS entity_name,
@@ -355,6 +450,25 @@ WHERE chunk.tenant_id = $tenant_id
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
+  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
 WITH DISTINCT chunk, embedding
 WITH chunk, vector.similarity.cosine(embedding.vector, $query_vector) AS score
 WHERE score >= $minimum_score
@@ -394,6 +508,25 @@ WHERE neighbor.chunk_id <> anchor.chunk_id
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
+  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
 RETURN DISTINCT anchor_position, anchor.chunk_id AS anchor_id,
        neighbor.chunk_id AS chunk_id,
        abs(neighbor.ordinal - anchor.ordinal) AS distance,
@@ -424,6 +557,25 @@ WHERE any(group IN document.access_groups WHERE group IN $groups)
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
+  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
+    EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
+    }
+    AND NOT EXISTS {
+      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
+      WHERE human_revision.version_id = version.version_id
+        AND NOT EXISTS {
+          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
+          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
+            AND human_revision.authority_level = 'SECONDARY'
+            AND human_revision.governance_status = 'PUBLISHED'
+        }
+    }
+  ))
 RETURN DISTINCT chunk.chunk_id AS chunk_id,
        chunk.text AS text,
        chunk.checksum AS chunk_checksum,

@@ -430,6 +430,17 @@ class Neo4jKnowledgeStore:
         batch.require_llm_candidates()
         return self._write_batch(batch, publish_entity_profiles=False)
 
+    def persist_manual_candidates(self, batch: ABoxRecordBatch) -> KnowledgeWriteResult:
+        """Persist explicitly submitted human facts without granting authority."""
+        for record in (*batch.mentions, *batch.assertions):
+            if (record.trust.origin is not KnowledgeOrigin.HUMAN_SUPPLEMENT
+                    or record.trust.authority is not AuthorityLevel.SECONDARY
+                    or record.trust.status is not GovernanceStatus.CANDIDATE
+                    or record.trust.extractor_version is not None
+                    or record.trust.prompt_version is not None):
+                raise ValueError("manual persistence requires unreviewed human secondary records")
+        return self._write_batch(batch, publish_entity_profiles=False)
+
     @staticmethod
     def require_rule_candidates(batch: ABoxRecordBatch) -> None:
         """Validate explicit rule provenance without relabelling it as LLM output."""
@@ -483,7 +494,7 @@ class Neo4jKnowledgeStore:
     ) -> KnowledgeWriteResult:
         cls._validate_tbox_tx(tx, batch)
         for mention in batch.mentions:
-            cls._validate_evidence_tx(tx, mention.evidence)
+            cls._validate_evidence_tx(tx, mention.evidence, origin=mention.trust.origin)
             cls._lock_head_tx(tx, mention.revision, mention.tenant_id, "ENTITY_MENTION", mention.created_at)
             if publish_entity_profiles:
                 cls._merge_entity_tx(tx, mention.entity)
@@ -494,7 +505,7 @@ class Neo4jKnowledgeStore:
             )
 
         for assertion in batch.assertions:
-            cls._validate_evidence_tx(tx, assertion.evidence)
+            cls._validate_evidence_tx(tx, assertion.evidence, origin=assertion.trust.origin)
             cls._lock_head_tx(tx, assertion.revision, assertion.tenant_id, "ASSERTION", assertion.created_at)
             if publish_entity_profiles:
                 cls._merge_entity_tx(tx, assertion.subject)
@@ -642,7 +653,8 @@ class Neo4jKnowledgeStore:
                 "one A-Box write must use exactly one knowledge origin"
             )
         model_derived = next(iter(origins)) in {
-            KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED
+            KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
+            KnowledgeOrigin.HUMAN_SUPPLEMENT,
         }
         for entity in entities.values():
             contract = entity_contracts.get(entity.entity_type)
@@ -724,7 +736,7 @@ class Neo4jKnowledgeStore:
                     )
 
     @staticmethod
-    def _validate_evidence_tx(tx: Any, evidence: EvidenceReference) -> None:
+    def _validate_evidence_tx(tx: Any, evidence: EvidenceReference, *, origin: KnowledgeOrigin | None = None) -> None:
         row = tx.run(
             """
             MATCH (document:Document {
@@ -749,7 +761,8 @@ class Neo4jKnowledgeStore:
             WHERE version.document_id = document.document_id
               AND chunk.document_id = document.document_id
               AND chunk.version_id = version.version_id
-            RETURN chunk.char_start AS chunk_char_start,
+            RETURN document.canonical_uri AS source_uri,
+                   chunk.char_start AS chunk_char_start,
                    chunk.char_end AS chunk_char_end,
                    substring(
                        chunk.text,
@@ -770,6 +783,10 @@ class Neo4jKnowledgeStore:
         ).single()
         if row is None:
             raise KnowledgeEvidenceError("source document/version/Chunk path does not exist")
+        if origin is not None:
+            human_source = str(row.get("source_uri", "")).startswith("urn:graphrag:human:")
+            if human_source != (origin is KnowledgeOrigin.HUMAN_SUPPLEMENT):
+                raise KnowledgeEvidenceError("knowledge origin does not match the source kind")
         groups = frozenset(row["access_groups"] or ())
         document_groups = frozenset(row["document_access_groups"] or ())
         matches = (

@@ -191,7 +191,7 @@ class GroundedGenerationTests(unittest.TestCase):
         )
         self.assertEqual(len(model.requests), 1)
         request = model.requests[0]
-        self.assertEqual(PROMPT_VERSION, "grounded-answer-v1.3.0")
+        self.assertEqual(PROMPT_VERSION, "grounded-answer-v1.4.0")
         self.assertEqual(request.prompt_version, PROMPT_VERSION)
         self.assertIn(f"Prompt-Version: {PROMPT_VERSION}", request.prompt)
         self.assertIn(text, request.prompt)

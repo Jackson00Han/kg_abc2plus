@@ -213,6 +213,27 @@ class Neo4jTBoxStore:
             )
         return self.get(value.tenant_id, value.tbox_id)
 
+    def save_and_activate(
+        self, value: TBoxVersion, *, expected_checksum: str | None = None,
+        expected_active_tbox_id: str | None = None,
+    ) -> TBoxVersion:
+        """Save and activate atomically: failed activation leaves no saved draft."""
+        if not isinstance(value, TBoxVersion) or value.status is not TBoxStatus.DRAFT:
+            raise ValueError("activation requires a validated new definition")
+        _validate_declared_units(value)
+        expected_checksum = _checked_checksum(expected_checksum)
+        if expected_active_tbox_id is not None:
+            expected_active_tbox_id = _required(expected_active_tbox_id, "expected_active_tbox_id")
+        now = datetime.now(UTC)
+
+        def save(tx: Any) -> None:
+            self._import_tx(tx, value, expected_checksum, now)
+            self._publish_tx(tx, value.tenant_id, value.tbox_id, expected_active_tbox_id, now)
+
+        with self.driver.session(database=self.database) as session:
+            session.execute_write(save)
+        return self.get(value.tenant_id, value.tbox_id)
+
     # Explicit alias for callers that name the operation after its payload.
     import_tbox = import_version
 

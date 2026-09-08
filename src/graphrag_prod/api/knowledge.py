@@ -615,6 +615,7 @@ class Neo4jKnowledgeOperations:
         inventory_service: Any | None = None,
         retirement_service: Any | None = None,
         clock: Callable[[], datetime] | None = None,
+        allow_legacy_authoritative_import: bool = False,
     ) -> None:
         if not callable(getattr(construction, "run", None)):
             raise TypeError("construction must implement run")
@@ -638,6 +639,7 @@ class Neo4jKnowledgeOperations:
             raise TypeError(
                 "retirement_service must implement list_active_documents and retire"
             )
+        self.allow_legacy_authoritative_import = allow_legacy_authoritative_import
         self.driver = driver
         self.database = database
         self.construction = construction
@@ -879,9 +881,11 @@ class Neo4jKnowledgeOperations:
         self, principal: Principal, request: OntologyImportRequest
     ) -> BackendResult:
         _require_capability(principal, "ontology:write")
+        if request.activate:
+            _require_capability(principal, "ontology:publish")
         mapping = request.model_dump(
             mode="python",
-            exclude={"expected_checksum"},
+            exclude={"expected_checksum", "activate", "expected_active_tbox_id"},
             exclude_none=True,
         )
         mapping.update(tenant_id=principal.tenant_id, status=TBoxStatus.DRAFT.value)
@@ -890,10 +894,13 @@ class Neo4jKnowledgeOperations:
         except (TypeError, ValueError) as error:
             raise RequestValidationError() from error
         try:
-            stored = self.tboxes.import_version(
-                value,
-                expected_checksum=request.expected_checksum,
-            )
+            if request.activate:
+                stored = self.tboxes.save_and_activate(
+                    value, expected_checksum=request.expected_checksum,
+                    expected_active_tbox_id=request.expected_active_tbox_id,
+                )
+            else:
+                stored = self.tboxes.import_version(value, expected_checksum=request.expected_checksum)
         except ApiRuntimeError:
             raise
         except TimeoutError as error:
@@ -1006,6 +1013,8 @@ class Neo4jKnowledgeOperations:
         self, principal: Principal, request: AuthoritativeImportRequest
     ) -> BackendResult:
         _require_capability(principal, "knowledge:import")
+        if not self.allow_legacy_authoritative_import:
+            raise ConflictError()  # New authority is created only by document construction.
         now = self._now()
         tbox = self._active_tbox(principal, request.ontology_version_id)
         try:
@@ -1158,6 +1167,7 @@ class Neo4jKnowledgeOperations:
                 max_attempts=request.max_attempts,
                 extraction_mode=request.extraction_mode,
                 knowledge_scope=request.knowledge_scope,
+                manual_record=None if request.manual_fact is None else request.manual_fact.to_record(),
                 industrial_context=None if request.industrial_context is None else request.industrial_context.to_domain(),
             )
             content = request.decoded_content()

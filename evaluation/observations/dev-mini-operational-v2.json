@@ -46,6 +46,6 @@
     "neo4j_image_digest": "sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37",
     "output_schema_version": "grounded-answer-output-v1.0.0",
     "profile_version": "1.0.0",
-    "prompt_version": "grounded-answer-v1.3.0"
+    "prompt_version": "grounded-answer-v1.4.0"
   }
 }

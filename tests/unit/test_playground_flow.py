@@ -45,6 +45,8 @@ class PlaygroundFlowUiTests(unittest.TestCase):
             self.source.index("function activeOntology(key)"):
             self.source.index("function renderOntologies()")
         ]
+        code += self.source[self.source.index("async function importOntology()"):self.source.index("async function publishOntology(")]
+        code += self.source[self.source.index("async function submitManualFact()"):self.source.index("function updateConstructionMode()")]
         code += "\n" + "\n".join(
             line for line in self.source.splitlines()
             if line.strip().startswith("elements.aboxEditor.addEventListener(")
@@ -66,6 +68,7 @@ function makeNode(attrs = {}) {
     scrollIntoView() { this.scrolled = true; },
     addEventListener(name, fn) { this[name] = fn; },
     querySelectorAll() { return []; },
+    querySelector(selector) { this.parts ??= new Map(); if (!this.parts.has(selector)) this.parts.set(selector,makeNode()); return this.parts.get(selector); },
   };
   for (const [key, value] of Object.entries(attrs)) {
     if (key.startsWith('data-')) element.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
@@ -85,7 +88,7 @@ const state = {identityEpoch: 0, ontologies: [], constructionFlow: 'baseline',
   constructionBusy: false, expertImportBusy: false, expertPublishing: false,
   expertRevisionIds: [], approvedRevisions: new Set(['unrelated-approved']),
   selectedCandidateRevisions: new Set(['unrelated-selected']), bootstrap: null};
-const elements = {aboxEditor: $('abox-editor'), aboxOutput: $('abox-output'),
+const elements = {ontologyEditor: $('ontology-editor'), aboxEditor: $('abox-editor'), aboxOutput: $('abox-output'),
   constructionOutput: $('construction-output'), publicationRevisions: $('publication-revisions')};
 elements.publicationRevisions.value = 'unrelated-approved';
 elements.aboxEditor.value = JSON.stringify({mentions: [], assertions: []});
@@ -98,6 +101,9 @@ const context = vm.createContext({$, fields, document, state, elements, assert, 
   loadInventory: async () => {}, loadQuality: async () => {},
   loadQualityHistory: async () => {}, loadActiveDocuments: async () => {},
   apiRequest: (url, options) => new Promise((resolve, reject) => requests.push({url, options, resolve, reject})),
+  crypto: require('node:crypto').webcrypto,
+  selectedDocumentAccessGroups: () => ['engineers'],
+  loadOntologies: async () => {}, loadReviews: async () => {},
   flush: () => new Promise(resolve => setImmediate(resolve)),
 });
 vm.runInContext(input.code, context);
@@ -113,6 +119,42 @@ vm.runInContext('(async () => {' + input.scenario + '})()', context)
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_atomic_ontology_save_uses_real_definition_and_discards_stale_identity(self) -> None:
+        self.run_js(r"""
+state.ontologies=[{key:'assets', tbox_id:'old-active',status:'PUBLISHED'}];
+const definition={key:'assets',version:2,entity_types:[],relationship_types:[],expected_checksum:'a'.repeat(64)};
+elements.ontologyEditor.value=JSON.stringify({schema:'graphrag-property-tbox-export-v1',checksum:definition.expected_checksum,definition});
+const first=importOntology(); const duplicate=importOntology();
+assert.equal(requests.length,1);
+const sent=JSON.parse(requests[0].options.body);
+assert.equal(sent.activate,true); assert.equal(sent.expected_active_tbox_id,'old-active');
+assert.equal(sent.expected_checksum,definition.expected_checksum); assert.equal(sent.version,2);
+state.identityEpoch++; $('document-tbox').value='new-identity';
+requests[0].resolve({tbox_id:'new-active'}); await Promise.all([first,duplicate]);
+assert.equal($('document-tbox').value,'new-identity'); assert.equal(state.ontologySaving,false);
+elements.ontologyEditor.value=JSON.stringify({schema:'unsupported',definition}); await importOntology();
+assert.equal(requests.length,1);
+""")
+
+    def test_manual_form_keeps_retry_identity_and_never_sends_authority_or_document_text(self) -> None:
+        self.run_js(r"""
+$('document-tbox').value='assets'; $('manual-kind').value='ENTITY';
+$('manual-subject-type').value='Equipment'; $('manual-subject-name').value='Pump-7';
+const first=submitManualFact(); const duplicate=submitManualFact();
+assert.equal(requests.length,1);
+requests[0].resolve({items:[{key:'assets',tbox_id:'tbox',status:'PUBLISHED'}]}); await flush();
+const sent=JSON.parse(requests[1].options.body);
+assert.equal(sent.extraction_mode,'MANUAL'); assert.equal(sent.source_name,'人工补充记录');
+assert.equal(sent.canonical_uri,'urn:graphrag:human:'+sent.operation_key);
+assert.equal(sent.knowledge_scope,undefined); assert.equal(sent.content_base64,undefined);
+requests[1].reject(new Error('unknown network outcome')); await Promise.all([first,duplicate]);
+const retry=submitManualFact(); requests[2].resolve({items:[{key:'assets',tbox_id:'tbox',status:'PUBLISHED'}]}); await flush();
+assert.equal(JSON.parse(requests[3].options.body).operation_key,sent.operation_key);
+state.identityEpoch++; $('manual-output').textContent='new identity';
+requests[3].resolve({chunks:[{mention_record_ids:['record']} ]}); await retry;
+assert.equal($('manual-output').textContent,'new identity'); assert.equal(state.manualBusy,false);
+""")
+
     def test_workflow_order_and_shared_upload_preserve_one_control_per_id(self) -> None:
         ids = [item["id"] for item in self.nodes if "id" in item]
         self.assertEqual(len(ids), len(set(ids)))
@@ -126,8 +168,10 @@ const upload = $('upload-card');
 showConstructionFlow('baseline');
 assert.equal(upload.parent, $('source-upload-slot'));
 assert.equal($('step-ontology').hidden, false);
-assert.equal($('step-review').hidden, true);
-assert.equal($('document-extraction-mode').value, 'SOURCE_ONLY');
+assert.equal($('step-review').hidden, false);
+assert.equal($('step-review').parent, $('step-abox'));
+assert.equal($('step-publication').parent, $('baseline-publication-slot'));
+assert.equal($('document-extraction-mode').value, 'LLM');
 $('document-file').value = 'expert.txt';
 showConstructionFlow('business', 'step-review');
 assert.equal($('upload-card'), upload);
@@ -137,7 +181,9 @@ assert.equal($('step-review').hidden, false);
 assert.equal($('step-review').scrolled, true);
 assert.equal($('document-extraction-mode').value, 'LLM');
 assert.equal($('document-file').value, '');
-assert.equal($('upload-step-number').textContent, '04');
+assert.equal($('upload-step-number').textContent, '05');
+assert.equal($('step-review').parent, $('business-review-slot'));
+assert.equal($('step-publication').parent, $('business-publication-slot'));
 state.constructionBusy = true;
 showConstructionFlow('baseline');
 assert.equal(state.constructionFlow, 'business');
@@ -153,7 +199,7 @@ assert.equal(requests.length, 0);
         self.run_js(r"""
 const pending = requirePublishedConstructionOntology('pump', 0);
 requests[0].resolve({items: [{key: 'pump', status: 'DRAFT'}]});
-await assert.rejects(pending, /仍是草稿.*发布此版本/);
+await assert.rejects(pending, /尚未启用.*保存并启用/);
 assert.equal(requests.length, 1);
 assert.equal(requests[0].options, undefined);
 assert.equal($('construction-next').hidden, false);

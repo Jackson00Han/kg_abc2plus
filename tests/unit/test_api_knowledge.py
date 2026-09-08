@@ -1322,6 +1322,7 @@ class KnowledgeAdapterTests(unittest.TestCase):
     ) -> Neo4jKnowledgeOperations:
         return Neo4jKnowledgeOperations(
             driver=driver,
+            allow_legacy_authoritative_import=True,
             construction=construction or _Construction(),
             tboxes=tboxes or _TBoxes(),
             knowledge=store,
@@ -1605,6 +1606,27 @@ class KnowledgeAdapterTests(unittest.TestCase):
         )
         with self.assertRaises(DependencyUnavailableError):
             foreign.inventory(principal, ActivePublicationInventoryRequest())
+
+    def test_normal_runtime_cannot_create_authority_by_legacy_manual_import(self) -> None:
+        store = _KnowledgeStore()
+        adapter = Neo4jKnowledgeOperations(driver=_Driver(), construction=_Construction(), knowledge=store)
+        principal = Principal("editor", "tenant-alpha", frozenset({"engineers"}), frozenset({"knowledge:import"}))
+        with self.assertRaises(ConflictError):
+            adapter.authoritative_import(principal, AuthoritativeImportRequest.model_validate(_authoritative_payload()))
+        self.assertIsNone(store.batch)
+
+    def test_atomic_ontology_activation_requires_publish_before_storage(self) -> None:
+        from unittest.mock import Mock
+        tboxes = Mock()
+        request = OntologyImportRequest.model_validate({"key":"assets", "version":1,
+            "entity_types":[{"name":"Asset", "canonical_key_namespaces":["asset"]}],
+            "relationship_types":[], "activate":True})
+        adapter = self._adapter(_Driver(), _KnowledgeStore(), tboxes=tboxes)
+        principal = Principal("editor", "tenant-alpha", frozenset({"engineers"}), frozenset({"ontology:write"}))
+        with self.assertRaises(AuthorizationError):
+            adapter.ontology_import(principal, request)
+        tboxes.save_and_activate.assert_not_called()
+        tboxes.import_version.assert_not_called()
 
     def test_authoritative_import_hydrates_acl_from_authorized_chunk(self) -> None:
         driver = _Driver()
