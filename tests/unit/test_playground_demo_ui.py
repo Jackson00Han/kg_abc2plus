@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import secrets
 import subprocess
 import unittest
 
@@ -25,6 +26,47 @@ class PlaygroundDemoUiTests(unittest.TestCase):
             Path(__file__).parents[2]
             / "src/graphrag_prod/playground/static/index.html"
         ).read_text(encoding="utf-8")
+
+    def test_workbench_uses_one_operator_for_all_steps(self) -> None:
+        from graphrag_prod.playground.demo_corpus import load_demo_corpus
+
+        node = shutil.which("node")
+        self.assertIsNotNone(node)
+        bootstrap = PlaygroundCatalog(load_demo_corpus(), secrets.token_bytes(32)).bootstrap()
+        start = self.source.index("      function currentPersona() {")
+        end = self.source.index("      function renderDocumentAccessGroups()", start)
+        script = """
+const assert = require('node:assert/strict');
+const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const state = {bootstrap: input.bootstrap, view: 'governance'};
+const elements = {persona: {value: ''}};
+eval(input.code);
+const operator = currentPersona();
+assert.ok(operator);
+assert.equal(operator.tenant_id, 'demo-a');
+for (const persona of state.bootstrap.personas) {
+  elements.persona.value = persona.id;
+  assert.equal(currentPersona().id, operator.id);
+  for (const scope of ['ontology:write', 'ontology:publish', 'knowledge:import',
+    'knowledge:construct', 'knowledge:review', 'knowledge:publish',
+    'knowledge:quality', 'knowledge:lifecycle']) {
+    assert.ok(currentPersona().scopes.includes(scope));
+  }
+  state.view = 'retrieval';
+  assert.equal(currentPersona().id, persona.id);
+  state.view = 'governance';
+}
+state.bootstrap = {personas: []};
+assert.equal(currentPersona(), null);
+"""
+        result = subprocess.run(
+            [node, "-e", script],
+            input=json.dumps({"bootstrap": bootstrap, "code": self.source[start:end]}),
+            text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("governance-persona-select", self.source)
+        self.assertNotIn("governance-scope-note", self.source)
 
     def run_js(self, scenario: str, *, upload: bool = False, detail: bool = False) -> None:
         node = shutil.which("node")

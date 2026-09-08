@@ -652,12 +652,10 @@
         <div>
           <span class="overline">Governed property graph</span>
           <h1 id="governance-title">工业属性图知识构建工作台</h1>
-          <p>T-Box 先定义实体、关系、属性与基数；专家实例进入权威层，LLM 抽取进入次权威候选层，人工审核后才可发布。所有动作都通过当前身份的 JWT、租户和 ACL。</p>
+          <p>T-Box 先定义实体、关系、属性与基数；专家实例进入权威层，LLM 抽取进入次权威候选层，人工审核后才可发布。</p>
         </div>
         <div style="min-width:min(380px,100%)">
-          <div class="field"><label for="governance-persona-select">当前治理身份（JWT tenant / groups / scopes）</label><select id="governance-persona-select"></select></div>
           <div class="capability-list" id="capability-list" aria-label="工作台能力" style="margin-top:9px"></div>
-          <p id="governance-scope-note" style="font-family:var(--mono);font-size:8px;text-align:right"></p>
         </div>
       </div>
 
@@ -917,6 +915,13 @@
       }
 
       function currentPersona() {
+        if (state.view === 'governance') {
+          const required = ['ontology:write', 'ontology:publish', 'knowledge:import',
+            'knowledge:construct', 'knowledge:review', 'knowledge:publish',
+            'knowledge:quality', 'knowledge:lifecycle'];
+          return state.bootstrap?.personas.find(item =>
+            required.every(scope => (item.scopes || []).includes(scope))) || null;
+        }
         return state.bootstrap?.personas.find(item => item.id === elements.persona.value) || null;
       }
 
@@ -948,8 +953,6 @@
           ...persona.groups.map(group => `<span class="group-tag">${escapeHtml(group)}</span>`),
           ...(persona.scopes || []).map(scope => `<span class="group-tag">${escapeHtml(scope)}</span>`),
         ].join('');
-        if ($('governance-persona-select').value !== persona.id) $('governance-persona-select').value = persona.id;
-        $('governance-scope-note').textContent = (persona.scopes || []).join(' · ');
         renderDocumentAccessGroups();
       }
 
@@ -1010,7 +1013,6 @@
         state.selectedQuestion = question;
         elements.query.value = question.query;
         elements.persona.value = question.recommended_persona_id;
-        $('governance-persona-select').value = question.recommended_persona_id;
         if (identityChanged) handleIdentityChange();
         else {
           resetRetrievalResult();
@@ -1589,13 +1591,16 @@
       }
 
       function switchWorkspace(view) {
+        const previousPersonaId = currentPersona()?.id;
         state.view = view;
         const governance = view === 'governance';
         $('retrieval-workspace').classList.toggle('hidden', governance);
         $('governance-workspace').classList.toggle('hidden', !governance);
         $('retrieval-nav').classList.toggle('active', !governance);
         $('governance-nav').classList.toggle('active', governance);
-        if (governance) {
+        if (previousPersonaId !== currentPersona()?.id) {
+          handleIdentityChange();
+        } else if (governance) {
           Promise.allSettled([loadOntologies(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         }
       }
@@ -3343,7 +3348,6 @@
           $('stat-entities').textContent = number(counts.entities);
           $('stat-tenants').textContent = number(counts.tenants);
           elements.persona.innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
-          $('governance-persona-select').innerHTML = bootstrap.personas.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join('');
           resetRetrievalControls();
           const classes = [...new Set(bootstrap.questions.map(item => item.question_class))];
           elements.classFilter.insertAdjacentHTML('beforeend', classes.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(classLabels[value] || value)}</option>`).join(''));
@@ -3355,7 +3359,6 @@
           } catch (_) {}
           if (resetReturn && bootstrap.personas.some(item => item.id === resetReturn.persona_id)) {
             elements.persona.value = resetReturn.persona_id;
-            $('governance-persona-select').value = resetReturn.persona_id;
           }
           renderQuestions(); renderIdentity(); updateMode();
           initializeLocalReset(bootstrap.local_reset);
@@ -3388,10 +3391,6 @@
         updateMode();
       });
       elements.persona.addEventListener('change', handleIdentityChange);
-      $('governance-persona-select').addEventListener('change', event => {
-        elements.persona.value = event.currentTarget.value;
-        elements.persona.dispatchEvent(new Event('change'));
-      });
       elements.retrieve.addEventListener('click', () => run());
       retrievalControls().forEach(input => input.addEventListener('change', () => {
         if (state.retrieval || state.raw) resetRetrievalResult();
