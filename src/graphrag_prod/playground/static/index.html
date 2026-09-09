@@ -754,7 +754,7 @@
           <div class="workbench-actions"><button class="button" id="publication-candidates-refresh-button" type="button">刷新可发布候选</button></div>
           <div class="history-list" id="publication-candidate-list" aria-live="polite"><div class="output-box">可发布候选尚未加载。</div></div>
           <details><summary>高级：按记录 ID 选择或撤回</summary>
-          <label class="query-label" for="publication-revisions">APPROVED revision IDs（每行一个）</label>
+          <label class="query-label" for="publication-revisions">待发布记录的 revision IDs（每条记录选择一个版本，每行一个）</label>
           <textarea class="json-editor compact" id="publication-revisions" spellcheck="false" placeholder="review 后会自动填入，也可手工粘贴"></textarea>
           <label class="query-label" for="publication-removals" style="margin-top:10px">从 active publication 移除的 record IDs（每行一个）</label>
           <textarea class="json-editor compact" id="publication-removals" spellcheck="false" placeholder="可仅提交移除；这是可审计的 publication 变更，不会删除 source"></textarea>
@@ -1379,6 +1379,7 @@
         state.approvedRevisions.clear();
         elements.publicationRevisions.value = '';
         elements.publicationRemovals.value = '';
+        state.reviewBusy=false;state.publicationBusy=false;renderPublicationCandidates();
         elements.inventorySummary.textContent = '活动 A-Box 尚未加载。';
         elements.inventoryList.innerHTML = '<div class="output-box">活动 A-Box 尚未加载。</div>';
         elements.qualityContent.innerHTML = '<div class="output-box">活动图谱质量尚未加载。</div>';
@@ -2598,7 +2599,7 @@
           : state.approvedRevisions.size ? '当前批次可处理记录已审核；暂缓记录不参与发布。'
           : progress.paused ? '当前只有暂缓记录，请补充核查；本次没有已批准的待发布内容。'
           : '当前没有待确认记录。请先上传文档并抽取，或填写人工补充。';
-        const navigation = `<div class="review-guide"><strong>${guidance}</strong><p>待确认提及 ${progress.identities} · 待处理事实 ${progress.facts} · 已暂缓 ${progress.paused} · 本次待发布 ${state.approvedRevisions.size}</p><div class="review-phases" role="group" aria-label="审核顺序">${[['identities','1 确认实体身份',progress.identities],['facts','2 审核属性与关系',progress.facts],['paused','暂缓处理',progress.paused]].map(([key,label,count]) => `<button class="button ${phase === key ? 'primary' : ''}" type="button" data-review-phase="${key}" aria-pressed="${phase === key}">${label}（${count}）</button>`).join('')}</div><p class="review-muted">这里列出当前账号可处理的记录，权威等级和来源逐条标明。相同名称不会自动合并；实体确认不会自动批准它的属性或关系。确认或修改不会提升等级。超出原文的事实请使用“人工补充”，不要改写文档证据。</p></div>`;
+        const navigation = `<div class="review-guide"><strong>${guidance}</strong><p>待确认提及 ${progress.identities} · 待处理事实 ${progress.facts} · 已暂缓 ${progress.paused} · 本次已确认记录 ${state.approvedRevisions.size}</p><div class="review-phases" role="group" aria-label="审核顺序">${[['identities','1 确认实体身份',progress.identities],['facts','2 审核属性与关系',progress.facts],['paused','暂缓处理',progress.paused]].map(([key,label,count]) => `<button class="button ${phase === key ? 'primary' : ''}" type="button" data-review-phase="${key}" aria-pressed="${phase === key}">${label}（${count}）</button>`).join('')}</div><p class="review-muted">这里列出当前账号可处理的记录，权威等级和来源逐条标明。相同名称不会自动合并；实体确认不会自动批准它的属性或关系。确认或修改不会提升等级。超出原文的事实请使用“人工补充”，不要改写文档证据。</p></div>`;
         const factTabs=phase==='facts' ? `<div class="review-phases" role="group" aria-label="事实类型">${[['properties','属性'],['relationships','关系']].map(([key,label])=>`<button class="button ${state.reviewFactTab===key?'primary':''}" type="button" data-review-fact-tab="${key}" aria-pressed="${state.reviewFactTab===key}">${label}（${state.reviews.filter(item=>item.record_kind!=='ENTITY_MENTION' && item.trust?.status!=='QUARANTINED' && (key==='relationships'?Boolean(item.object_entity):!item.object_entity)).length}）</button>`).join('')}</div>` : '';
         const cards = [...groups.values()].map(rows => {
           const entity = reviewEntity(rows[0].item);
@@ -2606,7 +2607,7 @@
           const facts = rows.filter(row=>row.item.record_kind !== 'ENTITY_MENTION');
           const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
           const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
-          return `<article class="review-entity-card"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span><span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
+          return `<article class="review-entity-card"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span><span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
         }).join('');
         elements.reviewList.innerHTML = navigation + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && state.approvedRevisions.size ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
         bindReviewActions(elements.reviewList);
@@ -2630,7 +2631,7 @@
         }));
         container.querySelectorAll('[data-review-action]').forEach(button => button.addEventListener('click', () => submitReviews(button.dataset.reviewAction,[Number(button.dataset.reviewIndex)],button.dataset.saveEdits === 'true')));
         container.querySelectorAll('[data-review-edit-toggle]').forEach(button => button.addEventListener('click', () => {
-          if(state.reviewBusy) {showToast('上一项审核正在保存，请稍候');return;}
+          if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
           setReviewEditing(Number(button.dataset.reviewEditToggle),button.getAttribute('aria-expanded') !== 'true');
         }));
         container.querySelectorAll('[data-revision-history]').forEach(button => button.addEventListener('click', () => loadRevisionHistory(Number(button.dataset.revisionHistory),button)));
@@ -2707,7 +2708,7 @@
         renderAssessment(item);pumpAssessments();return done;
       }
       function setReviewBusy(busy) {
-        state.reviewBusy=busy;
+        state.reviewBusy=busy;updatePublicationBusy();busy=Boolean(busy || state.publicationBusy);
         elements.reviewList.querySelectorAll('[data-review-action], [data-review-keep], [data-resolution-apply], [data-review-save-draft]').forEach(button=> {
           const index=Number(button.dataset.reviewIndex ?? button.dataset.reviewKeep ?? button.dataset.resolutionApply ?? button.dataset.reviewSaveDraft);
           const item=state.reviews[index];
@@ -2718,7 +2719,7 @@
         });
       }
       async function keepExistingFact(index) {
-        if(state.reviewBusy) {showToast('上一项审核正在保存，请稍候');return;}
+        if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
         if(reviewIsEditing(index)) {showToast('请先保存或取消当前编辑，再处理重复事实');return;}
         const item=state.reviews[index];const result=item && reviewAssessment(item);
         if(!item || result?.status!=='DUPLICATE' || !result.matches?.length) {showToast('比对结果已变化，请重新检查');return;}
@@ -2730,7 +2731,7 @@
           showToast('已保留权威事实；本次来源和处理原因已留存');
           await loadReviews();
         } catch(error) {if(identityEpoch===state.identityEpoch)showToast(error.message);}
-        finally {setReviewBusy(false);}
+        finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
       async function loadRevisionHistory(index, button) {
@@ -2867,7 +2868,7 @@
       }
 
       async function applyResolution(index, suggestionIndex, button, manualIndex=null) {
-        if(state.reviewBusy) {showToast('上一项审核正在保存，请稍候');return;}
+        if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
         if(reviewIsEditing(index)) {showToast('请先保存或取消当前编辑，再确认实体链接');return;}
         const item = state.reviews[index];
         const resolution = item && state.resolutions.get(item.record_id);
@@ -2896,10 +2897,7 @@
           });
           if (identityEpoch !== state.identityEpoch) return;
           const outcomes = payload.outcomes || [];
-          for (const outcome of outcomes) {
-            if (outcome.record_kind === 'ENTITY_MENTION' && outcome.status === 'APPROVED') state.approvedRevisions.add(outcome.revision_id);
-          }
-          elements.publicationRevisions.value = [...state.approvedRevisions].join('\n');
+          trackReviewedOutcomes(outcomes);
           invalidatePublicationPreview();
           state.resolutions.delete(item.record_id);
           showToast(`实体已链接；${Math.max(0, outcomes.length - 1)} 条依赖事实已重绑并保留待审核状态`);
@@ -2907,7 +2905,7 @@
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
           button.disabled = false;
-        } finally {setReviewBusy(false);}
+        } finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
       async function loadReviews({refreshResolutions = false, candidatesOnly = false} = {}) {
@@ -2945,7 +2943,7 @@
       }
 
       async function submitReviews(decision, indexes, saveEdits = false) {
-        if(state.reviewBusy) {showToast('上一项审核正在保存，请稍候');return;}
+        if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
         const identityEpoch=state.identityEpoch;
         if (!indexes.length) { showToast('请先勾选审核记录'); return; }
         setReviewBusy(true);
@@ -2978,51 +2976,125 @@
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({decisions}),
           });
           if(identityEpoch!==state.identityEpoch) return;
-          for (const outcome of payload.outcomes || []) {
-            if (outcome.status === 'APPROVED') state.approvedRevisions.add(outcome.revision_id);
-          }
-          elements.publicationRevisions.value = [...state.approvedRevisions].join('\n');
+          trackReviewedOutcomes(payload.outcomes || []);
           invalidatePublicationPreview();
           if(saveEdits) state.reviewPhase='paused';
           showToast(saveEdits ? '修改已保存到暂缓区；新版本重新检查后，再确认采用' : `${payload.outcomes?.length || 0} 条审核决定已保存`);
           await Promise.allSettled([loadReviews({refreshResolutions:true}), loadActiveDocuments(), loadPublicationCandidates()]);
         } catch (error) {
           if(identityEpoch===state.identityEpoch)showToast(error.message);
-        } finally {setReviewBusy(false);}
+        } finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
       function activePublication() {
         return state.publications.find(item => item.status === 'ACTIVE') || null;
       }
 
+      function publicationSelectedIds() {
+        return new Set([...elements.publicationRevisions.value.split(/\s+/).filter(Boolean),...state.selectedCandidateRevisions]);
+      }
+      function writePublicationSelection(ids) {
+        const visible=new Set(state.publicationCandidates.map(row=>row.record?.revision_id));
+        elements.publicationRevisions.value=[...ids].sort().join('\n');
+        state.selectedCandidateRevisions=new Set([...ids].filter(id=>visible.has(id)));
+        invalidatePublicationPreview();
+      }
+      function changePublicationSelection(ids, checked) {
+        if(state.reviewBusy || state.publicationBusy) return;
+        const selected=publicationSelectedIds();
+        for(const id of ids) checked ? selected.add(id) : selected.delete(id);
+        writePublicationSelection(selected);updatePublicationSelection();
+      }
+      function syncPublicationTextSelection() {
+        const ids=new Set(elements.publicationRevisions.value.split(/\s+/).filter(Boolean));
+        writePublicationSelection(ids);updatePublicationSelection();
+      }
+      function trackReviewedOutcomes(outcomes) {
+        const selected=publicationSelectedIds();
+        for(const outcome of outcomes) {
+          selected.delete(outcome.previous_revision_id);
+          state.approvedRevisions.delete(outcome.previous_revision_id);
+          if(outcome.status==='APPROVED') {
+            selected.add(outcome.revision_id);state.approvedRevisions.add(outcome.revision_id);
+          }
+        }
+        writePublicationSelection(selected);
+      }
+      function publicationCandidateGroups() {
+        const groups=new Map();
+        state.publicationCandidates.forEach((candidate,index)=> {
+          const item=candidate.record, key=reviewGroupKey(item);
+          if(!groups.has(key)) groups.set(key,{key,entity:reviewEntity(item),rows:[]});
+          groups.get(key).rows.push({candidate,item,index});
+        });
+        return [...groups.values()];
+      }
+      function updatePublicationSelection() {
+        const selected=publicationSelectedIds(), groups=publicationCandidateGroups();
+        elements.publicationCandidateList.querySelectorAll('[data-publication-candidate]').forEach(input=> {
+          input.checked=selected.has(state.publicationCandidates[Number(input.dataset.publicationCandidate)]?.record?.revision_id);
+        });
+        elements.publicationCandidateList.querySelectorAll('[data-publication-group]').forEach(input=> {
+          const rows=groups[Number(input.dataset.publicationGroup)].rows;
+          const count=rows.filter(row=>selected.has(row.item.revision_id)).length;
+          input.checked=count===rows.length;input.indeterminate=count>0 && count<rows.length;
+        });
+        elements.publicationCandidateList.querySelectorAll('[data-publication-selected-count]').forEach(label=> {
+          const rows=groups[Number(label.dataset.publicationSelectedCount)].rows;
+          label.textContent=`本组已选 ${rows.filter(row=>selected.has(row.item.revision_id)).length}/${rows.length} 条记录`;
+        });
+      }
+      function publicationSourceMarkup(row, position, selected) {
+        const {candidate,item,index}=row, mention=item.record_kind==='ENTITY_MENTION';
+        const title=mention ? `来源提及 ${position+1}` : reviewFactText(item);
+        const detail=mention ? '来源记录与版本' : `${standardizedTitle(item)}与版本`;
+        return `<div class="review-match"><label class="checkbox-label"><input type="checkbox" data-publication-candidate="${index}" ${selected.has(item.revision_id)?'checked':''}> <strong>${escapeHtml(title)}</strong></label>${provenanceBadges(item.trust)}<span class="trust-badge">${escapeHtml(item.trust?.status==='APPROVED'?'已确认':'已发布，可恢复')}</span>${candidate.requires_replacement?'<p>本次将替换这条来源记录的已发布版本。</p>':''}${reviewEvidence(item.evidence,item.trust?.origin==='HUMAN_SUPPLEMENT'?'查看人工补充记录':'查看文档原文',item)}<details><summary>${detail}</summary><p>记录 ID：${escapeHtml(item.record_id)}<br>当前记录版本：${escapeHtml(item.revision)}<br>版本 ID：${escapeHtml(item.revision_id)}</p><pre>${escapeHtml(JSON.stringify(standardizedReview(item),null,2))}</pre></details>${item.trust?.status==='APPROVED'?`<button class="button" type="button" data-publication-reopen="${index}">${mention?'返回修改此来源':'返回修改此事实'}</button>`:''}</div>`;
+      }
+      function updatePublicationBusy() {
+        const busy=Boolean(state.reviewBusy || state.publicationBusy);
+        elements.publicationCandidateList?.querySelectorAll('input, [data-publication-reopen]').forEach(control=>control.disabled=busy);
+        elements.publicationRevisions.disabled=busy;elements.publicationRemovals.disabled=busy;
+        if(typeof document!=='undefined') {
+          const preview=document.getElementById('publication-preview-button');if(preview) preview.disabled=busy;
+          const publish=document.getElementById('publication-button');if(publish) publish.disabled=busy || !state.publicationPreview;
+        }
+      }
       function renderPublicationCandidates() {
         if (!state.publicationCandidates.length) {
-          elements.publicationCandidateList.innerHTML = '<div class="output-box">没有可恢复的 APPROVED / 非 active PUBLISHED revision。</div>';
-          return;
+          elements.publicationCandidateList.innerHTML = '<div class="output-box">没有待发布或可恢复的已确认记录。</div>';
+          updatePublicationBusy();return;
         }
-        elements.publicationCandidateList.innerHTML = state.publicationCandidates.map((candidate, index) => {
-          const item = candidate.record;
-          const entity = item.entity || item.subject || {};
-          return `<article class="governance-item"><div class="governance-item-head"><label class="checkbox-label"><input type="checkbox" data-publication-candidate="${index}" ${state.selectedCandidateRevisions.has(item.revision_id) ? 'checked' : ''}> <strong>${escapeHtml(item.record_kind)} · ${escapeHtml(entity.canonical_name || item.record_id)}</strong></label><div class="badge-row"><span class="trust-badge ${item.trust?.authority === 'AUTHORITATIVE' ? 'authoritative' : ''}">${escapeHtml(item.trust?.authority === 'AUTHORITATIVE' ? '权威' : '次权威')}</span><span class="trust-badge">${escapeHtml(item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '人工补充' : '文档来源')}</span><span class="trust-badge">${escapeHtml(item.trust?.status)}</span></div></div><p>revision ${escapeHtml(item.revision)} · ${escapeHtml(item.revision_id)}${candidate.requires_replacement ? '<br>将替换 active publication 中同 record 的旧 revision' : ''}</p><details><summary>${standardizedTitle(item)}</summary><pre>${escapeHtml(JSON.stringify(standardizedReview(item),null,2))}</pre></details>${item.trust?.status==='APPROVED' ? `<button class="button" type="button" data-publication-reopen="${index}">返回修改</button>` : ''}</article>`;
+        const selected=publicationSelectedIds(), groups=publicationCandidateGroups();
+        const cards=groups.map((group,groupIndex)=> {
+          const mentions=group.rows.filter(row=>row.item.record_kind==='ENTITY_MENTION');
+          const properties=group.rows.filter(row=>row.item.record_kind!=='ENTITY_MENTION' && !row.item.object_entity);
+          const relationships=group.rows.filter(row=>Boolean(row.item.object_entity));
+          const count=group.rows.filter(row=>selected.has(row.item.revision_id)).length;
+          const sections=[['来源提及',mentions],['属性',properties],['关系',relationships]].map(([label,rows])=>rows.length ? `<details><summary>${label}（${rows.length} 条记录）</summary>${rows.map((row,position)=>publicationSourceMarkup(row,position,selected)).join('')}</details>`:'').join('');
+          return `<article class="review-entity-card" data-publication-entity="${escapeHtml(group.key)}"><header><input type="checkbox" data-publication-group="${groupIndex}" aria-label="选择${escapeHtml(group.entity.canonical_name)}的本批全部记录" ${count===group.rows.length?'checked':''}><h3>${escapeHtml(group.entity.canonical_name || '未命名实体')}</h3><span class="trust-badge">${escapeHtml(group.entity.entity_type)}</span><span>来源提及 ${mentions.length} · 属性 ${properties.length} · 关系 ${relationships.length}</span></header><div class="review-mention"><p>实体 ID：${escapeHtml(group.entity.entity_id || '尚未确定')} · <span data-publication-selected-count="${groupIndex}">本组已选 ${count}/${group.rows.length} 条记录</span></p>${!mentions.length?'<p>本批仅包含此实体的事实变更；发布预览会校验并带入所需的实体身份。</p>':''}${sections}</div></article>`;
         }).join('');
+        elements.publicationCandidateList.innerHTML=`<p>本批按 ${groups.length} 个实体汇总，共 ${state.publicationCandidates.length} 条记录。同一实体的多处提及保留各自来源，每条记录只选择一个有效版本；完整写入内容见下方发布预览。</p>${state.publicationCandidates.length>=100?'<p>本批最多显示 100 条记录，来源数量可能不完整。完成本批后请刷新继续处理。</p>':''}${cards}`;
         elements.publicationCandidateList.querySelectorAll('[data-publication-reopen]').forEach(button=>button.addEventListener('click',()=>reopenPublicationCandidate(Number(button.dataset.publicationReopen))));
-        elements.publicationCandidateList.querySelectorAll('[data-publication-candidate]').forEach(input => {
-          input.addEventListener('change', () => {
-            invalidatePublicationPreview();
-            const candidate = state.publicationCandidates[Number(input.dataset.publicationCandidate)];
-            const revisionId = candidate?.record?.revision_id;
-            if (!revisionId) return;
-            if (input.checked) state.selectedCandidateRevisions.add(revisionId);
-            else state.selectedCandidateRevisions.delete(revisionId);
-          });
+        elements.publicationCandidateList.querySelectorAll('[data-publication-candidate]').forEach(input=>input.addEventListener('change',()=> {
+          const item=state.publicationCandidates[Number(input.dataset.publicationCandidate)]?.record;
+          if(item) changePublicationSelection([item.revision_id],input.checked);
+        }));
+        elements.publicationCandidateList.querySelectorAll('[data-publication-group]').forEach(input=> {
+          const rows=groups[Number(input.dataset.publicationGroup)].rows;
+          const count=rows.filter(row=>selected.has(row.item.revision_id)).length;
+          input.indeterminate=count>0 && count<rows.length;
+          input.addEventListener('change',()=>changePublicationSelection(rows.map(row=>row.item.revision_id),input.checked));
         });
+        bindEvidenceActions(elements.publicationCandidateList);updatePublicationBusy();
       }
 
       async function loadPublicationCandidates() {
         const identityEpoch = state.identityEpoch;
+        const epoch=state.publicationCandidatesEpoch=(state.publicationCandidatesEpoch || 0)+1;
         try {
           const payload = await apiRequest('/v1/knowledge/publication-candidates?limit=100');
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || epoch!==state.publicationCandidatesEpoch) return;
+          if(JSON.stringify(state.publicationCandidates)!==JSON.stringify(payload.items || [])) invalidatePublicationPreview();
           const previousTracked=new Set([...state.approvedRevisions,...state.publicationCandidates.map(item=>item.record?.revision_id).filter(Boolean)]);
           state.publicationCandidates = Array.isArray(payload.items) ? payload.items : [];
           const visibleIds = new Set(state.publicationCandidates.map(item => item.record?.revision_id).filter(Boolean));
@@ -3035,7 +3107,8 @@
           }
           renderPublicationCandidates();
         } catch (error) {
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || epoch!==state.publicationCandidatesEpoch) return;
+          invalidatePublicationPreview();
           elements.publicationCandidateList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
       }
@@ -3463,23 +3536,29 @@
 
       async function reopenPublicationCandidate(index) {
         if(state.reviewBusy || state.publicationBusy) return;
+        if([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled)) {
+          showToast('请先保存或取消编辑与确认实例中的修改');return;
+        }
         const item=state.publicationCandidates[index]?.record;
         if(!item || item.trust?.status!=='APPROVED') return;
         const identityEpoch=state.identityEpoch;
-        state.reviewBusy=true;invalidatePublicationPreview();
+        setReviewBusy(true);invalidatePublicationPreview();
+        state.publicationCandidatesEpoch=(state.publicationCandidatesEpoch || 0)+1;
         try {
-          await apiRequest('/v1/knowledge/reviews:batch',{method:'POST',headers:{'Content-Type':'application/json'},
+          const payload=await apiRequest('/v1/knowledge/reviews:batch',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({decisions:[{record_kind:item.record_kind,record_id:item.record_id,
               expected_revision:item.revision,decision:'QUARANTINED',notes:'发布前返回修改，撤销本条审核确认。'}]})});
           if(identityEpoch!==state.identityEpoch) return;
+          trackReviewedOutcomes(payload.outcomes || []);
           state.approvedRevisions.delete(item.revision_id);state.selectedCandidateRevisions.delete(item.revision_id);
           elements.publicationRevisions.value=elements.publicationRevisions.value.split(/\s+/).filter(id=>id!==item.revision_id).join('\n');
           await Promise.allSettled([loadReviews(),loadPublicationCandidates()]);
+          if(identityEpoch!==state.identityEpoch) return;
           state.reviewPhase='paused';renderReviews();
           showConstructionFlow(state.constructionFlow,'step-review');
           document.getElementById(`review-record-${item.record_id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
         } catch(error) {if(identityEpoch===state.identityEpoch) showToast(error.message);}
-        finally {state.reviewBusy=false;}
+        finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
       function publicationSelection() {
@@ -3510,7 +3589,7 @@
         }).join('')).join('')+`<details><summary>查看完整变更 JSON（含保留记录、精确引用及发布后的完整清单）</summary><pre class="output-box">${escapeHtml(JSON.stringify(preview,null,2))}</pre></details><div class="workbench-actions"><button class="button" type="button" data-publication-back>返回编辑和确认实例</button></div>`;
       }
       async function previewKnowledgePublication() {
-        if(state.publicationBusy) return;
+        if(state.reviewBusy || state.publicationBusy) return;
         invalidatePublicationPreview();
         const identityEpoch=state.identityEpoch, epoch=state.publicationPreviewEpoch;
         const panel=document.getElementById('publication-preview');
@@ -3526,12 +3605,12 @@
         } catch(error) {if(identityEpoch===state.identityEpoch && epoch===state.publicationPreviewEpoch) panel.innerHTML=`<p>无法发布：${escapeHtml(error.message)}。请返回审核处理后重新预览。</p>`;}
       }
       async function publishKnowledge() {
-        if(state.publicationBusy) return;
+        if(state.reviewBusy || state.publicationBusy) return;
         const identityEpoch=state.identityEpoch;
         try {
           const selection=publicationSelection(), saved=state.publicationPreview;
           if(!saved || saved.selectionKey!==JSON.stringify(selection)) throw new Error('请先生成并查看当前选择的完整发布预览');
-          state.publicationBusy=true;
+          state.publicationBusy=true;setReviewBusy(state.reviewBusy);
           invalidateInventory();
           const button=typeof document!=='undefined' && document.getElementById('publication-button'); if(button) button.disabled=true;
           const payload=await apiRequest('/v1/knowledge/publications:publish',{
@@ -3547,7 +3626,7 @@
           await Promise.allSettled([loadPublicationCandidates(),loadHistory(),loadInventory(),loadQuality(),loadQualityHistory(),loadActiveDocuments()]);
         } catch(error) {
           if(identityEpoch===state.identityEpoch) {invalidatePublicationPreview();output(elements.publicationOutput,error.status===409?'内容或版本已变化，请刷新候选并重新查看预览。':error.message);}
-        } finally {state.publicationBusy=false;}
+        } finally {if(identityEpoch===state.identityEpoch) {state.publicationBusy=false;setReviewBusy(state.reviewBusy);}}
       }
 
       async function rollbackPublication(index) {
@@ -3719,7 +3798,7 @@
       $('review-quarantine-button').addEventListener('click', () => submitReviews('QUARANTINED', chosenReviews()));
       $('publication-button').addEventListener('click', publishKnowledge);
       $('publication-preview-button').addEventListener('click', previewKnowledgePublication);
-      elements.publicationRevisions.addEventListener('input',invalidatePublicationPreview);
+      elements.publicationRevisions.addEventListener('input',syncPublicationTextSelection);
       elements.publicationRemovals.addEventListener('input',invalidatePublicationPreview);
       $('publication-candidates-refresh-button').addEventListener('click', loadPublicationCandidates);
       $('history-refresh-button').addEventListener('click', loadHistory);

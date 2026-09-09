@@ -380,3 +380,73 @@ the UI/adapter checks with
 `.venv/bin/python -m unittest tests.unit.test_review_context tests.unit.test_api_entity_resolution`.
 The normal Stage 8 evaluation command consumes all five suite receipts and the
 locked knowledge-quality report; no acceptance threshold was relaxed.
+
+## Publication entity grouping and selection integrity (2026-09-09)
+
+Step 04 now groups the current candidate batch by canonical `entity_id`, matching
+step 03 and the existing publication projection. Each entity card contains
+separate expandable source-mention, property and outgoing-relationship sections.
+Names do not determine grouping: homonyms with different IDs remain separate.
+Each source/fact retains its record ID, effective revision, provenance, exact
+source context and individual return-to-review action. Group and leaf checkboxes
+select records, not multiple competing versions of one entity. The full
+publication preview remains the authoritative before/after write plan; grouping
+does not change the Neo4j schema, source grades or publication transaction.
+
+Checkboxes and the advanced revision-ID input now share the same selection.
+Unchecking a record removes it from the submitted request; reviewing another
+record does not reselect previously unchecked records. Selection changes preserve
+expanded source context and keyboard focus. Returning a source to review removes
+its old revision and any invalidated dependent-fact revisions from selection.
+Unsaved step-03 edits must be saved or cancelled before returning another record.
+Review and publication mutations block one another until they finish. Superseded candidate
+fetches and responses from a previous login identity cannot restore stale cards,
+selections or busy state. Changed content/selection invalidates the saved preview;
+the server still validates the exact preview hash at publication.
+
+The candidate endpoint remains bounded to 100 records. Cards explicitly describe
+counts as belonging to the current batch; a large entity can span batches.
+Grouping does not automatically select unseen records or claim a complete global
+source count. The final server preview validates required identity dependencies
+and carries the effective retained records into the complete publication plan.
+
+Live read-only acceptance used the current 11 candidate records: three entity
+cards contain seven mentions, two properties and two relationships. The pump
+card contains three mentions, two properties and two outgoing relationships;
+the site and seal cards each contain two mentions. All 11 source-context reads
+matched the stored exact quote. Executing the page's grouping and selection
+functions with this real API payload preserved every record once and selected/
+deselected the intended group. Restarting only the port-8000 Python workbench
+retained the same 129 nodes, 235 relationships and full-property fingerprint
+`6318912a048e0aa6ef7c229102f053a774c0b106eb2c2fdcf392939de0f50764`.
+No review, publication, reset or provider call changed the user's graph.
+Browser control surfaces were unavailable: functional acceptance executes the
+page JavaScript, authenticated HTTP endpoints and disposable-Neo4j transactions;
+a visual browser-click acceptance pass is not claimed.
+
+The focused disposable-Neo4j review/publication module passed all 21 tests.
+The added lifecycle case publishes three independently traced source records
+sharing one entity, including a source returned to review and approved again.
+It verifies one materialized entity, all three evidence references, one effective
+revision per record and rejection of historical/current revisions selected
+together without residual writes.
+
+
+Final validation: **1,286 tests passed without skips** — 1,036 unit,
+18 HTTP E2E, 54 security, 2 regression and 176 disposable-Neo4j integration
+checks. JavaScript syntax, Python compilation, packaging and `git diff --check`
+also passed. Baseline **1.14.0** preserves every 1.13.0 test ID and adds exactly
+four unit tests and one integration test. Case digests, contract metrics,
+diagnostics and configuration identities compare exactly equal. The locked
+knowledge-quality gate and unified report pass, with semantic digest
+`54408bfc553bba2c79b493dd66b1c52f82b00c7a96d605e0f541e0e965254f6a`. These are `dev-mini` maintenance results;
+operational fixtures do not qualify as new production performance evidence.
+
+Receipts and the report are in `/tmp/publication-groups-validation`, the baseline
+comparison in `/tmp/publication-groups-baseline-comparison.json`, and live
+read-only results in `/tmp/publication-groups-live-result.json`. Reproduce the
+focused UI checks with `.venv/bin/python -m unittest
+tests.unit.test_publication_groups tests.unit.test_standardized_publication
+tests.unit.test_review_context`. Run the complete Neo4j suite with
+`sh scripts/run_stage8_neo4j_tests.sh SUITE_RESULT_PATH OBSERVATION_DIR`, then use
+the existing Stage 8 evaluation workflow with all five suite receipts.

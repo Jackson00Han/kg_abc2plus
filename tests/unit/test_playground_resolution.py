@@ -30,6 +30,9 @@ class PlaygroundResolutionTests(unittest.TestCase):
         source += page[
             page.index("function publicationSelection(") : page.index("async function init(")
         ]
+        source += page[
+            page.index("function publicationSelectedIds(") : page.index("async function loadPublicationCandidates(")
+        ]
         badge_start = page.index("function provenanceBadges(")
         source += page[badge_start:page.index("\n      function ", badge_start)]
         harness = r"""
@@ -62,6 +65,7 @@ const reviewList = {
   },
 };
 const elements = {reviewList, publicationRevisions: {value: ''},
+  publicationCandidateList: {innerHTML: '', querySelectorAll: () => []},
   publicationRemovals: {value: ''}, publicationOutput: {textContent: ''}};
 const requests = [];
 let promptCount = 0;

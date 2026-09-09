@@ -1075,6 +1075,65 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
         self.assertEqual(fact.subject_mention_revision_id, current.revision_id)
         self.assertEqual(self.publication.history(self.principal), ())
 
+    def test_shared_entity_sources_publish_once_with_one_effective_revision_per_record(self):
+        revisions = list(self._approve_all())
+        target = self.store.get_entity_mention(self.principal, self.batch.mentions[0].record_id,
+            statuses=(GovernanceStatus.APPROVED,))
+        for index in range(2):
+            # Independent extraction records of the same evidence must retain
+            # distinct provenance, while resolving to one canonical entity.
+            source = dataclasses.replace(self.batch.mentions[0],
+                revision=RecordRevision.next(f'publication-source-{index}', 0),
+                trust=dataclasses.replace(self.batch.mentions[0].trust,
+                    extractor_version=f'publication-source-extractor:v{index + 2}'))
+            self.store.persist_llm_candidates(ABoxRecordBatch(self.tenant_id, (source,), ()))
+            outcome = self.review.apply_entity_resolution(self.principal,
+                record_id=source.record_id, expected_revision=1, target=target.entity,
+                target_record_id=target.record_id, target_expected_revision=target.revision.revision,
+                reviewed_at=REVIEWED_AT, notes='Both contexts identify the same entity.').outcomes[0]
+            if index == 1:
+                old_revision_id = outcome.revision_id
+                self.review.quarantine(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+                    record_id=source.record_id, expected_revision=2, reviewed_at=REVIEWED_AT,
+                    notes='Return this source to step 03 for another review.')
+                self.review.approve(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+                    record_id=source.record_id, expected_revision=3, reviewed_at=REVIEWED_AT,
+                    notes='Confirm this source again after review.')
+                current = self.store.get_entity_mention(self.principal, source.record_id,
+                    statuses=(GovernanceStatus.APPROVED,))
+                self.assertEqual(current.revision.revision, 4)
+                revisions.append(current.revision_id)
+            else:
+                revisions.append(outcome.revision_id)
+        before = self._database_snapshot()
+        with self.assertRaises((KnowledgeReviewUnavailable, KnowledgePublicationConflict)):
+            self.publication.publish(self.principal, (*revisions, old_revision_id),
+                expected_active_publication_id=None, published_at=PUBLISHED_AT, preview_only=True)
+        self.assertEqual(self._database_snapshot(), before)
+        preview = self.publication.publish(self.principal, tuple(revisions),
+            expected_active_publication_id=None, published_at=PUBLISHED_AT, preview_only=True)
+        self.assertEqual(self._database_snapshot(), before)
+        shared = [entity for entity in preview['entities_after']
+            if entity['entity_id'] == target.entity.entity_id]
+        self.assertEqual(len(shared), 1)
+        self.assertEqual(len(shared[0]['evidence_ids']), 3)
+        self.assertEqual(len(preview['records_after']), 5)
+        self.assertEqual(len(preview['relationship_changes']), 1)
+        publication = self.publication.publish(self.principal, tuple(revisions),
+            expected_active_publication_id=None, published_at=PUBLISHED_AT,
+            expected_preview_hash=preview['preview_hash'])
+        nodes, _, _ = self.driver.execute_query(
+            'MATCH (e:Entity {entity_id:$entity_id}) RETURN count(e) AS count',
+            entity_id=target.entity.entity_id, database_=self.database)
+        self.assertEqual(nodes[0]['count'], 1)
+        rows, _, _ = self.driver.execute_query(
+            'MATCH (:KnowledgePublication {publication_id:$publication_id})'
+            '-[:PUBLISHES_KNOWLEDGE_REVISION]->(r) '
+            'RETURN r.record_id AS record_id, count(r) AS count',
+            publication_id=publication.publication_id, database_=self.database)
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(row['count'] == 1 for row in rows))
+
     def test_publication_preview_rolls_back_and_matches_exact_published_manifest(self):
         revisions = self._approve_all()
         before = self._database_snapshot()

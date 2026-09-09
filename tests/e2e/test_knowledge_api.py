@@ -809,9 +809,9 @@ const actions = records.map(() => ['APPROVED', 'REJECTED', 'QUARANTINED'].map(
   reviewAction => ({dataset: {reviewAction}, hidden: false})));
 const toasts = [];
 const context = {
-  state: {reviews: records, approvedRevisions: new Set(), identityEpoch: 0, reviewEpoch: 0, resolutions: new Map(), reviewAssessments: new Map()},
+  state: {reviews: records, approvedRevisions: new Set(), selectedCandidateRevisions: new Set(), publicationCandidates: [], identityEpoch: 0, reviewEpoch: 0, resolutions: new Map(), reviewAssessments: new Map()},
   elements: {
-    publicationRevisions: {},
+    publicationRevisions: {value: ''}, publicationRemovals: {value: ''},
     reviewList: {querySelector(selector) {
       const index = Number(selector.match(/="(\d+)"/)[1]);
       if (selector.includes('edit-panel')) return panels[index];
@@ -838,6 +838,8 @@ for (const [start, end] of [
   ['function reviewEdit(', 'function resolutionMarkup('],
   ['function reviewModel(', 'function reviewTechnical('],
   ['function setReviewBusy(', 'async function keepExistingFact('],
+  ['function publicationSelectedIds(', 'function publicationCandidateGroups('],
+  ['function updatePublicationBusy(', 'function renderPublicationCandidates('],
   ['async function submitReviews(', 'function activePublication('],
 ]) vm.runInContext(page.slice(page.indexOf(start), page.indexOf(end)), context);
 (async () => {

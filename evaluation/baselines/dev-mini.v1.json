@@ -430,6 +430,7 @@
         "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_review_context_returns_paragraph_and_pinned_document_with_acl",
         "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_review_rejects_stale_exact_evidence",
         "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_rollback_atomically_reactivates_manifest_without_deleting_audit",
+        "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_shared_entity_sources_publish_once_with_one_effective_revision_per_record",
         "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_typed_literal_review_revalidates_and_publication_preserves_semantics",
         "test_knowledge_store_neo4j.Neo4jKnowledgeStoreIntegrationTests.test_authoritative_abox_round_trips_through_exact_source_and_acl",
         "test_knowledge_store_neo4j.Neo4jKnowledgeStoreIntegrationTests.test_evidence_mismatch_rolls_back_before_record_heads_exist",
@@ -1441,6 +1442,10 @@
         "test_production_report_requests.ProductionReportRequestTests.test_configured_case_set_must_be_exactly_thirty_unique_cases",
         "test_production_report_requests.ProductionReportRequestTests.test_exact_configured_gold_cases_and_load_anchors_pass",
         "test_production_report_requests.ProductionReportRequestTests.test_gold_identity_expected_chunks_and_selection_are_fail_closed",
+        "test_publication_groups.PublicationGroupTests.test_checkbox_group_and_text_selection_agree_and_review_does_not_restore_deselection",
+        "test_publication_groups.PublicationGroupTests.test_late_candidate_refresh_cannot_restore_old_revision_or_revoked_identity",
+        "test_publication_groups.PublicationGroupTests.test_return_to_review_removes_dependent_versions_and_blocks_publish_during_save",
+        "test_publication_groups.PublicationGroupTests.test_same_entity_sources_group_but_homonyms_and_fact_kinds_stay_distinct",
         "test_published_inventory.PublishedInventoryTests.test_authorization_and_input_bounds_fail_before_audit_or_database",
         "test_published_inventory.PublishedInventoryTests.test_changed_publication_or_backend_failure_is_sanitized",
         "test_published_inventory.PublishedInventoryTests.test_complete_manifest_hard_cap_is_enforced_before_item_read",
@@ -1589,8 +1594,8 @@
   },
   "gold_version": "2.0.0",
   "profile_id": "dev-mini",
-  "rationale": "Manual linking to confirmed identities and pinned source context retain every 1.12.0 test ID and add 5 unit, 1 HTTP E2E and 2 Neo4j integration checks. All case digests, contract metrics, quality diagnostics and configuration identities are unchanged. The final dev-mini suites pass without skips; operational figures remain deterministic, non-qualifying fixtures.",
+  "rationale": "Entity-grouped publication selection retains every 1.13.0 test ID and adds 4 executable UI tests and 1 Neo4j publication lifecycle test. Source versions remain distinct while canonical entities are grouped; deselection, return-to-review dependencies and concurrent UI state are checked. Case digests, contract metrics, diagnostics and identities are unchanged. All dev-mini suites pass without skips; operational figures remain deterministic, non-qualifying fixtures.",
   "schema_version": "evaluation-baseline-v1",
-  "semantic_digest": "0f8f32b0795c8707a7868f0f799511539045f9d874d31801e984419d9621cea3",
-  "version": "1.13.0"
+  "semantic_digest": "54408bfc553bba2c79b493dd66b1c52f82b00c7a96d605e0f541e0e965254f6a",
+  "version": "1.14.0"
 }

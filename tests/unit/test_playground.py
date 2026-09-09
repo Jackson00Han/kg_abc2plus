@@ -708,6 +708,16 @@ class PlaygroundRuntimeTests(unittest.TestCase):
                 "async function init"
             )
         ]
+        publication += source[
+            source.index("function updatePublicationBusy(") : source.index(
+                "function renderPublicationCandidates("
+            )
+        ]
+        publication += source[
+            source.index("function setReviewBusy(") : source.index(
+                "async function keepExistingFact("
+            )
+        ]
         quality_source = source[
             source.index("function renderQuality") : source.index(
                 "const documentBlockerLabels"
@@ -727,6 +737,7 @@ const state = {
   qualityDetailEpoch: 0, qualitySaveEpoch: 0, qualitySaving: false,
 };
 const elements = {
+  reviewList: {querySelectorAll: () => []},
   inventoryDocumentFilter: {value: ''},
   inventoryLimit: {value: '100', checkValidity: () => true},
   inventorySummary: {textContent: ''},
