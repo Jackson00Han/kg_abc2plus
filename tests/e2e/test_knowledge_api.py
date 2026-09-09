@@ -483,6 +483,46 @@ class _Knowledge:
 
 
 class KnowledgeAPIEndToEndTests(unittest.TestCase):
+    def test_review_context_and_manual_target_requests_keep_auth_and_revision_contracts(self):
+        from graphrag_prod.api.knowledge_contracts import ReviewEvidenceResponse
+
+        class ContextKnowledge(_Knowledge):
+            def review_evidence(self, principal, request):
+                self._record('review_evidence', principal, request)
+                return BackendResult(ReviewEvidenceResponse(
+                    record_id=request.record_id, revision=request.expected_revision,
+                    document_id='doc', version_id='version', chunk_id='chunk',
+                    document_title='设备台账', source_uri='https://example.test/ledger',
+                    text='设备 BC-P-101 的循环水泵。', context_start=0, context_end=18,
+                    char_start=13, char_end=17, quoted_text='循环水泵', total_characters=18,
+                    document_accessible=True, view=request.view, has_previous=False, has_next=False))
+
+        knowledge = ContextKnowledge()
+        app = create_app(backend=GraphRAGApplicationBackend(documents=_Documents(), queries=_Queries(),
+            readiness=_Readiness(), knowledge=knowledge),
+            authenticator=JWTAuthenticator(JWTAuthConfig(issuer=ISSUER, audience=AUDIENCE, secret=SECRET)))
+        with TestClient(app) as client:
+            body = {'record_id':'mention-1', 'expected_revision':1}
+            self.assertEqual(client.post('/v1/knowledge/review-evidence', json=body).status_code, 401)
+            headers = _headers()
+            claims = jwt.decode(headers['Authorization'].split()[1], SECRET,
+                algorithms=['HS256'], audience=AUDIENCE, issuer=ISSUER)
+            claims['scope'] = 'knowledge:publish'
+            denied = {'Authorization':'Bearer '+jwt.encode(claims, SECRET, algorithm='HS256')}
+            self.assertEqual(client.post('/v1/knowledge/review-evidence', headers=denied, json=body).status_code, 403)
+            response = client.post('/v1/knowledge/review-evidence', headers=headers, json=body)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn('BC-P-101', response.json()['text'])
+            self.assertEqual(client.post('/v1/knowledge/review-evidence', headers=headers,
+                json={**body, 'offset':-1}).status_code, 422)
+            target = {**body, 'target_entity_id':'entity-canonical', 'target_record_id':'confirmed',
+                      'target_expected_revision':2, 'notes':'Verified both source contexts.'}
+            response = client.post('/v1/knowledge/entity-resolution:apply', headers=headers, json=target)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(knowledge.calls[-1][2].target_expected_revision, 2)
+            target.pop('target_expected_revision')
+            self.assertEqual(client.post('/v1/knowledge/entity-resolution:apply', headers=headers, json=target).status_code, 422)
+
     def test_publication_preview_is_authenticated_complete_and_hash_bound(self):
         knowledge = _Knowledge()
         backend = GraphRAGApplicationBackend(documents=_Documents(), queries=_Queries(),

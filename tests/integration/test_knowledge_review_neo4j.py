@@ -942,6 +942,122 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
         )
         return json_value([list(map(dict, nodes)), list(map(dict, edges))])
 
+    def test_confirmed_unpublished_identity_accepts_other_mentions_without_publishing(self):
+        from graphrag_prod.domain.ids import entity_id
+        from graphrag_prod.api.knowledge_contracts import ConfirmedResolutionTarget
+
+        original = self.batch.mentions[0]
+        self.review.approve(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+            record_id=original.record_id, expected_revision=1,
+            reviewed_at=REVIEWED_AT, notes='Confirm first mention identity.')
+        target = self.store.get_entity_mention(self.principal, original.record_id,
+            statuses=(GovernanceStatus.APPROVED,))
+        candidates = []
+        for index in range(2):
+            key = f'llm-candidate:additional-{index}'
+            mention = dataclasses.replace(original,
+                revision=RecordRevision.next(f'additional-mention-{index}', 0),
+                entity=dataclasses.replace(original.entity, canonical_key=key,
+                    entity_id=entity_id(self.tenant_id, original.entity.entity_type, key)))
+            self.store.persist_llm_candidates(ABoxRecordBatch(self.tenant_id, (mention,), ()))
+            candidates.append(mention)
+        for candidate in candidates:
+            response = self.review.resolution_targets(self.principal, candidate, target.entity.canonical_name)
+            selected = next(row for row in response['items']
+                if row['entity']['entity_id'] == target.entity.entity_id)
+            ConfirmedResolutionTarget.model_validate(selected)
+            self.assertTrue(selected['selectable'])
+            self.assertEqual(selected['status'], 'APPROVED')
+            outcome = self.review.apply_entity_resolution(self.principal,
+                record_id=candidate.record_id, expected_revision=1, target=target.entity,
+                target_record_id=selected['record_id'], target_expected_revision=selected['revision'],
+                reviewed_at=REVIEWED_AT, notes='Context confirms the same entity.')
+            self.assertEqual(outcome.outcomes[0].status, GovernanceStatus.APPROVED)
+            linked = self.store.get_entity_mention(self.principal, candidate.record_id,
+                statuses=(GovernanceStatus.APPROVED,))
+            self.assertEqual(linked.entity.entity_id, target.entity.entity_id)
+            self.assertEqual(linked.evidence, candidate.evidence)
+            self.assertEqual(linked.trust.authority, candidate.trust.authority)
+        self.assertEqual(self.publication.history(self.principal), ())
+        self.assertEqual(self.store.get_assertion(self.principal, self.batch.assertions[0].record_id,
+            statuses=(GovernanceStatus.CANDIDATE,)).trust.status, GovernanceStatus.CANDIDATE)
+        outsider = dataclasses.replace(self.principal, groups=frozenset({'other'}))
+        self.assertEqual(self.review.resolution_targets(outsider, candidates[0])['items'], [])
+        fresh = dataclasses.replace(candidates[0], revision=RecordRevision.next('stale-target-source', 0))
+        self.store.persist_llm_candidates(ABoxRecordBatch(self.tenant_id, (fresh,), ()))
+        self.assertEqual(len(self.review.resolution_targets(self.principal, fresh)['items']), 1)
+        # An identity fact from the original source must still block a conflict
+        # when the deduplicated target is represented by a later linked source.
+        self.driver.execute_query(
+            'MATCH (t:TBoxVersion {tbox_id:$tbox_id})-[:DECLARES_ENTITY_TYPE]->'
+            '(d:TBoxEntityType {name:"Company"}) SET d.identity_properties=["DISPLAY_NAME"]',
+            tbox_id=self.tbox_id, database_=self.database)
+        identity_facts = []
+        for mention, value in ((target, 'Apple'), (fresh, 'iPhone')):
+            identity_facts.append(dataclasses.replace(self.batch.assertions[0],
+                revision=RecordRevision.next(f'identity:{mention.record_id}', 0),
+                subject=mention.entity, subject_mention_revision_id=mention.revision_id,
+                predicate='DISPLAY_NAME', object_entity=None, object_mention_revision_id=None,
+                literal_value=value, literal_semantics=TypedLiteralValue(
+                    datatype='STRING', typed_value=value, raw_value=value, canonical_value=value)))
+        def seed_identity_facts(tx):
+            for fact in identity_facts:
+                self.store._validate_evidence_tx(tx, fact.evidence, origin=fact.trust.origin)
+                self.store._lock_head_tx(tx, fact.revision, self.tenant_id, 'ASSERTION', fact.created_at)
+                self.store._create_assertion_revision_tx(tx, fact, link_canonical_entities=False)
+        with self.driver.session(database=self.database) as session:
+            session.execute_write(seed_identity_facts)
+        conflicting = self.review.resolution_targets(self.principal, fresh)['items'][0]
+        self.assertNotEqual(conflicting['record_id'], target.record_id)
+        self.assertFalse(conflicting['selectable'])
+        self.assertEqual(conflicting['identity_properties'][0]['value'], 'Apple')
+        before = self._database_snapshot()
+        with self.assertRaises(KnowledgeConflict):
+            self.review.apply_entity_resolution(self.principal,
+                record_id=fresh.record_id, expected_revision=1, target=target.entity,
+                target_record_id=conflicting['record_id'], target_expected_revision=conflicting['revision'],
+                reviewed_at=REVIEWED_AT, notes='Known identity conflict must block manual linking.')
+        self.assertEqual(self._database_snapshot(), before)
+        self.review.quarantine(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+            record_id=target.record_id, expected_revision=target.revision.revision,
+            reviewed_at=REVIEWED_AT, notes='Revise selected target after it was displayed.')
+        before = self._database_snapshot()
+        with self.assertRaises(KnowledgeConflict):
+            self.review.apply_entity_resolution(self.principal,
+                record_id=fresh.record_id, expected_revision=1, target=target.entity,
+                target_record_id=target.record_id, target_expected_revision=target.revision.revision,
+                reviewed_at=REVIEWED_AT, notes='Stale target must not be accepted.')
+        self.assertEqual(self._database_snapshot(), before)
+
+    def test_review_context_returns_paragraph_and_pinned_document_with_acl(self):
+        from graphrag_prod.api.knowledge_contracts import ReviewEvidenceRequest, ReviewEvidenceResponse
+
+        mention = self.batch.mentions[0]
+        request = ReviewEvidenceRequest(record_id=mention.record_id, expected_revision=1)
+        result = self.review.evidence_context(self.principal, request)
+        ReviewEvidenceResponse.model_validate(result)
+        self.assertGreater(len(result['text']), len(mention.evidence.quoted_text))
+        begin = result['char_start'] - result['context_start']
+        end = result['char_end'] - result['context_start']
+        self.assertEqual(result['text'][begin:end], mention.evidence.quoted_text)
+        document = self.review.evidence_context(self.principal, request.model_copy(update={'view':'document'}))
+        self.assertEqual(document['text'], self.bundle.version.normalized_text[:8000])
+        for denied in (dataclasses.replace(self.principal, groups=frozenset({'other'})),
+                       dataclasses.replace(self.principal, tenant_id='another-tenant')):
+            with self.assertRaises(KnowledgeReviewUnavailable):
+                self.review.evidence_context(denied, request)
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            self.review.evidence_context(self.principal, request.model_copy(update={'expected_revision':99}))
+        self.driver.execute_query(
+            'MATCH (v:DocumentVersion {version_id:$version_id, tenant_id:$tenant_id}) '
+            'CREATE (v)-[:HAS_CHUNK]->(:Chunk {chunk_id:"restricted-neighbor", '
+            'tenant_id:$tenant_id, access_groups:["other"]})',
+            tenant_id=self.tenant_id, version_id=self.bundle.version.version_id, database_=self.database)
+        limited = self.review.evidence_context(self.principal, request)
+        self.assertFalse(limited['document_accessible'])
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            self.review.evidence_context(self.principal, request.model_copy(update={'view':'document'}))
+
     def test_reopening_entity_invalidates_dependent_approval_without_publishing(self):
         self._approve_all()
         mention = self.store.get_entity_mention(self.principal, self.batch.mentions[0].record_id,

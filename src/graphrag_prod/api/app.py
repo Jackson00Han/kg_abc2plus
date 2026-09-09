@@ -53,6 +53,8 @@ from .knowledge_contracts import (
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionResponse,
+    ReviewEvidenceRequest,
+    ReviewEvidenceResponse,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
     MAX_BASE64_DOCUMENT_CHARS,
@@ -944,6 +946,11 @@ def create_app(
             {"record_id": record_id, "expected_revision": expected_revision},
         )
 
+    @app.post("/v1/knowledge/review-evidence", response_model=ReviewEvidenceResponse)
+    async def review_evidence(request: Request, body: ReviewEvidenceRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.KNOWLEDGE_REVIEW_EVIDENCE,
+                                   body.model_dump(mode="python"))
+
     @app.get(
         "/v1/knowledge/entity-resolution/{record_id}",
         response_model=EntityResolutionResponse,
@@ -953,6 +960,7 @@ def create_app(
         record_id: KnowledgeRecordPath,
         identity: IdentityDependency,
         expected_revision: Annotated[int, Query(ge=1, le=2_147_483_647)],
+        query: Annotated[str, Query(max_length=200)] = "",
     ) -> Any:
         return await run_operation(
             request,
@@ -961,6 +969,7 @@ def create_app(
             {
                 "record_id": record_id,
                 "expected_revision": expected_revision,
+                "query": query,
             },
         )
 

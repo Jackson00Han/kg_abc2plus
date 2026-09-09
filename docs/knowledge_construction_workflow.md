@@ -280,3 +280,103 @@ The independent industrial workbench on port 8002 remains untouched.
 Browser visual acceptance is still unverified because no browser surface or
 local browser test package was available. HTTP and executed-JavaScript checks
 do not substitute for that visual check.
+
+## Follow-up: confirmed identities and source context
+
+The first implementation of standardized review still matched only published
+authority and displayed only the exact mention quote. This left a reviewer
+unable to link later mentions to an identity just confirmed in step 03 or to
+judge a four-character equipment name in context. This follow-up changes those
+two review surfaces; extraction, fact approval and publication stay separate.
+
+The automatic authoritative matcher is unchanged. Missing identity properties
+are displayed as insufficient evidence, distinct from conflicting known values.
+An additional manual selector lists visible, current `APPROVED` mentions and
+mentions in the active publication, restricted to the same ontology and entity
+type. It groups results by entity ID, returns at most 20 entities, reports
+truncation and supports name/alias/canonical-key/ID search. Unpublished targets
+are explicitly labelled. The reviewer can inspect both source contexts before
+choosing a target and recording the reason. This action is never an automatic
+same-name merge or an authority promotion.
+
+Manual confirmation includes the selected mention record ID and expected
+revision. The shared corpus and record locks protect revalidation within
+the existing resolution transaction: target status, type, ontology, exact source,
+ACL and revision must still be valid. Known conflicting identity-property values
+block linking; absent values alone do not. Identity checks include the visible
+confirmed sources of a deduplicated entity, so changing its representative
+mention cannot hide a known conflicting value. Linking retains the candidate's own
+evidence and grade, appends a mention revision and rebinds dependent facts without
+approving them. After identity review the page refreshes matching so newly
+confirmed targets appear for the remaining mentions.
+
+`POST /v1/knowledge/review-evidence` is a `knowledge:review` read operation.
+It accepts a record ID, expected revision, view and bounded document-page offset;
+it never accepts a replacement source range. The server resolves the active
+source version and verifies the exact quote against both chunk and document.
+The page initially shows the containing paragraph within a bounded window,
+highlights the mention and shows the document title, version and character
+positions. Reviewers can expand up to 2,000 characters on either side or read
+the pinned normalized document in 8,000-character pages. Very long paragraphs
+remain bounded; displayed character ranges make the window explicit. Highlight
+positions use Unicode code points, including supplementary characters.
+
+Document expansion requires access to every chunk of the pinned version. If
+the document includes an inaccessible chunk, the normal context falls back to
+the accessible source chunk and full-document access is refused. Source reads
+are lazy and escaped for HTML; late responses after identity changes or removal
+of the card are discarded. Stored quotes and evidence offsets are unchanged.
+
+
+Live read-only verification on 2026-09-09 restarted only the port-8000 Python
+workbench with `--reuse-existing-corpus --skip-provider-warmup`; the existing
+Neo4j container was retained. Both remaining candidate mentions returned one
+selectable confirmed target. Their four-character quotes expanded to containing
+paragraphs of 16 and 22 characters, and both surrounding/full-document reads
+returned the pinned 308-character normalized source. Every returned quote matched
+its exact source range. The graph before and after restart plus authenticated
+reads contained 104 nodes and 157 relationships with the same full-property
+fingerprint (`6dfdcfd7b1755ddaac878799031fe8ce6929d04d0c075a2d9dfb597ccef96d21`).
+No review decision, publication, reset or provider call was used for this check.
+The port-8002 workbench was left untouched. Browser visual acceptance remains
+unverified; the checks execute page JavaScript and authenticated HTTP operations.
+
+The focused disposable-Neo4j review module passed all 20 tests, including
+continuous three-source identity linking, identity conflicts from another
+confirmed source, stale target revision rejection without residual writes,
+unchanged source grade, unapproved dependent facts, pinned source context and
+restricted neighboring-chunk denial. Earlier attempts exposed a query-parameter
+name collision and two test setup assumptions (a fixed representative source and
+an assertions-only batch); these were corrected before the successful rerun.
+An earlier complete run was interrupted after Bolt connection timeouts. Its log
+is retained locally at `/tmp/review-context-integration-full.log`; an orphaned
+test container from that run could not be removed because Docker did not report
+an exit event. The Docker daemon was not restarted, to preserve the user's
+running databases. Subsequent checks use fresh, separately owned containers with
+the unchanged 1-CPU/1.5-GiB resource cap.
+
+
+Final validation for this follow-up: **1,281 tests passed without skips** —
+1,032 unit, 18 HTTP E2E, 54 security, 2 regression and 175 disposable-Neo4j
+integration tests. The final complete Neo4j run passed in 1,374.682 seconds and
+its owned container was removed successfully. The updated page's manual apply
+request and stale-context handling were also executed in the Node.js harness.
+Packaging, Python compilation, JavaScript syntax and `git diff --check` passed.
+
+Baseline **1.13.0** retains every 1.12.0 test ID and adds exactly five unit,
+one HTTP E2E and two Neo4j integration tests. `case_digests`, `contract_metrics`,
+`diagnostics` and `identities` compare exactly equal to 1.12.0. The unified report
+passes against the updated baseline with semantic digest
+`0f8f32b0795c8707a7868f0f799511539045f9d874d31801e984419d9621cea3`.
+The locked knowledge-quality gate also passes. Operational figures remain
+non-qualifying deterministic fixtures; this is a `dev-mini` maintenance check,
+not a new production performance validation.
+
+Local receipts, observations and the unified report are in
+`/tmp/review-context-validation`; the baseline comparison is in
+`/tmp/review-context-baseline-comparison.json`. Reproduce the integration suite
+with `sh scripts/run_stage8_neo4j_tests.sh SUITE_RESULT_PATH OBSERVATION_DIR` and
+the UI/adapter checks with
+`.venv/bin/python -m unittest tests.unit.test_review_context tests.unit.test_api_entity_resolution`.
+The normal Stage 8 evaluation command consumes all five suite receipts and the
+locked knowledge-quality report; no acceptance threshold was relaxed.

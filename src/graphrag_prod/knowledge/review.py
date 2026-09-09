@@ -408,6 +408,8 @@ def _active_revision_query(
     kind: ReviewRecordKind,
     *,
     one_record: bool,
+    extra_where: str = "",
+    projection: str = "revision {.*} AS revision",
 ) -> str:
     if kind is ReviewRecordKind.ENTITY_MENTION:
         label = "GovernedEntityMentionRevision"
@@ -459,7 +461,8 @@ def _active_revision_query(
           AND any(group IN $groups WHERE group IN revision.access_groups)
           AND any(group IN $groups WHERE group IN chunk.access_groups)
           AND any(group IN $groups WHERE group IN document.access_groups)
-        RETURN revision {{.*}} AS revision
+          {extra_where}
+        RETURN {projection}
         ORDER BY revision.created_at, revision.record_id
         LIMIT $limit
     """
@@ -622,6 +625,20 @@ class Neo4jKnowledgeReviewService:
         self.driver = driver
         self.database = database
 
+    def resolution_targets(self, principal, candidate, query=""):
+        from .review_context import resolution_targets_tx
+
+        _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
+        with self.driver.session(database=self.database) as session:
+            return session.execute_read(resolution_targets_tx, principal, candidate, query)
+
+    def evidence_context(self, principal, request):
+        from .review_context import evidence_context_tx
+
+        _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
+        with self.driver.session(database=self.database) as session:
+            return session.execute_read(evidence_context_tx, principal, request)
+
     def review_queue(
         self,
         principal: Principal,
@@ -777,6 +794,8 @@ class Neo4jKnowledgeReviewService:
         target: EntityIdentity,
         reviewed_at: datetime,
         notes: str,
+        target_record_id: str | None = None,
+        target_expected_revision: int | None = None,
     ) -> ReviewBatchResult:
         """Atomically link a mention and rebind every dependent candidate fact.
 
@@ -803,6 +822,8 @@ class Neo4jKnowledgeReviewService:
                 target,
                 reviewed_at,
                 notes,
+                target_record_id,
+                target_expected_revision,
             )
         return ReviewBatchResult(principal.tenant_id, outcomes)
 
@@ -816,6 +837,8 @@ class Neo4jKnowledgeReviewService:
         target: EntityIdentity,
         reviewed_at: datetime,
         notes: str,
+        target_record_id: str | None = None,
+        target_expected_revision: int | None = None,
     ) -> tuple[ReviewOutcome, ...]:
         mention_request = ReviewRequest(
             ReviewRecordKind.ENTITY_MENTION,
@@ -836,6 +859,16 @@ class Neo4jKnowledgeReviewService:
             raise KnowledgeReviewUnavailable("review target is unavailable")
         if current.entity.entity_type != target.entity_type:
             raise KnowledgeReviewUnavailable("review target is unavailable")
+
+        if target_record_id is not None:
+            from .review_context import confirmed_target_tx
+
+            selected = confirmed_target_tx(
+                tx, principal, current, target_record_id, target_expected_revision,
+                reviewed_at=reviewed_at,
+            )
+            if selected.entity != target:
+                raise KnowledgeConflict("selected entity changed; refresh matching")
 
         source_names = {current.entity.canonical_name, *current.entity.aliases}
         target = dataclasses.replace(target, aliases=tuple(sorted(

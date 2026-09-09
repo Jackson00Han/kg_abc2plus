@@ -115,6 +115,8 @@ from .knowledge_contracts import (
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
+    ReviewEvidenceRequest,
+    ReviewEvidenceResponse,
     EntityResolutionResponse,
     EvidenceInput,
     KnowledgeConstructionRequest,
@@ -1446,6 +1448,39 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         return candidate, properties, suggestions
 
+    def review_evidence(self, principal: Principal, request: ReviewEvidenceRequest) -> BackendResult:
+        _require_capability(principal, "knowledge:review")
+        try:
+            payload = self.reviews.evidence_context(principal, request)
+        except KnowledgeReviewUnavailable as error:
+            raise ResourceNotFoundError() from error
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except KnowledgeConflict as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(ReviewEvidenceResponse, payload))
+
+    def _review_targets(self, principal, candidate, query=""):
+        # Custom API adapters may retain the legacy automatic-only interface.
+        if not hasattr(self.reviews, "resolution_targets"):
+            return {"items": [], "truncated": False}
+        try:
+            return self.reviews.resolution_targets(principal, candidate, query)
+        except KnowledgeReviewUnavailable as error:
+            raise ResourceNotFoundError() from error
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except KnowledgeConflict as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+
     def resolution_suggestions(
         self,
         principal: Principal,
@@ -1454,7 +1489,10 @@ class Neo4jKnowledgeOperations:
         candidate, properties, suggestions = self._resolution_context(
             principal, request
         )
+        targets = self._review_targets(principal, candidate, request.query)
         payload = {
+            "review_targets": targets["items"],
+            "targets_truncated": targets["truncated"],
             "record_id": candidate.record_id,
             "revision_id": candidate.revision_id,
             "revision": candidate.revision.revision,
@@ -1493,22 +1531,38 @@ class Neo4jKnowledgeOperations:
             ),
             None,
         )
-        if selected is None or selected.target is None:
-            raise ResourceNotFoundError()
+        manual = None
+        options = {}
+        if request.target_record_id is not None:
+            targets = self._review_targets(principal, candidate, request.target_entity_id)
+            manual = next((item for item in targets['items']
+                if item['record_id'] == request.target_record_id
+                and item['revision'] == request.target_expected_revision
+                and item['entity']['entity_id'] == request.target_entity_id), None)
+            if manual is None:
+                raise ResourceNotFoundError()
+            if not manual['selectable']:
+                raise ConflictError()
+            target = EntityIdentity(tenant_id=principal.tenant_id, **manual['entity'])
+            options = dict(target_record_id=request.target_record_id,
+                           target_expected_revision=request.target_expected_revision)
+            notes = f"{request.notes}\nManual identity selection; target record={request.target_record_id}; revision={request.target_expected_revision}"
+        else:
+            if selected is None or selected.target is None:
+                raise ResourceNotFoundError()
+            target = selected.target
+            notes = (f"{request.notes}\nResolution rule={selected.rule_version}; "
+                     f"matcher={selected.matcher_version}; target={target.entity_id}")
         reviewed_at = self._now()
         try:
             result = self.reviews.apply_entity_resolution(
                 principal,
                 record_id=candidate.record_id,
                 expected_revision=request.expected_revision,
-                target=selected.target,
+                target=target,
                 reviewed_at=reviewed_at,
-                notes=(
-                    f"{request.notes}\n"
-                    f"Resolution rule={selected.rule_version}; "
-                    f"matcher={selected.matcher_version}; "
-                    f"target={selected.target.entity_id}"
-                ),
+                notes=notes,
+                **options,
             )
         except KnowledgeReviewUnavailable as error:
             raise ResourceNotFoundError() from error
@@ -1534,7 +1588,8 @@ class Neo4jKnowledgeOperations:
                 }
                 for outcome in result.outcomes
             ),
-            "applied_suggestion": _resolution_suggestion_payload(selected),
+            "applied_suggestion": _resolution_suggestion_payload(selected) if manual is None else None,
+            "applied_target": manual,
         }
         return BackendResult(_outbound(EntityResolutionApplyResponse, payload))
 

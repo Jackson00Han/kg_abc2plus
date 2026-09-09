@@ -967,6 +967,47 @@ class RecordRevisionHistoryResponse(StrictAPIModel):
 class EntityResolutionRequest(StrictAPIModel):
     record_id: Identifier
     expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    query: Annotated[str, Field(max_length=200)] = ""
+
+
+class ReviewEvidenceRequest(StrictAPIModel):
+    record_id: Identifier
+    expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    view: Literal['paragraph', 'surrounding', 'document'] = 'paragraph'
+    offset: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)] = 0
+
+
+class ReviewEvidenceResponse(StrictAPIModel):
+    record_id: Identifier
+    revision: int
+    document_id: Identifier
+    version_id: Identifier
+    chunk_id: Identifier
+    document_title: str
+    source_uri: str | None
+    text: str
+    context_start: int
+    context_end: int
+    char_start: int
+    char_end: int
+    quoted_text: str
+    total_characters: int
+    document_accessible: bool
+    view: Literal['paragraph', 'surrounding', 'document']
+    has_previous: bool
+    has_next: bool
+
+
+class ConfirmedResolutionTarget(StrictAPIModel):
+    record_id: Identifier
+    revision: int
+    entity: EntityIdentityResponse
+    status: Literal['APPROVED', 'PUBLISHED']
+    authority: Literal['AUTHORITATIVE', 'SECONDARY']
+    evidence: EvidenceResponse
+    identity_properties: list[dict[str, JsonValue]]
+    selectable: bool
+    reason: str
 
 
 class IdentityPropertyResponse(StrictAPIModel):
@@ -1033,6 +1074,8 @@ class EntityResolutionResponse(StrictAPIModel):
     revision_id: Identifier
     revision: Annotated[int, Field(strict=True, ge=1)]
     candidate: EntityIdentityResponse
+    review_targets: list[ConfirmedResolutionTarget] = Field(default_factory=list, max_length=20)
+    targets_truncated: bool = False
     identity_properties: Annotated[
         tuple[IdentityPropertyResponse, ...], Field(max_length=64)
     ]
@@ -1049,6 +1092,14 @@ class EntityResolutionResponse(StrictAPIModel):
 class EntityResolutionApplyRequest(EntityResolutionRequest):
     target_entity_id: Identifier
     notes: LongText
+    target_record_id: Identifier | None = None
+    target_expected_revision: Annotated[int, Field(strict=True, ge=1)] | None = None
+
+    @model_validator(mode='after')
+    def target_revision_pair(self) -> Self:
+        if (self.target_record_id is None) != (self.target_expected_revision is None):
+            raise ValueError('manual target requires record ID and revision together')
+        return self
 
 
 class MentionEditInput(StrictAPIModel):
@@ -1157,7 +1208,14 @@ class EntityResolutionApplyResponse(StrictAPIModel):
         tuple[EntityResolutionOutcomeResponse, ...],
         Field(min_length=1, max_length=MAX_REVIEW_RECORDS),
     ]
-    applied_suggestion: EntityResolutionSuggestionResponse
+    applied_suggestion: EntityResolutionSuggestionResponse | None = None
+    applied_target: ConfirmedResolutionTarget | None = None
+
+    @model_validator(mode='after')
+    def one_applied_target(self) -> Self:
+        if (self.applied_suggestion is None) == (self.applied_target is None):
+            raise ValueError('resolution result requires exactly one applied suggestion or manual target')
+        return self
 
     @field_validator("outcomes", mode="before")
     @classmethod

@@ -2435,7 +2435,7 @@
       function resolutionMarkup(item, index) {
         if (item.record_kind !== 'ENTITY_MENTION') return '';
         const result=state.resolutions.get(item.record_id);
-        const label=result?.suggestions?.some(value=>value.target) ? '找到匹配候选' : result?.status==='ready' ? '未找到可确认的匹配目标' : '匹配中';
+        const label=(result?.suggestions?.some(value=>value.target) || result?.review_targets?.some(value=>value.selectable)) ? '找到匹配候选' : result?.status==='ready' ? '未找到可确认的匹配目标' : '匹配中';
         return `<details class="review-resolution" data-resolution-details="${index}"><summary>实体匹配与消歧 · ${label}</summary>${resolutionContent(item,index)}</details>`;
       }
       function resolutionContent(item, index) {
@@ -2452,11 +2452,16 @@
           const source = evidence?.authoritative_evidence?.[0];
           const canApply = target && ['AUTO_LINK', 'REVIEW'].includes(suggestion.outcome);
           const reason = suggestion.outcome === 'NO_MATCH' ? '当前可访问的权威知识中未找到匹配目标。核对原文后，可确认新实体。'
-            : suggestion.outcome === 'CONFLICT' ? (suggestion.reason?.includes('missing identity') ? '这条来源提及缺少本体要求的身份属性，请暂缓处理。' : '身份属性不足、不一致或对应多个目标，请核查后再处理。')
+            : suggestion.outcome === 'CONFLICT' ? (suggestion.reason?.includes('missing identity') ? '这条来源提及缺少身份属性，不能自动判断。可核对上下文后，在下方选择已确认实体。' : '身份属性不足、不一致或对应多个目标，请核查后再处理。')
             : ({EXACT_CANONICAL_KEY:'唯一标识与已有实体一致。', EXACT_IDENTITY_PROPERTIES:'本体要求的身份属性全部一致，且只对应一个已有实体。', EXACT_GOVERNED_ALIAS:'名称与已有实体的唯一治理别名一致。', EXACT_CANONICAL_NAME:'名称匹配，请结合原文确认是否为同一实体。', SIMILAR_NAME:'名称相似，仅供人工核对，不能据此直接认定为同一实体。'})[evidence?.match_kind] || '请结合匹配依据及权威来源确认是否为同一实体。';
-          return `<div class="review-match"><div class="governance-item-head"><strong>${escapeHtml(outcomeLabels[suggestion.outcome] || suggestion.outcome)}${target ? ` · ${escapeHtml(target.canonical_name)}` : ''}</strong></div><p>${escapeHtml(reason)}</p>${source ? `<div class="exact-evidence">权威来源：${escapeHtml(source.quoted_text)}</div>` : ''}<details class="review-technical"><summary>匹配依据详情</summary><p>${escapeHtml(suggestion.reason)}<br>rule ${escapeHtml(suggestion.rule_version)} · matcher ${escapeHtml(suggestion.matcher_version)} · confidence ${escapeHtml(suggestion.confidence)}${target ? `<br>${escapeHtml(target.entity_type)} · ${escapeHtml(target.canonical_key)}` : ''}${evidence ? `<br>${escapeHtml(evidence.match_kind)} · ${escapeHtml(evidence.candidate_value)}` : ''}${source ? `<br>Chunk ${escapeHtml(source.chunk_id)} · 字符 ${escapeHtml(source.char_start)}–${escapeHtml(source.char_end)}` : ''}</p></details>${canApply ? `<div class="workbench-actions"><button class="button primary" type="button" data-resolution-apply="${index}" data-resolution-suggestion="${suggestionIndex}">确认使用已有实体</button></div>` : ''}</div>`;
+          return `<div class="review-match"><div class="governance-item-head"><strong>${escapeHtml(suggestion.reason?.includes('missing identity') ? '身份依据不足 · 需人工确认' : outcomeLabels[suggestion.outcome] || suggestion.outcome)}${target ? ` · ${escapeHtml(target.canonical_name)}` : ''}</strong></div><p>${escapeHtml(reason)}</p>${source ? `<div class="exact-evidence">权威来源：${escapeHtml(source.quoted_text)}</div>` : ''}<details class="review-technical"><summary>匹配依据详情</summary><p>${escapeHtml(suggestion.reason)}<br>rule ${escapeHtml(suggestion.rule_version)} · matcher ${escapeHtml(suggestion.matcher_version)} · confidence ${escapeHtml(suggestion.confidence)}${target ? `<br>${escapeHtml(target.entity_type)} · ${escapeHtml(target.canonical_key)}` : ''}${evidence ? `<br>${escapeHtml(evidence.match_kind)} · ${escapeHtml(evidence.candidate_value)}` : ''}${source ? `<br>Chunk ${escapeHtml(source.chunk_id)} · 字符 ${escapeHtml(source.char_start)}–${escapeHtml(source.char_end)}` : ''}</p></details>${canApply ? `<div class="workbench-actions"><button class="button primary" type="button" data-resolution-apply="${index}" data-resolution-suggestion="${suggestionIndex}">确认使用已有实体</button></div>` : ''}</div>`;
         }).join('');
-        return `<div class="review-matching-basis"><strong>身份匹配依据</strong><br>${properties || '未取得可用的身份属性；请结合下方匹配结果处理。'}<br>自动匹配不修改候选。确认使用已有实体后，系统会更新相关事实的归属；这些事实仍需到下一阶段单独审核。</div>${suggestions}<div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">刷新匹配</button></div>`;
+        return `<div class="review-matching-basis"><strong>身份匹配依据</strong><br>${properties || '未取得可用的身份属性；请结合下方匹配结果处理。'}<br>自动匹配不修改候选。确认使用已有实体后，系统会更新相关事实的归属；这些事实仍需到下一阶段单独审核。</div>${suggestions}${manualResolutionMarkup(resolution,index)}<div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">刷新匹配</button></div>`;
+      }
+
+      function manualResolutionMarkup(resolution,index) {
+        const targets=resolution.review_targets || [];
+        return `<div class="review-match"><strong>人工选择已有实体</strong><p>包含已确认但尚未发布的实体，以及已发布实体。名称相同只用于查找，请查看双方原文后确认。</p><div class="workbench-actions"><input aria-label="查找已有实体" data-resolution-query="${index}" value="${escapeHtml(resolution.query || '')}" placeholder="输入名称、别名或实体 ID"><button type="button" class="button" data-resolution-search="${index}">查找</button></div>${targets.map((target,targetIndex)=>`<div class="review-match"><strong>${escapeHtml(target.entity.canonical_name)}</strong> · ${target.status==='APPROVED'?'已确认，尚未发布':'已发布'}<p>${escapeHtml(target.entity.entity_type)} · ${escapeHtml(target.entity.canonical_key)}<br>${(target.identity_properties || []).map(value=>`${escapeHtml(value.name)} = ${escapeHtml(value.value)}`).join(' · ')}</p>${reviewEvidence(target.evidence,'查看目标实体原文',target)}<p>${escapeHtml(target.reason)}</p><button type="button" class="button primary" data-resolution-apply="${index}" data-resolution-suggestion="-1" data-resolution-manual="${targetIndex}" data-resolution-blocked="${!target.selectable}" ${target.selectable?'':'disabled'}>确认归入此实体</button></div>`).join('') || '<p>未找到可见的已确认实体，可调整查找条件。</p>'}${resolution.targets_truncated?'<p>结果超过 20 条，请输入更具体的名称或标识。</p>':''}</div>`;
       }
 
       function revisionHistoryMarkup(item, index) {
@@ -2492,9 +2497,38 @@
         if(!item.literal_semantics && item.object_entity) return '';
         return `适用起点：${value.valid_from || '未声明'}；终点：${value.valid_to || '未声明'}；观测时间：${value.observed_at || '未声明'}`;
       }
-      function reviewEvidence(evidence, label = '查看原文证据') {
+      function reviewEvidence(evidence, label = '查看原文证据', record = null) {
         if (!evidence) return '<span class="review-muted">来源证据暂不可用</span>';
-        return `<details class="review-evidence"><summary>${escapeHtml(label)}</summary><blockquote>${escapeHtml(evidence.quoted_text || '此视图仅提供来源定位')}</blockquote><small>Chunk ${escapeHtml(shortId(evidence.chunk_id))} · 字符 ${escapeHtml(evidence.char_start)}–${escapeHtml(evidence.char_end)}</small></details>`;
+        const source=record ? ` data-evidence-record="${escapeHtml(record.record_id)}" data-evidence-revision="${escapeHtml(record.revision)}"` : '';
+        return `<details class="review-evidence"${source}><summary>${escapeHtml(label)}</summary><div data-evidence-context><blockquote>${escapeHtml(evidence.quoted_text || '此视图仅提供来源定位')}</blockquote><small>Chunk ${escapeHtml(shortId(evidence.chunk_id))} · 字符 ${escapeHtml(evidence.char_start)}–${escapeHtml(evidence.char_end)}</small></div></details>`;
+      }
+      function evidenceContextMarkup(value) {
+        const characters=Array.from(value.text);
+        const start=Math.max(0,Math.min(characters.length,value.char_start-value.context_start));
+        const end=Math.max(start,Math.min(characters.length,value.char_end-value.context_start));
+        const body=escapeHtml(characters.slice(0,start).join(''))+(end>start ? `<mark>${escapeHtml(characters.slice(start,end).join(''))}</mark>`:'')+escapeHtml(characters.slice(end).join(''));
+        return `<p><strong>${escapeHtml(value.document_title)}</strong></p><blockquote style="white-space:pre-wrap">${body}</blockquote><small>文档版本 ${escapeHtml(shortId(value.version_id))} · Chunk ${escapeHtml(shortId(value.chunk_id))} · 命中字符 ${value.char_start}–${value.char_end}<br>当前显示字符 ${value.context_start}–${value.context_end}${value.source_uri ? `<br>${escapeHtml(value.source_uri)}`:''}</small><div class="workbench-actions"><button type="button" class="button" data-evidence-view="paragraph">所在段落</button><button type="button" class="button" data-evidence-view="surrounding">展开前后文</button>${value.document_accessible ? `<button type="button" class="button" data-evidence-view="document" data-evidence-offset="${Math.floor(value.char_start/8000)*8000}">查看完整文档</button>`:'<span>仅显示当前可访问切块</span>'}${value.view==='document' && value.has_previous ? `<button type="button" class="button" data-evidence-view="document" data-evidence-offset="${Math.max(0,value.context_start-8000)}">上一页</button>`:''}${value.view==='document' && value.has_next ? `<button type="button" class="button" data-evidence-view="document" data-evidence-offset="${value.context_end}">下一页</button>`:''}</div>`;
+      }
+      async function loadEvidenceContext(details, view='paragraph', offset=0) {
+        const panel=details.querySelector('[data-evidence-context]');
+        const identityEpoch=state.identityEpoch, request=(details.contextRequest || 0)+1;
+        details.contextRequest=request;
+        panel.innerHTML='<p>正在读取原文上下文…</p>';
+        try {
+          const value=await apiRequest('/v1/knowledge/review-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({record_id:details.dataset.evidenceRecord,expected_revision:Number(details.dataset.evidenceRevision),view,offset})});
+          if(identityEpoch!==state.identityEpoch || details.contextRequest!==request || details.isConnected===false) return;
+          panel.innerHTML=evidenceContextMarkup(value);
+          panel.querySelectorAll('[data-evidence-view]').forEach(button=>button.addEventListener('click',()=>loadEvidenceContext(details,button.dataset.evidenceView,Number(button.dataset.evidenceOffset || 0))));
+        } catch(error) {
+          if(identityEpoch!==state.identityEpoch || details.contextRequest!==request || details.isConnected===false) return;
+          panel.innerHTML=`<p>无法读取原文：${escapeHtml(error.message)}</p><button type="button" class="button" data-evidence-retry>重试</button>`;
+          panel.querySelector('[data-evidence-retry]')?.addEventListener('click',()=>loadEvidenceContext(details,view,offset));
+        }
+      }
+      function bindEvidenceActions(container) {
+        container.querySelectorAll('[data-evidence-record]').forEach(details=>details.addEventListener('toggle',()=> {
+          if(details.open && !details.contextRequest) void loadEvidenceContext(details);
+        }));
       }
       function reviewAssessment(item) {
         reviewModel();
@@ -2570,8 +2604,8 @@
           const entity = reviewEntity(rows[0].item);
           const mentions = rows.filter(row=>row.item.record_kind === 'ENTITY_MENTION');
           const facts = rows.filter(row=>row.item.record_kind !== 'ENTITY_MENTION');
-          const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文')}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
-          const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文')}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
+          const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
+          const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
           return `<article class="review-entity-card"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span><span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
         }).join('');
         elements.reviewList.innerHTML = navigation + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && state.approvedRevisions.size ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
@@ -2678,7 +2712,7 @@
           const index=Number(button.dataset.reviewIndex ?? button.dataset.reviewKeep ?? button.dataset.resolutionApply ?? button.dataset.reviewSaveDraft);
           const item=state.reviews[index];
           const editing=item && reviewIsEditing(index);
-          button.disabled=busy || Boolean(editing && button.dataset.reviewSaveDraft === undefined);
+          button.disabled=busy || button.dataset.resolutionBlocked==='true' || Boolean(editing && button.dataset.reviewSaveDraft === undefined);
           if (!busy && !editing && item && button.dataset.reviewAction==='APPROVED') button.disabled=!reviewApproval(item).allowed;
           if (!busy && item && button.dataset.reviewAction==='QUARANTINED') button.disabled=item.trust?.status==='QUARANTINED';
         });
@@ -2724,11 +2758,17 @@
       }
 
       function bindResolutionActions(container) {
+        bindEvidenceActions(container);
+        container.querySelectorAll('[data-resolution-search]').forEach(button=>button.addEventListener('click',()=> {
+          const index=Number(button.dataset.resolutionSearch), item=state.reviews[index];
+          const input=container.querySelector(`[data-resolution-query="${index}"]`);
+          if(item) void queueResolution(item,{refresh:true,query:input?.value.trim() || ''});
+        }));
         container.querySelectorAll('[data-resolution-load]').forEach(button => {
           button.addEventListener('click', () => loadResolution(Number(button.dataset.resolutionLoad), button));
         });
         container.querySelectorAll('[data-resolution-apply]').forEach(button => {
-          button.addEventListener('click', () => applyResolution(Number(button.dataset.resolutionApply), Number(button.dataset.resolutionSuggestion), button));
+          button.addEventListener('click', () => applyResolution(Number(button.dataset.resolutionApply), Number(button.dataset.resolutionSuggestion), button, button.dataset.resolutionManual === undefined ? null : Number(button.dataset.resolutionManual)));
         });
       }
 
@@ -2787,7 +2827,7 @@
       async function executeResolution(job) {
         const {item, entry} = job;
         try {
-          const payload = await apiRequest(`/v1/knowledge/entity-resolution/${encodeURIComponent(item.record_id)}?expected_revision=${encodeURIComponent(item.revision)}`);
+          const payload = await apiRequest(`/v1/knowledge/entity-resolution/${encodeURIComponent(item.record_id)}?expected_revision=${encodeURIComponent(item.revision)}${entry.query ? `&query=${encodeURIComponent(entry.query)}` : ''}`);
           if (!currentResolutionJob(job)) return;
           if (payload.revision !== item.revision || payload.record_id !== item.record_id) throw new Error('候选版本已变化，请刷新审核队列');
           Object.assign(entry, payload, {status: 'ready'});
@@ -2803,14 +2843,14 @@
         }
       }
 
-      function queueResolution(item, {refresh = false} = {}) {
+      function queueResolution(item, {refresh = false, query = ""} = {}) {
         const cached = state.resolutions.get(item.record_id);
         if (!refresh && cached?.revision === item.revision && cached.identityEpoch === state.identityEpoch
           && cached.reviewEpoch === state.reviewEpoch) return cached.done || Promise.resolve();
         let finish;
         const done = new Promise(resolve => { finish = resolve; });
         const entry = {revision: item.revision, identityEpoch: state.identityEpoch,
-          reviewEpoch: state.reviewEpoch, status: 'queued', done};
+          reviewEpoch: state.reviewEpoch, status: 'queued', done, query};
         state.resolutions.set(item.record_id, entry);
         state.resolutionQueue.push({item, entry, identityEpoch: state.identityEpoch,
           reviewEpoch: state.reviewEpoch, finish});
@@ -2826,18 +2866,20 @@
         await queueResolution(item, {refresh: true});
       }
 
-      async function applyResolution(index, suggestionIndex, button) {
+      async function applyResolution(index, suggestionIndex, button, manualIndex=null) {
         if(state.reviewBusy) {showToast('上一项审核正在保存，请稍候');return;}
         if(reviewIsEditing(index)) {showToast('请先保存或取消当前编辑，再确认实体链接');return;}
         const item = state.reviews[index];
         const resolution = item && state.resolutions.get(item.record_id);
-        const suggestion = resolution?.suggestions?.[suggestionIndex];
+        const manual=manualIndex===null ? null : resolution?.review_targets?.[manualIndex];
+        if(manual && !manual.selectable) {showToast(manual.reason);return;}
+        const suggestion = manual ? {target:manual.entity} : resolution?.suggestions?.[suggestionIndex];
         if (!item || resolution?.revision !== item.revision || resolution.identityEpoch !== state.identityEpoch
           || resolution.reviewEpoch !== state.reviewEpoch || resolution.status !== 'ready' || !suggestion?.target) { showToast('消歧建议已变化，请重新匹配'); return; }
-        const reviewNotes = globalThis.prompt('请输入本次实体链接的人工审核依据：', '已核对 identity properties 与权威来源证据。');
+        const reviewNotes = globalThis.prompt('请输入本次实体链接的人工审核依据：', '已核对双方原文上下文，确认指向同一实体。');
         if (reviewNotes === null) return;
         if (!reviewNotes.trim()) { showToast('审核依据不能为空'); return; }
-        if (!globalThis.confirm(`确认将“${item.entity?.canonical_name || item.record_id}”链接到权威实体“${suggestion.target.canonical_name}”？依赖事实只重绑，不会自动批准。`)) return;
+        if (!globalThis.confirm(`确认将“${item.entity?.canonical_name || item.record_id}”链接到已有实体“${suggestion.target.canonical_name}”？依赖事实只重绑，不会自动批准。`)) return;
         const identityEpoch = state.identityEpoch;
         button.disabled = true;
         setReviewBusy(true);
@@ -2849,6 +2891,7 @@
               expected_revision: item.revision,
               target_entity_id: suggestion.target.entity_id,
               notes: reviewNotes.trim(),
+              ...(manual ? {target_record_id:manual.record_id,target_expected_revision:manual.revision} : {}),
             }),
           });
           if (identityEpoch !== state.identityEpoch) return;
@@ -2860,7 +2903,7 @@
           invalidatePublicationPreview();
           state.resolutions.delete(item.record_id);
           showToast(`实体已链接；${Math.max(0, outcomes.length - 1)} 条依赖事实已重绑并保留待审核状态`);
-          await Promise.allSettled([loadReviews(), loadActiveDocuments(), loadPublicationCandidates()]);
+          await Promise.allSettled([loadReviews({refreshResolutions:true}), loadActiveDocuments(), loadPublicationCandidates()]);
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
           button.disabled = false;
@@ -2942,7 +2985,7 @@
           invalidatePublicationPreview();
           if(saveEdits) state.reviewPhase='paused';
           showToast(saveEdits ? '修改已保存到暂缓区；新版本重新检查后，再确认采用' : `${payload.outcomes?.length || 0} 条审核决定已保存`);
-          await Promise.allSettled([loadReviews(), loadActiveDocuments(), loadPublicationCandidates()]);
+          await Promise.allSettled([loadReviews({refreshResolutions:true}), loadActiveDocuments(), loadPublicationCandidates()]);
         } catch (error) {
           if(identityEpoch===state.identityEpoch)showToast(error.message);
         } finally {setReviewBusy(false);}

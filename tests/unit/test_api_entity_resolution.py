@@ -247,6 +247,40 @@ def _principal(*, tenant_id: str = TENANT) -> Principal:
 
 
 class EntityResolutionAdapterTests(unittest.TestCase):
+    def test_missing_identity_can_be_manually_linked_to_revision_bound_confirmed_target(self):
+        from graphrag_prod.api.knowledge import _entity_payload, _evidence_payload
+
+        class MissingStore(_Store):
+            def list_identity_property_assertions(self, *_args, **_kwargs):
+                return ()
+
+        class ConfirmedReviews(_Reviews):
+            selectable = True
+
+            def resolution_targets(self, principal, candidate, query):
+                return {'items':[dict(record_id='confirmed-target', revision=2,
+                    entity=_entity_payload(TARGET), status='APPROVED', authority='AUTHORITATIVE',
+                    evidence=_evidence_payload(CANDIDATE.evidence), identity_properties=[],
+                    selectable=self.selectable, reason='Check both source contexts.')], 'truncated':False}
+
+        reviews = ConfirmedReviews()
+        adapter = self._adapter(store=MissingStore(), reviews=reviews)
+        suggestions = adapter.resolution_suggestions(_principal(),
+            EntityResolutionRequest(record_id=CANDIDATE.record_id, expected_revision=1)).payload
+        self.assertIsNone(suggestions.suggestions[0].target)
+        self.assertEqual(suggestions.review_targets[0].status, 'APPROVED')
+        request = EntityResolutionApplyRequest(record_id=CANDIDATE.record_id, expected_revision=1,
+            target_entity_id=TARGET.entity_id, target_record_id='confirmed-target',
+            target_expected_revision=2, notes='Both paragraphs refer to this pump.')
+        response = adapter.apply_resolution(_principal(), request).payload
+        self.assertIsNone(response.applied_suggestion)
+        self.assertEqual(response.applied_target.entity.entity_id, TARGET.entity_id)
+        self.assertEqual(reviews.call[1]['target_expected_revision'], 2)
+        self.assertEqual(reviews.call[1]['target'], TARGET)
+        reviews.selectable = False
+        with self.assertRaises(ConflictError):
+            adapter.apply_resolution(_principal(), request)
+
     def _adapter(
         self,
         *,
