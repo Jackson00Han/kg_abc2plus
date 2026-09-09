@@ -42,8 +42,9 @@ def standardized_record(record: EntityMentionRecord | AssertionRecord) -> dict[s
                     entity_type=record.entity.entity_type,
                     standard_name=record.entity.canonical_name,
                     aliases=list(record.entity.aliases))
+    common["fact_distinction"] = record.fact_distinction.to_mapping() if record.fact_distinction else None
     if record.object_entity is not None:
-        return dict(common, kind="RELATIONSHIP", relationship_id=record.record_id,
+        return dict(common, kind="RELATIONSHIP", relationship_id=record.fact_key, fact_key=record.fact_key,
                     source_entity_id=record.subject.entity_id,
                     relationship_type=record.predicate,
                     target_entity_id=record.object_entity.entity_id,
@@ -80,7 +81,7 @@ def instance_snapshot(records: tuple, evidence: list[dict]) -> dict:
     entities = entity_views(records)
     for entity in entities.values():
         entity["properties"] = []
-    relationships = []
+    relationships = {}
     for record in sorted(records, key=lambda item: item.revision_id):
         if isinstance(record, EntityMentionRecord):
             continue
@@ -92,7 +93,16 @@ def instance_snapshot(records: tuple, evidence: list[dict]) -> dict:
                 target = entities[identity.entity_id]
                 item[role] = {key: target[key] for key in
                               ("entity_id", "entity_type", "standard_name")}
-            relationships.append(item)
+            group = relationships.get(record.fact_key)
+            source = {key: item[key] for key in
+                      ("record_id", "revision_id", "authority_level", "origin", "evidence_ids", "properties", "fact_distinction")}
+            if group is None:
+                group = dict(item, sources=[], evidence_ids=[], authority_levels=[])
+                relationships[record.fact_key] = group
+            group["sources"].append(source)
+            group["evidence_ids"].append(record.revision_id)
+            group["authority_levels"] = sorted(set(group["authority_levels"]) | {item["authority_level"]})
+            group["source_count"] = len(group["sources"])
     return {
         "schema": "graphrag-instance-snapshot-v1",
         "status": "PREVIEW",
@@ -103,7 +113,7 @@ def instance_snapshot(records: tuple, evidence: list[dict]) -> dict:
             "relationship_count": len(relationships),
         },
         "entities": [entities[key] for key in sorted(entities)],
-        "relationships": relationships,
+        "relationships": [relationships[key] for key in sorted(relationships)],
         "evidence": evidence,
     }
 
@@ -166,6 +176,19 @@ def publication_preview(*, publication_id: str, ontology_version_id: str,
         publication_id=publication_id, ontology_version_id=ontology_version_id,
         manifest_hash=manifest_hash,
     )
+    old_relations = {item["fact_key"]: item for item in instance_snapshot(before, [])["relationships"]}
+    new_relations = {item["fact_key"]: item for item in payload["instances_after"]["relationships"]}
+    payload["relationship_fact_changes"] = []
+    for key in sorted(set(old_relations) | set(new_relations)):
+        old, new = old_relations.get(key), new_relations.get(key)
+        if old == new:
+            continue
+        old_ids, new_ids = set((old or {}).get("evidence_ids", [])), set((new or {}).get("evidence_ids", []))
+        payload["relationship_fact_changes"].append({
+            "fact_key": key, "operation": "CREATE" if old is None else "REMOVE" if new is None else "UPDATE",
+            "before": old, "after": new,
+            "sources_added": sorted(new_ids - old_ids), "sources_removed": sorted(old_ids - new_ids),
+        })
     payload["preview_hash"] = hashlib.sha256(json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode()).hexdigest()

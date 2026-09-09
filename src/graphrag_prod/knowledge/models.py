@@ -9,6 +9,8 @@ copied into an unverifiable entity property bag.
 
 from __future__ import annotations
 
+from graphrag_prod.domain.facts import FactDistinction
+
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -299,7 +301,14 @@ class AssertionRecord:
         default_factory=tuple
     )
 
+    fact_distinction: FactDistinction | None = None
+
     def __post_init__(self) -> None:
+        if self.fact_distinction is not None and (
+            not isinstance(self.fact_distinction, FactDistinction)
+            or self.fact_distinction.record_id != self.record_id
+        ):
+            raise ValueError("independent fact decision must belong to this record")
         tenant_id = _required_text(self.tenant_id, "tenant_id")
         object.__setattr__(self, "tenant_id", tenant_id)
         object.__setattr__(self, "predicate", _required_text(self.predicate, "predicate"))
@@ -434,6 +443,16 @@ class AssertionRecord:
     @property
     def revision_id(self) -> str:
         return self.revision.revision_id
+
+    @property
+    def fact_key(self) -> str | None:
+        if self.object_entity is None:
+            return None
+        from graphrag_prod.domain.facts import relationship_fact_key
+        return relationship_fact_key(self.tenant_id, self.trust.ontology_version_id,
+            self.subject.entity_id, self.predicate, self.object_entity.entity_id,
+            self.relationship_properties,
+            independent_record_id=self.record_id if self.fact_distinction else None)
 
     @property
     def object_kind(self) -> str:

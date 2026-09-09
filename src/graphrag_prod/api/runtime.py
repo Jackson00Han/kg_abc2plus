@@ -19,6 +19,8 @@ import time
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
+from graphrag_prod.domain.publication_issue import PublicationIssue
+
 
 def _required_text(value: str, name: str, *, maximum: int = 256) -> str:
     if not isinstance(value, str):
@@ -430,6 +432,16 @@ class ConflictError(ApiRuntimeError):
     code = ErrorCode.CONFLICT
     status_code = 409
     default_message = "the operation conflicts with current state"
+
+
+class PublicationValidationError(ConflictError):
+    """A fixed reason and locations from an authorized publication check."""
+
+    def __init__(self, issue: PublicationIssue):
+        if not isinstance(issue, PublicationIssue):
+            raise TypeError("publication issue required")
+        self.issue = issue
+        super().__init__()
 
 
 class GraphViewChangedError(ConflictError):

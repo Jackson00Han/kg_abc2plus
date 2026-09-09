@@ -817,6 +817,7 @@ class RelationshipPropertyResponse(StrictAPIModel):
 
 
 class ReviewRecordResponse(StrictAPIModel):
+    fact_distinction: dict[str, JsonValue] | None = None
     record_kind: Literal["ENTITY_MENTION", "ASSERTION"]
     record_id: Identifier
     revision_id: Identifier
@@ -1176,8 +1177,19 @@ class ReviewDecisionInput(StrictAPIModel):
     assertion_edit: AssertionEditInput | None = None
     duplicate_of_revision_id: Identifier | None = None
 
+    fact_action: Literal["INDEPENDENT"] | None = None
+    fact_reason: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=2000)] | None = None
+
     @model_validator(mode="after")
     def valid_edit(self) -> Self:
+        if self.fact_action is not None:
+            if (self.record_kind != "ASSERTION" or self.decision != "APPROVED"
+                    or self.assertion_edit is not None or self.mention_edit is not None
+                    or self.identity_action is not None or self.duplicate_of_revision_id is not None
+                    or self.fact_reason is None or not self.fact_reason.strip()):
+                raise ValueError("independent fact requires an unedited assertion approval and reason")
+        elif self.fact_reason is not None:
+            raise ValueError("fact reason requires an independent fact decision")
         if self.expected_identity_impact is not None and self.identity_action != "INDEPENDENT":
             raise ValueError("identity impact requires independent identity decision")
         if self.identity_group is not None and self.identity_action != "INDEPENDENT":
@@ -1323,6 +1335,7 @@ class PublicationPreviewResponse(StrictAPIModel):
     entity_changes: list[dict[str, JsonValue]]
     property_changes: list[dict[str, JsonValue]]
     relationship_changes: list[dict[str, JsonValue]]
+    relationship_fact_changes: list[dict[str, JsonValue]]
     instances_after: dict[str, JsonValue]
     entities_after: list[dict[str, JsonValue]]
     records_after: list[dict[str, JsonValue]]

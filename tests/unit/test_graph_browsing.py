@@ -169,6 +169,34 @@ class GraphBrowsingTests(unittest.TestCase):
         with self.assertRaises(GraphBrowseLimitExceeded):
             self.browser.query(PRINCIPAL, GraphBrowseQuery())
 
+    def test_same_relation_groups_sources_before_paging_and_survives_source_removal(self):
+        view = self.browser._load(PRINCIPAL, "PUBLISHED_SECONDARY_INCLUSIVE", VersionFilter())
+        original = next(value for value in view.assertions.values() if value.object_entity_id)
+        provenance = replace(original.evidence.provenance, record_id="second-record", revision_id="second-revision")
+        duplicate = replace(original, record_id=provenance.record_id, revision_id=provenance.revision_id,
+                            evidence=replace(original.evidence, provenance=provenance))
+        source = deepcopy(view.evidence[original.revision_id])
+        source.update(record_id=duplicate.record_id, revision_id=duplicate.revision_id)
+        source["evidence"]["citation"].update(document_id="second-document", version_id="second-version")
+        expanded = replace(view, assertions={**view.assertions, duplicate.revision_id: duplicate},
+                           evidence={**view.evidence, duplicate.revision_id: source})
+        query = GraphBrowseQuery(page_size=1, predicates=(original.predicate,))
+        with patch.object(self.browser, "_load", return_value=expanded):
+            result = self.browser.query(PRINCIPAL, query)
+            GraphBrowseResponse.model_validate(result)
+            self.assertFalse(result["page"]["has_more"])
+            edge = result["edges"][0]
+            self.assertEqual(edge["source_count"], 2)
+            self.assertEqual(set(edge["revision_ids"]), {original.revision_id, duplicate.revision_id})
+            self.assertEqual(len({item["document_id"] for item in edge["sources"]}), 2)
+        remaining = replace(expanded, assertions={duplicate.revision_id: duplicate})
+        with patch.object(self.browser, "_load", return_value=remaining):
+            result = self.browser.query(PRINCIPAL, query)
+            self.assertEqual(result["edges"][0]["fact_key"], edge["fact_key"])
+            self.assertEqual(result["edges"][0]["source_count"], 1)
+        with patch.object(self.browser, "_load", return_value=replace(remaining, assertions={})):
+            self.assertEqual(self.browser.query(PRINCIPAL, query)["edges"], ())
+
     def test_dto_rejects_extra_identity_bad_depth_and_duplicate_seeds(self):
         for values in ({"tenant_id": "victim"}, {"hops": 3}, {"hops": True}, {"seed_entity_ids": ["same", "same"]}, {"name_query": "a\nb"}, {"cursor": "x"}):
             with self.subTest(values=values), self.assertRaises(ValueError):
@@ -197,8 +225,10 @@ class GraphBrowsingTests(unittest.TestCase):
         for i in range(200):
             key = f"edge-{i:03d}"
             assertions[key] = SimpleNamespace(subject_entity_id="hub", object_entity_id=f"leaf-{i:03d}", predicate="CONNECTS_TO",
-                record_id="record-" + key, evidence=SimpleNamespace(provenance=provenance))
-            evidence[key] = {"source_kind": None}
+                record_id="record-" + key, relationship_properties=(), evidence=SimpleNamespace(provenance=provenance))
+            evidence[key] = {"source_kind": None, "revision_id": key, "record_id": "record-" + key,
+                "authority_level": "SECONDARY", "origin": "RULE_DERIVED", "confidence": 0.9,
+                "evidence": {"citation": {"document_id": "document-1", "version_id": "version-1"}}}
         view = _View(PIN, {"entity_types": (), "relationship_types": (), "hierarchies": ()}, nodes, assertions, evidence, "a" * 64)
         query = GraphBrowseQuery(seed_entity_ids=("hub",), predicates=("CONNECTS_TO",), page_size=200)
         seen = []

@@ -62,7 +62,9 @@ export function validateGraphPage(page) {
   )
     throw new Error("图谱响应超出约定范围。");
   const ids = new Set(page.nodes.map((n) => n.entity_id));
-  const revisions = [...page.edges, ...page.literals].map((e) => e.revision_id);
+  const revisions = [...page.edges.flatMap(e => e.revision_ids || [e.revision_id]), ...page.literals.map(e => e.revision_id)];
+  if (new Set(page.edges.map(e => e.fact_key || e.revision_id)).size !== page.edges.length)
+    throw new Error("图谱关系未按事实聚合。");
   if (
     ids.size !== page.nodes.length ||
     new Set(revisions).size !== revisions.length ||
@@ -98,14 +100,14 @@ export function graphElements(page) {
     }),
     ...page.edges.map((edge) => ({
       data: {
-        id: `r:${edge.revision_id}`,
+        id: `r:${edge.fact_key || edge.revision_id}`,
         source: `n:${edge.source}`,
         target: `n:${edge.target}`,
         label: PREDICATE_LABELS[edge.predicate] || edge.predicate,
         assertion: edge,
       },
       classes:
-        edge.authority_level === "AUTHORITATIVE"
+        (edge.authority_levels || [edge.authority_level]).includes("AUTHORITATIVE")
           ? "authoritative"
           : "secondary",
     })),

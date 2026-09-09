@@ -511,15 +511,22 @@ class KnowledgeReviewContractTests(unittest.TestCase):
             good_records,
         )
 
-        with self.assertRaisesRegex(
-            KnowledgePublicationConflict,
-            "single-valued",
-        ):
+        # A second source confirming the same value is still one semantic value.
+        duplicate = dataclasses.replace(literal, revision=RecordRevision.next("second-source", 0))
+        Neo4jKnowledgePublicationService._validate_property_cardinality_tx(
+            tx, batch.tenant_id, (*good_records, duplicate),
+        )
+        different = dataclasses.replace(duplicate, literal_value="iPhone",
+            literal_semantics=TypedLiteralValue(datatype="STRING", typed_value="iPhone",
+                raw_value="iPhone", canonical_value="iPhone"))
+        with self.assertRaisesRegex(KnowledgePublicationConflict, "single-valued") as conflict:
             Neo4jKnowledgePublicationService._validate_property_cardinality_tx(
-                tx,
-                batch.tenant_id,
-                (*good_records, literal),
+                tx, batch.tenant_id, (*good_records, different),
             )
+        self.assertEqual(conflict.exception.issue.reason, "PROPERTY_VALUES_DIFFER")
+        self.assertEqual({item.record_id for item in conflict.exception.issue.targets},
+                         {literal.record_id, different.record_id})
+        self.assertTrue(all(item.predicate == "DISPLAY_NAME" for item in conflict.exception.issue.targets))
 
         legacy_approved = dataclasses.replace(literal, literal_semantics=None)
         with self.assertRaisesRegex(

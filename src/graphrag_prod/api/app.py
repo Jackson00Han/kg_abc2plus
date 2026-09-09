@@ -77,6 +77,7 @@ from .knowledge_contracts import (
 )
 from .runtime import (
     ApiRuntimeError,
+    PublicationValidationError,
     AuthenticationError,
     AuthorizationError,
     Backend,
@@ -400,13 +401,18 @@ def _public_error_response(
         headers["WWW-Authenticate"] = "Bearer"
     if info.retry_after_seconds is not None:
         headers["Retry-After"] = str(max(1, math.ceil(info.retry_after_seconds)))
+    details = {}
+    if isinstance(error, PublicationValidationError):
+        from dataclasses import asdict
+        details["publication_issue"] = {**asdict(error.issue), "message": error.issue.message}
     return JSONResponse(
         status_code=info.status_code,
         content=ErrorResponse(
             code=info.code.value,
             message=info.public_message,
             request_id=request_id,
-        ).model_dump(mode="json"),
+            **details,
+        ).model_dump(mode="json", exclude_unset=True),
         headers=headers,
     )
 

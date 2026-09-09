@@ -835,6 +835,24 @@ class PublishedGraphQualityTests(unittest.TestCase):
         self.assertTrue(report.passed, report.to_json())
         self.assertEqual(report.total_issue_count, 0)
 
+        duplicate = deepcopy(literal_row)
+        duplicate["revision"].update(revision_id="assertion-rating-second", record_id="record-rating-second")
+        _set_assertion_navigation_id(duplicate)
+        corroborating = [*revisions, duplicate]
+        corroborating_state = _state(tuple(row["revision"]["revision_id"] for row in corroborating), tbox_value=tbox)
+        corroborating_report = Neo4jPublishedGraphQualityService(
+            _driver(state=corroborating_state, revisions=corroborating)
+        ).audit(_principal())
+        self.assertTrue(corroborating_report.passed, corroborating_report.to_json())
+        different = deepcopy(corroborating)
+        changed = TypedLiteralValue(datatype="STRING", typed_value="B", raw_value="B", canonical_value="B")
+        different[-1]["revision"].update(literal_value="B", **changed.to_flat_properties())
+        _set_assertion_navigation_id(different[-1])
+        different_report = Neo4jPublishedGraphQualityService(
+            _driver(state=corroborating_state, revisions=different)
+        ).audit(_principal())
+        self.assertIn("ENTITY_PROPERTY_CARDINALITY_INVALID", {issue.code for issue in different_report.issues})
+
         broken = deepcopy(revisions)
         broken[-2]["revision"]["relationship_properties_json"] = "[]"
         broken[-2]["materialized_property_count"] = 0

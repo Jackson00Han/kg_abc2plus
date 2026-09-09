@@ -1,349 +1,43 @@
-# Production GraphRAG Development Plan
+# 项目开发约定
 
-## Goal
+本文件只记录长期适用的开发规则。具体任务以用户当前要求为准；历史验证报告和实现说明查阅 `docs/`，验收指标查阅 `contracts/`。历史阶段完成不代表后续修改已通过同等验证，也不等于已部署生产环境。
 
-Evolve the current GraphRAG teaching project into a production-oriented,
-fully tested reference implementation. The target of this plan is the
-"validation complete" milestone, not a live production deployment.
+## 工作范围与代码组织
 
-The system must preserve this evidence chain:
+- 围绕当前 Neo4j GraphRAG 应用开发，沿用现有模块边界；领域模型、摄取、图谱治理、检索、生成、API 和评估职责保持分离。
+- 修改前检查工作区状态和相关实现，保护用户已有改动，不顺手重构或修改无关文件。
+- 提交、推送和部署按用户授权执行，不因历史计划自动推送到 `main`；不重写已发布的 Git 历史。
+- 不提交 `.env`、凭据、生成缓存、本地数据库或虚拟环境；日志默认不记录受保护的原文和秘密。
 
-> trusted source -> versioned document -> traceable chunk -> governed graph
-> -> bounded retrieval -> cited answer -> measurable validation
+## 数据、身份与证据
 
-The repository owner superseded tutorial retention on 2026-09-08: remove the
-standalone numbered examples and their unused assets/dependencies, and keep
-the current Neo4j application plus its development and validation dependencies.
-Production code remains organized into focused packages. The completed stages
-below record historical deliverables; their validation evidence is retained.
+必须保持以下链路可追溯：
 
-## Non-negotiable Working Rules
+> 可信来源 → 不可变文档版本 → 精确 Chunk 位置 → 受治理的图谱 → 有界检索 → 带引用的回答 → 可复现验证
 
-1. Work through the stages below in order. Do not begin the next stage until
-   the current stage satisfies its exit criteria.
-2. Every implementation stage must include proportionate automated checks.
-3. Before every commit, run the stage checks, `git diff --check`, and a secret
-   scan of the files being committed.
-4. Commit and push each completed stage separately to `origin/main`.
-5. Never commit `.env`, credentials, generated caches, local databases, or
-   virtual environments.
-6. Preserve unrelated user changes and never rewrite published Git history.
-7. Prefer established, documented retrieval and graph methods. Do not add a
-   custom scoring formula without explicit approval and comparative evaluation.
-8. Treat graph entities and relationships as derived navigation data. Source
-   chunks remain the factual evidence used to generate answers.
-9. Apply tenant and access filters during every recall and graph-expansion
-   query, not only after retrieval.
-10. Record material design decisions, test evidence, limitations, and metric
-    changes in the repository.
-11. Local development defaults to the versioned `dev-mini` workload profile.
-    It may reduce scale, duration, and repetition only; it must not weaken
-    identity, provenance, authorization, correctness, or lifecycle invariants,
-    and its results never qualify as production-candidate validation.
-12. Use tiered corpora instead of replacing fast fixtures with one large
-    dataset. Unit tests may use minimal fixtures, `dev-corpus-v1` must exercise
-    representative multi-document behavior, and production-reference load
-    evidence remains a Stage 9 requirement.
+- 文档、Chunk、实体和关系使用稳定的应用 ID，不将 Neo4j 内部 `elementId` 用作持久业务标识。
+- 保留来源、文档版本、校验和、原文位置、抽取或人工形成记录及审核历史。数据修订不得覆盖历史证据。
+- 实体身份不能仅凭同名判定；遵守现有本体约束，身份关联和合并必须有可审计依据。
+- 图实体和关系用于导航，回答的事实依据仍是来源 Chunk；缺乏证据的抽取结果不得直接作为已确认事实发布。
+- 来源等级、形成方式和审核状态分别保留；人工确认不得自动提升来源等级。
+- 摄取和重试保持幂等；更新、删除、撤回及恢复保持版本、证据和发布状态一致，避免误删其他来源仍支持的数据。
+- 嵌入模型、索引和配置版本必须明确，不能静默混用不同向量空间。
 
-## Definition of Done for Every Stage
+## 权限、检索与回答
 
-A stage is complete only when all of the following are true:
+- 在召回、图扩展、相邻 Chunk 补全、知识浏览和证据读取的查询中执行租户与访问过滤，不能只在最终结果中补做过滤。
+- 聚合、计数和来源展示同样遵守权限；候选、已发布和历史版本的边界必须明确。
+- 查询、图扩展、上下文、并发、超时和重试均须有界；达到上限或依赖失败时明确报告，不能将部分结果冒充完整结果。
+- 优先采用成熟且有文档的检索与图算法；自定义评分公式须经用户明确同意并完成对比评估。
+- 回答中的关键事实附 Chunk 级引用，能够定位到文档版本和原文范围；保留数字、日期、货币和单位，明确区分原文事实与推断。
+- 证据不足时说明无法回答；来源冲突时保留差异及适用时间，不静默覆盖或编造结论。
 
-- Its deliverables and tests are implemented.
-- Its exit criteria are demonstrated by repeatable commands.
-- Existing tests still pass.
-- Formatting/static checks and `git diff --check` pass.
-- No secrets or unintended generated files are included.
-- Documentation reflects the implemented behavior.
-- The stage has one focused commit pushed successfully to `origin/main`.
+## 开发与验证
 
-If a check fails, fix the problem and rerun the complete relevant check set
-before committing. Do not hide failures by weakening or deleting tests.
-
-## Stage 1: Requirements and Acceptance Contract
-
-### Deliverables
-
-- Define supported document types, expected corpus size, update frequency,
-  question classes, tenancy model, and access-control boundary.
-- Define representative test categories: single-chunk, cross-chunk, graph
-  relationship, exact-value, temporal/conflicting, unanswerable, and
-  unauthorized questions.
-- Define measurable targets for retrieval quality, answer grounding, citation
-  correctness, refusal behavior, latency, throughput, and ingestion success.
-- Record assumptions separately from confirmed requirements.
-
-### Checks
-
-- Validate that every target has a measurement method and test dataset owner.
-- Validate that every supported question class has positive and negative cases.
-- Review the contract for undefined terms and untestable promises.
-
-### Exit Criteria
-
-- A versioned acceptance contract exists and all later stages can be judged
-  against it.
-
-## Stage 2: Production Data and Provenance Model
-
-### Deliverables
-
-- Add stable application IDs for Document, Chunk, Entity, and Relationship.
-- Define document source, URI/path, publication time, ingestion time, version,
-  checksum, tenant, and access metadata.
-- Define chunk location, sequence, splitter version, embedding model/version,
-  and source-document linkage.
-- Store extraction provenance, evidence chunk IDs, extractor version, and
-  confidence for derived entities and relationships.
-- Add required uniqueness constraints and indexes.
-- Stop using Neo4j internal `elementId` as a persistent business identifier.
-
-### Checks
-
-- Schema/constraint tests against a disposable Neo4j database.
-- Provenance round-trip tests from relationship/entity to source text.
-- Duplicate-ID and missing-required-metadata rejection tests.
-
-### Exit Criteria
-
-- Every derived fact and answer citation can be traced to an immutable source
-  document version and exact chunk location.
-
-## Stage 3: Idempotent Incremental Ingestion
-
-### Deliverables
-
-- Implement create, unchanged/no-op, update, and delete document lifecycles.
-- Use content checksums and stable IDs to prevent duplicate ingestion.
-- Update only affected chunks and graph elements when a document changes.
-- Remove orphaned derived data safely when a source/version is deleted.
-- Track ingestion jobs, errors, retries, and resumable state.
-- Support embedding/index version migration without silently mixing vector
-  spaces.
-
-### Checks
-
-- Repeat-ingestion idempotency test.
-- Partial-update isolation test.
-- Delete and orphan-cleanup test.
-- Interrupted-ingestion recovery and transaction-boundary tests.
-
-### Exit Criteria
-
-- Repeating an operation produces the same final graph, and a failed operation
-  cannot leave an unidentifiable partial state.
-
-## Stage 4: Knowledge Graph Quality Governance
-
-### Deliverables
-
-- Define allowed entity labels, relationship types, properties, and patterns.
-- Normalize names and manage aliases without merging distinct homonyms.
-- Add established entity-resolution rules or models with auditable evidence.
-- Reject or quarantine entities/relationships unsupported by source text.
-- Detect duplicates, isolated nodes, invalid patterns, and anomalous hubs.
-- Produce graph-quality reports and a reproducible human-review sample.
-
-### Checks
-
-- Entity and relationship precision tests on an adjudicated sample.
-- Entity-resolution positive/negative pair tests.
-- Constraint, orphan, duplicate, and unsupported-claim tests.
-
-### Exit Criteria
-
-- Graph-quality targets from Stage 1 are met, and every accepted relationship
-  has source evidence.
-
-## Stage 5: Production Retrieval Engine
-
-### Deliverables
-
-- Refactor file `06` behavior into reusable retrieval modules.
-- Preserve vector and BM25 recall, standard RRF fusion, Resource Allocation
-  candidate expansion, and adjacent-chunk context completion.
-- Add deterministic relevance gating, deduplication, context budgeting,
-  version filters, tenant/access filters, and configurable limits.
-- Return stable citations and a structured retrieval trace.
-- Ensure graph expansion is bounded and cannot bypass access control.
-
-### Checks
-
-- Unit tests for RRF, RA, deduplication, gates, and context budgets.
-- Retrieval integration tests for all Stage 1 question classes.
-- Access-control tests on initial recall, graph expansion, adjacency, and final
-  context.
-- Retrieval regression metrics: Recall@K, MRR, and nDCG.
-
-### Exit Criteria
-
-- Retrieval is bounded, explainable, permission-safe, and meets the agreed
-  quality targets.
-
-## Stage 5A: Representative Development Corpus
-
-This additive stage strengthens the evidence for Stage 5 without invalidating
-or rewriting the completed Stage 1 through Stage 5 commits. It must complete
-before Stage 6 begins.
-
-### Deliverables
-
-- Add a versioned, deterministic `dev-corpus-v1` containing 100–200 Chunks,
-  multiple documents, companies, filing periods, tenants, and access groups.
-- Include temporal conflicts, exact values, homonym non-merge cases,
-  unauthorized material, and unanswerable questions.
-- Preserve source text, immutable checksums, exact Chunk ranges, provenance,
-  and a reproducible offline build/check command.
-- Keep fast unit fixtures; do not require provider calls during routine
-  validation. The original teaching sample was retired in the authorized
-  2026-09-08 repository cleanup.
-
-### Checks
-
-- Corpus manifest, checksum, exact-range, scale, diversity, and deterministic
-  rebuild tests.
-- Real-Neo4j ingestion and retrieval regression over the representative
-  corpus, including tenant/access isolation and stable citations.
-- Re-run the complete Stage 5 checks under the `dev-mini` resource cap.
-
-### Exit Criteria
-
-- At least 100 representative Chunks can be rebuilt and validated from a clean
-  checkout, Stage 5 quality/security targets still pass, and development-scale
-  execution remains bounded.
-
-## Stage 6: Grounded Answer Generation
-
-### Deliverables
-
-- Require chunk-level inline citations for material factual claims.
-- Return document provenance and exact chunk location with each citation.
-- Treat graph data as navigation unless supported by source text.
-- Implement insufficient-context refusal and conflicting-source behavior.
-- Preserve original numbers, dates, currencies, and units.
-- Separate sourced statements from explicitly labelled inference.
-
-### Checks
-
-- Answer correctness and citation-entailment tests.
-- Unsupported-claim and citation-location tests.
-- Unanswerable, conflicting-source, and numerical-fidelity tests.
-
-### Exit Criteria
-
-- Answers meet correctness, citation, and refusal targets and can be audited
-  back to source text.
-
-## Stage 7: API, Security, Reliability, and Observability
-
-### Deliverables
-
-- Provide APIs for ingestion, deletion, job status, retrieval, answering, and
-  health/readiness checks.
-- Add authentication, authorization, tenant isolation, validation, rate limits,
-  timeouts, retries, and bounded concurrency.
-- Configure Neo4j connection pooling and safe transaction handling.
-- Add structured logs, request/trace IDs, metrics, error taxonomy, and secret
-  redaction.
-- Record latency, retrieval stages, token usage, model calls, and estimated
-  cost without logging protected content by default.
-
-### Checks
-
-- API contract and end-to-end tests.
-- Cross-tenant and unauthorized-access tests.
-- Timeout, retry, dependency-failure, log-redaction, and health-check tests.
-
-### Exit Criteria
-
-- Requests are secure, bounded, diagnosable, and fail predictably when a
-  dependency is unavailable.
-
-## Stage 8: Automated Evaluation and Regression Gates
-
-### Deliverables
-
-- Build a versioned gold evaluation dataset with evidence annotations.
-- Automate graph, retrieval, answer, citation, refusal, latency, and cost
-  metrics.
-- Add unit, Neo4j integration, API end-to-end, and regression test suites.
-- Store baseline metrics and fail CI on agreed material regressions.
-- Make evaluation runs reproducible by recording data, prompt, model, index,
-  and configuration versions.
-
-### Checks
-
-- Verify metric implementations on small hand-computable fixtures.
-- Run the complete suite twice to check reproducibility.
-- Confirm negative and security cases cannot be excluded from reports.
-
-### Exit Criteria
-
-- A single documented workflow produces repeatable quality and regression
-  reports for the complete system.
-
-## Stage 9: Integrated Production-Candidate Validation
-
-### Deliverables
-
-- Test representative corpus sizes, concurrency, sustained load, and ingestion
-  throughput.
-- Test Neo4j, embedding-provider, and LLM latency, timeout, and failure modes.
-- Validate interrupted ingestion, backup/restore, deletion completeness, access
-  isolation, and recovery behavior.
-- Measure latency percentiles, throughput, error rates, retrieval/answer
-  quality, and operating cost.
-- Produce a final validation report containing passed criteria, failures,
-  limitations, residual risks, and deployment prerequisites.
-
-### Checks
-
-- Run the complete functional, quality, security, recovery, and performance
-  suites against a clean environment.
-- Reproduce the final report from committed configuration and documented
-  commands.
-
-### Exit Criteria
-
-- All Stage 1 acceptance targets pass, or every exception is explicitly
-  documented and accepted. The project is then a validated production
-  candidate, not automatically a live production deployment.
-
-## Planned Production Package Boundaries
-
-The precise module names may evolve, but responsibilities must remain separate:
-
-```text
-src/
-  graphrag_prod/
-    domain/          # IDs, schemas, provenance, access model
-    ingestion/       # document lifecycle and graph construction
-    graph/           # constraints, resolution, quality checks
-    retrieval/       # recall, fusion, expansion, gating, context
-    generation/      # grounded prompts, citations, refusal
-    api/             # request contracts and endpoints
-    observability/   # logs, metrics, tracing
-    evaluation/      # datasets, metrics, reports
-tests/
-  unit/
-  integration/
-  e2e/
-  security/
-  performance/
-```
-
-## Progress
-
-| Stage | Status | Evidence |
-| --- | --- | --- |
-| Plan and execution rules | Complete | `AGENTS.md`; formatting and secret checks passed |
-| 1. Requirements and acceptance contract | Complete | Production reference plus default `dev-mini` overlay; `contracts/acceptance.v1.json`; `docs/validation/stage-1.md` |
-| 2. Production data and provenance model | Complete | `docs/provenance_model.md`; `docs/validation/stage-2.md`; 28 unit + 13 disposable-Neo4j tests |
-| 3. Idempotent incremental ingestion | Complete | `docs/incremental_ingestion.md`; `docs/validation/stage-3.md`; 49 unit + 41 disposable-Neo4j tests |
-| 4. Knowledge graph quality governance | Complete | `docs/graph_quality_governance.md`; `docs/validation/stage-4.md`; 75 unit + 48 disposable-Neo4j tests; 60 adjudicated cases |
-| 5. Production retrieval engine | Complete | `docs/production_retrieval.md`; `docs/validation/stage-5.md`; 88 unit + 53 disposable-Neo4j tests; 49-case gold regression fixture |
-| 5A. Representative development corpus | Complete | `docs/representative_dev_corpus.md`; `docs/validation/stage-5a.md`; 120-Chunk corpus; 99 unit + 60 disposable-Neo4j tests |
-| 6. Grounded answer generation | Complete | `docs/grounded_answer_generation.md`; `docs/validation/stage-6.md`; 153 unit + 62 disposable-Neo4j tests; 49-case cited-answer regression |
-| 7. API, security, reliability, observability | Complete | `docs/api_security_reliability.md`; `docs/validation/stage-7.md`; 248 unit + 4 HTTP E2E + 11 security + 64 disposable-Neo4j tests |
-| 8. Automated evaluation and regression gates | Complete | `docs/automated_evaluation.md`; `docs/validation/stage-8.md`; current baseline 1.16.0 covers 1069 unit + 18 HTTP E2E + 59 security + 2 regression + 186 disposable-Neo4j tests plus the locked industrial extraction-quality gate; published completion and later baseline maintenance are recorded separately; the normal authoritative-document workflow, fixed source grades, human-record provenance, standardized review editors, complete publication preview, confirmed-identity linking and source context, entity-grouped publication selection and workflow checks, baseline comparison and current validation are recorded in `docs/knowledge_construction_workflow.md`; guided construction is recorded in `docs/validation/guided-construction-review.md`; the homonym extraction fix, complete capture and final resume checks are recorded in `docs/validation/homonym-extraction-correction.md`; explicit local reset and its complete validation are recorded in `docs/validation/playground-reset.md`; preparation failure recovery is recorded in `docs/validation/construction-ingestion-failure.md`; the completed industrial round, live walkthrough and two full regression runs are recorded in `docs/validation/industrial-final.md` and `docs/validation/industrial-final-regression.md`; the knowledge browsing and maintenance redesign, baseline comparison, expanded security coverage and retained-runtime checks are recorded in `docs/knowledge_browsing_maintenance.md`; generic human identity review and its baseline/runtime validation are recorded in `docs/validation/human-identity-review.md` |
-| 9. Integrated production-candidate validation | Complete | Implementation commit `7142fa331f74ecd868a5ba20d343c787e2f9d367`; report semantic digest `71d67bee2c155656cb663f602e92fe30aa2e5f58a35d8848847a7bdc24b4d575`; `docs/production_candidate_validation.md`; `docs/validation/stage-9.md` |
+- 本地开发默认使用版本化的 `dev-mini` 配置，只降低规模、持续时间和重复次数，不削弱身份、溯源、权限、正确性或生命周期约束。开发规模结果不能冒充生产候选验证。
+- 保留分层数据集：快速单元测试使用小型夹具，代表性多文档验证使用 `dev-corpus-v1`，容量与持续负载验证使用对应的生产参考配置。
+- 根据改动风险运行必要的自动化检查。行为修改补充相关测试；涉及 Neo4j 查询、事务或持久化时运行对应的真实 Neo4j 集成测试；权限修改覆盖越权和跨租户案例。
+- 常规验证优先使用确定性离线夹具；外部模型服务验证单独记录，不把离线结果表述为真实服务验证。
+- 检查失败后修复原因并重跑相关检查，不通过删除测试、降低阈值或排除安全案例掩盖失败。
+- 完成修改后检查差异并运行 `git diff --check`；提交前运行相关测试、适用的格式与静态检查，并扫描待提交文件中的秘密和意外生成文件。纯文档修改进行相应的内容与格式检查即可。
+- 对重要行为变化同步维护相关文档，记录设计依据、可复现命令、实际测试结果、指标变化和限制；未执行或未通过的验证必须如实说明。

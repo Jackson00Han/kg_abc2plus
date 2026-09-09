@@ -106,7 +106,24 @@ class GraphBrowseNodeResponse(StrictAPIModel):
     mention_revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=500)]
 
 
+class GraphRelationshipSourceResponse(StrictAPIModel):
+    revision_id: Identifier
+    record_id: Identifier
+    document_id: Identifier
+    version_id: Identifier
+    authority_level: GraphAuthority
+    origin: GraphOrigin
+    confidence: Annotated[float, Field(strict=True, ge=0, le=1)]
+    source_kind: SourceKind | None = None
+
+
+class GraphRelationshipQualifierResponse(StrictAPIModel):
+    name: GraphTypeName
+    semantics: TypedLiteralSemanticsResponse
+
+
 class GraphBrowseEdgeResponse(StrictAPIModel):
+    fact_distinction: dict[str, JsonValue] | None = None
     revision_id: Identifier
     record_id: Identifier
     source: Identifier
@@ -117,8 +134,27 @@ class GraphBrowseEdgeResponse(StrictAPIModel):
     confidence: Annotated[float, Field(strict=True, ge=0, le=1)]
     source_kind: SourceKind | None = None
 
+    fact_key: Identifier
+    relationship_id: Identifier
+    revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=500)]
+    source_count: Annotated[int, Field(strict=True, ge=1, le=500)]
+    sources: Annotated[tuple[GraphRelationshipSourceResponse, ...], Field(min_length=1, max_length=500)]
+    authority_levels: Annotated[tuple[GraphAuthority, ...], Field(min_length=1, max_length=2)]
+    relationship_properties: tuple[GraphRelationshipQualifierResponse, ...] = ()
+
+    @model_validator(mode="after")
+    def consistent_sources(self) -> Self:
+        ids = tuple(item.revision_id for item in self.sources)
+        if (self.relationship_id != self.fact_key or ids != self.revision_ids
+                or len(set(ids)) != len(ids) or self.source_count != len(ids)
+                or self.revision_id != ids[0]
+                or set(self.authority_levels) != {item.authority_level for item in self.sources}):
+            raise ValueError("relationship sources must match the unique fact")
+        return self
+
 
 class GraphBrowseLiteralResponse(StrictAPIModel):
+    fact_distinction: dict[str, JsonValue] | None = None
     revision_id: Identifier
     record_id: Identifier
     subject: Identifier
@@ -152,7 +188,9 @@ class GraphBrowseResponse(StrictAPIModel):
     @model_validator(mode="after")
     def consistent_page(self) -> Self:
         ids = {item.entity_id for item in self.nodes}
-        revisions = [item.revision_id for item in (*self.edges, *self.literals)]
+        revisions = [key for item in self.edges for key in item.revision_ids] + [item.revision_id for item in self.literals]
+        if len({item.fact_key for item in self.edges}) != len(self.edges):
+            raise ValueError("graph relationships must be unique")
         if len(ids) != len(self.nodes) or len(revisions) != len(set(revisions)):
             raise ValueError("graph response identities must be unique")
         if any(item.source not in ids or item.target not in ids for item in self.edges) or any(item.subject not in ids for item in self.literals):
@@ -171,6 +209,7 @@ class GraphSourceApplicabilityResponse(StrictAPIModel):
 
 
 class GraphEvidenceItemResponse(StrictAPIModel):
+    fact_distinction: dict[str, JsonValue] | None = None
     revision_id: Identifier
     record_id: Identifier
     record_kind: Literal["ENTITY_MENTION", "ASSERTION"]

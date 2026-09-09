@@ -21,9 +21,10 @@ export function dossiers(pages) {
     token = page.view_token;
     for (const node of page.nodes) nodes.set(node.entity_id, {...node, properties:[], relations:[]});
     for (const fact of [...page.edges,...page.literals]) {
-      const old = facts.get(fact.revision_id);
+      const key = fact.fact_key || fact.revision_id;
+      const old = facts.get(key);
       if (old && JSON.stringify(old)!==JSON.stringify(fact)) throw new Error('事实版本不一致，请刷新。');
-      facts.set(fact.revision_id,fact);
+      facts.set(key,fact);
     }
   }
   if (nodes.size>500 || facts.size>500) throw new Error('知识范围超过浏览上限，请按来源缩小范围。');
@@ -57,4 +58,9 @@ export async function readDirectory(api, version_filter={}, isCurrent=()=>true) 
     cursors.add(cursor);
   }
   throw new Error('知识范围超过浏览上限，请按来源缩小范围。');
+}
+
+export function distinctionMarkup(fact) {
+  const d=fact.fact_distinction;
+  return d?`<div class="kb-muted"><strong>人工独立事实 · 区分依据尚未结构化</strong><p>${escape(d.reason)}</p><small>审核人：${escape(d.reviewed_by)} · ${escape(d.reviewed_at)}；此理由是审核判断，不是来源原文。</small></div>`:'';
 }

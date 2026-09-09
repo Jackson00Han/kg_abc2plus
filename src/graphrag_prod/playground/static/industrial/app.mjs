@@ -263,13 +263,12 @@ async function selectGraph(selected) {
     element("h2", "", selectedDescription(selected)),
   );
   const tags = element("div", "tag-row");
-  for (const authority of entity?.authority_levels || [
+  for (const authority of entity?.authority_levels || assertion?.authority_levels || [
     assertion?.authority_level,
   ])
     if (authority) tags.append(authorityTag(authority));
   if (assertion) {
-    tags.append(tag(ORIGIN_LABELS[assertion.origin] || assertion.origin));
-    if (assertion.source_kind) tags.append(sourceTag(assertion.source_kind));
+    tags.append(tag(`${assertion.source_count || 1} 条来源记录，等级分别保留`));
   }
   target.append(tags);
   if (entity) {
@@ -321,51 +320,52 @@ async function selectGraph(selected) {
   }
   const revisions = entity
     ? entity.mention_revision_ids
-    : [assertion.revision_id];
+    : assertion.revision_ids || [assertion.revision_id];
   const evidenceArea = element("div", "detail-section");
   evidenceArea.append(
     element("h3", "", "来源与事实依据"),
     element("p", "", "正在核对来源…"),
   );
   target.append(evidenceArea);
-  try {
-    const data = await client.request("/v1/knowledge/graph:evidence", {
-      view_token: current.view_token,
-      revision_ids: revisions.slice(0, 10),
-    });
-    if (
-      epoch !== graphEpoch ||
-      identity !== client.epoch ||
-      selection !== selectionEpoch
-    )
-      return;
-    if (!samePin(current.pin, data.pin))
-      throw new Error("图谱与来源版本不一致，请刷新图谱。");
-    clear(evidenceArea);
-    evidenceArea.append(element("h3", "", "来源与事实依据"));
-    if (!data.items.length)
-      evidenceArea.append(empty("当前身份没有可见的来源记录。"));
-    for (const item of data.items) evidenceArea.append(renderEvidence(item));
-    if (revisions.length > 10)
-      evidenceArea.append(
-        element(
-          "p",
-          "muted",
-          `显示前 10 条可见来源提及，共 ${revisions.length} 条。`,
-        ),
-      );
-  } catch (error) {
-    if (
-      epoch !== graphEpoch ||
-      identity !== client.epoch ||
-      selection !== selectionEpoch
-    )
-      return;
-    const text = safeError(error);
-    if (text) {
-      clear(evidenceArea).append(element("p", "danger-text", text));
+  let evidenceSerial = 0;
+  async function loadEvidence(offset=0) {
+    const serial = ++evidenceSerial;
+    clear(evidenceArea).append(element("p", "", "正在核对来源…"));
+    try {
+      const data = await client.request("/v1/knowledge/graph:evidence", {
+        view_token: current.view_token,
+        revision_ids: revisions.slice(offset, offset + 10),
+      });
+      if (
+        serial !== evidenceSerial || epoch !== graphEpoch ||
+        identity !== client.epoch ||
+        selection !== selectionEpoch
+      )
+        return;
+      if (!samePin(current.pin, data.pin))
+        throw new Error("图谱与来源版本不一致，请刷新图谱。");
+      clear(evidenceArea);
+      evidenceArea.append(element("h3", "", "来源与事实依据"));
+      if (!data.items.length)
+        evidenceArea.append(empty("当前身份没有可见的来源记录。"));
+      for (const item of data.items) evidenceArea.append(renderEvidence(item));
+      evidenceArea.append(element("p", "muted", `来源记录 ${offset+1}–${Math.min(offset+10,revisions.length)} / ${revisions.length}`));
+      if(offset) evidenceArea.append(button("上一页来源",()=>loadEvidence(offset-10)));
+      if(offset+10<revisions.length) evidenceArea.append(button("下一页来源",()=>loadEvidence(offset+10)));
+    } catch (error) {
+      if (
+        serial !== evidenceSerial || epoch !== graphEpoch ||
+        identity !== client.epoch ||
+        selection !== selectionEpoch
+      )
+        return;
+      const text = safeError(error);
+      if (text) {
+        clear(evidenceArea).append(element("p", "danger-text", text));
+      }
     }
   }
+  await loadEvidence();
 }
 function renderEvidence(item) {
   const node = element("article", "evidence-detail");
@@ -374,8 +374,12 @@ function renderEvidence(item) {
   const tags = element("div", "tag-row");
   tags.append(
     sourceTag(item.source_kind),
+    authorityTag(item.authority_level),
     tag(STATUS_LABELS[item.status] || item.status),
   );
+  if(item.fact_distinction) {
+    node.append(element("p", "source-note", `人工独立事实（区分依据尚未结构化）：${item.fact_distinction.reason}。审核人：${item.fact_distinction.reviewed_by} · ${item.fact_distinction.reviewed_at}。这是审核判断，不是来源原文。`));
+  }
   node.append(tags, element("h3", "", citation.document_title));
   node.append(
     metadata([

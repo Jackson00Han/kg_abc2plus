@@ -1276,6 +1276,21 @@ class MetricsResponse(StrictAPIModel):
     in_flight: Annotated[int, Field(strict=True, ge=0)] = 0
 
 
+class PublicationIssueTargetResponse(StrictAPIModel):
+    record_id: Identifier | None = None
+    entity_id: Identifier | None = None
+    entity_name: Annotated[str, StringConstraints(strict=True, max_length=500)] | None = None
+    predicate: Annotated[str, StringConstraints(strict=True, max_length=500)] | None = None
+
+
+class PublicationIssueResponse(StrictAPIModel):
+    reason: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=64)]
+    message: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=256)]
+    targets: Annotated[tuple[PublicationIssueTargetResponse, ...], Field(max_length=50)] = ()
+    property_name: Annotated[str, StringConstraints(strict=True, max_length=128)] | None = None
+    truncated: bool = False
+
+
 class ErrorResponse(StrictAPIModel):
     code: Annotated[
         str,
@@ -1288,6 +1303,7 @@ class ErrorResponse(StrictAPIModel):
     ]
     message: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=256)]
     request_id: Identifier
+    publication_issue: PublicationIssueResponse | None = None
 
 
 # Readable aliases for route code and backwards-compatible naming during the

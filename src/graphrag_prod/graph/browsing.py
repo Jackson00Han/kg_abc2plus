@@ -16,6 +16,7 @@ from neo4j import unit_of_work
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum
+from graphrag_prod.domain.facts import relationship_fact_key, decode_fact_distinction
 from graphrag_prod.retrieval.models import VersionFilter
 from graphrag_prod.retrieval.subgraph import (
     EvidenceSubgraphLimits, Neo4jEvidenceSubgraphProjector, SubgraphTrustPolicy,
@@ -217,12 +218,16 @@ class Neo4jPublishedGraphBrowser:
                     applicability[key] = tuple(metadata[key]) if key == "asset_keys" else metadata[key]
         elif source_kind is not None:
             raise GraphViewChanged()
+        distinction = decode_fact_distinction(record.get("fact_distinction_json"))
+        if distinction is not None and distinction.record_id != item.provenance.record_id:
+            raise GraphViewChanged()
         citation = asdict(item.citation)
         citation.pop("tenant_id")
         provenance = asdict(item.provenance)
         for key in ("origin", "authority", "status"):
             provenance[key] = provenance[key].value
-        return {"revision_id": item.provenance.revision_id, "record_id": item.provenance.record_id, "record_kind": kind,
+        return {"fact_distinction": distinction.to_mapping() if distinction else None,
+            "revision_id": item.provenance.revision_id, "record_id": item.provenance.record_id, "record_kind": kind,
             "authority_level": item.provenance.authority.value, "origin": item.provenance.origin.value,
             "status": item.provenance.status.value, "confidence": item.provenance.confidence,
             "reviewed_by": record.get("reviewed_by"), "reviewed_at": record["reviewed_at"].to_native() if hasattr(record.get("reviewed_at"), "to_native") else record.get("reviewed_at"),
@@ -280,7 +285,24 @@ class Neo4jPublishedGraphBrowser:
             if set(continuation) != {"view", "query", "after"} or continuation["view"] != digest(claims) or continuation["query"] != query_digest:
                 raise GraphViewChanged()
             after = tuple(continuation["after"])
-        entries = [item for item in self._selection(view, query) if after is None or item[0] > after]
+        groups: dict[str, list[str]] = {}
+        grouped_entries = {}
+        for ordering, kind, key in self._selection(view, query):
+            value = view.assertions[key] if kind == "assertion" else None
+            if value is not None and value.object_entity_id is not None:
+                fact_key = relationship_fact_key(principal.tenant_id, view.pin.ontology_version_id,
+                    value.subject_entity_id, value.predicate, value.object_entity_id,
+                    value.relationship_properties,
+                    independent_record_id=(view.evidence[key].get("fact_distinction") or {}).get("record_id"))
+                groups.setdefault(fact_key, []).append(key)
+                group_order = (ordering[0], ordering[1], fact_key)
+                previous_entry = grouped_entries.get(fact_key)
+                if previous_entry is None or group_order < previous_entry[0]:
+                    grouped_entries[fact_key] = (group_order, "relationship", fact_key)
+            else:
+                grouped_entries[(kind, key)] = (ordering, kind, key)
+        entries = [item for item in sorted(grouped_entries.values())
+                   if after is None or item[0] > after]
         nodes: set[str] = set()
         edges, literals = [], []
         consumed = 0
@@ -288,17 +310,33 @@ class Neo4jPublishedGraphBrowser:
         for ordering, kind, key in entries:
             if consumed >= query.page_size:
                 break
-            value = view.assertions[key] if kind == "assertion" else None
+            source_ids = sorted(groups[key]) if kind == "relationship" else [key]
+            source_id = source_ids[0]
+            value = view.assertions[source_id] if kind != "node" else None
             endpoints = {key} if value is None else {value.subject_entity_id} | (set() if value.object_entity_id is None else {value.object_entity_id})
             if len(nodes | endpoints) > MAX_GRAPH_NODES or (value is not None and value.object_entity_id is not None and len(edges) >= MAX_GRAPH_EDGES):
                 break
             nodes.update(endpoints)
             if value is not None:
-                common = {"revision_id": key, "record_id": value.record_id, "predicate": value.predicate,
+                common = {"fact_distinction": view.evidence[source_id].get("fact_distinction"),
+                    "revision_id": source_id, "record_id": value.record_id, "predicate": value.predicate,
                     "authority_level": value.evidence.provenance.authority.value, "origin": value.evidence.provenance.origin.value,
-                    "confidence": value.evidence.provenance.confidence, "source_kind": view.evidence[key]["source_kind"]}
+                    "confidence": value.evidence.provenance.confidence, "source_kind": view.evidence[source_id]["source_kind"]}
                 if value.object_entity_id is not None:
-                    edges.append({**common, "source": value.subject_entity_id, "target": value.object_entity_id})
+                    sources = []
+                    for revision_id in source_ids:
+                        item = view.evidence[revision_id]
+                        citation = item["evidence"]["citation"]
+                        sources.append({name: item[name] for name in
+                            ("revision_id", "record_id", "authority_level", "origin", "confidence", "source_kind")}
+                            | {"document_id": citation["document_id"], "version_id": citation["version_id"]})
+                    levels = sorted({item["authority_level"] for item in sources})
+                    edges.append({**common, "fact_key": key, "relationship_id": key,
+                        "source": value.subject_entity_id, "target": value.object_entity_id,
+                        "relationship_properties": tuple({"name": item.name, "semantics": asdict(item.literal_semantics)}
+                            for item in value.relationship_properties),
+                        "revision_ids": tuple(source_ids), "source_count": len(sources), "sources": tuple(sources),
+                        "authority_levels": tuple(levels)})
                 else:
                     semantics = None if value.literal_semantics is None else asdict(value.literal_semantics)
                     literals.append({**common, "subject": value.subject_entity_id, "value": value.literal_value, "semantics": semantics})

@@ -152,6 +152,7 @@ from .runtime import (
     AuthorizationError,
     BackendResult,
     ConflictError,
+    PublicationValidationError,
     ConstructionIngestionFailedError,
     IndustrialConstructionInputLimitError,
     DependencyTimeoutError,
@@ -359,6 +360,7 @@ def _review_record_payload(item: Any) -> dict[str, object]:
         common["entity"] = _entity_payload(record.entity)
     elif isinstance(record, AssertionRecord):
         common.update(
+            fact_distinction=record.fact_distinction.to_mapping() if record.fact_distinction else None,
             subject=_entity_payload(record.subject),
             predicate=record.predicate,
             subject_mention_revision_id=record.subject_mention_revision_id,
@@ -1727,6 +1729,7 @@ class Neo4jKnowledgeOperations:
                         identity_action=item.identity_action,
                         identity_group=item.identity_group,
                         expected_identity_impact=item.expected_identity_impact,
+                        fact_action=item.fact_action, fact_reason=item.fact_reason,
                     )
                 )
         except (TypeError, ValueError) as error:
@@ -1795,6 +1798,8 @@ class Neo4jKnowledgeOperations:
         except KnowledgeAuthorizationError as error:
             raise AuthorizationError() from error
         except (KnowledgePublicationConflict, KnowledgeConflict) as error:
+            if isinstance(error, KnowledgePublicationConflict) and error.issue is not None:
+                raise PublicationValidationError(error.issue) from error
             raise ConflictError() from error
         except TimeoutError as error:
             raise DependencyTimeoutError() from error

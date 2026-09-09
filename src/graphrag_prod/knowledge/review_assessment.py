@@ -11,7 +11,7 @@ from typing import Any
 from neo4j import unit_of_work
 
 from graphrag_prod.domain.access import Principal
-from graphrag_prod.domain.models import TypedLiteralValue
+from graphrag_prod.domain.facts import literal_signature, relationship_signature
 
 from .models import AssertionRecord, EntityIdentity, EntityMentionRecord, EvidenceReference
 from .review import (
@@ -61,40 +61,31 @@ class ReviewAssessment:
     truncated: bool = False
 
 
-def literal_signature(value: TypedLiteralValue | None) -> tuple[object, ...] | None:
-    """Compare normalized meaning, preserving validity and observation scope."""
-    if value is None:
-        return None
-    return (
-        value.datatype, value.canonical_value, value.canonical_unit,
-        value.valid_from, value.valid_to, value.observed_at,
-    )
-
-
 def fact_signature(record: AssertionRecord) -> tuple[object, ...] | None:
     if record.object_entity is None and record.literal_semantics is None:
         return None
-    properties = tuple(sorted(
-        ((value.name, literal_signature(value.literal_semantics))
-         for value in record.relationship_properties), key=repr,
-    ))
-    return (
-        record.trust.ontology_version_id, record.subject.entity_id,
-        record.predicate,
-        None if record.object_entity is None else record.object_entity.entity_id,
-        literal_signature(record.literal_semantics), properties,
-    )
+    if record.object_entity is not None:
+        return relationship_signature(record.tenant_id, record.trust.ontology_version_id,
+            record.subject.entity_id, record.predicate, record.object_entity.entity_id,
+            record.relationship_properties)
+    return (record.tenant_id, record.trust.ontology_version_id, record.subject.entity_id,
+            record.predicate, literal_signature(record.literal_semantics))
+
 
 
 def classify_facts(
     candidate: AssertionRecord,
     matches: tuple[AuthoritativeFactMatch, ...],
 ) -> tuple[str, str, str, tuple[AuthoritativeFactMatch, ...]]:
+    if getattr(candidate, "fact_distinction", None) is not None:
+        return "READY", "HUMAN_DISTINCT_FACT", "这条事实已有人工独立确认记录，后续发布继续独立保留；区分理由是审核判断，不是原文事实。", ()
     signature = fact_signature(candidate)
     if signature is None:
         return "UNAVAILABLE", "MISSING_TYPED_SEMANTICS", "缺少规范化属性语义，请先检查原始内容。", ()
     comparable = tuple(value for value in matches if (
-        value.record.subject.entity_id == candidate.subject.entity_id
+        getattr(value.record, "fact_distinction", None) is None
+        and value.record.tenant_id == candidate.tenant_id
+        and value.record.subject.entity_id == candidate.subject.entity_id
         and value.record.predicate == candidate.predicate
         and value.record.trust.ontology_version_id == candidate.trust.ontology_version_id
         and (candidate.object_entity is None or (
@@ -105,10 +96,10 @@ def classify_facts(
     duplicates = tuple(value for value in comparable if fact_signature(value.record) == signature)
     differences = tuple(value for value in comparable if fact_signature(value.record) != signature)
     if differences:
-        return "CONFLICT", "AUTHORITATIVE_VALUES_DIFFER", "已有权威事实的值、单位、时间或关系属性不同，请核对来源后处理。", comparable
+        return "CONFLICT", "AUTHORITATIVE_VALUES_DIFFER", "已有事实的值、单位、时间或关系属性不同，请核对来源后处理。", comparable
     if duplicates:
-        return "DUPLICATE", "EXACT_AUTHORITATIVE_DUPLICATE", "与已发布权威事实一致，可保留已有事实并记录本次来源。", duplicates
-    return "READY", "NO_VISIBLE_AUTHORITATIVE_DUPLICATE", "关联实体已确认，当前可访问的权威事实中未发现重复，请核对原文后批准。", ()
+        return "DUPLICATE", "EXACT_AUTHORITATIVE_DUPLICATE", "与已发布事实一致，确认后本次来源进入待发布列表，发布后归入已有事实。", duplicates
+    return "READY", "NO_VISIBLE_AUTHORITATIVE_DUPLICATE", "关联实体已确认，当前比较范围内未发现重复，请核对原文后批准。", ()
 
 
 # Explicit planning boundaries keep the source/authority pattern from becoming
@@ -205,14 +196,17 @@ class Neo4jReviewAssessmentService:
         if any(not item.ready for item in dependencies):
             return ReviewAssessment(**common, status="BLOCKED", reason_code="ENDPOINTS_REQUIRE_REVIEW",
                                     summary="请先确认下列关联实体，再审核这条事实。")
-        rows = tuple(tx.run(_AUTHORITY_QUERY, tenant_id=principal.tenant_id,
+        comparison_query = _AUTHORITY_QUERY
+        if record.object_entity is not None:
+            comparison_query = comparison_query.replace("authority_level: 'AUTHORITATIVE',", "")
+        rows = tuple(tx.run(comparison_query, tenant_id=principal.tenant_id,
                             groups=sorted(principal.groups), statuses=["PUBLISHED"],
                             subject_entity_id=record.subject.entity_id, predicate=record.predicate,
                             ontology_version_id=record.trust.ontology_version_id,
                             limit=MAX_COMPARISON_FACTS + 1))
         if len(rows) > MAX_COMPARISON_FACTS:
             return ReviewAssessment(**common, status="UNAVAILABLE", reason_code="COMPARISON_LIMIT_EXCEEDED",
-                                    summary="相关权威事实超过本次比较上限，请保留候选并缩小处理范围。", truncated=True)
+                                    summary="相关已发布事实超过本次比较上限，请保留候选并缩小处理范围。", truncated=True)
         matches = []
         for row in rows:
             authoritative = _stored_assertion(dict(row["revision"]))

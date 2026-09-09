@@ -711,6 +711,11 @@ class Neo4jKnowledgeStoreUnitTests(unittest.TestCase):
             first,
             revision=RecordRevision.next(second_record_id, 0),
         )
+        corroborating = dataclasses.replace(batch, assertions=(first, second))
+        Neo4jKnowledgeStore(_WriteDriver(corroborating)).import_authoritative(corroborating)
+        second = dataclasses.replace(second, literal_value="iPhone",
+            literal_semantics=TypedLiteralValue(datatype="STRING", typed_value="iPhone",
+                raw_value="iPhone", canonical_value="iPhone"))
         conflicting = dataclasses.replace(batch, assertions=(first, second))
         driver = _WriteDriver(conflicting)
         with self.assertRaisesRegex(KnowledgeSchemaError, "single-valued"):

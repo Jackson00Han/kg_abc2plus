@@ -20,6 +20,8 @@ from uuid import uuid5
 
 from neo4j import unit_of_work
 
+from graphrag_prod.domain.facts import literal_signature
+from graphrag_prod.domain.publication_issue import PublicationIssue, PublicationIssueTarget
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import (
     ID_NAMESPACE,
@@ -80,6 +82,25 @@ class _PublicationPreviewReady(Exception):
 
 class KnowledgePublicationConflict(KnowledgeStoreError):
     """A publication CAS, manifest, or immutable identity conflicts."""
+
+    def __init__(self, message: str, *, issue: PublicationIssue | None = None):
+        super().__init__(message)
+        self.issue = issue
+
+
+def _publication_issue(reason: str, records=(), *, entity=None, predicate=None, property_name=None):
+    # Call only with records already loaded through the publication ACL boundary.
+    targets = []
+    for record in records:
+        identity = record.entity if isinstance(record, EntityMentionRecord) else record.subject
+        target = PublicationIssueTarget(record.record_id, identity.entity_id,
+            identity.canonical_name, getattr(record, "predicate", None))
+        if target not in targets:
+            targets.append(target)
+    if entity is not None:
+        targets.append(PublicationIssueTarget(entity_id=entity.entity_id,
+            entity_name=entity.canonical_name, predicate=predicate))
+    return PublicationIssue(reason, tuple(targets[:50]), property_name, len(targets) > 50)
 
 
 class KnowledgeAuthorizationError(PermissionError, KnowledgeStoreError):
@@ -263,7 +284,18 @@ class ReviewRequest:
     identity_group: str | None = None
     expected_identity_impact: str | None = None
 
+    fact_action: str | None = None
+    fact_reason: str | None = None
+
     def __post_init__(self) -> None:
+        if self.fact_action is not None:
+            if (self.fact_action != "INDEPENDENT" or self.record_kind is not ReviewRecordKind.ASSERTION
+                    or self.decision is not GovernanceStatus.APPROVED or self.edit is not None
+                    or self.identity_action is not None or self.duplicate_of_revision_id is not None):
+                raise ValueError("independent fact requires an unedited assertion approval")
+            _required_text(self.fact_reason, "independent fact reason", maximum=2000)
+        elif self.fact_reason is not None:
+            raise ValueError("fact reason requires an independent fact decision")
         if not isinstance(self.record_kind, ReviewRecordKind):
             raise TypeError("record_kind must be ReviewRecordKind")
         object.__setattr__(
@@ -1175,6 +1207,12 @@ class Neo4jKnowledgeReviewService:
                 from .review_context import validate_existing_identity_tx
                 validate_existing_identity_tx(tx, principal, current,
                     request.edit.entity if request.edit is not None else current.entity)
+            if request.fact_action == "INDEPENDENT":
+                from .review_assessment import Neo4jReviewAssessmentService
+                assessment = Neo4jReviewAssessmentService.assess_tx(
+                    tx, principal, request.record_id, request.expected_revision)
+                if assessment.status not in {"READY", "DUPLICATE", "CONFLICT"}:
+                    raise KnowledgeReviewUnavailable("fact dependencies or comparison are unavailable")
             updated = cls._reviewed_record_tx(
                 tx,
                 principal,
@@ -1403,6 +1441,10 @@ class Neo4jKnowledgeReviewService:
                 "literal_semantics": request.edit.literal_semantics,
                 "relationship_properties": request.edit.relationship_properties,
             }
+        if request.fact_action == "INDEPENDENT":
+            from graphrag_prod.domain.facts import FactDistinction
+            values["fact_distinction"] = FactDistinction(current.record_id,
+                request.fact_reason.strip(), principal.principal_id, request.reviewed_at)
         updated = dataclasses.replace(
             current,
             revision=revision,
@@ -2143,9 +2185,9 @@ class Neo4jKnowledgePublicationService:
         if existing is not None:
             existing = dict(existing)
             if preview_only:
-                raise KnowledgePublicationConflict("change set is already published; refresh candidates")
+                raise KnowledgePublicationConflict("change set is already published; refresh candidates", issue=PublicationIssue("ALREADY_PUBLISHED"))
             if expected_preview_hash is not None and existing.get("preview_hash") != expected_preview_hash:
-                raise KnowledgePublicationConflict("publication preview no longer matches")
+                raise KnowledgePublicationConflict("publication preview no longer matches", issue=PublicationIssue("PREVIEW_CHANGED"))
             if (
                 tuple(existing.get("source_revision_ids", ())) != source_ids
                 or tuple(existing.get("removed_record_ids", ()))
@@ -2184,7 +2226,8 @@ class Neo4jKnowledgePublicationService:
             return
         if current_id != expected_active_id:
             raise KnowledgePublicationConflict(
-                "active knowledge publication CAS failed"
+                "active knowledge publication CAS failed",
+                issue=PublicationIssue("ACTIVE_VERSION_CHANGED"),
             )
 
         carried_entries: tuple[
@@ -2238,7 +2281,9 @@ class Neo4jKnowledgePublicationService:
         collisions = set(source_record_ids) & set(carried_by_record)
         if collisions:
             raise KnowledgePublicationConflict(
-                "replacing an active record requires replace_record_ids"
+                "replacing an active record requires replace_record_ids",
+                issue=_publication_issue("REPLACEMENT_REQUIRED",
+                    [record for record, _ in loaded if record.record_id in collisions]),
             )
 
         published_records = [
@@ -2314,7 +2359,8 @@ class Neo4jKnowledgePublicationService:
                     required.add(assertion.object_mention_revision_id)
                 if not required <= set(published_mention_ids):
                     raise KnowledgePublicationConflict(
-                        "publication must include every assertion endpoint mention"
+                        "publication must include every assertion endpoint mention",
+                        issue=_publication_issue("ENDPOINT_MISSING", (assertion,)),
                     )
                 published = dataclasses.replace(
                     assertion,
@@ -2379,7 +2425,8 @@ class Neo4jKnowledgePublicationService:
             if not required <= final_mention_ids:
                 raise KnowledgePublicationConflict(
                     "active publication contains an assertion without its "
-                    "endpoint mentions"
+                    "endpoint mentions",
+                    issue=_publication_issue("ENDPOINT_MISSING", (record,)),
                 )
 
         ontology_version_id = cls._validate_property_cardinality_tx(
@@ -2495,7 +2542,7 @@ class Neo4jKnowledgePublicationService:
             replaced_record_ids=replaced_record_ids,
         )
         if expected_preview_hash is not None and preview["preview_hash"] != expected_preview_hash:
-            raise KnowledgePublicationConflict("publication preview changed; review a fresh preview")
+            raise KnowledgePublicationConflict("publication preview changed; review a fresh preview", issue=PublicationIssue("PREVIEW_CHANGED"))
         if preview_only:
             raise _PublicationPreviewReady(preview)
         tx.run(
@@ -2731,7 +2778,7 @@ class Neo4jKnowledgePublicationService:
             )
 
         entities: dict[str, EntityIdentity] = {}
-        literal_counts: dict[tuple[str, str], int] = {}
+        literal_counts: dict[tuple[str, str], set[tuple]] = {}
         relationship_records: list[AssertionRecord] = []
         for record in records:
             if isinstance(record, EntityMentionRecord):
@@ -2748,7 +2795,8 @@ class Neo4jKnowledgePublicationService:
             ).get(record.predicate)
             if property_definition is None:
                 raise KnowledgePublicationConflict(
-                    "literal assertion is outside the active T-Box"
+                    "literal assertion is outside the active T-Box",
+                    issue=_publication_issue("SCHEMA_INVALID", (record,)),
                 )
             try:
                 _validate_literal_semantics(
@@ -2760,27 +2808,37 @@ class Neo4jKnowledgePublicationService:
                 )
             except KnowledgeStoreError as exc:
                 raise KnowledgePublicationConflict(
-                    "literal assertion violates the active T-Box"
+                    "literal assertion violates the active T-Box",
+                    issue=_publication_issue("PROPERTY_INVALID", (record,)),
                 ) from exc
             key = (record.subject.entity_id, record.predicate)
-            literal_counts[key] = literal_counts.get(key, 0) + 1
+            # Cardinality concerns distinct meanings, not the number of sources.
+            signature = literal_signature(record.literal_semantics)
+            literal_counts.setdefault(key, set()).add(
+                signature if signature is not None else ("legacy-revision", record.revision_id)
+            )
 
         for entity in entities.values():
             entity_definitions = definitions.get(entity.entity_type)
             if entity_definitions is None:
                 raise KnowledgePublicationConflict(
-                    "publication entity type is outside the active T-Box"
+                    "publication entity type is outside the active T-Box",
+                    issue=_publication_issue("SCHEMA_INVALID", entity=entity),
                 )
             for name, definition in entity_definitions.items():
-                count = literal_counts.get((entity.entity_id, name), 0)
+                count = len(literal_counts.get((entity.entity_id, name), set()))
                 if definition.cardinality.required and count == 0:
                     raise KnowledgePublicationConflict(
-                        f"required property {entity.entity_type}.{name} is absent"
+                        f"required property {entity.entity_type}.{name} is absent",
+                        issue=_publication_issue("PROPERTY_REQUIRED", entity=entity, predicate=name),
                     )
                 if definition.cardinality.single_valued and count > 1:
                     raise KnowledgePublicationConflict(
                         f"property {entity.entity_type}.{name} exceeds its "
-                        "single-valued cardinality"
+                        "single-valued cardinality",
+                        issue=_publication_issue("PROPERTY_VALUES_DIFFER", [item for item in records
+                            if isinstance(item, AssertionRecord) and item.object_entity is None
+                            and item.subject.entity_id == entity.entity_id and item.predicate == name]),
                     )
 
         relationship_rows = tuple(
@@ -2864,14 +2922,16 @@ class Neo4jKnowledgePublicationService:
             contract = relationship_definitions.get(record.predicate)
             if contract is None:
                 raise KnowledgePublicationConflict(
-                    "relationship assertion is outside the bound T-Box"
+                    "relationship assertion is outside the bound T-Box",
+                    issue=_publication_issue("SCHEMA_INVALID", (record,)),
                 )
             if (
                 record.subject.entity_type not in contract["source_types"]
                 or record.object_entity.entity_type not in contract["target_types"]
             ):
                 raise KnowledgePublicationConflict(
-                    "relationship assertion violates its bound T-Box domain/range"
+                    "relationship assertion violates its bound T-Box domain/range",
+                    issue=_publication_issue("SCHEMA_INVALID", (record,)),
                 )
 
             property_counts: dict[str, int] = {}
@@ -2880,7 +2940,8 @@ class Neo4jKnowledgePublicationService:
                 if definition is None:
                     raise KnowledgePublicationConflict(
                         f"relationship property {record.predicate}.{value.name} "
-                        "is outside the bound T-Box"
+                        "is outside the bound T-Box",
+                        issue=_publication_issue("RELATIONSHIP_PROPERTY_INVALID", (record,), property_name=value.name),
                     )
                 try:
                     _validate_literal_semantics(
@@ -2890,7 +2951,8 @@ class Neo4jKnowledgePublicationService:
                 except KnowledgeStoreError as exc:
                     raise KnowledgePublicationConflict(
                         f"relationship property {record.predicate}.{value.name} "
-                        "violates the bound T-Box"
+                        "violates the bound T-Box",
+                        issue=_publication_issue("RELATIONSHIP_PROPERTY_INVALID", (record,), property_name=value.name),
                     ) from exc
                 property_counts[value.name] = property_counts.get(value.name, 0) + 1
             for name, definition in contract["properties"].items():
@@ -2898,12 +2960,14 @@ class Neo4jKnowledgePublicationService:
                 if definition.cardinality.required and count == 0:
                     raise KnowledgePublicationConflict(
                         f"required relationship property {record.predicate}.{name} "
-                        "is absent"
+                        "is absent",
+                        issue=_publication_issue("RELATIONSHIP_PROPERTY_INVALID", (record,), property_name=name),
                     )
                 if definition.cardinality.single_valued and count > 1:
                     raise KnowledgePublicationConflict(
                         f"relationship property {record.predicate}.{name} exceeds "
-                        "its single-valued cardinality"
+                        "its single-valued cardinality",
+                        issue=_publication_issue("RELATIONSHIP_PROPERTY_INVALID", (record,), property_name=name),
                     )
 
             outgoing.setdefault(
@@ -2929,24 +2993,30 @@ class Neo4jKnowledgePublicationService:
                     if source_cardinality.required and count == 0:
                         raise KnowledgePublicationConflict(
                             f"required relationship {predicate} is absent from "
-                            f"source entity {entity.entity_id}"
+                            f"source entity {entity.entity_id}",
+                            issue=_publication_issue("RELATIONSHIP_REQUIRED", entity=entity, predicate=predicate),
                         )
                     if source_cardinality.single_valued and count > 1:
                         raise KnowledgePublicationConflict(
                             f"relationship {predicate} exceeds source endpoint "
-                            "single-valued cardinality"
+                            "single-valued cardinality",
+                            issue=_publication_issue("RELATIONSHIP_CARDINALITY", [item for item in relationship_records
+                                if item.predicate == predicate and item.subject.entity_id == entity.entity_id]),
                         )
                 if entity.entity_type in contract["target_types"]:
                     count = len(incoming.get((predicate, entity.entity_id), set()))
                     if target_cardinality.required and count == 0:
                         raise KnowledgePublicationConflict(
                             f"required relationship {predicate} is absent at "
-                            f"target entity {entity.entity_id}"
+                            f"target entity {entity.entity_id}",
+                            issue=_publication_issue("RELATIONSHIP_REQUIRED", entity=entity, predicate=predicate),
                         )
                     if target_cardinality.single_valued and count > 1:
                         raise KnowledgePublicationConflict(
                             f"relationship {predicate} exceeds target endpoint "
-                            "single-valued cardinality"
+                            "single-valued cardinality",
+                            issue=_publication_issue("RELATIONSHIP_CARDINALITY", [item for item in relationship_records
+                                if item.predicate == predicate and item.object_entity.entity_id == entity.entity_id]),
                         )
         return ontology_id
 
@@ -3530,6 +3600,10 @@ class Neo4jKnowledgePublicationService:
             "governed_publication_id": publication_id,
             "authority_level": assertion.trust.authority.value,
         }
+        if assertion.fact_distinction is not None:
+            properties["fact_distinction_json"] = json.dumps(assertion.fact_distinction.to_mapping(), ensure_ascii=False)
+        if assertion.fact_key is not None:
+            properties["fact_key"] = assertion.fact_key
         if assertion.literal_semantics is not None:
             properties.update(assertion.literal_semantics.to_flat_properties())
         properties.update(

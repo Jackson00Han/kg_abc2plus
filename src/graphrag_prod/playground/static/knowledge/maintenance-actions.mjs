@@ -25,13 +25,13 @@ export function mountActions({api,epoch,browser,navigate,correctRecord,rollback,
   async function maintain(item){
     if(item.document_id){await maintainSource(item);return;}
     if(item.object_id){
-      const d=browser.getDirectory();const n=d?.items.find(n=>n.entity_id===item.object_id || n.mention_revision_ids.includes(item.object_id) || [...n.properties,...n.relations].some(f=>f.revision_id===item.object_id || f.record_id===item.object_id));
+      const d=browser.getDirectory();const n=d?.items.find(n=>n.entity_id===item.object_id || n.mention_revision_ids.includes(item.object_id) || [...n.properties,...n.relations].some(f=>f.revision_id===item.object_id || f.record_id===item.object_id || f.sources?.some(s=>s.revision_id===item.object_id || s.record_id===item.object_id)));
       if(n)return maintain(n);
       open('定位待修正知识','<p>当前浏览视图中无法定位该对象。可以尝试按记录读取；图谱结构问题需根据质量报告修复来源关联或知识模型。</p>');
       return correct(item.object_id);
     }
-    const facts=[...new Map([...item.properties,...item.relations].map(f=>[f.revision_id,f])).values()];
-    const choices=[...facts.map(f=>({revision_id:f.revision_id,title:`${label(f.predicate)}：${f.other?.label||valueLabel(f)}`,record_id:f.record_id})),...item.mention_revision_ids.map((id,i)=>({revision_id:id,title:`原文提及 ${i+1}`}))];
+    const facts=[...new Map([...item.properties,...item.relations.flatMap(f=>(f.sources||[f]).map((s,i)=>({...f,...s,sourceLabel:`来源记录 ${i+1} · ${s.authority_level==='AUTHORITATIVE'?'权威来源':'业务来源'}`})))].map(f=>[f.revision_id,f])).values()];
+    const choices=[...facts.map(f=>({revision_id:f.revision_id,title:`${label(f.predicate)}：${f.other?.label||valueLabel(f)}${f.sourceLabel?` · ${f.sourceLabel}`:""}`,record_id:f.record_id})),...item.mention_revision_ids.map((id,i)=>({revision_id:id,title:`原文提及 ${i+1}`}))];
     const pin=open(`${item.label} · 选择要修正的内容`,`<p>开始修正会生成待修订记录，进入现有审核流程。当前检查可能提示记录版本不一致；完成审核并重新发布后恢复一致。</p>${choices.map((f,i)=>`<article class="kb-source"><strong>${e(f.title)}</strong><div class="kb-actions"><button class="button" data-proof="${i}">核对依据</button><button class="button" data-correct="${i}">进入修正</button></div></article>`).join('')}`);
     const token=browser.getDirectory()?.view_token;
     dialog.querySelectorAll('[data-proof]').forEach(b=>b.onclick=()=>browser.evidence([choices[Number(b.dataset.proof)].revision_id],token));

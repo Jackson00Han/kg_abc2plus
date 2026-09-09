@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from neo4j import unit_of_work
 
+from graphrag_prod.domain.facts import literal_signature
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import assertion_id, mention_id
 from graphrag_prod.domain.models import (
@@ -36,7 +37,7 @@ from graphrag_prod.ontology.models import (
 from .quality import IssueSeverity
 
 PUBLISHED_QUALITY_CAPABILITIES = frozenset({"knowledge:quality", "knowledge:review"})
-PUBLISHED_QUALITY_RULESET_VERSION = "published-governed-graph-quality-v1"
+PUBLISHED_QUALITY_RULESET_VERSION = "published-governed-graph-quality-v2"
 
 _MAX_REVISIONS = 50_000
 _MAX_ENTITIES = 50_000
@@ -1248,7 +1249,7 @@ def _audit_revision(
     entity_types: Mapping[str, EntityTypeDefinition],
     relationship_types: Mapping[str, RelationshipTypeDefinition],
     issues: _IssueCollector,
-    literal_counts: dict[tuple[str, str], int],
+    literal_counts: dict[tuple[str, str], set[tuple]],
 ) -> tuple[str, str | None]:
     revision = _mapping(row.get("revision"))
     revision_id = _text(revision.get("revision_id")) or "unknown"
@@ -1621,7 +1622,10 @@ def _audit_revision(
             )
         if predicate is not None and revision.get("subject_entity_id") is not None:
             key = (str(revision["subject_entity_id"]), predicate)
-            literal_counts[key] = literal_counts.get(key, 0) + 1
+            signature = literal_signature(literal)
+            literal_counts.setdefault(key, set()).add(
+                signature if signature is not None else ("invalid-revision", revision_id)
+            )
         return kind, chunk_id
 
     issues.add(
@@ -1964,7 +1968,7 @@ class Neo4jPublishedGraphQualityService:
             item.name: item for item in boundary.tbox.relationship_types
         }
         evidence_by_object: dict[tuple[str, str], set[str]] = {}
-        literal_counts: dict[tuple[str, str], int] = {}
+        literal_counts: dict[tuple[str, str], set[tuple]] = {}
         mention_count = 0
         assertion_count = 0
         relationship_count = 0
@@ -2041,7 +2045,7 @@ class Neo4jPublishedGraphQualityService:
             if definition is None:
                 continue
             for property_definition in definition.properties:
-                count = literal_counts.get((entity_id, property_definition.name), 0)
+                count = len(literal_counts.get((entity_id, property_definition.name), set()))
                 if property_definition.cardinality.required and count == 0:
                     collector.add(
                         "REQUIRED_ENTITY_PROPERTY_MISSING",
@@ -2056,7 +2060,7 @@ class Neo4jPublishedGraphQualityService:
                         IssueSeverity.ERROR,
                         "Entity",
                         entity_id,
-                        "a single-valued T-Box entity property has multiple assertions",
+                        "a single-valued T-Box entity property has multiple distinct semantic values",
                     )
             sample_chunk_id = _text(entity_row.get("sample_chunk_id"))
             if sample_chunk_id:

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from graphrag_prod.domain.facts import decode_fact_distinction
+
 from dataclasses import dataclass
 from datetime import datetime
 import json
 from typing import Any, Iterable, Protocol
 
+from graphrag_prod.domain.facts import literal_signature
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.ontology.models import (
@@ -111,6 +114,10 @@ def _revision_properties(record: EntityMentionRecord | AssertionRecord) -> dict[
         **_trust_properties(record.trust),
     }
     if isinstance(record, AssertionRecord):
+        if record.fact_distinction is not None:
+            properties["fact_distinction_json"] = json.dumps(record.fact_distinction.to_mapping(), ensure_ascii=False)
+        if record.fact_key is not None:
+            properties["fact_key"] = record.fact_key
         properties.update(
             relationship_properties_format_version=1,
             relationship_properties_json=json.dumps(
@@ -268,6 +275,7 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
             literal_semantics if object_kind == "literal" else None
         ),
         relationship_properties=relationship_properties,
+        fact_distinction=decode_fact_distinction(properties.get("fact_distinction_json")),
     )
 
 
@@ -675,7 +683,7 @@ class Neo4jKnowledgeStore:
                     f"canonical key namespace for {entity.entity_type!r} is not allowed"
                 )
 
-        literal_counts: dict[tuple[str, str], int] = {}
+        literal_counts: dict[tuple[str, str], set[tuple]] = {}
         for assertion in batch.assertions:
             if assertion.object_entity is None:
                 definitions = entity_contracts[assertion.subject.entity_type][
@@ -692,8 +700,8 @@ class Neo4jKnowledgeStore:
                     definition,
                 )
                 key = (assertion.subject.entity_id, assertion.predicate)
-                literal_counts[key] = literal_counts.get(key, 0) + 1
-                if definition.cardinality.single_valued and literal_counts[key] > 1:
+                literal_counts.setdefault(key, set()).add(literal_signature(assertion.literal_semantics))
+                if definition.cardinality.single_valued and len(literal_counts[key]) > 1:
                     raise KnowledgeSchemaError(
                         f"literal predicate {assertion.predicate!r} exceeds its "
                         "single-valued T-Box cardinality in this batch"
