@@ -31,6 +31,7 @@ PLAYGROUND_AUDIENCE = "sample-graphrag-local-api"
 PLAYGROUND_TOKEN_LIFETIME_SECONDS = 900
 PLAYGROUND_SCOPES = (
     "retrieval:read",
+    "knowledge:graph:read",
     "ontology:read",
     "ontology:write",
     "ontology:publish",
@@ -223,7 +224,7 @@ def _persona_label(tenant_id: str, groups: tuple[str, ...]) -> str:
 def _persona_scopes(tenant_id: str, groups: tuple[str, ...]) -> tuple[str, ...]:
     """Assign local demo duties without weakening production-style RBAC."""
 
-    selected = {"retrieval:read", "ontology:read"}
+    selected = {"retrieval:read", "ontology:read", "knowledge:graph:read"}
     group_set = frozenset(groups)
     if tenant_id == "demo-a":
         if "administrator" in group_set:
@@ -499,6 +500,17 @@ def attach_playground_routes(
     @app.get("/playground", response_class=HTMLResponse, include_in_schema=False)
     async def playground_page() -> HTMLResponse:
         return HTMLResponse(page, headers=security_headers)
+
+    @app.get("/playground/assets/{asset_name}", include_in_schema=False)
+    async def knowledge_asset(asset_name: str) -> Response:
+        from fastapi import HTTPException
+        allowed = {"browser.mjs", "model.mjs", "browser.css", "graph-view.mjs", "sources.mjs", "maintenance.mjs"}
+        if asset_name not in allowed:
+            raise HTTPException(status_code=404, detail="asset not found")
+        asset = files("graphrag_prod.playground").joinpath("static", "knowledge", asset_name)
+        if not asset.is_file():
+            raise HTTPException(status_code=404, detail="asset not found")
+        return Response(asset.read_bytes(), media_type="text/css" if asset_name.endswith(".css") else "text/javascript", headers=security_headers)
 
     @app.get("/playground/bootstrap", include_in_schema=False)
     async def playground_bootstrap(response: Response) -> dict[str, Any]:

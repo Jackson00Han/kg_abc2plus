@@ -156,7 +156,7 @@ class Neo4jPublishedGraphBrowser:
             for node in graph.entities:
                 identity = node.entity
                 projected = {"entity_id": identity.entity_id, "entity_type": identity.entity_type, "label": identity.canonical_name,
-                    "canonical_key": identity.canonical_key, "authority_levels": set(), "mention_revision_ids": set()}
+                    "canonical_key": identity.canonical_key, "aliases": identity.aliases, "authority_levels": set(), "mention_revision_ids": set()}
                 current = nodes.setdefault(identity.entity_id, projected)
                 if any(current[key] != projected[key] for key in ("entity_type", "label", "canonical_key")):
                     raise GraphViewChanged()

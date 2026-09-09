@@ -44,7 +44,7 @@ Original values, units, temporal context and exact source positions are retained
 | Step | Deliverable | Exit checks | Status |
 | --- | --- | --- | --- |
 | B1 | Scope, terms, capability mapping and execution record | 1,037 unit + 18 HTTP E2E + 54 security; compile/diff/secret checks | Complete |
-| B2 | Four flows, entity dossiers and exact evidence | Executed JS, API/security contracts, existing suites | Pending |
+| B2 | Four flows, entity dossiers and exact evidence | Executed JS, API/security contracts, existing suites | Complete |
 | B3 | Linked graph with separate model/loading/layout/rendering | Graph interaction, bounded reads, ACL, stale-view tests | Pending |
 | B4 | Source catalogue and bidirectional knowledge navigation | Source/version/permission and browser tests | Pending |
 | B5 | Readable quality checks and durable human dispositions | Neo4j persistence, scope, replay and stale-version checks | Pending |
@@ -84,3 +84,26 @@ found that general graph APIs were wired only in industrial mode; B2 will wire
 the existing browser into the ordinary workbench, with explicit read scopes.
 Browser discovery returned no enabled surfaces; visual verification remains
 required at B7 and will not be claimed from HTTP tests alone.
+
+## B2 implementation and validation
+
+The ordinary Playground now wires the existing graph browser. Local read personas
+receive `knowledge:graph:read` alongside retrieval read; construction, review,
+publication and lifecycle duties remain separate and every graph query retains
+its source ACL boundary. The read-role expectation was updated explicitly, not
+removed. Browser modules are served through an exact static-asset allowlist.
+
+Entity dossiers collect all version-pinned pages within the existing server read
+budget before grouping/paging canonical entities. They preserve parallel facts,
+multiple mentions, aliases, original units and temporal qualifiers. Evidence is
+fetched on demand, Unicode character offsets are checked before highlighting,
+and rendered text is escaped. Identity changes cancel and clear prior views.
+The existing 500-record server bound remains; this is not unbounded browsing.
+
+A complete unit capture passed 1,041 tests; the subsequently added asset allowlist
+check and final unit-display correction passed the five-test browser module.
+All 18 HTTP E2E and 54 security checks passed. JavaScript syntax, source compilation
+and whitespace checks passed. All three real-Neo4j graph browsing tests passed in 249.483 seconds under the
+unchanged dev-mini cap; the owned container was removed. The final 102-test
+Playground subset also passed. Source and graph tabs are staged integration
+slots until B3/B4, not claimed completed features.

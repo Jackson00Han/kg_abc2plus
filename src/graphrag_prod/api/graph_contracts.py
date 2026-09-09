@@ -97,6 +97,7 @@ class GraphBrowseSchemaResponse(StrictAPIModel):
 
 
 class GraphBrowseNodeResponse(StrictAPIModel):
+    aliases: Annotated[tuple[GraphName, ...], Field(max_length=500)] = ()
     entity_id: Identifier
     entity_type: GraphTypeName
     label: GraphName

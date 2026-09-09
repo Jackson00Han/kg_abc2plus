@@ -861,7 +861,9 @@ def build_playground_app(
         GroundedGenerationService(_DisabledAnswerModel()),
         subgraph_projector=Neo4jEvidenceSubgraphProjector(driver, database),
     )
-    graph_operations = None
+    from graphrag_prod.api.graph import Neo4jGraphOperations
+    from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser
+    graph_operations = Neo4jGraphOperations(browser=Neo4jPublishedGraphBrowser(driver, database))
     if enable_industrial:
         from graphrag_prod.api.graph import Neo4jGraphOperations
         from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser

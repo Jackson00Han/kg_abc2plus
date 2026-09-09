@@ -1,0 +1,66 @@
+"""Executed business browser projections and version/identity cancellation contracts."""
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).parents[2]
+MODEL = (ROOT / 'src/graphrag_prod/playground/static/knowledge/model.mjs').as_uri()
+BROWSER = (ROOT / 'src/graphrag_prod/playground/static/knowledge/browser.mjs').as_uri()
+
+
+class KnowledgeBrowserTests(unittest.TestCase):
+    def js(self, scenario):
+        script = f"import assert from 'node:assert/strict'; import * as m from {MODEL!r}; import {{evidenceMarkup}} from {BROWSER!r};\n" + scenario
+        result = subprocess.run(['node','--input-type=module','-e',script], capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_entities_group_by_id_keep_parallel_facts_and_search_business_code(self):
+        self.js("""
+const nodes=[{entity_id:'a',label:'循环水泵',entity_type:'Equipment',mention_revision_ids:['m1','m2']},{entity_id:'b',label:'循环水泵',entity_type:'Equipment',mention_revision_ids:['m3']}];
+const fact={subject:'a',revision_id:'r1',predicate:'EquipmentCode',value:'BC-P-101'};
+const rows=m.dossiers([{view_token:'v',nodes,edges:[],literals:[fact,{...fact,revision_id:'r2'}]}]);
+assert.equal(rows.length,2);assert.equal(rows.find(n=>n.entity_id==='a').properties.length,2);
+assert.equal(m.entityPage(rows,{query:'BC-P-101'}).total,1);
+assert.equal(m.entityPage(rows,{size:1,page:1}).items.length,1);
+assert.equal(rows.find(n=>n.entity_id==='a').mention_revision_ids.length,2);
+""")
+
+    def test_collection_requires_every_page_and_rejects_changed_or_looping_cursor(self):
+        self.js("""
+const first={view_token:'v',nodes:[],edges:[],literals:[],pin:{},schema:{},page:{has_more:true,next_cursor:'next'}};
+let calls=0;const api=async(url,options)=>{calls++; const body=JSON.parse(options.body);if(calls===2)assert.equal(body.cursor,'next');return calls===1?first:{...first,page:{has_more:false}};};
+assert.equal((await m.readDirectory(api)).pages.length,2);
+await assert.rejects(m.readDirectory(async()=>first),/分页无效/);
+await assert.rejects(m.readDirectory(async()=>first,{},()=>false),/已取消/);
+let n=0;await assert.rejects(m.readDirectory(async()=>++n===1?first:{...first,view_token:'changed'}),/版本发生变化/);
+""")
+
+    def test_evidence_uses_unicode_offsets_escapes_markup_and_rejects_wrong_quote(self):
+        self.js("""
+const item={evidence:{citation:{chunk_text:'😀<泵>功率',char_start:10,document_title:'<script>'},char_start:12,char_end:13,quoted_text:'泵'},origin:'AUTHORITATIVE_EXTRACTED'};
+const html=evidenceMarkup(item);assert.ok(html.includes('<mark>泵</mark>'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('<script>'));
+item.evidence.quoted_text='错';assert.throws(()=>evidenceMarkup(item),/位置校验失败/);
+""")
+
+    def test_raw_values_temporal_conditions_and_units_are_not_conflated(self):
+        self.js("""
+assert.equal(m.valueLabel({value:'1',semantics:{raw_value:'1',raw_unit:'MPa',canonical_value:'1000000',canonical_unit:'Pa'}}),'1 MPa');
+assert.equal(m.valueLabel({value:'37.5',semantics:{raw_value:'37.5',canonical_value:'37.5',canonical_unit:'kW'}}),'37.5 kW');
+assert.equal(m.valueLabel({value:'1 MPa',semantics:{raw_value:'1 MPa',canonical_value:'1000000',canonical_unit:'Pa'}}),'1 MPa');
+assert.ok(m.contextLabel({semantics:{observed_at:'2026-09-09'}}).includes('2026-09-09'));
+""")
+
+    def test_browser_assets_are_allowlisted_and_not_cached(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from graphrag_prod.playground import PlaygroundCatalog, attach_playground_routes
+        from tests.fixtures.dev_corpus import load_dev_corpus_fixture
+        app = FastAPI()
+        attach_playground_routes(app, PlaygroundCatalog(load_dev_corpus_fixture(), b"local-browser-test-key-at-least-thirty-two-bytes"))
+        with TestClient(app) as client:
+            for name in ("browser.mjs", "model.mjs", "browser.css"):
+                response = client.get("/playground/assets/" + name)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["cache-control"], "no-store")
+            self.assertEqual(client.get("/playground/assets/.env").status_code, 404)
+            self.assertEqual(client.get("/playground/assets/unknown.mjs").status_code, 404)

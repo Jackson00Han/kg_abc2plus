@@ -140,7 +140,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
 
         self.assertEqual(
             by_groups[frozenset({"alpha-public"})].scopes,
-            ("retrieval:read", "ontology:read"),
+            ("retrieval:read", "knowledge:graph:read", "ontology:read"),
         )
         self.assertIn(
             "knowledge:construct",
