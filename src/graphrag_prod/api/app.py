@@ -90,6 +90,7 @@ from .runtime import (
     classify_exception,
     required_scope,
 )
+from .quality_review_contracts import QualityReviewRequest, QualityReviewResponse, QualityReviewListRequest, QualityReviewListResponse
 from .quality_history_contracts import (
     PublishedGraphQualityRecordRequest,
     PublishedGraphQualityRunListResponse,
@@ -1113,6 +1114,14 @@ def create_app(
             OperationKind.KNOWLEDGE_INVENTORY,
             {"document_id": document_id, "limit": limit},
         )
+
+    @app.post("/v1/knowledge/quality/reviews", response_model=QualityReviewResponse)
+    async def record_quality_review(request: Request, body: QualityReviewRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.QUALITY_REVIEW, body.model_dump(mode="python"))
+
+    @app.post("/v1/knowledge/quality/reviews:query", response_model=QualityReviewListResponse)
+    async def list_quality_reviews(request: Request, body: QualityReviewListRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.QUALITY_REVIEWS, body.model_dump(mode="python"))
 
     @app.post("/v1/knowledge/quality/runs", response_model=PublishedGraphQualityRunResponse)
     async def record_published_graph_quality(

@@ -77,3 +77,14 @@ epoch++;calls[1].resolve({view_token:'v',page:{has_more:false}});assert.equal(aw
 const old=session.read(query);session.clear();calls[2].resolve({view_token:'v',page:{has_more:false}});assert.equal(await old,null);
 const changed=session.read(query,{token:'v'});calls[3].resolve({view_token:'other'});await assert.rejects(changed,/版本发生变化/);
 """)
+
+    def test_quality_display_names_explain_property_degree_and_keep_human_separate(self):
+        path = (ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance.mjs').as_uri()
+        self.js(f"import {{qualityMarkup}} from {path!r};" + """
+const report={publication_generation:1,passed:true,total_issue_count:1,total_error_count:0,counts:{canonical_entities:3,literal_assertions:2,relationship_assertions:0},issues:[{issue_id:'issue',object_id:'entity',object_kind:'Entity',code:'ISOLATED_ENTITY',severity:'WARNING'}]};
+const html=qualityMarkup(report,{labels:{entity:'北辰一号泵站'}});
+assert.ok(html.includes('北辰一号泵站'));assert.ok(html.includes('未参与任何已发布属性或关系'));assert.ok(html.includes('自动规则通过不表示事实完整'));
+assert.ok(!html.includes('确定性人工复核样本'));
+const history=qualityMarkup(report,{historical:true,records:[{issue_id:'issue',decision:'NO_CHANGE_REQUIRED',recorded_by:'reviewer',recorded_at:'2026-09-09T00:00:00Z',notes:'<unsafe>'}]});
+assert.ok(history.includes('已核查，无需修正'));assert.ok(history.includes('&lt;unsafe&gt;'));assert.ok(!history.includes('data-quality-review='));
+""")

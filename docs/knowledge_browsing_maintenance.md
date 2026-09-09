@@ -47,7 +47,7 @@ Original values, units, temporal context and exact source positions are retained
 | B2 | Four flows, entity dossiers and exact evidence | Executed JS, API/security contracts, existing suites | Complete |
 | B3 | Linked graph with separate model/loading/layout/rendering | 36 UI/module + 18 HTTP E2E + 54 security; syntax checks | Complete |
 | B4 | Source catalogue and bidirectional knowledge navigation | 1,046 unit + 18 HTTP + 55 security + 2 Neo4j; exact text checks | Complete |
-| B5 | Readable quality checks and durable human dispositions | Neo4j persistence, scope, replay and stale-version checks | Pending |
+| B5 | Readable quality checks and durable human dispositions | 1,050 unit + 18 HTTP + 56 security + real-Neo4j decision lifecycle | Complete |
 | B6 | Contextual corrections, removal impact, publication comparison | Review/publication/retirement/rollback regression | Pending |
 | B7 | Unified states, visual QA and complete regression | Four business journeys, complete dev-mini checks | Pending |
 
@@ -145,3 +145,33 @@ preserves whitespace, and the complete relevant focused/security/E2E set was
 rerun successfully. The new security case's discovery placement was corrected
 and its exact test ID was executed before the complete 55-test run. JavaScript,
 compilation and diff checks passed. No original source data was modified.
+
+## B5 implementation and validation
+
+Quality cards now explain the checks in Chinese, show business object names when
+available from the same authorized publication, and put technical identifiers
+behind details. Historical names resolve through the recorded publication's
+immutable revisions after the existing complete audit authorization check.
+ISOLATED_ENTITY retains its established property-or-relationship degree rule;
+the current English detail and Chinese explanation now match that rule. No score
+or graph-quality threshold changed, and historical stored reports are unchanged.
+
+Human decisions are independent immutable `QualityReviewDecision` events with
+unique tenant/actor/operation identity and a checked payload checksum. Writes
+require both review and quality scopes, preserve original observer/time on exact
+replay, reject changed replay bodies, and lock/revalidate publication and corpus
+state. They cannot overwrite automatic reports or propagate to another version.
+The bounded history displays the most recent 100 decisions and explicitly warns
+when earlier entries are not displayed. Migration 013 adds uniqueness and lookup
+indexes without modifying existing knowledge.
+
+Passed: 1,050 unit tests, 44 final focused checks, 18 HTTP E2E, 56 security and the
+real-Neo4j decision lifecycle (109.129 seconds). The database check covers durable
+readback, exact replay, unchanged report hash, denied ACL, stale corpus rejection
+and corrupted payload rejection. Schema expectations include migration 013.
+
+`scripts/check_playground_assets.py` parses and checks all 12 inline scripts and
+first-party modules. It corrects the earlier ad-hoc inline extraction, which
+spanned multiple script tags and was not a valid complete inline-script check;
+B2/B3 modules and the final full inline scripts now pass the parser-based check.
+Source compilation and diff/secret checks passed. Browser visual QA remains open.

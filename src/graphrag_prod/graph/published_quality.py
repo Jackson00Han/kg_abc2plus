@@ -1691,7 +1691,7 @@ def _audit_entities(
                 IssueSeverity.WARNING,
                 "Entity",
                 entity_id,
-                "published entity has no relationship assertion",
+                "published entity participates in no property or relationship assertion",
             )
         elif degree >= hub_degree:
             issues.add(

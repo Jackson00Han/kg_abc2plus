@@ -26,6 +26,8 @@ class SchemaExpectation:
 
 
 EXPECTED_SCHEMA = (
+    SchemaExpectation("quality_review_decision_id_unique", "constraint", "UNIQUENESS", "QualityReviewDecision", ("review_id",)),
+    SchemaExpectation("quality_review_decision_run_lookup", "index", "RANGE", "QualityReviewDecision", ("tenant_id", "run_id", "recorded_at")),
     SchemaExpectation(
         "document_id_unique",
         "constraint",

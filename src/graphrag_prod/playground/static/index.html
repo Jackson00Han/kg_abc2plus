@@ -794,12 +794,12 @@
         </section>
 
         <section class="workbench-card full" id="maintenance-quality" data-construction-flow="maintenance" hidden aria-labelledby="quality-title">
-          <div class="workbench-head"><div><h2 id="quality-title">活动已发布图谱质量</h2><p>按 active publication 的完整 ACL 与精确 T-Box 审计当前导航投影；只显示有界元数据、问题和证据 Chunk ID，绝不返回源文本。</p></div></div>
-          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="quality-refresh-button" type="button">运行质量审计（不保存）</button><button class="button primary" id="quality-save-button" type="button">运行并保存审计</button></div>
+          <div class="workbench-head"><div><h2 id="quality-title">当前图谱质量检查</h2><p>检查当前版本的结构、来源关联与知识模型一致性，定位问题并记录人工核查结论。</p><details><summary>检查范围与证据</summary><p>质量报告绝不返回源文本；查看依据时另行授权读取。</p></details></div></div>
+          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="quality-refresh-button" type="button">检查当前版本</button><button class="button primary" id="quality-save-button" type="button">检查并保存报告</button></div>
           <div class="history-list" id="quality-content" aria-live="polite"><div class="output-box">活动图谱质量尚未加载。</div></div>
-          <div class="output-box" id="quality-save-output" aria-live="polite">只有点击“运行并保存审计”才写入不可变质量记录；重复运行保留首次观察者和记录时间。</div>
+          <div class="output-box" id="quality-save-output" aria-live="polite">只有点击“检查并保存报告”才写入不可变质量记录；重复运行保留首次观察者和记录时间。</div>
           <div class="field" style="margin-top:14px"><label for="quality-history-publication">按 Publication ID 筛选历史（可选）</label><input id="quality-history-publication" maxlength="256" placeholder="留空查看当前身份可见的最近 10 条记录"></div>
-          <div class="workbench-actions" style="justify-content:flex-start"><button class="button" id="quality-history-refresh-button" type="button">刷新审计历史</button></div>
+          <div class="workbench-actions" style="justify-content:flex-start"><button class="button" id="quality-history-refresh-button" type="button">查看历史检查报告</button></div>
           <div class="history-list" id="quality-history-list" aria-live="polite"><div class="output-box">审计历史尚未加载。</div></div>
           <div class="history-list" id="quality-history-detail" aria-live="polite"><div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div></div>
         </section>
@@ -1375,16 +1375,18 @@
         refreshABoxPreparation('身份已切换，已清除之前身份的实例草稿。请在当前身份下完成 02 的权威来源上传，再准备专家实例。');
         state.publications = [];
         state.knowledgeBrowser?.reset();
+        state.qualityPresenter?.reset();
         invalidateInventory();
         state.quality = null;
         state.qualityEpoch += 1;
         state.qualityHistory = [];
         state.qualityHistoryEpoch += 1;
         state.qualityDetailEpoch += 1;
+        state.qualityPresenter?.invalidate(elements.qualityHistoryDetail);
         state.qualitySaveEpoch += 1;
         state.qualitySaving = false;
         elements.qualitySaveButton.disabled = false;
-        elements.qualitySaveOutput.textContent = '只有点击“运行并保存审计”才写入不可变质量记录。';
+        elements.qualitySaveOutput.textContent = '只有点击“检查并保存报告”才写入不可变质量记录。';
         elements.qualityHistoryPublication.value = '';
         elements.qualityHistoryList.innerHTML = '<div class="output-box">审计历史尚未加载。</div>';
         elements.qualityHistoryDetail.innerHTML = '<div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div>';
@@ -3316,6 +3318,7 @@
 
       function renderQuality() {
         const report = state.quality;
+        if(report && state.qualityPresenter){state.qualityPresenter.render(report,elements.qualityContent);return;}
         elements.qualityContent.innerHTML = report ? qualityReportMarkup(report, 'active publication') : '<div class="output-box">活动图谱质量尚未加载。</div>';
       }
 
@@ -3346,7 +3349,8 @@
         const identityEpoch = state.identityEpoch;
         const requestEpoch = ++state.qualityEpoch;
         state.quality = null;
-        elements.qualityContent.innerHTML = '<div class="output-box">正在审计完整 active publication…</div>';
+        state.qualityPresenter?.invalidate(elements.qualityContent);
+        elements.qualityContent.innerHTML = '<div class="output-box">正在检查当前生效版本…</div>';
         try {
           const payload = await apiRequest('/v1/knowledge/quality');
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityEpoch) return;
@@ -3373,7 +3377,7 @@
 
       function renderQualityHistory() {
         elements.qualityHistoryList.innerHTML = state.qualityHistory.length
-          ? state.qualityHistory.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><strong>历史观察 · generation ${escapeHtml(item.publication_generation)}</strong><span class="trust-badge ${item.passed ? 'authoritative' : 'danger'}">${item.passed ? 'PASS' : 'FAIL'}</span></div><p>run ${escapeHtml(item.run_id)}<br>publication ${escapeHtml(item.publication_id)}<br>T-Box ${escapeHtml(item.ontology_version_id)} · corpus revision ${escapeHtml(item.corpus_revision)}<br>issues ${escapeHtml(item.total_issue_count)} · errors ${escapeHtml(item.total_error_count)}${item.issues_truncated ? ' · 问题列表有界截断' : ''}<br>首次观察者 ${escapeHtml(item.recorded_by)} · ${escapeHtml(item.recorded_at)}</p><div class="workbench-actions"><button class="button" type="button" data-quality-history="${index}">查看历史观察详情</button></div></article>`).join('')
+          ? state.qualityHistory.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><strong>历史检查 · 第 ${escapeHtml(item.publication_generation)} 版</strong><span class="trust-badge ${item.passed ? 'authoritative' : 'danger'}">${item.passed ? '自动检查通过' : '发现阻断性错误'}</span></div><p>问题 ${escapeHtml(item.total_issue_count)} 项 · 错误 ${escapeHtml(item.total_error_count)} 项${item.issues_truncated ? ' · 仍有未显示的问题' : ''}<br>保存人 ${escapeHtml(item.recorded_by)} · ${escapeHtml(item.recorded_at)}</p><details><summary>版本与审计标识</summary><p>${escapeHtml(item.run_id)}<br>${escapeHtml(item.publication_id)}<br>${escapeHtml(item.ontology_version_id)}</p></details><div class="workbench-actions"><button class="button" type="button" data-quality-history="${index}">查看历史报告</button></div></article>`).join('')
           : '<div class="output-box">当前身份和筛选范围内没有已保存的质量审计。</div>';
         elements.qualityHistoryList.querySelectorAll('[data-quality-history]').forEach(button => {
           button.addEventListener('click', () => loadQualityRun(state.qualityHistory[Number(button.dataset.qualityHistory)]?.run_id));
@@ -3385,6 +3389,7 @@
         const requestEpoch = ++state.qualityHistoryEpoch;
         state.qualityHistory = [];
         state.qualityDetailEpoch += 1;
+        state.qualityPresenter?.invalidate(elements.qualityHistoryDetail);
         elements.qualityHistoryList.innerHTML = '<div class="output-box">正在读取最近 10 条可见质量审计…</div>';
         elements.qualityHistoryDetail.innerHTML = '<div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div>';
         const params = new URLSearchParams({limit: '10'});
@@ -3405,10 +3410,12 @@
         if (!runId) return;
         const identityEpoch = state.identityEpoch;
         const requestEpoch = ++state.qualityDetailEpoch;
+        state.qualityPresenter?.invalidate(elements.qualityHistoryDetail);
         elements.qualityHistoryDetail.innerHTML = '<div class="output-box">正在读取不可变历史观察…</div>';
         try {
           const payload = await apiRequest(`/v1/knowledge/quality/runs/${encodeURIComponent(runId)}`);
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityDetailEpoch) return;
+          if(state.qualityPresenter){state.qualityPresenter.render(payload.report,elements.qualityHistoryDetail,true);return;}
           elements.qualityHistoryDetail.innerHTML = `<div class="exact-evidence"><strong>历史观察，不代表当前图谱状态</strong><br>首次观察者 ${escapeHtml(payload.recorded_by)} · ${escapeHtml(payload.recorded_at)}<br>record hash ${escapeHtml(payload.record_hash)}</div>${qualityReportMarkup(payload.report, '历史观察（非实时）')}`;
         } catch (error) {
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityDetailEpoch) return;
@@ -3850,9 +3857,11 @@
         }
       });
 
-      import('/playground/assets/browser.mjs').then(({mountBrowser}) => {
+      Promise.all([import('/playground/assets/browser.mjs'),import('/playground/assets/maintenance.mjs')]).then(([{mountBrowser},{mountMaintenance}]) => {
         state.knowledgeBrowser = mountBrowser({api: apiRequest, epoch: () => state.identityEpoch,
           maintain: () => showConstructionFlow('maintenance', 'maintenance-inventory')});
+        state.qualityPresenter=mountMaintenance({api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correct:()=>showConstructionFlow('maintenance','maintenance-inventory')});
+        if(state.quality)renderQuality();
         if (state.constructionFlow === 'browse') state.knowledgeBrowser.activate();
       }).catch(() => { $('kb-summary').textContent = '知识浏览组件加载失败，请刷新页面重试。'; });
       init();

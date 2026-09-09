@@ -90,6 +90,8 @@ class OperationKind(str, Enum):
     KNOWLEDGE_ROLLBACK = "knowledge_rollback"
     KNOWLEDGE_HISTORY = "knowledge_history"
     KNOWLEDGE_PUBLICATION_CANDIDATES = "knowledge_publication_candidates"
+    QUALITY_REVIEW = "quality_review"
+    QUALITY_REVIEWS = "quality_reviews"
     KNOWLEDGE_QUALITY = "knowledge_quality"
     KNOWLEDGE_QUALITY_RECORD = "knowledge_quality_record"
     KNOWLEDGE_QUALITY_RUNS = "knowledge_quality_runs"
@@ -107,6 +109,7 @@ class OperationKind(str, Enum):
     @property
     def is_write(self) -> bool:
         return self in {
+            self.QUALITY_REVIEW,
             self.INGESTION,
             self.DELETION,
             self.ONTOLOGY_IMPORT,
@@ -139,6 +142,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_HISTORY,
             self.KNOWLEDGE_PUBLICATION_CANDIDATES,
             self.KNOWLEDGE_PUBLICATION_PREVIEW,
+            self.QUALITY_REVIEWS,
             self.KNOWLEDGE_QUALITY,
             self.KNOWLEDGE_QUALITY_RUNS,
             self.KNOWLEDGE_QUALITY_RUN,
@@ -181,6 +185,8 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_ROLLBACK: "knowledge:publish",
         OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
         OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: "knowledge:publish",
+        OperationKind.QUALITY_REVIEW: "knowledge:review",
+        OperationKind.QUALITY_REVIEWS: "knowledge:quality",
         OperationKind.KNOWLEDGE_QUALITY: "knowledge:quality",
         OperationKind.KNOWLEDGE_QUALITY_RECORD: "knowledge:quality",
         OperationKind.KNOWLEDGE_QUALITY_RUNS: "knowledge:quality",

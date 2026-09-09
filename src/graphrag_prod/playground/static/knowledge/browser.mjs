@@ -63,7 +63,7 @@ export function mountBrowser({api,epoch,maintain}) {
   for(const view of ['entities','graph','sources'])$(`kb-tab-${view}`).onclick=()=>tab(view);
   $('kb-refresh').onclick=()=>load();$('kb-search').oninput=()=>{page=0;renderList();};$('kb-type').onchange=()=>{page=0;renderList();};
   $('kb-prev').onclick=()=>{page--;renderList();};$('kb-next').onclick=()=>{page++;renderList();};
-  const controller = {activate(){if(!directory)load();},reset,load,evidence,select,tab,getDirectory:()=>directory,
+  const controller = {activate(){if(!directory)return load();},reset,load,evidence,select,tab,getDirectory:()=>directory,
     attachGraph(value){graph=value;if(directory)graph.setDirectory(directory);if(active==='graph')graph.activate();},
     attachSources(value){sources=value;if(active==='sources')sources.activate();}};
   graph=mountGraph({api,epoch,browser:controller});

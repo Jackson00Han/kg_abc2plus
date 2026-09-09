@@ -159,6 +159,7 @@ from .runtime import (
     RequestValidationError,
     ResourceNotFoundError,
 )
+from .quality_review_contracts import QualityReviewRequest, QualityReviewResponse, QualityReviewListRequest, QualityReviewListResponse
 from .quality_history_contracts import (
     PublishedGraphQualityRunListRequest,
     PublishedGraphQualityRunListResponse,
@@ -2127,6 +2128,19 @@ class Neo4jKnowledgeOperations:
             "status": result.status,
         }
         return BackendResult(_outbound(DocumentRetirementResponse, payload))
+
+    def quality_review(self, principal: Principal, request: QualityReviewRequest) -> BackendResult:
+        from graphrag_prod.graph.quality_review import Neo4jQualityReviewService
+        _require_capability(principal, "knowledge:review")
+        _require_capability(principal, "knowledge:quality")
+        value=self._quality_history_call(Neo4jQualityReviewService(self.quality_history_service).record, principal, request)
+        return BackendResult(_outbound(QualityReviewResponse, value))
+
+    def quality_reviews(self, principal: Principal, request: QualityReviewListRequest) -> BackendResult:
+        from graphrag_prod.graph.quality_review import Neo4jQualityReviewService
+        _require_capability(principal, "knowledge:quality")
+        value=self._quality_history_call(Neo4jQualityReviewService(self.quality_history_service).list, principal, request.run_id)
+        return BackendResult(_outbound(QualityReviewListResponse, value))
 
 
 __all__ = ["Neo4jKnowledgeOperations"]

@@ -59,6 +59,7 @@ from .contracts import (
     RetrievalRequest,
     RetrievalResponse,
 )
+from .quality_review_contracts import QualityReviewRequest, QualityReviewResponse, QualityReviewListRequest, QualityReviewListResponse
 from .quality_history_contracts import (
     PublishedGraphQualityRecordRequest,
     PublishedGraphQualityRunListRequest,
@@ -1233,6 +1234,8 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_ROLLBACK,
             OperationKind.KNOWLEDGE_HISTORY,
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
+            OperationKind.QUALITY_REVIEW,
+            OperationKind.QUALITY_REVIEWS,
             OperationKind.KNOWLEDGE_QUALITY,
             OperationKind.KNOWLEDGE_QUALITY_RECORD,
             OperationKind.KNOWLEDGE_QUALITY_RUNS,
@@ -1369,6 +1372,12 @@ class GraphRAGApplicationBackend:
                     self._knowledge.publication_candidates(principal, request),
                     PublicationCandidatesResponse,
                 )
+            if envelope.operation is OperationKind.QUALITY_REVIEW:
+                request = _validated(QualityReviewRequest, envelope.payload)
+                return _response(self._knowledge.quality_review(principal, request), QualityReviewResponse)
+            if envelope.operation is OperationKind.QUALITY_REVIEWS:
+                request = _validated(QualityReviewListRequest, envelope.payload)
+                return _response(self._knowledge.quality_reviews(principal, request), QualityReviewListResponse)
             if envelope.operation is OperationKind.KNOWLEDGE_QUALITY:
                 if envelope.payload:
                     raise RequestValidationError()
