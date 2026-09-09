@@ -1,13 +1,14 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 SUITE_RESULT_PATH OBSERVATION_DIR" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 SUITE_RESULT_PATH OBSERVATION_DIR [TEST_PATTERN]" >&2
   exit 2
 fi
 
 suite_result_path=$1
 observation_dir=$2
+test_pattern=${3:-test_*neo4j.py}
 container_name="sample-graphrag-stage8-neo4j-$$"
 image=${STAGE8_NEO4J_IMAGE:-neo4j:5.26.12-community}
 password="stage8-test-password"
@@ -125,6 +126,6 @@ env -u OPENAI_API_KEY -u OPENAI_BASE_URL \
   GRAPHRAG_EVALUATION_OUTPUT_DIR="$observation_dir" \
   uv run --locked python scripts/run_test_suite.py \
   --start tests/integration \
-  --pattern 'test_*neo4j.py' \
+  --pattern "$test_pattern" \
   --output "$suite_result_path" \
   --require-no-skips

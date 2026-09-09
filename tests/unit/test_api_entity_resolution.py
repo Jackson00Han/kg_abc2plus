@@ -281,6 +281,25 @@ class EntityResolutionAdapterTests(unittest.TestCase):
         with self.assertRaises(ConflictError):
             adapter.apply_resolution(_principal(), request)
 
+    def test_independent_decision_contract_reaches_transaction_with_preview_and_group(self):
+        from graphrag_prod.api.knowledge_contracts import ReviewBatchRequest
+
+        class IndependentReviews(_Reviews):
+            def review_batch(self, principal, requests):
+                self.requests = requests
+                return self.apply_entity_resolution(principal, record_id=requests[0].record_id)
+
+        reviews = IndependentReviews()
+        adapter = self._adapter(reviews=reviews)
+        response = adapter.review_batch(_principal(), ReviewBatchRequest(decisions=[dict(
+            record_kind='ENTITY_MENTION', record_id=CANDIDATE.record_id, expected_revision=1,
+            decision='APPROVED', notes='上下文指向独立对象', identity_action='INDEPENDENT',
+            identity_group='selected', expected_identity_impact='preview-token')])).payload
+        self.assertEqual(reviews.requests[0].identity_action, 'INDEPENDENT')
+        self.assertEqual(reviews.requests[0].identity_group, 'selected')
+        self.assertEqual(reviews.requests[0].expected_identity_impact, 'preview-token')
+        self.assertEqual(response.outcomes[1].status, 'CANDIDATE')
+
     def _adapter(
         self,
         *,

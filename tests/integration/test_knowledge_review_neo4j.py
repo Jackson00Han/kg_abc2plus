@@ -942,6 +942,89 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
         )
         return json_value([list(map(dict, nodes)), list(map(dict, edges))])
 
+    def test_independent_identity_without_identifier_splits_only_selected_mention(self):
+        original = self.batch.mentions[0]
+        sibling = dataclasses.replace(original, revision=RecordRevision.next('same-group-other-source', 0))
+        self.store.persist_llm_candidates(ABoxRecordBatch(self.tenant_id, (sibling,), ()))
+        request = ReviewRequest(ReviewRecordKind.ENTITY_MENTION, original.record_id, 1,
+            GovernanceStatus.APPROVED, REVIEWED_AT, '上下文支持独立的公司实体；无编码。',
+            identity_action='INDEPENDENT')
+        result = self.review.review_batch(self.principal, (request,))
+        approved = self.store.get_entity_mention(self.principal, original.record_id,
+            statuses=(GovernanceStatus.APPROVED,))
+        self.assertNotEqual(approved.entity.entity_id, original.entity.entity_id)
+        self.assertEqual(approved.evidence, original.evidence)
+        self.assertEqual(approved.trust.authority, original.trust.authority)
+        self.assertIn('"action":"INDEPENDENT"', approved.trust.review_notes)
+        remaining = self.store.get_entity_mention(self.principal, sibling.record_id, statuses=(GovernanceStatus.CANDIDATE,))
+        self.assertEqual(remaining.entity, original.entity)
+        fact = self.store.get_assertion(self.principal, self.batch.assertions[0].record_id, statuses=(GovernanceStatus.CANDIDATE,))
+        self.assertEqual(fact.subject.entity_id, approved.entity.entity_id)
+        self.assertEqual(fact.subject_mention_revision_id, approved.revision_id)
+        self.assertEqual(fact.trust.status, GovernanceStatus.CANDIDATE)
+        self.assertEqual(len(result.outcomes), 2)
+        with self.assertRaises(KnowledgeConflict):
+            self.review.review_batch(self.principal, (request,))
+        self.assertEqual(self.publication.history(self.principal), ())
+
+    def test_explicit_independent_group_joins_selected_mentions_atomically(self):
+        original = self.batch.mentions[0]
+        sibling = dataclasses.replace(original, revision=RecordRevision.next('group-second', 0),
+            entity=dataclasses.replace(original.entity, canonical_name=original.evidence.quoted_text))
+        self.store.persist_llm_candidates(ABoxRecordBatch(self.tenant_id, (sibling,), ()))
+        requests = tuple(ReviewRequest(ReviewRecordKind.ENTITY_MENTION, item.record_id, 1,
+            GovernanceStatus.APPROVED, REVIEWED_AT, '双方上下文描述同一公司，无业务编码。',
+            identity_action='INDEPENDENT', identity_group='selected-company')
+            for item in (original, sibling))
+        self.review.review_batch(self.principal, requests)
+        records = [self.store.get_entity_mention(self.principal, item.record_id,
+            statuses=(GovernanceStatus.APPROVED,)) for item in (original, sibling)]
+        self.assertEqual(records[0].entity.entity_id, records[1].entity.entity_id)
+        self.assertIn('LINK_SELECTED_GROUP', records[1].trust.review_notes)
+
+    def test_missing_declared_identity_does_not_block_independent_confirmation(self):
+        self.driver.execute_query(
+            'MATCH (t:TBoxVersion {tbox_id:$tbox})-[:DECLARES_ENTITY_TYPE]->'
+            '(d:TBoxEntityType {name:"Company"}) SET d.identity_properties=["DISPLAY_NAME"]',
+            tbox=self.tbox_id, database_=self.database)
+        original = self.batch.mentions[0]
+        result = self.review.review_batch(self.principal, (
+            ReviewRequest(ReviewRecordKind.ENTITY_MENTION, original.record_id, 1,
+                GovernanceStatus.APPROVED, REVIEWED_AT, '原文确认独立公司，身份字段未抽取。',
+                identity_action='INDEPENDENT'),))
+        self.assertEqual(result.outcomes[0].status, GovernanceStatus.APPROVED)
+
+    def test_independent_decision_rejects_stale_preview_and_inaccessible_dependents(self):
+        original = self.batch.mentions[0]
+        request = ReviewRequest(ReviewRecordKind.ENTITY_MENTION, original.record_id, 1,
+            GovernanceStatus.APPROVED, REVIEWED_AT, '原文支持独立实体',
+            identity_action='INDEPENDENT', expected_identity_impact='stale-preview')
+        before = self._database_snapshot()
+        with self.assertRaises(KnowledgeConflict):
+            self.review.review_batch(self.principal, (request,))
+        self.assertEqual(self._database_snapshot(), before)
+        self.driver.execute_query(
+            'MATCH (r:GovernedAssertionRevision {revision_id:$revision}) SET r.access_groups=["private"]',
+            revision=self.batch.assertions[0].revision_id, database_=self.database)
+        before = self._database_snapshot()
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            self.review.review_batch(self.principal, (dataclasses.replace(request, expected_identity_impact=None),))
+        self.assertEqual(self._database_snapshot(), before)
+
+    def test_independent_group_type_conflict_and_acl_roll_back_whole_batch(self):
+        original, other = self.batch.mentions
+        requests = tuple(ReviewRequest(ReviewRecordKind.ENTITY_MENTION, item.record_id, 1,
+            GovernanceStatus.APPROVED, REVIEWED_AT, '错误分组必须整体回滚',
+            identity_action='INDEPENDENT', identity_group='mixed-types')
+            for item in (original, other))
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            self.review.review_batch(self.principal, requests)
+        self.assertEqual(self.store.get_entity_mention(self.principal, original.record_id, statuses=(GovernanceStatus.CANDIDATE,)).revision.revision, 1)
+        outsider = dataclasses.replace(self.principal, groups=frozenset({'other'}))
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            self.review.review_batch(outsider, requests[:1])
+        self.assertEqual(self.store.get_assertion(self.principal, self.batch.assertions[0].record_id, statuses=(GovernanceStatus.CANDIDATE,)).revision.revision, 1)
+
     def test_confirmed_unpublished_identity_accepts_other_mentions_without_publishing(self):
         from graphrag_prod.domain.ids import entity_id
         from graphrag_prod.api.knowledge_contracts import ConfirmedResolutionTarget
@@ -1017,6 +1100,18 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
                 record_id=fresh.record_id, expected_revision=1, target=target.entity,
                 target_record_id=conflicting['record_id'], target_expected_revision=conflicting['revision'],
                 reviewed_at=REVIEWED_AT, notes='Known identity conflict must block manual linking.')
+        self.assertEqual(self._database_snapshot(), before)
+        # Neither the legacy approval endpoint nor a suggested-link call may
+        # bypass the same known-contradiction check.
+        with self.assertRaises(KnowledgeConflict):
+            self.review.approve(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
+                record_id=fresh.record_id, expected_revision=1, reviewed_at=REVIEWED_AT,
+                notes='Legacy approval must not bypass identity contradictions.',
+                edit=MentionEdit(target.entity, fresh.confidence))
+        with self.assertRaises(KnowledgeConflict):
+            self.review.apply_entity_resolution(self.principal, record_id=fresh.record_id,
+                expected_revision=1, target=target.entity, reviewed_at=REVIEWED_AT,
+                notes='Suggested link must not bypass identity contradictions.')
         self.assertEqual(self._database_snapshot(), before)
         self.review.quarantine(self.principal, record_kind=ReviewRecordKind.ENTITY_MENTION,
             record_id=target.record_id, expected_revision=target.revision.revision,

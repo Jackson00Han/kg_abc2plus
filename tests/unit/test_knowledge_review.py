@@ -84,6 +84,7 @@ class KnowledgeReviewContractTests(unittest.TestCase):
         created_assertions: list[object] = []
 
         with (
+            patch("graphrag_prod.knowledge.review_context.validate_existing_identity_tx"),
             patch.object(
                 Neo4jKnowledgeReviewService,
                 "_lock_tenant_corpus_tx",

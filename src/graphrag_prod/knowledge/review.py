@@ -259,6 +259,9 @@ class ReviewRequest:
     notes: str
     edit: MentionEdit | AssertionEdit | None = None
     duplicate_of_revision_id: str | None = None
+    identity_action: str | None = None
+    identity_group: str | None = None
+    expected_identity_impact: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.record_kind, ReviewRecordKind):
@@ -297,6 +300,20 @@ class ReviewRequest:
             )
             if not isinstance(self.edit, expected):
                 raise TypeError("review edit does not match record_kind")
+        if self.expected_identity_impact is not None and self.identity_action != "INDEPENDENT":
+            raise ValueError("identity impact requires independent identity decision")
+        if self.identity_group is not None:
+            _required_text(self.identity_group, "identity_group", maximum=200)
+            if self.identity_action != "INDEPENDENT":
+                raise ValueError("identity group requires independent identity decision")
+        if self.identity_action and len(self.notes) > 2000:
+            raise ValueError("identity decision notes must not exceed 2000 characters")
+        if self.identity_action is not None and (
+            self.identity_action != "INDEPENDENT"
+            or self.record_kind is not ReviewRecordKind.ENTITY_MENTION
+            or self.decision is not GovernanceStatus.APPROVED or self.edit is not None
+        ):
+            raise ValueError("independent identity requires an unedited mention approval")
         if self.duplicate_of_revision_id is not None:
             _required_text(self.duplicate_of_revision_id, "duplicate_of_revision_id")
             if (self.record_kind is not ReviewRecordKind.ASSERTION
@@ -781,7 +798,8 @@ class Neo4jKnowledgeReviewService:
         return ReviewBatchResult(
             tenant_id=principal.tenant_id,
             outcomes=tuple(
-                outcome_by_record[record_id] for record_id in record_ids
+                outcome_by_record[record_id]
+                for record_id in (*record_ids, *sorted(set(outcome_by_record) - set(record_ids)))
             ),
         )
 
@@ -869,6 +887,10 @@ class Neo4jKnowledgeReviewService:
             )
             if selected.entity != target:
                 raise KnowledgeConflict("selected entity changed; refresh matching")
+
+        if target_record_id is None:
+            from .review_context import validate_existing_identity_tx
+            validate_existing_identity_tx(tx, principal, current, target)
 
         source_names = {current.entity.canonical_name, *current.entity.aliases}
         target = dataclasses.replace(target, aliases=tuple(sorted(
@@ -1065,6 +1087,18 @@ class Neo4jKnowledgeReviewService:
             min(request.reviewed_at for request in requests),
         )
         outcomes: list[ReviewOutcome] = []
+        independent_groups = {}
+        # Pin the complete selection before any member rebinds a shared fact.
+        from .identity_review import impact_digest
+        for request in requests:
+            if request.expected_identity_impact is not None:
+                original = cls._load_current_review_record_tx(tx, principal, request)
+                rows = list(tx.run(_DEPENDENT_ASSERTION_QUERY,
+                    tenant_id=principal.tenant_id, groups=sorted(principal.groups),
+                    ontology_version_id=original.trust.ontology_version_id,
+                    mention_revision_id=original.revision_id, limit=MAX_REVIEW_BATCH))
+                if request.expected_identity_impact != impact_digest([row['revision'] for row in rows]):
+                    raise KnowledgeConflict("identity dependency preview changed; refresh review")
         for request in requests:
             cls._lock_review_head_tx(tx, principal, request)
             current = cls._load_current_review_record_tx(
@@ -1072,6 +1106,54 @@ class Neo4jKnowledgeReviewService:
                 principal,
                 request,
             )
+            if request.identity_action == "INDEPENDENT":
+                from .identity_review import independent_entity, POLICY_VERSION
+                from .review_context import resolution_targets_tx
+
+                assert isinstance(current, EntityMentionRecord)
+                # Hidden, stale or already-approved dependents cannot be silently
+                # left attached to an identity that has just been split.
+                visible = list(tx.run(_DEPENDENT_ASSERTION_QUERY,
+                    tenant_id=principal.tenant_id, groups=sorted(principal.groups),
+                    ontology_version_id=current.trust.ontology_version_id,
+                    mention_revision_id=current.revision_id, limit=MAX_REVIEW_BATCH))
+                all_dependents = list(tx.run("""
+                    MATCH (:KnowledgeRecordHead {tenant_id:$tenant_id, record_kind:'ASSERTION'})
+                      -[:CURRENT_REVISION]->(r:GovernedAssertionRevision {tenant_id:$tenant_id})
+                    WHERE r.governance_status IN ['CANDIDATE','QUARANTINED','APPROVED','PUBLISHED']
+                      AND (r.subject_mention_revision_id=$revision OR r.object_mention_revision_id=$revision)
+                    RETURN r.record_id AS record_id LIMIT $limit
+                    """, tenant_id=principal.tenant_id, revision=current.revision_id, limit=MAX_REVIEW_BATCH))
+                if (len(all_dependents) >= MAX_REVIEW_BATCH or
+                    {row['record_id'] for row in all_dependents} !=
+                    {row['revision']['record_id'] for row in visible}):
+                    raise KnowledgeReviewUnavailable("dependent facts are unavailable for identity review")
+                # This snapshot is recomputed inside the locked write transaction.
+                # Exact source evidence, reviewer and time remain on the revision.
+                candidates = resolution_targets_tx(tx, principal, current, current.entity.canonical_name)
+                target = independent_entity(current)
+                audit = json.dumps({"action": "INDEPENDENT", "policy": POLICY_VERSION,
+                    "source_revision": current.revision_id, "target": target.entity_id,
+                    "candidates": [item["entity"]["entity_id"] for item in candidates["items"]],
+                    "truncated": candidates["truncated"]}, ensure_ascii=False, separators=(",", ":"))
+                if len(request.notes) > 2000:
+                    raise ValueError("identity decision notes must not exceed 2000 characters")
+                options = {}
+                if request.identity_group in independent_groups:
+                    target, target_record, target_revision = independent_groups[request.identity_group]
+                    options = dict(target_record_id=target_record,
+                                   target_expected_revision=target_revision)
+                    audit = json.dumps({"action": "LINK_SELECTED_GROUP", "policy": POLICY_VERSION,
+                        "source_revision": current.revision_id, "target": target.entity_id,
+                        "target_record": target_record, "target_revision": target_revision})
+                applied = cls._apply_entity_resolution_tx(
+                    tx, principal, current.record_id, request.expected_revision,
+                    target, request.reviewed_at, request.notes + "\n" + audit, **options)
+                outcomes.extend(applied)
+                if request.identity_group and request.identity_group not in independent_groups:
+                    independent_groups[request.identity_group] = (
+                        target, current.record_id, applied[0].revision)
+                continue
             if request.duplicate_of_revision_id is not None:
                 from .review_assessment import Neo4jReviewAssessmentService
 
@@ -1089,6 +1171,10 @@ class Neo4jKnowledgeReviewService:
                     f"KEEP_EXISTING_AUTHORITATIVE_FACT revision={request.duplicate_of_revision_id}; "
                     f"duplicate graph insertion dismissed; extraction evidence retained. {request.notes}"
                 )[:4_000])
+            if isinstance(current, EntityMentionRecord) and request.decision is GovernanceStatus.APPROVED:
+                from .review_context import validate_existing_identity_tx
+                validate_existing_identity_tx(tx, principal, current,
+                    request.edit.entity if request.edit is not None else current.entity)
             updated = cls._reviewed_record_tx(
                 tx,
                 principal,
@@ -1131,6 +1217,8 @@ class Neo4jKnowledgeReviewService:
                     status=updated.trust.status,
                 )
             )
+        if len(outcomes) > MAX_REVIEW_BATCH:
+            raise KnowledgeConflict("identity review exceeds the bounded batch outcome limit")
         return tuple(outcomes)
 
     @classmethod

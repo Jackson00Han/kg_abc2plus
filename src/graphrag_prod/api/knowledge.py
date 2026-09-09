@@ -460,7 +460,9 @@ def _resolution_evidence_payload(value: Any) -> dict[str, object]:
 
 
 def _resolution_suggestion_payload(value: ResolutionSuggestion) -> dict[str, object]:
+    from graphrag_prod.knowledge.identity_review import suggestion_reason_code
     return {
+        "reason_code": suggestion_reason_code(value),
         "target": None if value.target is None else _entity_payload(value.target),
         "ontology_version_id": value.ontology_version_id,
         "rule_version": value.rule_version,
@@ -1492,7 +1494,14 @@ class Neo4jKnowledgeOperations:
             principal, request
         )
         targets = self._review_targets(principal, candidate, request.query)
+        from graphrag_prod.knowledge.identity_review import identity_actions
+        definition = next(item for item in self._active_tbox(
+            principal, candidate.trust.ontology_version_id).entity_types
+            if item.name == candidate.entity.entity_type)
         payload = {
+            "identity_actions": identity_actions(candidate, definition, suggestions),
+            "dependent_facts": targets.get("dependent_facts", []),
+            "impact_token": targets.get("impact_token"),
             "review_targets": targets["items"],
             "targets_truncated": targets["truncated"],
             "record_id": candidate.record_id,
@@ -1715,6 +1724,9 @@ class Neo4jKnowledgeOperations:
                         notes=item.notes,
                         edit=edit,
                         duplicate_of_revision_id=item.duplicate_of_revision_id,
+                        identity_action=item.identity_action,
+                        identity_group=item.identity_group,
+                        expected_identity_impact=item.expected_identity_impact,
                     )
                 )
         except (TypeError, ValueError) as error:

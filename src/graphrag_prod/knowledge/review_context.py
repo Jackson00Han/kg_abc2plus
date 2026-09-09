@@ -118,7 +118,33 @@ def resolution_targets_tx(tx, principal, candidate, query):
             reason='身份属性存在不同值，请先核查并修正。' if conflict else
                    '请核对双方上下文，明确确认是否为同一实体。',
         ))
-    return {'items': targets, 'truncated': len(rows) > 20}
+    from .review import _DEPENDENT_ASSERTION_QUERY, MAX_REVIEW_BATCH
+    from .identity_review import impact_digest
+    facts = list(tx.run(_DEPENDENT_ASSERTION_QUERY, tenant_id=principal.tenant_id,
+        groups=sorted(principal.groups), ontology_version_id=candidate.trust.ontology_version_id,
+        mention_revision_id=candidate.revision_id, limit=MAX_REVIEW_BATCH))
+    impact = [dict(record_id=row['revision']['record_id'], revision=row['revision']['revision'],
+        predicate=row['revision']['predicate']) for row in facts]
+    return {'items': targets, 'truncated': len(rows) > 20,
+            'dependent_facts': impact, 'impact_token': impact_digest(impact)}
+
+
+def validate_existing_identity_tx(tx, principal, candidate, target):
+    """Apply known-contradiction checks to legacy approval and suggested links too."""
+    parameters = _target_parameters(principal, candidate, target.entity_id)
+    query = _TARGET_QUERY.replace(
+        "AND revision.entity_type = $entity_type",
+        "AND revision.entity_type = $entity_type AND revision.entity_id = $target_entity_id")
+    parameters['target_entity_id'] = target.entity_id
+    rows = list(tx.run(query, **parameters))
+    if len(rows) > 20:
+        raise KnowledgeConflict('identity targets exceed review limit')
+    if rows:
+        values = identity_values_tx(tx, principal, candidate)
+        for row in rows:
+            mention = _stored_mention(dict(row['revision']))
+            if _conflict(values, identity_values_tx(tx, principal, mention, confirmed_entity=True)):
+                raise KnowledgeConflict('identity property conflict; correct the evidence before linking')
 
 
 def confirmed_target_tx(tx, principal, candidate, record_id, revision, *, reviewed_at):

@@ -1044,6 +1044,7 @@ class ResolutionEvidenceResponse(StrictAPIModel):
 
 
 class EntityResolutionSuggestionResponse(StrictAPIModel):
+    reason_code: TypeName = "LEGACY_SUGGESTION"
     target: EntityIdentityResponse | None = None
     ontology_version_id: Identifier
     rule_version: ShortText
@@ -1069,11 +1070,33 @@ class EntityResolutionSuggestionResponse(StrictAPIModel):
         return self
 
 
+class IdentityActionPermission(StrictAPIModel):
+    allowed: bool
+    reason_code: TypeName
+    note: LongText
+    requires_reason: bool
+
+
+class IdentityActionsResponse(StrictAPIModel):
+    independent: IdentityActionPermission
+    policy_version: ShortText
+    match_state: Literal["UNCERTAIN", "CANDIDATES", "NO_CANDIDATES"]
+
+
+class IdentityDependentFact(StrictAPIModel):
+    record_id: Identifier
+    revision: Annotated[int, Field(strict=True, ge=1)]
+    predicate: TypeName
+
+
 class EntityResolutionResponse(StrictAPIModel):
+    dependent_facts: list[IdentityDependentFact] = Field(default_factory=list, max_length=100)
+    impact_token: ShortText | None = None
     record_id: Identifier
     revision_id: Identifier
     revision: Annotated[int, Field(strict=True, ge=1)]
     candidate: EntityIdentityResponse
+    identity_actions: IdentityActionsResponse | None = None
     review_targets: list[ConfirmedResolutionTarget] = Field(default_factory=list, max_length=20)
     targets_truncated: bool = False
     identity_properties: Annotated[
@@ -1146,12 +1169,26 @@ class ReviewDecisionInput(StrictAPIModel):
     expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
     decision: Literal["APPROVED", "REJECTED", "QUARANTINED"]
     notes: LongText
+    identity_action: Literal["INDEPENDENT"] | None = None
+    identity_group: Identifier | None = None
+    expected_identity_impact: ShortText | None = None
     mention_edit: MentionEditInput | None = None
     assertion_edit: AssertionEditInput | None = None
     duplicate_of_revision_id: Identifier | None = None
 
     @model_validator(mode="after")
     def valid_edit(self) -> Self:
+        if self.expected_identity_impact is not None and self.identity_action != "INDEPENDENT":
+            raise ValueError("identity impact requires independent identity decision")
+        if self.identity_group is not None and self.identity_action != "INDEPENDENT":
+            raise ValueError("identity group requires independent identity decision")
+        if self.identity_action is not None and (
+            self.record_kind != "ENTITY_MENTION" or self.decision != "APPROVED"
+            or self.mention_edit is not None or self.assertion_edit is not None
+        ):
+            raise ValueError("independent identity requires an unedited mention approval")
+        if self.identity_action and len(self.notes) > 2000:
+            raise ValueError("identity decision notes must not exceed 2000 characters")
         if self.mention_edit is not None and self.assertion_edit is not None:
             raise ValueError("review decision accepts at most one edit")
         if self.record_kind == "ENTITY_MENTION" and self.assertion_edit is not None:
@@ -1191,7 +1228,7 @@ class ReviewOutcomeResponse(StrictAPIModel):
     previous_revision_id: Identifier
     revision_id: Identifier
     revision: Annotated[int, Field(strict=True, ge=2)]
-    status: Literal["APPROVED", "REJECTED", "QUARANTINED"]
+    status: Literal["CANDIDATE", "APPROVED", "REJECTED", "QUARANTINED"]
 
 
 class EntityResolutionOutcomeResponse(StrictAPIModel):
