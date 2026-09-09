@@ -456,5 +456,6 @@ the existing Stage 8 evaluation workflow with all five suite receipts.
 The publication preview's **查看完整实例 JSON** disclosure now shows the complete
 post-publication entity/property/relationship snapshot with exact evidence,
 including retained records. It is a read-only business projection, not the Neo4j
-write payload. The original change manifest remains in the audit disclosure.
+write payload. The original change manifest remains in the backend response for audit; the UI
+shows only the complete instance JSON disclosure.
 See [implementation and validation](validation/instance-json-preview.md).

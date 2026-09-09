@@ -10,8 +10,10 @@ The snapshot carries its schema, PREVIEW status, PUBLICATION_AFTER scope,
 publication ID, ontology version and manifest hash. Separate property assertions
 remain separate, even for the same predicate, preserving values, literal semantics,
 source grades and evidence. Source mentions of one identity are grouped, with
-aliases and evidence retained. The original complete change JSON remains available
-in a separate audit disclosure.
+aliases and evidence retained. The original complete change data remains in the backend preview response
+for audit and hash validation. At the owner's request, the redundant change-JSON
+disclosure was removed from the UI on 2026-09-09; only the instance-JSON
+disclosure remains.
 
 This is not a Neo4j node-property serialization or an import contract. The existing
 publication transaction continues to validate governed records and write its graph
@@ -67,3 +69,10 @@ replay, stale hashes, missing dependencies and removal behavior.
 Restart the local service after upgrading the backend, reload the page, and
 generate a fresh publication preview. No existing knowledge needs re-ingestion.
 This change is development validation, not new production-scale evidence.
+
+## Disclosure cleanup validation
+
+The subsequent UI-only cleanup updates the existing rendering assertion to reject
+the redundant disclosure. The standardized-publication and playground-resolution
+unit modules pass; Python compilation and diff/secret checks pass. The backend
+preview contract, hash calculation and Neo4j publication logic are unchanged.

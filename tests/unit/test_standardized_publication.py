@@ -65,7 +65,7 @@ class StandardizedPublicationTests(unittest.TestCase):
 const html=publicationPreviewMarkup(preview);
 assert.ok(html.includes('查看完整实例 JSON（2 个实体 · 2 条属性 · 1 条关系）'));
 assert.ok(html.includes('PUBLICATION_AFTER'));
-assert.ok(html.includes('查看完整变更 JSON'));
+assert.ok(!html.includes('查看完整变更 JSON'));
 """)
 
     def test_editor_separates_identity_and_facts_and_protects_source_fields(self):
