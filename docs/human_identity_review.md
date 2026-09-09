@@ -109,8 +109,8 @@ the existing workbench's manual-link interaction convention.
 
 ### Workbench checkpoint (2026-09-09)
 
-All 108 Playground tests, eight related context/publication-group tests and 18
-HTTP E2E tests passed. These include six new executable-page scenarios for missing
+All 108 Playground tests and eight related context/publication-group tests
+passed. The first HTTP E2E run required the fixture correction recorded below. These include six new executable-page scenarios for missing
 identifiers, similar candidates, action policy, separate versus shared allocation,
 preview/reason submission, cancellation, contradictory groups and success refresh.
 The old stale-response test keeps its same assertions and now expects the revised
@@ -119,3 +119,21 @@ JavaScript/asset checks, Python compilation and whitespace checks passed.
 Receipts: `/tmp/identity-ui-final.log`, `/tmp/identity-ui-final-related.log`, and
 `/tmp/identity-ui-e2e.log`. No connected browser was available to the CUA tool;
 these checks are not a browser visual inspection.
+
+### Workbench E2E correction
+
+The page checkpoint was inadvertently committed before its HTTP E2E result had
+been checked; its earlier claim of 18 passing E2E tests was premature. Published
+history is retained. The raw-only edit/approval E2E fixture still expected the
+retired button text and omitted the new preview function and explicit human
+confirmation. Its scenario now exercises those steps and additionally asserts
+that the HTTP adapter receives the independent decision and human reason. The
+existing protected-field, raw-value, no-write-on-invalid-edit and unchanged-queue
+assertions remain intact. The complete E2E and page-related suites are rerun for
+this corrective checkpoint.
+
+Corrective verification passed: 18 HTTP E2E, 108 Playground and eight related
+context/publication tests, plus JavaScript syntax and whitespace checks. The
+machine-readable E2E receipt is `/tmp/identity-ui-corrected-e2e.json`; page and
+related-suite evidence is retained in `/tmp/identity-ui-corrected-pages.log` and
+the corrective command output. No test was removed or bypassed.

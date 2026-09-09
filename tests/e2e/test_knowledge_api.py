@@ -825,6 +825,8 @@ const context = {
       return match ? actions[Number(match[1])] : actions.flat();
     }},
   },
+  prompt: () => '原文支持独立实体，已核对相似候选',
+  confirm: text => { assert.ok(text.includes('分别建立 1 个独立实体')); return true; },
   parseJsonEditor: editor => JSON.parse(editor.value),
   apiRequest: async (path, options) => {
     assert.equal(path, '/v1/knowledge/reviews:batch');
@@ -843,7 +845,7 @@ for (const [start, end] of [
   ['function setReviewBusy(', 'async function keepExistingFact('],
   ['function publicationSelectedIds(', 'function publicationCandidateGroups('],
   ['function updatePublicationBusy(', 'function renderPublicationCandidates('],
-  ['async function submitReviews(', 'function activePublication('],
+  ['function independentReviewPreview(', 'function activePublication('],
 ]) vm.runInContext(page.slice(page.indexOf(start), page.indexOf(end)), context);
 (async () => {
   context.state.resolutions.set(records[0].record_id,{revision:1,identityEpoch:0,reviewEpoch:0,status:'ready',suggestions:[{outcome:'NO_MATCH'}]});
@@ -867,7 +869,7 @@ for (const [start, end] of [
   assert.equal(editors[0].value, initial);
   assert.equal(editors[0].disabled, true);
   assert.equal(panels[0].hidden, true);
-  assert.equal(actions[0][0].textContent, '确认新实体');
+  assert.equal(actions[0][0].textContent, '确认为独立实体');
   assert.equal(actions[0][1].hidden, false);
   assert.equal(requests.length, 0, 'cancel must not submit');
   for (let i = 0; i < records.length; i++) {
@@ -935,6 +937,8 @@ for (const [start, end] of [
         prop = decisions[2].assertion_edit.relationship_properties[0]
         self.assertEqual(prop.literal.raw_unit, "psi")
         self.assertEqual(prop.evidence.quoted_text, quote)
+        self.assertEqual(knowledge.calls[4][2].decisions[0].identity_action, "INDEPENDENT")
+        self.assertIn("原文", knowledge.calls[4][2].decisions[0].notes)
         for decision in knowledge.calls[4][2].decisions:
             self.assertIsNone(decision.mention_edit)
             self.assertIsNone(decision.assertion_edit)
