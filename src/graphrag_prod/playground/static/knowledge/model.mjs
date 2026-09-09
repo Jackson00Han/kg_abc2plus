@@ -51,7 +51,7 @@ export async function readDirectory(api, version_filter={}, isCurrent=()=>true) 
     if(!isCurrent()) throw new Error('读取已取消。');
     if(view_token && page.view_token!==view_token) throw new Error('知识版本发生变化，请刷新。');
     pages.push(page); view_token=page.view_token;
-    if(!page.page.has_more) return {pages,items:dossiers(pages),view_token,pin:page.pin,schema:page.schema};
+    if(!page.page.has_more) return {pages,items:dossiers(pages),view_token,pin:page.pin,schema:page.schema,version_filter};
     cursor=page.page.next_cursor;
     if(!cursor || cursors.has(cursor)) throw new Error('知识分页无效，请刷新。');
     cursors.add(cursor);

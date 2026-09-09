@@ -2,11 +2,13 @@ import { graphElements, ontologyElements, VIEWS } from "./graph-model.mjs";
 
 /** Reusable renderer: callers own authentication, scope, fetching and evidence UI. */
 export class IndustrialGraph {
-  constructor(container, { onSelect = () => {} } = {}) {
+  constructor(container, { onSelect = () => {}, layoutOptions = {}, transformElements = items => items } = {}) {
     if (typeof globalThis.cytoscape !== "function")
       throw new Error("图谱组件未加载，请刷新页面。");
     this.container = container;
     this.onSelect = onSelect;
+    this.layoutOptions = layoutOptions;
+    this.transformElements = transformElements;
     this.view = "composition";
     this.page = null;
     this.cy = globalThis.cytoscape({
@@ -126,7 +128,7 @@ export class IndustrialGraph {
     this.page = page;
     this.view = view;
     this.cy.elements().remove();
-    this.cy.add(elements);
+    this.cy.add(this.transformElements(elements));
     this.layout();
     return { nodes: this.cy.nodes().length, edges: this.cy.edges().length };
   }
@@ -143,6 +145,7 @@ export class IndustrialGraph {
         fit: false,
         ranker: "network-simplex",
         padding: 40,
+        ...this.layoutOptions,
       })
       .run();
     this.fit();

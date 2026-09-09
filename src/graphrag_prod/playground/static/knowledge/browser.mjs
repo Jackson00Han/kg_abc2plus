@@ -1,3 +1,4 @@
+import {mountGraph} from './graph-view.mjs';
 import {label,escape as e,valueLabel,contextLabel,entityPage,readDirectory} from './model.mjs';
 const $=id=>document.getElementById(id);
 const origins={AUTHORITATIVE_EXTRACTED:'权威文档抽取',LLM_EXTRACTED:'业务文档抽取',HUMAN_SUPPLEMENT:'人工补充',EXPERT_IMPORT:'专家导入',EXPERT_CREATED:'专家建立',FIXTURE:'测试样例',RULE_DERIVED:'规则生成'};
@@ -56,11 +57,13 @@ export function mountBrowser({api,epoch,maintain}) {
       renderList();$('kb-dossier').textContent='选择实体，查看属性、关系和来源。';graph?.setDirectory(result);
     }catch(error){if(current(id,identity)){$('kb-summary').textContent=error.status===403?'当前身份没有知识浏览权限。':`知识读取失败：${error.message}。可按来源缩小范围后重试。`;$('kb-dossier').textContent='未显示不完整或过期的知识。';}}
   }
-  function tab(name){active=name;for(const view of ['entities','graph','sources']){$(`kb-${view}`).hidden=name!==view;$(`kb-tab-${view}`).setAttribute('aria-selected',String(name===view));}$('kb-dossier').parentElement.parentElement.hidden=name!=='entities';if(name==='graph')graph?.activate();if(name==='sources')sources?.activate();}
+  function tab(name){active=name;const home=$('kb-detail-home'),graphHome=$('kb-detail-graph');if(home && graphHome)(name==='graph'?graphHome:home).appendChild($('kb-dossier'));for(const view of ['entities','graph','sources']){$(`kb-${view}`).hidden=name!==view;$(`kb-tab-${view}`).setAttribute('aria-selected',String(name===view));}if(name==='graph')graph?.activate();if(name==='sources')sources?.activate();}
   for(const view of ['entities','graph','sources'])$(`kb-tab-${view}`).onclick=()=>tab(view);
   $('kb-refresh').onclick=()=>load();$('kb-search').oninput=()=>{page=0;renderList();};$('kb-type').onchange=()=>{page=0;renderList();};
   $('kb-prev').onclick=()=>{page--;renderList();};$('kb-next').onclick=()=>{page++;renderList();};
-  return {activate(){if(!directory)load();},reset,load,evidence,select,tab,getDirectory:()=>directory,
+  const controller = {activate(){if(!directory)load();},reset,load,evidence,select,tab,getDirectory:()=>directory,
     attachGraph(value){graph=value;if(directory)graph.setDirectory(directory);if(active==='graph')graph.activate();},
     attachSources(value){sources=value;if(active==='sources')sources.activate();}};
+  graph=mountGraph({api,epoch,browser:controller});
+  return controller;
 }

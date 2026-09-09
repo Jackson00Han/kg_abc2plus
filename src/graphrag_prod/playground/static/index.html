@@ -6,6 +6,8 @@
   <meta name="color-scheme" content="light dark">
   <meta name="description" content="sample-graphrag 本地知识库检索 Playground">
   <title>GraphRAG Local Playground</title>
+  <script src="/industrial/assets/vendor/cytoscape.min.js"></script>
+  <script src="/industrial/assets/vendor/cytoscape-dagre.min.js"></script>
   <script>
     try {
       const saved = localStorage.getItem('graphrag-playground-theme');
@@ -772,8 +774,8 @@
           <div class="kb-tabs" role="tablist" aria-label="知识浏览视图"><button class="button" id="kb-tab-entities" role="tab" aria-selected="true" aria-controls="kb-entities">实体档案</button><button class="button" id="kb-tab-graph" role="tab" aria-selected="false" aria-controls="kb-graph">关系图谱</button><button class="button" id="kb-tab-sources" role="tab" aria-selected="false" aria-controls="kb-sources">来源资料</button></div>
           <p id="kb-summary" role="status">点击刷新知识，读取当前生效版本。</p>
           <div class="kb-filters"><label>名称、别名或业务编号<input id="kb-search" maxlength="128" placeholder="例如：循环水泵 / BC-P-101"></label><label>实体类型<select id="kb-type"><option value="">全部类型</option></select></label></div>
-          <div id="kb-entities" role="tabpanel" aria-labelledby="kb-tab-entities"><div class="kb-workspace"><div><div id="kb-list"></div><div class="kb-pagination"><button class="button" id="kb-prev" type="button">上一页</button><span id="kb-page"></span><button class="button" id="kb-next" type="button">下一页</button></div></div><aside id="kb-dossier" class="kb-dossier" aria-label="实体档案">选择实体，查看属性、关系和来源。</aside></div></div>
-          <div id="kb-graph" role="tabpanel" aria-labelledby="kb-tab-graph" hidden><p>关系图谱模块正在分阶段接入。</p></div>
+          <div id="kb-entities" role="tabpanel" aria-labelledby="kb-tab-entities"><div class="kb-workspace"><div><div id="kb-list"></div><div class="kb-pagination"><button class="button" id="kb-prev" type="button">上一页</button><span id="kb-page"></span><button class="button" id="kb-next" type="button">下一页</button></div></div><div id="kb-detail-home"><aside id="kb-dossier" class="kb-dossier" aria-label="实体档案">选择实体，查看属性、关系和来源。</aside></div></div></div>
+          <div id="kb-graph" role="tabpanel" aria-labelledby="kb-tab-graph" hidden><p>选择实体或刷新关系图谱，探索当前已发布关系。</p></div>
           <div id="kb-sources" role="tabpanel" aria-labelledby="kb-tab-sources" hidden><p>来源资料模块正在分阶段接入；可先通过实体档案查看已发布知识的原文依据。</p></div>
         </section>
 

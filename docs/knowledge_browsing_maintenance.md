@@ -45,7 +45,7 @@ Original values, units, temporal context and exact source positions are retained
 | --- | --- | --- | --- |
 | B1 | Scope, terms, capability mapping and execution record | 1,037 unit + 18 HTTP E2E + 54 security; compile/diff/secret checks | Complete |
 | B2 | Four flows, entity dossiers and exact evidence | Executed JS, API/security contracts, existing suites | Complete |
-| B3 | Linked graph with separate model/loading/layout/rendering | Graph interaction, bounded reads, ACL, stale-view tests | Pending |
+| B3 | Linked graph with separate model/loading/layout/rendering | 36 UI/module + 18 HTTP E2E + 54 security; syntax checks | Complete |
 | B4 | Source catalogue and bidirectional knowledge navigation | Source/version/permission and browser tests | Pending |
 | B5 | Readable quality checks and durable human dispositions | Neo4j persistence, scope, replay and stale-version checks | Pending |
 | B6 | Contextual corrections, removal impact, publication comparison | Review/publication/retirement/rollback regression | Pending |
@@ -107,3 +107,23 @@ and whitespace checks passed. All three real-Neo4j graph browsing tests passed i
 unchanged dev-mini cap; the owned container was removed. The final 102-test
 Playground subset also passed. Source and graph tabs are staged integration
 slots until B3/B4, not claimed completed features.
+
+## B3 implementation and validation
+
+The published graph tab reuses the vendored Cytoscape/Dagre renderer. It supports
+entity/code lookup from the complete authorized directory, direction/predicate
+filters, one/two-hop server expansion, bounded next pages, zoom/fit/reset, node
+selection into the shared dossier and relation evidence. A keyboard-operable
+content list provides the same node/evidence actions. Empty graphs and partial
+pages are explicitly labelled. The retrieval-result subgraph remains separate.
+
+`GraphSession` owns pinned loading/cancellation without a rendering dependency.
+The existing renderer accepts optional layout options and element transformation,
+retaining its defaults for the industrial workbench. This is the extension seam
+for future industrial layouts and visual themes, not a second graph store.
+
+Validation passed 36 executed industrial/browser/flow checks, the 29-test focused
+browser/graph regression, 18 HTTP E2E and 54 security checks. JavaScript and inline
+script syntax and whitespace passed. No graph query authorization or expansion
+limits changed; B2's three Neo4j checks cover the reused backend. Live visual QA
+remains unavailable and is not inferred from these checks.

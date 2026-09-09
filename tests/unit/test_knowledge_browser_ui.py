@@ -64,3 +64,16 @@ assert.ok(m.contextLabel({semantics:{observed_at:'2026-09-09'}}).includes('2026-
                 self.assertEqual(response.headers["cache-control"], "no-store")
             self.assertEqual(client.get("/playground/assets/.env").status_code, 404)
             self.assertEqual(client.get("/playground/assets/unknown.mjs").status_code, 404)
+
+    def test_graph_loading_pins_next_page_and_cancels_stale_identity(self):
+        path = (ROOT / 'src/graphrag_prod/playground/static/knowledge/graph-view.mjs').as_uri()
+        self.js(f"import {{GraphSession}} from {path!r};" + """
+let epoch=0,calls=[];const session=new GraphSession((url,options)=>new Promise(resolve=>calls.push({body:JSON.parse(options.body),resolve})),()=>epoch);
+const query={seed_entity_ids:['pump'],hops:2,direction:'incoming'};
+const first=session.read(query,{token:'v'});assert.equal(calls[0].body.view_token,'v');
+calls[0].resolve({view_token:'v',page:{has_more:true,next_cursor:'c'}});await first;
+const next=session.next();assert.equal(calls[1].body.cursor,'c');assert.deepEqual(calls[1].body.seed_entity_ids,['pump']);assert.equal(calls[1].body.hops,2);
+epoch++;calls[1].resolve({view_token:'v',page:{has_more:false}});assert.equal(await next,null);assert.equal(session.page,null);
+const old=session.read(query);session.clear();calls[2].resolve({view_token:'v',page:{has_more:false}});assert.equal(await old,null);
+const changed=session.read(query,{token:'v'});calls[3].resolve({view_token:'other'});await assert.rejects(changed,/版本发生变化/);
+""")
