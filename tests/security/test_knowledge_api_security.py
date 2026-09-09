@@ -211,6 +211,34 @@ class KnowledgeAPISecurityTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.context.__exit__(None, None, None)
 
+    def test_independent_identity_requires_scope_and_rejects_forged_audit_fields(self):
+        decision = dict(record_kind='ENTITY_MENTION', record_id='source', expected_revision=1,
+            decision='APPROVED', notes='Source supports an independent entity.', identity_action='INDEPENDENT')
+        for headers, expected in (({}, 401), (_headers(scope='retrieval:read'), 403)):
+            response = self.client.post('/v1/knowledge/reviews:batch', headers=headers,
+                json={'decisions': [decision]})
+            self.assertEqual(response.status_code, expected)
+        for field, value in (('tenant_id', 'tenant-victim'), ('entity_id', 'forged'),
+                             ('reviewed_by', 'someone-else'), ('identity_actions', {'allowed': True})):
+            with self.subTest(field=field):
+                response = self.client.post('/v1/knowledge/reviews:batch',
+                    headers=_headers(scope='knowledge:review'), json={'decisions': [decision | {field: value}]})
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.backend.envelopes, [])
+
+    def test_identity_group_and_preview_cannot_authorize_other_review_operations(self):
+        decision = dict(record_kind='ENTITY_MENTION', record_id='source', expected_revision=1,
+            decision='APPROVED', notes='Source supports an independent entity.', identity_action='INDEPENDENT')
+        for change in ({'record_kind': 'ASSERTION'}, {'decision': 'REJECTED'},
+                       {'identity_action': 'AUTO_APPROVE'}, {'notes': ' '}, {'notes': 'x'*2001},
+                       {'identity_action': None, 'identity_group': 'group'},
+                       {'identity_action': None, 'expected_identity_impact': 'forged-preview'}):
+            with self.subTest(change=change.keys()):
+                response = self.client.post('/v1/knowledge/reviews:batch',
+                    headers=_headers(scope='knowledge:review'), json={'decisions': [decision | change]})
+                self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.backend.envelopes, [])
+
     def test_each_action_requires_its_independent_verified_scope(self) -> None:
         allowed = self.client.get("/v1/ontologies", headers=_headers())
         denied = self.client.post(

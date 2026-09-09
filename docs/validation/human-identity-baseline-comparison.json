@@ -1,0 +1,72 @@
+{
+  "schema_version": "human-identity-baseline-comparison-v1",
+  "old_baseline_version": "1.15.0",
+  "old_semantic_digest": "05337e55c79a283bb5e04920a0c51dded766b2e4e176bee324dd5c44d1ee6d9a",
+  "new_semantic_digest": "c672c7b9a76e36e190531db5bb2552cdaacfa97757e3b732c106bf8c50815404",
+  "case_digests_unchanged": true,
+  "contract_metrics_unchanged": true,
+  "diagnostics_unchanged": true,
+  "other_identity_pins_unchanged": true,
+  "all_old_tests_retained": true,
+  "security_manifest_before": {
+    "sha256": "1b1b5ab9c017773bde0ba8b308400e4c1efd394b9217756deec57a60314b7401",
+    "version": "1.1.0"
+  },
+  "security_manifest_after": {
+    "sha256": "fab89c6fb46d86c2ba5546407d5cc6b930629719d43fb1d95d16cd4d3536c5f0",
+    "version": "1.1.0"
+  },
+  "suite_counts": {
+    "e2e": {
+      "before": 18,
+      "after": 18
+    },
+    "integration": {
+      "before": 181,
+      "after": 186
+    },
+    "regression": {
+      "before": 2,
+      "after": 2
+    },
+    "security": {
+      "before": 57,
+      "after": 59
+    },
+    "unit": {
+      "before": 1056,
+      "after": 1069
+    }
+  },
+  "added_test_ids": {
+    "e2e": [],
+    "integration": [
+      "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_explicit_independent_group_joins_selected_mentions_atomically",
+      "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_independent_decision_rejects_stale_preview_and_inaccessible_dependents",
+      "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_independent_group_type_conflict_and_acl_roll_back_whole_batch",
+      "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_independent_identity_without_identifier_splits_only_selected_mention",
+      "test_knowledge_review_neo4j.Neo4jKnowledgeReviewIntegrationTests.test_missing_declared_identity_does_not_block_independent_confirmation"
+    ],
+    "regression": [],
+    "security": [
+      "test_knowledge_api_security.KnowledgeAPISecurityTests.test_identity_group_and_preview_cannot_authorize_other_review_operations",
+      "test_knowledge_api_security.KnowledgeAPISecurityTests.test_independent_identity_requires_scope_and_rejects_forged_audit_fields"
+    ],
+    "unit": [
+      "test_api_entity_resolution.EntityResolutionAdapterTests.test_independent_decision_contract_reaches_transaction_with_preview_and_group",
+      "test_identity_review.IdentityReviewTests.test_action_does_not_depend_on_match_or_identity_properties",
+      "test_identity_review.IdentityReviewTests.test_batch_response_preserves_pending_dependency_status",
+      "test_identity_review.IdentityReviewTests.test_contract_rejects_ambiguous_action_and_oversized_notes",
+      "test_identity_review.IdentityReviewTests.test_independent_ids_are_stable_per_source_and_never_name_based",
+      "test_identity_review.IdentityReviewTests.test_service_returns_latest_dependent_outcome_after_selected_records",
+      "test_knowledge_browser_ui.KnowledgeBrowserTests.test_rollback_entry_requires_target_preview_and_explicit_confirmation",
+      "test_playground_identity_decisions.PlaygroundIdentityDecisionTests.test_cancel_empty_reason_and_group_contradictions_never_send_a_write",
+      "test_playground_identity_decisions.PlaygroundIdentityDecisionTests.test_existing_identity_entry_only_opens_choices",
+      "test_playground_identity_decisions.PlaygroundIdentityDecisionTests.test_explicit_grouping_is_distinct_from_separate_allocation",
+      "test_playground_identity_decisions.PlaygroundIdentityDecisionTests.test_independent_submission_pins_source_reason_and_dependency_preview",
+      "test_playground_identity_decisions.PlaygroundIdentityDecisionTests.test_missing_identifier_and_similar_candidates_do_not_disable_independent_action",
+      "test_playground_identity_decisions.PlaygroundIdentityDecisionTests.test_success_refreshes_queue_without_approving_dependent_facts"
+    ]
+  },
+  "note": "Includes the previously committed publication-rollback unit test in addition to this change’s identity tests."
+}
