@@ -729,7 +729,7 @@
           <div class="workbench-head"><div><h2 id="review-title">确认实体与审核事实</h2><p>先确认每条来源提及对应哪个实体，再审核该实体的属性与关系。系统会标明阻塞原因、重复与差异；处理完成后进入下一步发布。</p></div><span class="step-chip">05</span></div>
           <div class="workbench-actions" style="justify-content:flex-start;margin-top:0">
             <button class="button" id="review-refresh-button" type="button">刷新审核队列</button>
-            <button class="button" id="review-approve-button" type="button">批量批准已就绪项</button>
+            <button class="button" id="review-approve-button" type="button">确认所选记录</button>
             <button class="button danger" id="review-reject-button" type="button">批量不采纳</button>
             <button class="button" id="review-quarantine-button" type="button">批量暂缓</button>
           </div>
@@ -2444,7 +2444,7 @@
           const approve = button.dataset.reviewAction === 'APPROVED';
           button.hidden = enabled;
           if (approve) {
-            button.textContent = item.record_kind === 'ENTITY_MENTION' ? '确认新实体' : item.object_entity ? '确认关系' : '确认属性';
+            button.textContent = item.record_kind === 'ENTITY_MENTION' ? '确认为独立实体' : item.object_entity ? '确认关系' : '确认属性';
             button.disabled = enabled || !reviewApproval(item).allowed;
           }
         });
@@ -2456,7 +2456,7 @@
       function resolutionMarkup(item, index) {
         if (item.record_kind !== 'ENTITY_MENTION') return '';
         const result=state.resolutions.get(item.record_id);
-        const label=(result?.suggestions?.some(value=>value.target) || result?.review_targets?.some(value=>value.selectable)) ? '找到匹配候选' : result?.status==='ready' ? '未找到可确认的匹配目标' : '匹配中';
+        const label=(result?.suggestions?.some(value=>value.target) || result?.review_targets?.some(value=>value.selectable)) ? '找到候选，身份尚待确认' : result?.status==='ready' ? '未找到可确认的匹配目标' : '匹配中';
         return `<details class="review-resolution" data-resolution-details="${index}"><summary>实体匹配与消歧 · ${label}</summary>${resolutionContent(item,index)}</details>`;
       }
       function resolutionContent(item, index) {
@@ -2465,19 +2465,19 @@
         if (!resolution || resolution.revision !== item.revision) return '<div class="provider-note">等待自动匹配权威实体。</div>';
         if (['queued', 'loading'].includes(resolution.status)) return `<div class="provider-note">${resolution.status === 'queued' ? '等待自动匹配' : '正在自动匹配权威实体'}… 匹配只生成建议。</div>`;
         if (resolution.error) return `<div class="output-box">自动匹配失败：${escapeHtml(resolution.error)}。请先保留此记录，恢复后重新匹配。</div><div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">重新匹配</button></div>`;
-        const outcomeLabels = {AUTO_LINK: '唯一匹配建议 · 待人工确认', REVIEW: '存在相似或多个目标 · 需人工判断', NO_MATCH: '没有匹配目标 · 保留为新实体候选', CONFLICT: '身份属性冲突 · 保持分离'};
+        const outcomeLabels = {AUTO_LINK: '唯一匹配建议 · 待人工确认', REVIEW: '存在相似或多个目标 · 需人工判断', NO_MATCH: '没有匹配目标 · 保留为新实体候选', CONFLICT: '需要人工判断 · 不自动关联'};
         const properties = (resolution.identity_properties || []).map(value => `${escapeHtml(value.name)} = ${escapeHtml(value.canonical_value)}${value.canonical_unit ? ` ${escapeHtml(value.canonical_unit)}` : ''}`).join(' · ');
         const suggestions = (resolution.suggestions || []).map((suggestion, suggestionIndex) => {
           const target = suggestion.target;
           const evidence = suggestion.evidence?.[0];
           const source = evidence?.authoritative_evidence?.[0];
           const canApply = target && ['AUTO_LINK', 'REVIEW'].includes(suggestion.outcome);
-          const reason = suggestion.outcome === 'NO_MATCH' ? '当前可访问的权威知识中未找到匹配目标。核对原文后，可确认新实体。'
-            : suggestion.outcome === 'CONFLICT' ? (suggestion.reason?.includes('missing identity') ? '这条来源提及缺少身份属性，不能自动判断。可核对上下文后，在下方选择已确认实体。' : '身份属性不足、不一致或对应多个目标，请核查后再处理。')
+          const reason = suggestion.outcome === 'NO_MATCH' ? '当前可访问的权威知识中未找到匹配目标。核对原文后，可确认为独立实体。'
+            : suggestion.outcome === 'CONFLICT' ? ((suggestion.reason_code === 'IDENTITY_EVIDENCE_MISSING' || suggestion.reason?.includes('missing identity')) ? '当前信息不足以自动匹配。可依据原文确认为独立实体，也可核对双方原文后归入已有实体。' : '匹配存在不确定性，请核对原文后判断归属；相似候选不要求合并。')
             : ({EXACT_CANONICAL_KEY:'唯一标识与已有实体一致。', EXACT_IDENTITY_PROPERTIES:'本体要求的身份属性全部一致，且只对应一个已有实体。', EXACT_GOVERNED_ALIAS:'名称与已有实体的唯一治理别名一致。', EXACT_CANONICAL_NAME:'名称匹配，请结合原文确认是否为同一实体。', SIMILAR_NAME:'名称相似，仅供人工核对，不能据此直接认定为同一实体。'})[evidence?.match_kind] || '请结合匹配依据及权威来源确认是否为同一实体。';
-          return `<div class="review-match"><div class="governance-item-head"><strong>${escapeHtml(suggestion.reason?.includes('missing identity') ? '身份依据不足 · 需人工确认' : outcomeLabels[suggestion.outcome] || suggestion.outcome)}${target ? ` · ${escapeHtml(target.canonical_name)}` : ''}</strong></div><p>${escapeHtml(reason)}</p>${source ? `<div class="exact-evidence">权威来源：${escapeHtml(source.quoted_text)}</div>` : ''}<details class="review-technical"><summary>匹配依据详情</summary><p>${escapeHtml(suggestion.reason)}<br>rule ${escapeHtml(suggestion.rule_version)} · matcher ${escapeHtml(suggestion.matcher_version)} · confidence ${escapeHtml(suggestion.confidence)}${target ? `<br>${escapeHtml(target.entity_type)} · ${escapeHtml(target.canonical_key)}` : ''}${evidence ? `<br>${escapeHtml(evidence.match_kind)} · ${escapeHtml(evidence.candidate_value)}` : ''}${source ? `<br>Chunk ${escapeHtml(source.chunk_id)} · 字符 ${escapeHtml(source.char_start)}–${escapeHtml(source.char_end)}` : ''}</p></details>${canApply ? `<div class="workbench-actions"><button class="button primary" type="button" data-resolution-apply="${index}" data-resolution-suggestion="${suggestionIndex}">确认使用已有实体</button></div>` : ''}</div>`;
+          return `<div class="review-match"><div class="governance-item-head"><strong>${escapeHtml((suggestion.reason_code === 'IDENTITY_EVIDENCE_MISSING' || suggestion.reason?.includes('missing identity')) ? '身份依据不足 · 需人工确认' : outcomeLabels[suggestion.outcome] || suggestion.outcome)}${target ? ` · ${escapeHtml(target.canonical_name)}` : ''}</strong></div><p>${escapeHtml(reason)}</p>${source ? `<div class="exact-evidence">权威来源：${escapeHtml(source.quoted_text)}</div>` : ''}<details class="review-technical"><summary>匹配依据详情</summary><p>${escapeHtml(suggestion.reason)}<br>rule ${escapeHtml(suggestion.rule_version)} · matcher ${escapeHtml(suggestion.matcher_version)} · confidence ${escapeHtml(suggestion.confidence)}${target ? `<br>${escapeHtml(target.entity_type)} · ${escapeHtml(target.canonical_key)}` : ''}${evidence ? `<br>${escapeHtml(evidence.match_kind)} · ${escapeHtml(evidence.candidate_value)}` : ''}${source ? `<br>Chunk ${escapeHtml(source.chunk_id)} · 字符 ${escapeHtml(source.char_start)}–${escapeHtml(source.char_end)}` : ''}</p></details>${canApply ? `<div class="workbench-actions"><button class="button primary" type="button" data-resolution-apply="${index}" data-resolution-suggestion="${suggestionIndex}">确认使用已有实体</button></div>` : ''}</div>`;
         }).join('');
-        return `<div class="review-matching-basis"><strong>身份匹配依据</strong><br>${properties || '未取得可用的身份属性；请结合下方匹配结果处理。'}<br>自动匹配不修改候选。确认使用已有实体后，系统会更新相关事实的归属；这些事实仍需到下一阶段单独审核。</div>${suggestions}${manualResolutionMarkup(resolution,index)}<div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">刷新匹配</button></div>`;
+        return `<div class="review-matching-basis"><strong>自动匹配参考</strong><br>${properties || '未取得可用的自动匹配身份属性；仍可依据原文进行人工身份判断。'}<br>自动匹配不修改候选。确认使用已有实体后，系统会更新相关事实的归属；这些事实仍需到下一阶段单独审核。</div>${suggestions}${manualResolutionMarkup(resolution,index)}<div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">刷新匹配</button></div>`;
       }
 
       function manualResolutionMarkup(resolution,index) {
@@ -2559,8 +2559,11 @@
       function reviewApproval(item) {
         if (item.record_kind === 'ENTITY_MENTION') {
           const result = state.resolutions.get(item.record_id);
+          if(result?.error) return {allowed:false,note:'无法读取审核依据，请刷新匹配后重试'};
           if (!result || result.revision !== item.revision || result.identityEpoch !== state.identityEpoch || result.reviewEpoch !== state.reviewEpoch || result.status !== 'ready') return {allowed:false, note:'等待身份匹配完成'};
-          if (result.suggestions?.some(value => value.outcome === 'NO_MATCH')) return {allowed:true, note:'核对原文后，可确认新实体'};
+          const permission=result.identity_actions?.independent;
+          if(permission) return {allowed:permission.allowed === true, note:permission.note};
+          if (result.suggestions?.some(value => value.outcome === 'NO_MATCH')) return {allowed:true, note:'核对原文后，可确认为独立实体'};
           if (result.suggestions?.some(value => value.target)) return {allowed:false, note:'请先确认使用已有实体'};
           return {allowed:false, note:'身份依据不足或冲突，请暂缓处理'};
         }
@@ -2573,8 +2576,8 @@
       function reviewActions(item, index) {
         const check = reviewApproval(item);
         const paused = item.trust?.status === 'QUARANTINED';
-        const approveLabel = item.record_kind === 'ENTITY_MENTION' ? '确认新实体' : reviewAssessment(item)?.status === 'DUPLICATE' ? '确认并追加来源' : item.object_entity ? '确认关系' : '确认属性';
-        return `<div class="workbench-actions review-actions"><button class="button primary" type="button" data-review-action="APPROVED" data-review-index="${index}" ${check.allowed ? '' : 'disabled'} title="${escapeHtml(check.note)}">${approveLabel}</button><button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">不采纳</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}" ${paused ? 'disabled' : ''}>${paused ? '已暂缓' : '暂缓处理'}</button></div>`;
+        const approveLabel = item.record_kind === 'ENTITY_MENTION' ? '确认为独立实体' : reviewAssessment(item)?.status === 'DUPLICATE' ? '确认并追加来源' : item.object_entity ? '确认关系' : '确认属性';
+        return `<p class="provider-note" role="status" data-review-note="${index}">${escapeHtml(check.note)}</p><div class="workbench-actions review-actions"><button class="button primary" type="button" data-review-action="APPROVED" data-review-index="${index}" ${check.allowed ? '' : 'disabled'} title="${escapeHtml(check.note)}">${approveLabel}</button>${item.record_kind === 'ENTITY_MENTION' ? `<button class="button" type="button" data-review-existing="${index}">归入已有实体</button>` : ''}<button class="button danger" type="button" data-review-action="REJECTED" data-review-index="${index}">不采纳</button><button class="button" type="button" data-review-action="QUARANTINED" data-review-index="${index}" ${paused ? 'disabled' : ''}>${paused ? '已暂缓' : '暂缓处理'}</button></div>`;
       }
       function reviewSelection(item, index) {
         const check = reviewApproval(item);
@@ -2627,9 +2630,10 @@
           const facts = rows.filter(row=>row.item.record_kind !== 'ENTITY_MENTION');
           const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
           const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
-          return `<article class="review-entity-card"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span><span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
+          return `<article class="review-entity-card"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span>${mentions.length ? '<span class="trust-badge">待确认分组</span>' : ''}<span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${mentions.length ? '<p class="provider-note">同组是抽取时的候选归属，请逐条核对。已确认的实体可以接收其他提及；同名不代表同一实体。</p>' : ''}${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
         }).join('');
-        elements.reviewList.innerHTML = navigation + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && state.approvedRevisions.size ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
+        const identityBatch=state.reviewPhase==='identities' && progress.identities ? '<div class="provider-note">确认所选提及时，默认分别建立独立实体。若所选提及描述同一对象，可使用下面的合并建档操作。<div class="workbench-actions"><button class="button" type="button" data-review-group>所选提及归为同一独立实体</button></div></div>' : '';
+        elements.reviewList.innerHTML = navigation + identityBatch + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && state.approvedRevisions.size ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
         bindReviewActions(elements.reviewList);
         state.reviews.forEach((item,index) => {
           const value = saved.get(`${item.record_id}:${item.revision}`);
@@ -2643,7 +2647,14 @@
         });
         if(state.reviewBusy) setReviewBusy(true);
       }
+      function openResolutionChoices(index) {
+        if(state.reviewBusy || state.publicationBusy || reviewIsEditing(index)) {showToast('请先完成当前保存或编辑');return;}
+        const details=elements.reviewList.querySelector(`[data-resolution-details="${index}"]`);
+        if(details) {details.open=true;details.scrollIntoView?.({block:'nearest',behavior:'smooth'});}
+      }
       function bindReviewActions(container) {
+        container.querySelectorAll('[data-review-existing]').forEach(button=>button.addEventListener('click',()=>openResolutionChoices(Number(button.dataset.reviewExisting))));
+        container.querySelectorAll('[data-review-group]').forEach(button=>button.addEventListener('click',()=>submitReviews('APPROVED',chosenReviews(),false,true)));
         container.querySelectorAll('[data-standard-endpoint]').forEach(select=>select.addEventListener('change',()=>{
           const editor=elements.reviewList.querySelector(`[data-review-editor="${select.dataset.standardEndpoint}"]`);
           try {const value=JSON.parse(editor.value);value[select.dataset.standardField]=select.value;editor.value=JSON.stringify(value,null,2);}
@@ -2683,6 +2694,8 @@
         const check=reviewApproval(item);
         const select=elements.reviewList.querySelector(`[data-review-select="${index}"]`);
         if (select) select.title=check.note;
+        const note=elements.reviewList.querySelector(`[data-review-note="${index}"]`);
+        if(note) note.textContent=check.note;
         elements.reviewList.querySelectorAll(`[data-review-index="${index}"]`).forEach(button=> {
           if(button.dataset.reviewAction === 'APPROVED') {button.disabled=Boolean(state.reviewBusy) || reviewIsEditing(index) || !check.allowed; button.title=check.note;}
         });
@@ -2962,9 +2975,27 @@
         return [...elements.reviewList.querySelectorAll('[data-review-select]:checked')].map(input => Number(input.dataset.reviewSelect));
       }
 
-      async function submitReviews(decision, indexes, saveEdits = false) {
+      function independentReviewPreview(items, grouped = false) {
+        if(grouped && (items.length < 2 || new Set(items.map(item=>item.entity?.entity_type)).size !== 1)) throw new Error('请选择至少两条类型一致的实体提及，核对原文后再共同建档');
+        const properties=new Map(), facts=new Map();
+        const sources=items.map((item,position)=> {
+          const resolution=state.resolutions.get(item.record_id);
+          for(const property of resolution?.identity_properties || []) {
+            const values=properties.get(property.name) || new Set();
+            values.add(JSON.stringify([property.datatype,property.canonical_value,property.canonical_unit || null]));
+            properties.set(property.name,values);
+          }
+          for(const fact of resolution?.dependent_facts || []) facts.set(fact.record_id,fact);
+          const quote=[...(item.evidence?.quoted_text || '请先展开文档原文核对')];
+          return `${position+1}. ${item.entity?.canonical_name || '未命名实体'}\n原文摘录：${quote.slice(0,180).join('')}${quote.length>180 ? '…' : ''}`;
+        });
+        if(grouped && [...properties.values()].some(values=>values.size>1)) throw new Error('所选提及的身份依据存在矛盾，请分别确认或暂缓核查');
+        return `${grouped ? '建立 1 个独立实体，归入全部所选提及' : `分别建立 ${items.length} 个独立实体`}。\n只处理以下 ${items.length} 条提及，同组其他提及保持待确认。\n\n${sources.join('\n\n')}\n\n将更新 ${facts.size} 条关联属性或关系的归属，仍需单独审核：${[...facts.values()].map(fact=>reviewPropertyLabel(fact.predicate)).join('、') || '无'}。\n本次仅保存审核决定，发布前仍可返回修改。`;
+      }
+
+      async function submitReviews(decision, indexes, saveEdits = false, groupIdentity = false) {
         if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
-        const identityEpoch=state.identityEpoch;
+        const identityEpoch=state.identityEpoch, reviewEpoch=state.reviewEpoch;
         if (!indexes.length) { showToast('请先勾选审核记录'); return; }
         setReviewBusy(true);
         try {
@@ -2992,6 +3023,23 @@
             }
             return request;
           });
+          const identityRequests=decision==='APPROVED' ? decisions.filter(item=>item.record_kind==='ENTITY_MENTION') : [];
+          if(groupIdentity && identityRequests.length !== decisions.length) throw new Error('共同建档只能选择实体提及');
+          if(identityRequests.length) {
+            const items=identityRequests.map(request=>state.reviews.find(item=>item.record_id===request.record_id));
+            const preview=independentReviewPreview(items,groupIdentity);
+            const reason=globalThis.prompt('请根据原文填写身份判断依据：为什么独立建档，或为什么所选提及属于同一对象？（最多 2000 字）','');
+            if(reason===null) return;
+            if(!reason.trim() || [...reason.trim()].length>2000) throw new Error('请填写 1–2000 字的身份判断依据');
+            if(!globalThis.confirm(`${preview}\n\n审核依据：${reason.trim()}\n\n确认保存？`)) return;
+            for(const request of identityRequests) {
+              request.identity_action='INDEPENDENT'; request.notes=reason.trim();
+              if(groupIdentity) request.identity_group='selected-mentions';
+              const token=state.resolutions.get(request.record_id)?.impact_token;
+              if(token) request.expected_identity_impact=token;
+            }
+          }
+          if(identityEpoch!==state.identityEpoch || reviewEpoch!==state.reviewEpoch) throw new Error('审核上下文已变化，请刷新后重试');
           const payload = await apiRequest('/v1/knowledge/reviews:batch', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({decisions}),
           });

@@ -83,3 +83,39 @@ an actual legacy batch-response bug that omitted rebound dependent records.
 The test reads now explicitly select candidates. The service returns the final
 version of each affected record, including dependencies. Both the complete unit
 suite and the focused database suite were rerun successfully after the fix.
+
+## Workbench behavior
+
+The four per-mention entries are independent confirmation, existing-entity
+selection, rejection and deferral. Existing-entity selection opens the matching
+panel without writing. Independent availability uses the server's action policy,
+not the presence of similar candidates. Loading, read errors and disallowed
+identity formats have visible explanations alongside the buttons.
+
+The original extraction card is labelled a pending group. Ordinary selected-mention
+confirmation creates separate identities; an explicitly labelled second action
+creates one shared independent identity from the selected mentions. A preview
+lists each selected source excerpt (bounded to 180 Unicode characters), the
+allocation mode and every affected property/relationship record, deduplicated by
+record ID. The user provides a reason and confirms the preview before submission.
+The full original evidence remains available in the source viewer and unchanged
+in storage. Different declared identity values and mixed types cannot be grouped;
+missing values alone do not prohibit human grouping.
+
+Cancellation, an empty/oversized reason, outdated review context or invalid group
+selection sends no write. Successful review refreshes suggestions and publication
+candidates; dependent facts remain unapproved. Native confirmation dialogs follow
+the existing workbench's manual-link interaction convention.
+
+### Workbench checkpoint (2026-09-09)
+
+All 108 Playground tests, eight related context/publication-group tests and 18
+HTTP E2E tests passed. These include six new executable-page scenarios for missing
+identifiers, similar candidates, action policy, separate versus shared allocation,
+preview/reason submission, cancellation, contradictory groups and success refresh.
+The old stale-response test keeps its same assertions and now expects the revised
+uncertainty label instead of calling every matcher conflict an identity mismatch.
+JavaScript/asset checks, Python compilation and whitespace checks passed.
+Receipts: `/tmp/identity-ui-final.log`, `/tmp/identity-ui-final-related.log`, and
+`/tmp/identity-ui-e2e.log`. No connected browser was available to the CUA tool;
+these checks are not a browser visual inspection.

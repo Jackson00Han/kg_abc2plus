@@ -277,7 +277,7 @@ await second;
 requests[4].reject(new Error('stale matching failure'));
 await first;
 assert.equal(state.resolutions.get('a').suggestions[0].outcome, 'CONFLICT');
-assert.ok(panels.get('0').innerHTML.includes('身份属性冲突 · 保持分离'));
+assert.ok(panels.get('0').innerHTML.includes('需要人工判断 · 不自动关联'));
 """)
 
     def test_mismatched_response_is_error_and_stale_result_cannot_apply(self) -> None:
