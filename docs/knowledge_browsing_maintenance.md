@@ -297,3 +297,29 @@ Both owned integration containers were removed; retained local databases remain.
 Implementation and automated verification are complete. Browser visual acceptance
 is still pending because neither browser surface is available in this session.
 No screenshot, responsive-layout inspection or manual graph interaction is claimed.
+
+### Rollback entry follow-up (ordinary workbench, port 8000)
+
+The publication comparison and guarded rollback API already existed, but the
+entry appeared only on historical cards. The version panel now always shows a
+rollback section with a target selector and an explicit “查看影响并回滚” action.
+Empty history, one accessible version, and no accessible active version each
+explain why rollback is unavailable. Historical cards also expose “回滚到此版本…”.
+Both entries use the same comparison dialog; selecting a version never changes
+the active publication. Confirmation pins the expected active publication, blocks
+double submission and ignores an invalidated identity/dialog. A failed submission
+requires a fresh comparison. The existing backend reactivates the target manifest
+and appends an activation event; it does not create a new publication or discard
+history, restore retired source documents, or switch the active ontology.
+
+Validation includes an executed JavaScript interaction regression for unavailable
+states, target selection, preview-before-confirmation, duplicate clicks, stale
+identity and failure recovery, plus existing publication/cache-invalidation tests.
+This is a frontend usability follow-up; the publication API and schema contracts
+are unchanged. The ordinary port 8000 runtime is updated with its retained corpus
+and local-reset configuration; validation does not roll back user knowledge.
+
+Follow-up checks passed: 1,057 unit tests (including the new rollback interaction
+case), JavaScript syntax checks for 13 inline scripts and first-party modules,
+Python compilation, `git diff --check`, and a credential-pattern scan of the
+changed files. No backend or schema change is required for this entry improvement.

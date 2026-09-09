@@ -3697,7 +3697,7 @@
         const target = state.publications[index];
         const active = activePublication();
         if(expectedActive && active?.publication_id!==expectedActive)throw new Error('生效版本已变化，请重新比较。');
-        if (!target || !active) { showToast('没有可用的 active publication'); return; }
+        if (!target || !active) { showToast('当前没有可用的生效版本，请刷新发布历史'); return; }
         const identityEpoch = state.identityEpoch;
         invalidateInventory();
         try {
@@ -3708,7 +3708,7 @@
           if (identityEpoch !== state.identityEpoch) return;
           refreshReviewResolutions(identityEpoch);
           state.knowledgeBrowser?.reset();
-          showToast(`已回滚并激活 generation ${payload.generation}`);
+          showToast(`回滚成功，当前生效：第 ${payload.generation} 版`);
           await Promise.allSettled([loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);

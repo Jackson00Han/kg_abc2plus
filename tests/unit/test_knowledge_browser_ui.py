@@ -84,6 +84,47 @@ actions.reset();epoch++;calls[0].resolve({added:[],removed:[],changed:[],unchang
 assert.equal(d.open,false);assert.equal(d.innerHTML,'');
 """)
 
+    def test_rollback_entry_requires_target_preview_and_explicit_confirmation(self):
+        path=(ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance-actions.mjs').as_uri()
+        self.js(f"import {{mountActions}} from {path!r};" + """
+class Element {
+  constructor(){this.children=new Map();this.value='';this.disabled=true;this.open=false;}
+  set innerHTML(value){this.html=value;this.children.clear();}get innerHTML(){return this.html;}
+  querySelector(key){if(!this.children.has(key))this.children.set(key,new Element());return this.children.get(key);}
+  querySelectorAll(){return [];}setAttribute(){}addEventListener(){}
+  replaceChildren(){this.children.clear();this.html='';}showModal(){this.open=true;}close(){this.open=false;}
+}
+const dialog=new Element();globalThis.document={createElement:()=>dialog,body:{append(){}}};
+let epoch=0,comparisons=[],rollbacks=[],finishRollback,failComparison=false;
+const actions=mountActions({epoch:()=>epoch,browser:{},toast(){},api:async(url,options)=>{
+  comparisons.push({url,body:JSON.parse(options.body)});
+  if(failComparison)throw {status:409};
+  return {added:[],removed:[],changed:[],unchanged_count:2};
+},rollback:(...args)=>{rollbacks.push(args);return new Promise((resolve,reject)=>{finishRollback={resolve,reject};});}});
+const container=new Element(),active={publication_id:'current',status:'ACTIVE',generation:2,published_revision_ids:[],created_at:'2026-09-09T00:00:00Z'},old={...active,publication_id:'old',status:'SUPERSEDED',generation:1};
+actions.history([],container);assert.match(container.innerHTML,/首次发布/);assert.match(container.innerHTML,/data-open-rollback disabled/);
+await container.querySelector('[data-open-rollback]').onclick();assert.equal(comparisons.length,0);
+actions.history([active],container);assert.match(container.innerHTML,/暂无历史版本可回滚/);
+actions.history([old],container);assert.match(container.innerHTML,/没有可访问的生效版本/);
+actions.history([active,old],container);
+const select=container.querySelector('[data-rollback-target]'),button=container.querySelector('[data-open-rollback]');
+select.value='current';select.onchange();assert.equal(button.disabled,true);
+select.value='old';select.onchange();assert.equal(button.disabled,false);
+await button.onclick();assert.deepEqual(comparisons[0],{url:'/v1/knowledge/publications:compare',body:{target_publication_id:'old',expected_active_publication_id:'current'}});
+assert.equal(rollbacks.length,0);assert.match(dialog.querySelector('[data-comparison]').innerHTML,/确认回滚到第 1 版/);
+const confirm=dialog.querySelector('[data-confirm]');confirm.disabled=false;
+const pending=confirm.onclick();await confirm.onclick();assert.equal(rollbacks.length,1);assert.deepEqual(rollbacks[0],['old','current']);
+finishRollback.resolve();await pending;assert.equal(dialog.open,false);
+await button.onclick();const stale=dialog.querySelector('[data-confirm]');stale.disabled=false;epoch++;
+await stale.onclick();assert.equal(rollbacks.length,1);
+await button.onclick();const failing=dialog.querySelector('[data-confirm]');failing.disabled=false;
+const failed=failing.onclick();finishRollback.reject({status:409});await failed;
+assert.equal(failing.disabled,true);assert.match(dialog.querySelector('[data-status]').textContent,/请刷新后重试/);
+await failing.onclick();assert.equal(rollbacks.length,2);
+failComparison=true;await button.onclick();assert.equal(dialog.querySelector('[data-comparison]').innerHTML,undefined);
+assert.equal(rollbacks.length,2);assert.match(dialog.querySelector('[data-status]').textContent,/请刷新后重试/);
+""")
+
     def test_maintenance_comparison_preserves_raw_units_and_escapes_business_content(self):
         path=(ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance-actions.mjs').as_uri()
         self.js(f"import {{factTitle,comparisonMarkup}} from {path!r};" + """

@@ -65,15 +65,21 @@ export function mountActions({api,epoch,browser,navigate,correctRecord,rollback,
   }
   function history(items,container){
     const active=items.find(p=>p.status==='ACTIVE');
-    container.innerHTML=items.map((p,index)=>`<article class="kb-source"><h3>第 ${p.generation} 版 · ${p.status==='ACTIVE'?'当前生效':'历史版本'}</h3><p>${e(new Date(p.created_at).toLocaleString('zh-CN'))} · 发布人 ${e(p.created_by)} · ${p.published_revision_ids.length} 条知识记录</p>${active&&p.publication_id!==active.publication_id?`<button class="button" data-compare="${index}">比较变化与回滚</button>`:''}<details><summary>版本技术详情</summary><p>${e(p.publication_id)}</p><p>知识模型版本：${e(p.ontology_version_id)}</p></details></article>`).join('')||'<p>当前没有可访问的发布版本。</p>';
+    const targets=active?items.filter(p=>p.publication_id!==active.publication_id):[];
+    const reason=!items.length?'尚未发布知识。首次发布后会生成版本记录；再次发布后，可以回滚到之前的版本。':!active?'当前没有可访问的生效版本，暂时无法回滚。请核对当前身份权限与发布状态。':!targets.length?'当前仅有一个可访问的发布版本，暂无历史版本可回滚。后续发布新版本后，可在这里选择之前的版本。':'选择历史版本，先查看新增、移除和变更的知识，再确认回滚。回滚会重新启用目标版本，记录本次切换并保留完整发布历史。';
+    container.innerHTML=`<div class="kb-source"><h3>版本回滚</h3><p>${active?`当前生效：第 ${e(active.generation)} 版。`:''}${e(reason)}</p><div class="kb-actions"><label>目标版本 <select data-rollback-target aria-label="选择回滚目标版本" ${targets.length?'':'disabled'}><option value="">${targets.length?'请选择历史版本':'暂无可回滚版本'}</option>${targets.map(p=>`<option value="${e(p.publication_id)}">第 ${e(p.generation)} 版 · ${e(new Date(p.created_at).toLocaleString('zh-CN'))}</option>`).join('')}</select></label><button class="button" data-open-rollback disabled>查看影响并回滚</button></div></div>`+items.map((p,index)=>`<article class="kb-source"><h3>第 ${e(p.generation)} 版 · ${p.status==='ACTIVE'?'当前生效':'历史版本'}</h3><p>${e(new Date(p.created_at).toLocaleString('zh-CN'))} · 发布人 ${e(p.created_by)} · ${p.published_revision_ids.length} 条知识记录</p>${active&&p.publication_id!==active.publication_id?`<button class="button" data-compare="${index}">回滚到此版本…</button>`:''}<details><summary>版本技术详情</summary><p>${e(p.publication_id)}</p><p>知识模型版本：${e(p.ontology_version_id)}</p></details></article>`).join('');
+    const select=container.querySelector('[data-rollback-target]');
+    const button=container.querySelector('[data-open-rollback]');
+    select.onchange=()=>{button.disabled=!targets.some(p=>p.publication_id===select.value);};
+    button.onclick=()=>{const target=targets.find(p=>p.publication_id===select.value);if(target&&active)return compare(target,active);};
     if(items.length===100)container.insertAdjacentHTML('beforeend','<p>仅显示最近 100 个可访问版本。</p>');
     container.querySelectorAll('[data-compare]').forEach(b=>b.onclick=()=>compare(items[Number(b.dataset.compare)],active));
   }
   async function compare(target,active){
     const pin=open(`回滚到第 ${target.generation} 版前的影响`,`<p>正在比较当前第 ${active.generation} 版与目标版本…</p><div data-comparison></div>`);
     try{const result=await api('/v1/knowledge/publications:compare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_publication_id:target.publication_id,expected_active_publication_id:active.publication_id})});if(!valid(pin))return;
-      dialog.querySelector('[data-comparison]').innerHTML=`${comparisonMarkup(result)}<p>确认后切换生效知识。来源版本与知识模型还需通过服务器回滚校验。</p><button class="button danger" data-confirm>确认回滚到第 ${target.generation} 版</button>`;
-      dialog.querySelector('[data-confirm]').onclick=async()=>{const b=dialog.querySelector('[data-confirm]');b.disabled=true;try{await rollback(target.publication_id,active.publication_id);if(valid(pin))reset();}catch(error){if(valid(pin)){dialog.querySelector('[data-status]').textContent=errorText(error);b.disabled=false;}}};
+      dialog.querySelector('[data-comparison]').innerHTML=`${comparisonMarkup(result)}<p>确认后将重新启用目标版本的知识内容，记录本次切换并保留此前发布历史。此操作不会恢复已撤回的来源资料，也不会切换知识模型；来源与模型不兼容时，服务器会阻止回滚。</p><button class="button danger" data-confirm>确认回滚到第 ${target.generation} 版</button>`;
+      dialog.querySelector('[data-confirm]').onclick=async()=>{if(!valid(pin))return;const b=dialog.querySelector('[data-confirm]');if(b.disabled)return;b.disabled=true;b.textContent='正在回滚…';try{await rollback(target.publication_id,active.publication_id);if(valid(pin))reset();}catch(error){if(valid(pin)){dialog.querySelector('[data-status]').textContent=errorText(error);b.textContent='回滚未完成，请关闭后重新比较';}}};
     }catch(error){if(valid(pin))dialog.querySelector('[data-status]').textContent=errorText(error);}
   }
   return {reset,maintain,inventory,history,removals};
