@@ -1286,6 +1286,7 @@ class PublicationPreviewResponse(StrictAPIModel):
     entity_changes: list[dict[str, JsonValue]]
     property_changes: list[dict[str, JsonValue]]
     relationship_changes: list[dict[str, JsonValue]]
+    instances_after: dict[str, JsonValue]
     entities_after: list[dict[str, JsonValue]]
     records_after: list[dict[str, JsonValue]]
     evidence: list[dict[str, JsonValue]]

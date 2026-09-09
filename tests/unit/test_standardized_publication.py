@@ -1,6 +1,7 @@
 """Business editing boundaries and complete deterministic publication previews."""
 
 import dataclasses
+import json
 import unittest
 
 from graphrag_prod.api.knowledge_contracts import PublicationPreviewResponse, PublicationRequest
@@ -31,6 +32,41 @@ class StandardizedPublicationTests(unittest.TestCase):
         self.assertEqual(response.model_dump(by_alias=True, mode="json"), preview)
         self.assertEqual(PublicationRequest(approved_revision_ids=["revision"],
             expected_preview_hash=preview["preview_hash"]).expected_preview_hash, preview["preview_hash"])
+
+    def test_complete_instances_preserve_multiple_facts_sources_and_order(self):
+        batch = make_knowledge_batch()
+        relation = batch.assertions[0]
+        properties = tuple(dataclasses.replace(relation,
+            revision=RecordRevision.next(f"property-{index}", 0),
+            object_entity=None, object_mention_revision_id=None,
+            predicate="description", literal_value=relation.evidence.quoted_text)
+            for index in range(2))
+        records = (*batch.mentions, relation, *properties)
+        kwargs = dict(publication_id="publication", ontology_version_id="ontology",
+            manifest_hash="a" * 64, base_publication_id=None, before=(),
+            source_revision_ids=(), removed_record_ids=(), replaced_record_ids=())
+        preview = publication_preview(after=records, **kwargs)
+        self.assertEqual(preview, publication_preview(after=tuple(reversed(records)), **kwargs))
+        snapshot = preview["instances_after"]
+        self.assertEqual(snapshot["summary"], {
+            "entity_count": 2, "property_count": 2, "relationship_count": 1})
+        entities = {item["entity_id"]: item for item in snapshot["entities"]}
+        self.assertEqual(len(entities[relation.subject.entity_id]["properties"]), 2)
+        self.assertEqual(snapshot["relationships"][0]["target"]["standard_name"],
+                         relation.object_entity.canonical_name)
+        evidence = {item["evidence_id"]: item for item in snapshot["evidence"]}
+        for prop in entities[relation.subject.entity_id]["properties"]:
+            self.assertEqual(evidence[prop["evidence_ids"][0]]["quoted_text"], prop["value"])
+        empty = publication_preview(after=(), **kwargs)["instances_after"]
+        self.assertEqual(empty["entities"], [])
+        self.assertEqual(empty["relationships"], [])
+        ui_checks.PlaygroundResolutionTests().run_ui(
+            "const preview=" + json.dumps(preview) + r""";
+const html=publicationPreviewMarkup(preview);
+assert.ok(html.includes('查看完整实例 JSON（2 个实体 · 2 条属性 · 1 条关系）'));
+assert.ok(html.includes('PUBLICATION_AFTER'));
+assert.ok(html.includes('查看完整变更 JSON'));
+""")
 
     def test_editor_separates_identity_and_facts_and_protects_source_fields(self):
         ui_checks.PlaygroundResolutionTests().run_ui(r'''
@@ -68,6 +104,8 @@ await publishKnowledge();assert.equal(requests.length,0);assert.equal(state.publ
 state.publicationPreview={selection:publicationSelection(),selectionKey:JSON.stringify(publicationSelection()),preview:{preview_hash:'verified'}};
 const pending=publishKnowledge();
 assert.equal(JSON.parse(requests[0].options.body).expected_preview_hash,'verified');
+assert.ok(!('instances_after' in JSON.parse(requests[0].options.body)));
+assert.ok(!('entities' in JSON.parse(requests[0].options.body)));
 const duplicate=publishKnowledge();assert.equal(requests.length,1);await duplicate;
 requests[0].reject({status:409,message:'stale'});await pending;
 assert.equal(state.publicationPreview,null);

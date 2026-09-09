@@ -75,6 +75,39 @@ def entity_views(records: tuple) -> dict[str, dict]:
     return result
 
 
+def instance_snapshot(records: tuple, evidence: list[dict]) -> dict:
+    """Read-only business projection; never a Neo4j persistence payload."""
+    entities = entity_views(records)
+    for entity in entities.values():
+        entity["properties"] = []
+    relationships = []
+    for record in sorted(records, key=lambda item: item.revision_id):
+        if isinstance(record, EntityMentionRecord):
+            continue
+        item = standardized_record(record)
+        if record.object_entity is None:
+            entities[record.subject.entity_id]["properties"].append(item)
+        else:
+            for role, identity in (("source", record.subject), ("target", record.object_entity)):
+                target = entities[identity.entity_id]
+                item[role] = {key: target[key] for key in
+                              ("entity_id", "entity_type", "standard_name")}
+            relationships.append(item)
+    return {
+        "schema": "graphrag-instance-snapshot-v1",
+        "status": "PREVIEW",
+        "scope": "PUBLICATION_AFTER",
+        "summary": {
+            "entity_count": len(entities),
+            "property_count": sum(len(item["properties"]) for item in entities.values()),
+            "relationship_count": len(relationships),
+        },
+        "entities": [entities[key] for key in sorted(entities)],
+        "relationships": relationships,
+        "evidence": evidence,
+    }
+
+
 def publication_preview(*, publication_id: str, ontology_version_id: str,
                         manifest_hash: str, base_publication_id: str | None,
                         before: tuple, after: tuple, source_revision_ids: tuple[str, ...],
@@ -128,6 +161,11 @@ def publication_preview(*, publication_id: str, ontology_version_id: str,
         payload["evidence"].append(dict(
             json_value(asdict(record.evidence)), evidence_id=record.revision_id,
             origin=record.trust.origin.value, authority_level=record.trust.authority.value))
+    payload["instances_after"] = dict(
+        instance_snapshot(after, payload["evidence"]),
+        publication_id=publication_id, ontology_version_id=ontology_version_id,
+        manifest_hash=manifest_hash,
+    )
     payload["preview_hash"] = hashlib.sha256(json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode()).hexdigest()

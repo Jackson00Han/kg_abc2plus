@@ -450,3 +450,11 @@ tests.unit.test_publication_groups tests.unit.test_standardized_publication
 tests.unit.test_review_context`. Run the complete Neo4j suite with
 `sh scripts/run_stage8_neo4j_tests.sh SUITE_RESULT_PATH OBSERVATION_DIR`, then use
 the existing Stage 8 evaluation workflow with all five suite receipts.
+
+### Complete instance JSON disclosure
+
+The publication preview's **查看完整实例 JSON** disclosure now shows the complete
+post-publication entity/property/relationship snapshot with exact evidence,
+including retained records. It is a read-only business projection, not the Neo4j
+write payload. The original change manifest remains in the audit disclosure.
+See [implementation and validation](validation/instance-json-preview.md).

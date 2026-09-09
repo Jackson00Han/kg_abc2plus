@@ -1143,6 +1143,10 @@ class Neo4jKnowledgeReviewIntegrationTests(unittest.TestCase):
         repeated = self.publication.publish(self.principal, revisions, preview_only=True,
             expected_active_publication_id=None, published_at=PUBLISHED_AT + timedelta(minutes=1))
         self.assertEqual(preview, repeated)
+        self.assertEqual(preview["instances_after"]["summary"], {
+            "entity_count": 2, "property_count": 0, "relationship_count": 1})
+        self.assertEqual({item["entity_id"] for item in preview["instances_after"]["entities"]},
+                         {item["entity_id"] for item in preview["entities_after"]})
         self.assertEqual(len(preview["entity_changes"]), 2)
         self.assertEqual(len(preview["relationship_changes"]), 1)
         self.assertEqual(len(preview["records_after"]), 3)

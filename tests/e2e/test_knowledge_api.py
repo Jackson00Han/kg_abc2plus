@@ -542,6 +542,9 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
             response = client.post("/v1/knowledge/publications:publish", headers=_headers(), json=body)
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(knowledge.calls[-1][2].expected_preview_hash, preview["preview_hash"])
+            invalid_payload = dict(body, instances_after=preview["instances_after"])
+            response = client.post("/v1/knowledge/publications:publish", headers=_headers(), json=invalid_payload)
+            self.assertEqual(response.status_code, 422)
             body["expected_preview_hash"] = "invalid"
             self.assertEqual(client.post("/v1/knowledge/publications:publish", headers=_headers(), json=body).status_code, 422)
 

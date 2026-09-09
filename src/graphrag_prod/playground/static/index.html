@@ -3586,7 +3586,7 @@
           const after=change.after || change.before;
           const title=after.standard_name || after.property_name || after.relationship_type || after.entity_id;
           return `<article class="publication-preview-card"><strong>${label} · ${escapeHtml(title)} · ${labels[change.operation]}</strong>${provenanceBadges({authority:after.authority_level,origin:after.origin})}<pre>${escapeHtml(JSON.stringify(change.after || change.before,null,2))}</pre>${change.before && change.after ? `<details><summary>更新前</summary><pre>${escapeHtml(JSON.stringify(change.before,null,2))}</pre></details>`:''}</article>`;
-        }).join('')).join('')+`<details><summary>查看完整变更 JSON（含保留记录、精确引用及发布后的完整清单）</summary><pre class="output-box">${escapeHtml(JSON.stringify(preview,null,2))}</pre></details><div class="workbench-actions"><button class="button" type="button" data-publication-back>返回编辑和确认实例</button></div>`;
+        }).join('')).join('')+`<details><summary>查看完整实例 JSON（${preview.instances_after.summary.entity_count} 个实体 · ${preview.instances_after.summary.property_count} 条属性 · ${preview.instances_after.summary.relationship_count} 条关系）</summary><p>待发布预览：包含本次发布后保留的完整实例及精确来源，并非数据库写入格式。</p><pre class="output-box">${escapeHtml(JSON.stringify(preview.instances_after,null,2))}</pre></details><details><summary>查看完整变更 JSON（审计：含保留记录、精确引用及发布后的完整清单）</summary><pre class="output-box">${escapeHtml(JSON.stringify(preview,null,2))}</pre></details><div class="workbench-actions"><button class="button" type="button" data-publication-back>返回编辑和确认实例</button></div>`;
       }
       async function previewKnowledgePublication() {
         if(state.reviewBusy || state.publicationBusy) return;
