@@ -30,7 +30,7 @@ def industrial_personas():
         (8, "工业 · 公开读者", ("public",), read),
         (9, "工业 · 工程师", ("engineering", "public"), read + ("knowledge:construct", "knowledge:review")),
         (10, "工业 · 维护人员", ("maintenance", "public"), read + ("knowledge:construct",)),
-        (11, "工业 · 知识管理员", ("engineering", "maintenance", "public"), PLAYGROUND_SCOPES + ("knowledge:graph:read",)),
+        (11, "工业 · 知识管理员", ("engineering", "maintenance", "public"), PLAYGROUND_SCOPES),
     )
     return tuple(PlaygroundPersona(f"persona-{number:02d}", f"local-industrial-{number:02d}",
                                   label, INDUSTRIAL_TENANT, groups, scopes)

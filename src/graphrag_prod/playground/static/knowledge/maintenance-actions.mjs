@@ -17,9 +17,9 @@ export function mountActions({api,epoch,browser,navigate,correctRecord,rollback,
   function open(title,content){reset();dialog.innerHTML=`<h3>${e(title)}</h3>${content}<p data-status role="status"></p><div class="kb-actions"><button class="button" data-close>关闭</button></div>`;dialog.querySelector('[data-close]').onclick=reset;dialog.showModal();return {id:serial,identity:epoch()};}
   const valid=pin=>pin.id===serial && pin.identity===epoch();
   function errorText(error){return error.status===403?'当前身份没有完整查看或维护这些知识的权限。':error.status===409?'版本、来源或权限已变化，或内容超出比较范围。请刷新后重试。':error.message;}
-  async function correct(recordId){
+  async function correct(recordId,revisionId=null){
     const pin={id:serial,identity:epoch()};const status=dialog.querySelector('[data-status]');
-    try{if(status)status.textContent='正在定位可编辑记录…';await correctRecord(recordId);if(valid(pin))reset();}
+    try{if(status)status.textContent='正在定位可编辑记录…';await correctRecord(recordId,revisionId);if(valid(pin))reset();}
     catch(error){if(valid(pin) && status)status.textContent=errorText(error);else if(pin.identity===epoch())toast(errorText(error));}
   }
   async function maintain(item){
@@ -41,7 +41,7 @@ export function mountActions({api,epoch,browser,navigate,correctRecord,rollback,
         let id=choice.record_id;
         if(!id){const result=await api('/v1/knowledge/graph:evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({view_token:token,revision_ids:[choice.revision_id]})});if(!valid(pin))return;id=result.items[0]?.record_id;}
         if(!id)throw new Error('未找到可访问的记录，请刷新知识。');
-        await correct(id);
+        await correct(id,choice.revision_id);
       }catch(error){if(valid(pin))dialog.querySelector('[data-status]').textContent=errorText(error);}
       finally{if(valid(pin))b.disabled=false;}
     });
@@ -50,7 +50,7 @@ export function mountActions({api,epoch,browser,navigate,correctRecord,rollback,
     summary.textContent=`当前生效：第 ${inventory.publication_generation} 版 · 当前筛选 ${inventory.matching_record_count} 条 / 已发布 ${inventory.total_record_count} 条${inventory.truncated?' · 本页达到上限，请按来源缩小范围':''}`;
     container.innerHTML=(inventory.items||[]).map((item,index)=>`<article class="kb-source"><label class="checkbox-label"><input type="checkbox" data-select="${index}" ${selected.has(item.revision_id)?'checked':''}><strong>${e(factTitle(item))}</strong></label><p>${item.authority_level==='AUTHORITATIVE'?'权威来源':'业务来源'} · 已发布 ${e(contextLabel({semantics:item.assertion?.literal}))}</p><p>来源片段 ${e(item.evidence?.ordinal)} · 字符 ${e(item.evidence?.char_start)}–${e(item.evidence?.char_end)}</p><div class="kb-actions"><button class="button" data-correct-record="${index}">修正这条知识</button><button class="button" data-history="${index}">查看修订历史</button></div><details><summary>技术详情与证据位置</summary><pre>${e(JSON.stringify({record_id:item.record_id,revision_id:item.revision_id,evidence:item.evidence,origin:item.origin},null,2))}</pre></details></article>`).join('')||'<p>当前筛选下没有已发布知识。</p>';
     container.querySelectorAll('[data-select]').forEach(b=>b.onchange=()=>onSelect(inventory.items[Number(b.dataset.select)],b.checked));
-    container.querySelectorAll('[data-correct-record]').forEach(b=>b.onclick=()=>{open('修正已发布知识',`<p>${e(factTitle(inventory.items[Number(b.dataset.correctRecord)]))}</p><p>开始后生成待修订记录，当前检查可能提示版本不一致。完成审核并重新发布后恢复一致。</p><button class="button primary" data-begin>开始修正</button>`);dialog.querySelector('[data-begin]').onclick=()=>correct(inventory.items[Number(b.dataset.correctRecord)].record_id);});
+    container.querySelectorAll('[data-correct-record]').forEach(b=>b.onclick=()=>{open('修正已发布知识',`<p>${e(factTitle(inventory.items[Number(b.dataset.correctRecord)]))}</p><p>开始后生成待修订记录，当前检查可能提示版本不一致。完成审核并重新发布后恢复一致。</p><button class="button primary" data-begin>开始修正</button>`);dialog.querySelector('[data-begin]').onclick=()=>correct(inventory.items[Number(b.dataset.correctRecord)].record_id,inventory.items[Number(b.dataset.correctRecord)].revision_id);});
     container.querySelectorAll('[data-history]').forEach(b=>b.onclick=()=>revisionHistory(inventory.items[Number(b.dataset.history)]));
   }
   async function revisionHistory(item){

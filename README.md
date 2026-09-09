@@ -27,6 +27,7 @@ cp -n .env.example .env
 - [中文最小演示、数据库隔离与重置](docs/playground_mini_demo.md)
 - [运行配置、provider 限制和故障处理](docs/local_playground.md)
 - [知识构建流程与来源等级](docs/knowledge_construction_workflow.md)
+- [实体档案、关系图谱、来源资料与质量维护](docs/knowledge_browsing.md)
 - [知识构建操作指南](docs/industrial_demo_walkthrough.md)
 - [工业工作台使用指南](docs/industrial_workbench.md)
 - [复用已有工业数据库与上传恢复](docs/industrial_runtime_and_uploads.md)
@@ -35,6 +36,10 @@ cp -n .env.example .env
 请填写自己的密钥并确认模型权限；API 核心通过依赖注入接入 provider。
 Playground 的检索页面返回 Chunk、出处、子图和检索轨迹；最终回答生成未在该页面启用。
 构建页面按需调用 chat model 抽取候选。
+
+知识管理分为“建立专家基准、扩充业务知识、知识浏览、质量与维护”。知识浏览
+提供实体档案、可探索的关系图谱和原文资料；维护提供问题核查、知识修正、
+移除影响预览以及发布版本比较。原文按需授权读取，修正经审核和发布后生效。
 
 ## 项目结构
 

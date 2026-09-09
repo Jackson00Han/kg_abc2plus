@@ -9,8 +9,61 @@ BROWSER = (ROOT / 'src/graphrag_prod/playground/static/knowledge/browser.mjs').a
 
 
 class KnowledgeBrowserTests(unittest.TestCase):
+    def test_every_ordinary_and_industrial_persona_issues_a_valid_unique_scope_token(self):
+        from graphrag_prod.api.auth import JWTAuthConfig, JWTAuthenticator
+        from graphrag_prod.playground import PlaygroundCatalog, PLAYGROUND_ISSUER, PLAYGROUND_AUDIENCE
+        from tests.fixtures.dev_corpus import load_dev_corpus_fixture
+        key=b'local-browser-persona-token-regression-key-2026'
+        catalog=PlaygroundCatalog(load_dev_corpus_fixture(),key,enable_industrial=True)
+        authenticator=JWTAuthenticator(JWTAuthConfig(issuer=PLAYGROUND_ISSUER,audience=PLAYGROUND_AUDIENCE,secret=key))
+        self.assertEqual(len(catalog.personas),11)
+        for persona in catalog.personas:
+            with self.subTest(persona=persona.persona_id):
+                self.assertEqual(len(persona.scopes),len(set(persona.scopes)))
+                identity=authenticator.verify_identity(catalog.issue_session(persona.persona_id)['access_token'])
+                self.assertEqual(identity.principal.tenant_id,persona.tenant_id)
+                self.assertEqual(identity.scopes,frozenset(persona.scopes))
+                self.assertIn('knowledge:graph:read',identity.scopes)
+
+    def test_browser_scope_refresh_clear_and_identity_invalidation(self):
+        self.js(f"import {{mountBrowser}} from {BROWSER!r};" + """
+const nodes=new Map();
+class Element {
+  constructor(){this.value='';this.hidden=false;this.children=new Map();this.open=false;}
+  set innerHTML(value){this.html=value;this.children.clear();}get innerHTML(){return this.html;}
+  querySelector(key){if(!this.children.has(key))this.children.set(key,new Element());return this.children.get(key);}
+  querySelectorAll(){return [];}setAttribute(){}addEventListener(){}append(){}appendChild(){}
+  replaceChildren(){this.html='';this.textContent='';}showModal(){this.open=true;}close(){this.open=false;}
+}
+globalThis.document={getElementById(id){if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);},createElement:()=>new Element(),body:new Element()};
+document.getElementById('kb-graph').hidden=true;
+let epoch=0,calls=[],defer=null;
+const response={view_token:'v',pin:{publication_id:'pub',publication_generation:2},schema:{relationship_types:[]},nodes:[{entity_id:'pump',label:'循环泵',entity_type:'InstalledAsset',mention_revision_ids:['mention']}],edges:[],literals:[],page:{has_more:false}};
+const browser=mountBrowser({api:async(url,options)=>{calls.push(JSON.parse(options.body));if(defer)return await new Promise(resolve=>defer=resolve);return response;},epoch:()=>epoch,maintain(){}});
+await browser.load({document_ids:['doc'],version_ids:['version']},'设备手册');
+assert.ok(document.getElementById('kb-scope').textContent.includes('设备手册'));
+assert.equal(document.getElementById('kb-clear-scope').hidden,false);
+await document.getElementById('kb-refresh').onclick();assert.deepEqual(calls[1].version_filter,{document_ids:['doc'],version_ids:['version']});
+await document.getElementById('kb-clear-scope').onclick();assert.deepEqual(calls[2].version_filter,{});assert.equal(document.getElementById('kb-clear-scope').hidden,true);
+browser.select('pump');assert.ok(document.getElementById('kb-dossier').innerHTML.includes('循环泵'));
+defer=true;const pending=browser.load();epoch++;browser.reset();defer(response);await pending;
+assert.equal(browser.getDirectory(),null);assert.equal(document.getElementById('kb-list').innerHTML,'');assert.ok(!document.getElementById('kb-dossier').textContent.includes('循环泵'));
+""")
+
     def test_maintenance_dialog_cancels_stale_preview_and_rechecks_removal_selection(self):
         path=(ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance-actions.mjs').as_uri()
+        # A stale displayed publication must not unapprove a newer review head.
+        page=(ROOT / 'src/graphrag_prod/playground/static/index.html').as_uri()
+        self.js(f"""
+import vm from 'node:vm';import fs from 'node:fs';
+const html=fs.readFileSync(new URL({page!r}),'utf8');
+const source=html.slice(html.indexOf('async function correctPublishedRecord('),html.indexOf('function publicationSelection('));
+const calls=[],state={{identityEpoch:0,reviewBusy:false,publicationBusy:false}};
+const context=vm.createContext({{state,elements:{{reviewList:{{querySelectorAll:()=>[]}}}},setReviewBusy:value=>state.reviewBusy=value,apiRequest:async(url,options)=>{{calls.push({{url,options}});return {{items:[{{record_id:'fact',revision_id:'new-reviewed',trust:{{status:'APPROVED'}}}}]}};}}}});
+vm.runInContext(source,context);
+await assert.rejects(vm.runInContext("correctPublishedRecord('fact','old-published')",context),/已有更新的审核版本/);
+assert.equal(calls.length,1);assert.equal(calls[0].options,undefined);assert.equal(state.reviewBusy,false);
+""")
         self.js(f"import {{mountActions}} from {path!r};" + """
 class Element {
   constructor(){this.children=new Map();this.open=false;this.dataset={};}
@@ -80,6 +133,8 @@ assert.equal(m.valueLabel({value:'1',semantics:{raw_value:'1',raw_unit:'MPa',can
 assert.equal(m.valueLabel({value:'37.5',semantics:{raw_value:'37.5',canonical_value:'37.5',canonical_unit:'kW'}}),'37.5 kW');
 assert.equal(m.valueLabel({value:'1 MPa',semantics:{raw_value:'1 MPa',canonical_value:'1000000',canonical_unit:'Pa'}}),'1 MPa');
 assert.ok(m.contextLabel({semantics:{observed_at:'2026-09-09'}}).includes('2026-09-09'));
+assert.ok(m.contextLabel({semantics:{raw_observed_at:'2026年9月9日',observed_at:'2026-09-09'}}).includes('2026年9月9日'));
+assert.equal(m.label('InstalledAsset'),'设备实例');assert.equal(m.label('MAY_INDICATE'),'可能关联');
 """)
 
     def test_browser_assets_are_allowlisted_and_not_cached(self):
@@ -90,7 +145,7 @@ assert.ok(m.contextLabel({semantics:{observed_at:'2026-09-09'}}).includes('2026-
         app = FastAPI()
         attach_playground_routes(app, PlaygroundCatalog(load_dev_corpus_fixture(), b"local-browser-test-key-at-least-thirty-two-bytes"))
         with TestClient(app) as client:
-            for name in ("browser.mjs", "model.mjs", "browser.css"):
+            for name in ("browser.mjs", "model.mjs", "browser.css", "sources.mjs", "graph-view.mjs", "maintenance.mjs", "maintenance-actions.mjs"):
                 response = client.get("/playground/assets/" + name)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["cache-control"], "no-store")
@@ -117,6 +172,8 @@ const report={publication_generation:1,passed:true,total_issue_count:1,total_err
 const html=qualityMarkup(report,{labels:{entity:'北辰一号泵站'}});
 assert.ok(html.includes('北辰一号泵站'));assert.ok(html.includes('未参与任何已发布属性或关系'));assert.ok(html.includes('自动规则通过不表示事实完整'));
 assert.ok(!html.includes('确定性人工复核样本'));
+const sampled=qualityMarkup({...report,review_sample:[{object_id:'entity',object_kind:'Entity',issue_codes:['ISOLATED_ENTITY'],evidence_chunk_ids:['chunk']} ]},{labels:{entity:'北辰一号泵站'}});
+assert.ok(sampled.includes('建议人工核查'));assert.ok(sampled.includes('不代表整个知识库的准确率'));assert.ok(sampled.includes('data-quality-sample="0"'));assert.ok(sampled.includes('核查：尚无属性或关系的实体'));
 const history=qualityMarkup(report,{historical:true,records:[{issue_id:'issue',decision:'NO_CHANGE_REQUIRED',recorded_by:'reviewer',recorded_at:'2026-09-09T00:00:00Z',notes:'<unsafe>'}]});
 assert.ok(history.includes('已核查，无需修正'));assert.ok(history.includes('&lt;unsafe&gt;'));assert.ok(!history.includes('data-quality-review='));
 """)

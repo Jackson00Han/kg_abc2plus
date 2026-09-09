@@ -257,7 +257,8 @@
         "009_knowledge_construction_schema.cypher": "9bc7b0a0383fae2860fc0aac498dd5d1b5cfe931a222612fe47aa2d5040c380e",
         "010_knowledge_publication_tbox_binding.cypher": "7238ce17bb8587231a0c4d8e85716345f8e9fa0af68d3c2560a45195083fcef6",
         "011_relationship_property_value_schema.cypher": "d5ee82b5666b629dc46c87854f453797a8fc0f446ba2e8514699e95fbade2292",
-        "012_published_quality_history_schema.cypher": "d7299f19b112ea8871944e86f9e0a3a3870d87bd7d5da2a6a6d999ad52aa7a13"
+        "012_published_quality_history_schema.cypher": "d7299f19b112ea8871944e86f9e0a3a3870d87bd7d5da2a6a6d999ad52aa7a13",
+        "013_quality_review_decisions.cypher": "3bb3fc92776c88a7e9382dff025f4ac632a7a3775d55de5256d620ef4e1ffe5f"
       },
       "knowledge_quality": {
         "asset_sha256": {
@@ -289,8 +290,8 @@
         "version": "1.0.0"
       },
       "security_manifest": {
-        "sha256": "5f7ca2ceba8ad6c4486cc3ebf797e94affb16bd0bc82811bd0615d2d03db3d09",
-        "version": "1.0.0"
+        "sha256": "1b1b5ab9c017773bde0ba8b308400e4c1efd394b9217756deec57a60314b7401",
+        "version": "1.1.0"
       }
     },
     "suite_passed_test_ids": {
@@ -461,6 +462,8 @@
         "test_provenance_neo4j.Neo4jProvenanceIntegrationTests.test_schema_is_structurally_valid_and_online",
         "test_provenance_neo4j.Neo4jProvenanceIntegrationTests.test_second_active_version_is_rejected_atomically",
         "test_provenance_neo4j.Neo4jProvenanceIntegrationTests.test_unpublished_or_unaccepted_evidence_is_invisible",
+        "test_publication_comparison_neo4j.PublicationComparisonNeo4jTests.test_complete_current_and_historical_comparison_and_denied_scope",
+        "test_publication_comparison_neo4j.PublicationComparisonNeo4jTests.test_published_correction_republishes_and_comparison_identifies_revision_change",
         "test_published_inventory_neo4j.PublishedInventoryNeo4jTests.test_authoritative_mixed_entity_and_literal_publication_is_inventory_safe",
         "test_published_inventory_neo4j.PublishedInventoryNeo4jTests.test_lists_exact_active_manifest_without_source_text",
         "test_published_inventory_neo4j.PublishedInventoryNeo4jTests.test_partial_acl_and_materialization_tampering_fail_closed",
@@ -476,6 +479,7 @@
         "test_published_quality_neo4j.PublishedGraphQualityNeo4jTests.test_navigation_and_relationship_property_tampering_is_detected",
         "test_published_quality_neo4j.PublishedGraphQualityNeo4jTests.test_no_active_publication_or_missing_tbox_binding_fails_closed",
         "test_published_quality_neo4j.PublishedGraphQualityNeo4jTests.test_partial_acl_is_rejected_without_partial_statistics",
+        "test_quality_review_neo4j.QualityReviewNeo4jTests.test_decision_persists_replays_preserves_report_and_rejects_changed_version",
         "test_retrieval_neo4j.Neo4jRetrievalIntegrationTests.test_acl_is_enforced_in_recall_graph_adjacency_and_final_context",
         "test_retrieval_neo4j.Neo4jRetrievalIntegrationTests.test_all_stage_1_question_classes_have_real_retrieval_cases",
         "test_retrieval_neo4j.Neo4jRetrievalIntegrationTests.test_citation_metadata_cannot_be_spoofed_by_chunk_properties",
@@ -490,7 +494,9 @@
         "test_retrieval_subgraph_neo4j.Neo4jEvidenceSubgraphIntegrationTests.test_projection_hard_limits_are_enforced_after_graph_expansion",
         "test_retrieval_subgraph_neo4j.Neo4jEvidenceSubgraphIntegrationTests.test_tenant_acl_and_active_lifecycle_boundaries_fail_closed",
         "test_retrieval_subgraph_neo4j.Neo4jEvidenceSubgraphIntegrationTests.test_typed_chinese_candidate_review_publication_and_projection_preserve_exact_source",
-        "test_retrieval_subgraph_neo4j.Neo4jEvidenceSubgraphIntegrationTests.test_version_filter_bounds_seed_and_cross_document_expansion"
+        "test_retrieval_subgraph_neo4j.Neo4jEvidenceSubgraphIntegrationTests.test_version_filter_bounds_seed_and_cross_document_expansion",
+        "test_source_library_neo4j.SourceLibraryNeo4jTests.test_corrupted_text_is_not_returned_and_partial_acl_hides_complete_source",
+        "test_source_library_neo4j.SourceLibraryNeo4jTests.test_ingested_source_without_published_graph_is_readable_and_version_pinned"
       ],
       "regression": [
         "test_evaluation_regression.EvaluationRegressionTests.test_split_gold_graph_and_conflict_runtime_results_are_perfect",
@@ -509,6 +515,7 @@
         "test_api_security.APISecurityTests.test_unknown_routes_collapse_to_one_low_cardinality_metric_label",
         "test_api_security.APISecurityTests.test_validation_errors_do_not_echo_protected_input",
         "test_graph_browsing_api.GraphBrowsingAPISecurityTests.test_changed_cursor_query_and_cross_identity_token_have_fixed_409",
+        "test_graph_browsing_api.GraphBrowsingAPISecurityTests.test_general_source_library_requires_read_scope_and_rejects_identity_injection",
         "test_graph_browsing_api.GraphBrowsingAPISecurityTests.test_http_graph_query_and_evidence_survive_real_mappingproxy_envelope",
         "test_graph_browsing_api.GraphBrowsingAPISecurityTests.test_new_routes_reject_identity_spoof_and_strict_limits_before_backend",
         "test_graph_browsing_api.GraphBrowsingAPISecurityTests.test_source_only_reader_can_list_and_preserve_exact_chunk_whitespace",
@@ -543,6 +550,8 @@
         "test_knowledge_api_security.KnowledgeAPISecurityTests.test_relationship_property_identity_and_canonical_values_are_server_owned",
         "test_knowledge_api_security.KnowledgeAPISecurityTests.test_upload_mime_and_base64_fail_closed_before_worker_submission",
         "test_knowledge_api_security.KnowledgeAPISecurityTests.test_valid_upload_uses_only_jwt_identity_in_bounded_envelope",
+        "test_quality_review_api.QualityReviewAPISecurityTests.test_publication_comparison_requires_publish_scope_and_validates_response",
+        "test_quality_review_api.QualityReviewAPISecurityTests.test_review_write_needs_both_scopes_and_cannot_spoof_actor_or_tenant",
         "test_reranking_api.RerankingAPISecurityTests.test_http_trace_exposes_separate_model_rank_and_actual_usage",
         "test_reranking_api.RerankingAPISecurityTests.test_internal_context_is_not_an_http_field",
         "test_reranking_api.RerankingAPISecurityTests.test_max_attempts_three_never_repeats_paid_provider_failures",
@@ -1189,6 +1198,17 @@
         "test_ingestion_plan.IngestionPlanTests.test_plan_rejects_mixed_document_access_snapshots",
         "test_ingestion_plan.IngestionPlanTests.test_snapshot_manifest_seals_material_chunk_and_derivation_metadata",
         "test_ingestion_plan.IngestionPlanTests.test_vector_order_is_part_of_request_and_artifact_fingerprints",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_browser_assets_are_allowlisted_and_not_cached",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_browser_scope_refresh_clear_and_identity_invalidation",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_collection_requires_every_page_and_rejects_changed_or_looping_cursor",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_entities_group_by_id_keep_parallel_facts_and_search_business_code",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_every_ordinary_and_industrial_persona_issues_a_valid_unique_scope_token",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_evidence_uses_unicode_offsets_escapes_markup_and_rejects_wrong_quote",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_graph_loading_pins_next_page_and_cancels_stale_identity",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_maintenance_comparison_preserves_raw_units_and_escapes_business_content",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_maintenance_dialog_cancels_stale_preview_and_rechecks_removal_selection",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_quality_display_names_explain_property_degree_and_keep_human_separate",
+        "test_knowledge_browser_ui.KnowledgeBrowserTests.test_raw_values_temporal_conditions_and_units_are_not_conflated",
         "test_knowledge_quality.KnowledgeQualityTests.test_all_core_datatypes_and_lossless_decimal_are_supported",
         "test_knowledge_quality.KnowledgeQualityTests.test_baseline_must_be_locked_exact_and_policy_is_bounded",
         "test_knowledge_quality.KnowledgeQualityTests.test_drift_detects_regression_even_when_absolute_thresholds_allow_it",
@@ -1442,6 +1462,8 @@
         "test_production_report_requests.ProductionReportRequestTests.test_configured_case_set_must_be_exactly_thirty_unique_cases",
         "test_production_report_requests.ProductionReportRequestTests.test_exact_configured_gold_cases_and_load_anchors_pass",
         "test_production_report_requests.ProductionReportRequestTests.test_gold_identity_expected_chunks_and_selection_are_fail_closed",
+        "test_publication_comparison.PublicationComparisonTests.test_record_identity_and_revision_changes_not_display_names",
+        "test_publication_comparison.PublicationComparisonTests.test_unknown_or_unbounded_publications_fail_before_metadata_query",
         "test_publication_groups.PublicationGroupTests.test_checkbox_group_and_text_selection_agree_and_review_does_not_restore_deselection",
         "test_publication_groups.PublicationGroupTests.test_late_candidate_refresh_cannot_restore_old_revision_or_revoked_identity",
         "test_publication_groups.PublicationGroupTests.test_return_to_review_removes_dependent_versions_and_blocks_publish_during_save",
@@ -1485,6 +1507,9 @@
         "test_quality_history_contracts.QualityHistoryContractTests.test_list_bounds_and_filters_are_strict",
         "test_quality_history_contracts.QualityHistoryContractTests.test_record_request_accepts_only_empty_server_owned_input",
         "test_quality_history_contracts.QualityHistoryContractTests.test_summary_rejects_mismatched_totals_duplicate_runs_and_secrets",
+        "test_quality_review.QualityReviewTests.test_notes_and_dual_permissions_are_required",
+        "test_quality_review.QualityReviewTests.test_operation_identity_is_tenant_and_actor_scoped",
+        "test_quality_review.QualityReviewTests.test_tampered_disposition_payload_is_not_returned",
         "test_reference_predictions.ReferencePredictionTests.test_asset_is_pinned_and_predictions_render_only_present_sources",
         "test_rerank_provider.RerankProviderTests.test_cached_identity_rechecks_query_order_metadata_and_score_checksum",
         "test_rerank_provider.RerankProviderTests.test_complete_intact_default_request_and_auditable_usage",
@@ -1571,6 +1596,9 @@
         "test_semantic_holdout.SemanticHoldoutLiveBoundaryTests.test_live_runner_counts_forbidden_ids_anywhere_in_trace",
         "test_semantic_holdout.SemanticHoldoutLiveBoundaryTests.test_live_runner_rejects_fixture_embedding_provider",
         "test_semantic_holdout.SemanticHoldoutLiveBoundaryTests.test_live_runner_sends_text_only_and_emits_no_source_or_answer_text",
+        "test_source_library.SourceLibraryTests.test_list_has_real_continuation_and_human_sources_keep_publication_gate",
+        "test_source_library.SourceLibraryTests.test_source_projection_checks_exact_checksum_and_rechecks_visibility",
+        "test_source_library.SourceLibraryTests.test_source_requests_reject_identity_injection_and_unbounded_reads",
         "test_source_token_boundaries.SourceTokenDownstreamTests.test_entity_literal_numeric_units_time_and_other_scripts_remain_strict",
         "test_source_token_boundaries.SourceTokenDownstreamTests.test_relationship_literal_numeric_units_time_and_other_scripts_remain_strict",
         "test_source_token_boundaries.SourceTokenDownstreamTests.test_relationship_typed_han_allows_exact_text_but_no_source_rewrite",
@@ -1579,6 +1607,7 @@
         "test_source_token_boundaries.SourceTokenDownstreamTests.test_shared_default_stays_strict_and_v6_boundary_version_is_unchanged",
         "test_source_token_boundaries.SourceTokenDownstreamTests.test_typed_han_literals_survive_audit_encoding_and_abox_conversion",
         "test_source_token_boundaries.SourceTokenDownstreamTests.test_untyped_han_is_rejected_by_provenance_and_governed_record",
+        "test_standardized_publication.StandardizedPublicationTests.test_complete_instances_preserve_multiple_facts_sources_and_order",
         "test_standardized_publication.StandardizedPublicationTests.test_editor_separates_identity_and_facts_and_protects_source_fields",
         "test_standardized_publication.StandardizedPublicationTests.test_fact_tabs_preserve_separate_review_lanes",
         "test_standardized_publication.StandardizedPublicationTests.test_preview_groups_same_entity_mentions_and_keeps_source_records",
@@ -1594,8 +1623,8 @@
   },
   "gold_version": "2.0.0",
   "profile_id": "dev-mini",
-  "rationale": "Entity-grouped publication selection retains every 1.13.0 test ID and adds 4 executable UI tests and 1 Neo4j publication lifecycle test. Source versions remain distinct while canonical entities are grouped; deselection, return-to-review dependencies and concurrent UI state are checked. Case digests, contract metrics, diagnostics and identities are unchanged. All dev-mini suites pass without skips; operational figures remain deterministic, non-qualifying fixtures.",
+  "rationale": "All deterministic quality, security, case, and version projections are exact. Dev-mini performance and cost remain non-qualifying observations.",
   "schema_version": "evaluation-baseline-v1",
-  "semantic_digest": "54408bfc553bba2c79b493dd66b1c52f82b00c7a96d605e0f541e0e965254f6a",
-  "version": "1.14.0"
+  "semantic_digest": "05337e55c79a283bb5e04920a0c51dded766b2e4e176bee324dd5c44d1ee6d9a",
+  "version": "1.15.0"
 }

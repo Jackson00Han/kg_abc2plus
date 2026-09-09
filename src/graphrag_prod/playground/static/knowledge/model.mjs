@@ -1,5 +1,5 @@
 /** Business projections only. Canonical IDs control grouping; revisions stay distinct. */
-export const LABELS = Object.freeze({Equipment:'设备',Site:'站点',Component:'部件',Organization:'组织',Person:'人员',Inspection:'巡检',Fault:'故障',MaintenanceAction:'维护措施',EquipmentCode:'设备编号',RatedPower:'额定功率',LOCATED_AT:'位于',INSTALLED_AT:'安装于',PART_OF:'组成于',HAS_COMPONENT:'包含部件',INSPECTED_BY:'检查人员',HAS_FAULT:'发生故障'});
+export const LABELS = Object.freeze({EquipmentClass:"设备类别",ProductFamily:"产品系列",ProductModel:"产品型号",Site:"场站",IndustrialSystem:"工业系统",InstalledAsset:"设备实例",Component:"部件",Symptom:"异常现象",FaultMode:"候选故障",DiagnosticCondition:"诊断条件",DiagnosticTest:"检查项目",MaintenanceAction:"维护活动",Observation:"观测记录",InspectionEvent:"巡检事件",SourceEdition:"来源版本",SUBTYPE_OF:"细分于",IN_FAMILY:"属于系列",CLASSIFIED_AS:"归类为",INSTANCE_OF:"对应型号",PART_OF:"组成于",INSTALLED_AT:"安装于",LOCATED_AT:"位于",CONNECTS_TO:"电气连接",HAS_SYMPTOM:"出现现象",MAY_INDICATE:"可能关联",CHECKED_BY:"检查依据",ADDRESSED_BY:"相关维护",OBSERVED_ON:"观测对象",OBSERVES:"包含观测",DESCRIBES:"描述现象",APPLIES_TO:"适用于",Manufacturer:"制造商",SerialNumber:"出厂编号",AssetCode:"设备编号",ModelNumber:"型号编号",RatedVoltage:"额定电压",RatedCurrent:"额定电流",RatedSpeed:"额定转速",Power:"功率",Pressure:"压力",Temperature:"温度",InspectionDate:"巡检日期",Company:"企业",Product:"产品",OFFERS:"提供",Equipment:'设备',Site:'站点',Component:'部件',Organization:'组织',Person:'人员',Inspection:'巡检',Fault:'故障',MaintenanceAction:'维护措施',EquipmentCode:'设备编号',RatedPower:'额定功率',LOCATED_AT:'位于',INSTALLED_AT:'安装于',PART_OF:'组成于',HAS_COMPONENT:'包含部件',INSPECTED_BY:'检查人员',HAS_FAULT:'发生故障'});
 export const label = key => LABELS[key] || key;
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function valueLabel(fact) {
@@ -11,7 +11,7 @@ export function valueLabel(fact) {
 }
 export function contextLabel(fact) {
   const s = fact.semantics || {};
-  return [['valid_from','起始'],['valid_to','截止'],['observed_at','观测时间']].filter(([k])=>s[k]).map(([k,l])=>`${l}：${s[k]}`).join(' · ');
+  return [['valid_from','起始'],['valid_to','截止'],['observed_at','观测时间']].filter(([k])=>s['raw_'+k]||s[k]).map(([k,l])=>`${l}：${s['raw_'+k]||s[k]}`).join(' · ');
 }
 export function dossiers(pages) {
   const nodes = new Map(), facts = new Map();

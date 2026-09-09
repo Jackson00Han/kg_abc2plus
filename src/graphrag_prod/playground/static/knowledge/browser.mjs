@@ -10,13 +10,13 @@ export function evidenceMarkup(item) {
   return `<article><h3>${e(c.document_title || c.source_name || '来源文档')}</h3><p>${e(c.source_name)} · 第 ${e(c.version_number ?? "未记录")} 版 · 片段 ${e(c.ordinal ?? c.chunk_ordinal ?? '')} · 字符 ${e(evidence.char_start)}–${e(evidence.char_end)}</p><p class="kb-muted">${item.authority_level==='AUTHORITATIVE'?'权威来源':'业务来源'} · ${e(origins[item.origin]||item.origin)} · 已发布；${item.reviewed_by?`审核人：${e(item.reviewed_by)}`:'未记录人工审核人'}</p><pre>${e(chars.slice(0,start).join(''))}<mark>${e(chars.slice(start,end).join(''))}</mark>${e(chars.slice(end).join(''))}</pre><details><summary>技术详情</summary><pre>${e(JSON.stringify({revision_id:item.revision_id,record_id:item.record_id,version_id:c.version_id,provenance:evidence.provenance},null,2))}</pre></details></article>`;
 }
 export function mountBrowser({api,epoch,maintain}) {
-  let directory=null,request=0,selected=null,page=0,active='entities',evidenceRequest=0,graph=null,sources=null;
+  let directory=null,request=0,selected=null,page=0,active='entities',scope={},scopeTitle='',evidenceRequest=0,graph=null,sources=null;
   const dialog=document.createElement('dialog');dialog.className='kb-evidence';dialog.setAttribute('aria-label','来源依据');
   dialog.innerHTML='<button class="button" type="button" data-close>关闭依据</button><div data-content></div>';document.body.append(dialog);
   dialog.querySelector('[data-close]').onclick=()=>{evidenceRequest++;dialog.close();};
   dialog.addEventListener('cancel',()=>{evidenceRequest++;});
   function current(id,identity){return id===request && identity===epoch();}
-  function reset(){request++;evidenceRequest++;directory=null;selected=null;page=0;graph?.clear();sources?.reset();dialog.close();dialog.querySelector('[data-content]').replaceChildren();$('kb-list').replaceChildren();$('kb-dossier').textContent='选择实体，查看属性、关系和来源。';$('kb-summary').textContent='请刷新知识，读取当前身份可访问的版本。';$('kb-search').value='';$('kb-type').innerHTML='<option value="">全部类型</option>';$('kb-prev').disabled=true;$('kb-next').disabled=true;$('kb-page').textContent='';}
+  function reset(){scope={};scopeTitle='';$('kb-scope').textContent='';$('kb-clear-scope').hidden=true;request++;evidenceRequest++;directory=null;selected=null;page=0;graph?.clear();sources?.reset();dialog.close();dialog.querySelector('[data-content]').replaceChildren();$('kb-list').replaceChildren();$('kb-dossier').textContent='选择实体，查看属性、关系和来源。';$('kb-summary').textContent='请刷新知识，读取当前身份可访问的版本。';$('kb-search').value='';$('kb-type').innerHTML='<option value="">全部类型</option>';$('kb-prev').disabled=true;$('kb-next').disabled=true;$('kb-page').textContent='';}
   async function evidence(ids,token=directory?.view_token){
     if(!token || !ids.length) return;
     const id=++evidenceRequest,identity=epoch(),content=dialog.querySelector('[data-content]');
@@ -47,7 +47,8 @@ export function mountBrowser({api,epoch,maintain}) {
     $('kb-page').textContent=`符合条件 ${result.total} 个实体 · 第 ${result.pages?result.page+1:0} / ${result.pages} 页`;
     $('kb-prev').disabled=result.page===0;$('kb-next').disabled=result.page+1>=result.pages;
   }
-  async function load(version_filter={}){
+  async function load(version_filter=scope,title=scopeTitle){
+    scope=version_filter;scopeTitle=title;$('kb-clear-scope').hidden=active==='sources'||!Object.keys(scope).length;$('kb-scope').textContent=Object.keys(scope).length?`来源范围：${title||'指定资料及版本'}`:'范围：当前身份可访问的已发布知识';
     const id=++request,identity=epoch();directory=null;selected=null;page=0;graph?.clear();evidenceRequest++;dialog.close();
     $('kb-list').replaceChildren();$('kb-dossier').textContent='正在读取完整实体资料…';$('kb-summary').textContent='正在读取当前授权知识范围…';
     try{
@@ -55,15 +56,15 @@ export function mountBrowser({api,epoch,maintain}) {
       directory=result;
       $('kb-type').innerHTML='<option value="">全部类型</option>'+[...new Set(result.items.map(n=>n.entity_type))].sort().map(t=>`<option value="${e(t)}">${e(label(t))}</option>`).join('');
       const properties=result.items.reduce((sum,n)=>sum+n.properties.length,0),edges=new Set(result.items.flatMap(n=>n.relations.map(f=>f.revision_id))).size;
-      $('kb-summary').textContent=`${result.pin.publication_id?`当前生效版本：第 ${result.pin.publication_generation} 版`:'当前尚无生效发布'} · 当前授权${Object.keys(version_filter).length?'筛选':''}范围：${result.items.length} 个实体 · ${properties} 条属性 · ${edges} 条关系`;
+      $('kb-summary').textContent=`${result.pin.publication_id?`本次读取：第 ${result.pin.publication_generation} 版`:'当前尚无生效发布'} · 当前授权${Object.keys(version_filter).length?'筛选':''}范围：${result.items.length} 个实体 · ${properties} 条属性 · ${edges} 条关系`;
       renderList();$('kb-dossier').textContent='选择实体，查看属性、关系和来源。';graph?.setDirectory(result);
     }catch(error){if(current(id,identity)){$('kb-summary').textContent=error.status===403?'当前身份没有知识浏览权限。':`知识读取失败：${error.message}。可按来源缩小范围后重试。`;$('kb-dossier').textContent='未显示不完整或过期的知识。';}}
   }
-  function tab(name){active=name;const home=$('kb-detail-home'),graphHome=$('kb-detail-graph');if(home && graphHome)(name==='graph'?graphHome:home).appendChild($('kb-dossier'));for(const view of ['entities','graph','sources']){$(`kb-${view}`).hidden=name!==view;$(`kb-tab-${view}`).setAttribute('aria-selected',String(name===view));}if(name==='graph')graph?.activate();if(name==='sources')sources?.activate();}
+  function tab(name){active=name;$('kb-filters').hidden=name==='sources';$('kb-clear-scope').hidden=name==='sources'||!Object.keys(scope).length;$('kb-scope').hidden=name==='sources';$('kb-refresh').hidden=name==='sources';const home=$('kb-detail-home'),graphHome=$('kb-detail-graph');if(home && graphHome)(name==='graph'?graphHome:home).appendChild($('kb-dossier'));for(const view of ['entities','graph','sources']){$(`kb-${view}`).hidden=name!==view;$(`kb-tab-${view}`).setAttribute('aria-selected',String(name===view));}if(name==='graph')graph?.activate();if(name==='sources')sources?.activate();}
   for(const view of ['entities','graph','sources'])$(`kb-tab-${view}`).onclick=()=>tab(view);
-  $('kb-refresh').onclick=()=>load();$('kb-search').oninput=()=>{page=0;renderList();};$('kb-type').onchange=()=>{page=0;renderList();};
+  $('kb-refresh').onclick=()=>load();$('kb-clear-scope').onclick=()=>load({},'');$('kb-search').oninput=()=>{page=0;renderList();};$('kb-type').onchange=()=>{page=0;renderList();};
   $('kb-prev').onclick=()=>{page--;renderList();};$('kb-next').onclick=()=>{page++;renderList();};
-  const controller = {activate(){if(!directory)return load();},reset,load,evidence,select,tab,getDirectory:()=>directory,
+  const controller = {activate(){if(active==='sources')sources?.activate();if(!directory)return load();if(active==='graph')graph?.activate();},reset,load,evidence,select,tab,getDirectory:()=>directory,
     attachGraph(value){graph=value;if(directory)graph.setDirectory(directory);if(active==='graph')graph.activate();},
     attachSources(value){sources=value;if(active==='sources')sources.activate();}};
   graph=mountGraph({api,epoch,browser:controller});

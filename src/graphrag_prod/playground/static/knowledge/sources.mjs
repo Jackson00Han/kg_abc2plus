@@ -15,7 +15,7 @@ export function mountSources({api,epoch,browser,maintain}){
       $('kb-source-list').querySelectorAll('[data-knowledge]').forEach(b=>b.onclick=()=>knowledge(rows[Number(b.dataset.knowledge)]));
     }catch(error){if(id===request && identity===epoch()){$('kb-source-summary').textContent=`资料读取失败：${error.message}`;$('kb-source-next').disabled=true;}}
   }
-  async function knowledge(r){browser.tab('entities');await browser.load({document_ids:[r.document_id],version_ids:[r.version_id]});}
+  async function knowledge(r){browser.tab('entities');await browser.load({document_ids:[r.document_id],version_ids:[r.version_id]},r.title);}
   async function openDocument(document_id,version_id,ordinal=0){
     const id=++detailRequest,identity=epoch();current=null;$('kb-source-detail').textContent='正在授权读取指定版本的原文…';
     try{const r=await api('/v1/knowledge/sources:read',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({document_id,version_id,ordinal})});if(id!==detailRequest || identity!==epoch())return;current=r;

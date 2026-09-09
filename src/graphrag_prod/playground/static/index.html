@@ -773,10 +773,21 @@
           <div class="workbench-head"><div><h2 id="knowledge-browser-title">知识浏览</h2><p>查找已发布实体，探索关联关系，核对原始依据。仅展示当前身份可访问的知识。</p></div><button class="button" id="kb-refresh" type="button">刷新知识</button></div>
           <div class="kb-tabs" role="tablist" aria-label="知识浏览视图"><button class="button" id="kb-tab-entities" role="tab" aria-selected="true" aria-controls="kb-entities">实体档案</button><button class="button" id="kb-tab-graph" role="tab" aria-selected="false" aria-controls="kb-graph">关系图谱</button><button class="button" id="kb-tab-sources" role="tab" aria-selected="false" aria-controls="kb-sources">来源资料</button></div>
           <p id="kb-summary" role="status">点击刷新知识，读取当前生效版本。</p>
-          <div class="kb-filters"><label>名称、别名或业务编号<input id="kb-search" maxlength="128" placeholder="例如：循环水泵 / BC-P-101"></label><label>实体类型<select id="kb-type"><option value="">全部类型</option></select></label></div>
+          <p class="kb-scope" id="kb-scope"></p><button class="button" id="kb-clear-scope" type="button" hidden>清除来源筛选</button><div class="kb-filters" id="kb-filters"><label>名称、别名或业务编号<input id="kb-search" maxlength="128" placeholder="例如：循环水泵 / BC-P-101"></label><label>实体类型<select id="kb-type"><option value="">全部类型</option></select></label></div>
           <div id="kb-entities" role="tabpanel" aria-labelledby="kb-tab-entities"><div class="kb-workspace"><div><div id="kb-list"></div><div class="kb-pagination"><button class="button" id="kb-prev" type="button">上一页</button><span id="kb-page"></span><button class="button" id="kb-next" type="button">下一页</button></div></div><div id="kb-detail-home"><aside id="kb-dossier" class="kb-dossier" aria-label="实体档案">选择实体，查看属性、关系和来源。</aside></div></div></div>
           <div id="kb-graph" role="tabpanel" aria-labelledby="kb-tab-graph" hidden><p>选择实体或刷新关系图谱，探索当前已发布关系。</p></div>
           <div id="kb-sources" role="tabpanel" aria-labelledby="kb-tab-sources" hidden><p>来源资料模块正在分阶段接入；可先通过实体档案查看已发布知识的原文依据。</p></div>
+        </section>
+
+        <section class="workbench-card full" id="maintenance-quality" data-construction-flow="maintenance" hidden aria-labelledby="quality-title">
+          <div class="workbench-head"><div><h2 id="quality-title">当前图谱质量检查</h2><p>检查当前版本的结构、来源关联与知识模型一致性，定位问题并记录人工核查结论。</p><details><summary>检查范围与证据</summary><p>质量报告绝不返回源文本；查看依据时另行授权读取。</p></details></div></div>
+          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="quality-refresh-button" type="button">检查当前版本</button><button class="button primary" id="quality-save-button" type="button">检查并保存报告</button></div>
+          <div class="history-list" id="quality-content" aria-live="polite"><div class="output-box">活动图谱质量尚未加载。</div></div>
+          <div class="output-box" id="quality-save-output" aria-live="polite">只有点击“检查并保存报告”才写入不可变质量记录；重复运行保留首次观察者和记录时间。</div>
+          <div class="field" style="margin-top:14px"><label for="quality-history-publication">按 Publication ID 筛选历史（可选）</label><input id="quality-history-publication" maxlength="256" placeholder="留空查看当前身份可见的最近 10 条记录"></div>
+          <div class="workbench-actions" style="justify-content:flex-start"><button class="button" id="quality-history-refresh-button" type="button">查看历史检查报告</button></div>
+          <div class="history-list" id="quality-history-list" aria-live="polite"><div class="output-box">审计历史尚未加载。</div></div>
+          <div class="history-list" id="quality-history-detail" aria-live="polite"><div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div></div>
         </section>
 
         <section class="workbench-card full" id="maintenance-inventory" data-construction-flow="maintenance" hidden aria-labelledby="inventory-title">
@@ -793,28 +804,17 @@
           <div class="history-list" id="inventory-list" aria-live="polite"><div class="output-box">已发布知识尚未加载。</div></div>
         </section>
 
-        <section class="workbench-card full" id="maintenance-quality" data-construction-flow="maintenance" hidden aria-labelledby="quality-title">
-          <div class="workbench-head"><div><h2 id="quality-title">当前图谱质量检查</h2><p>检查当前版本的结构、来源关联与知识模型一致性，定位问题并记录人工核查结论。</p><details><summary>检查范围与证据</summary><p>质量报告绝不返回源文本；查看依据时另行授权读取。</p></details></div></div>
-          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="quality-refresh-button" type="button">检查当前版本</button><button class="button primary" id="quality-save-button" type="button">检查并保存报告</button></div>
-          <div class="history-list" id="quality-content" aria-live="polite"><div class="output-box">活动图谱质量尚未加载。</div></div>
-          <div class="output-box" id="quality-save-output" aria-live="polite">只有点击“检查并保存报告”才写入不可变质量记录；重复运行保留首次观察者和记录时间。</div>
-          <div class="field" style="margin-top:14px"><label for="quality-history-publication">按 Publication ID 筛选历史（可选）</label><input id="quality-history-publication" maxlength="256" placeholder="留空查看当前身份可见的最近 10 条记录"></div>
-          <div class="workbench-actions" style="justify-content:flex-start"><button class="button" id="quality-history-refresh-button" type="button">查看历史检查报告</button></div>
-          <div class="history-list" id="quality-history-list" aria-live="polite"><div class="output-box">审计历史尚未加载。</div></div>
-          <div class="history-list" id="quality-history-detail" aria-live="polite"><div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div></div>
+        <section class="workbench-card full" id="maintenance-document-lifecycle" data-construction-flow="maintenance" hidden aria-labelledby="document-lifecycle-title">
+          <div class="workbench-head"><div><h2 id="document-lifecycle-title">来源资料维护</h2><p>核对来源资料及其知识引用。存在发布引用或审核任务时，先处理依赖再撤回；撤回后退出当前检索，原始资料和审核历史继续保留。</p><details><summary>撤回技术范围</summary><p>不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></details></div></div>
+          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="document-lifecycle-refresh-button" type="button">刷新活动文档</button></div>
+          <div class="exact-evidence" id="document-lifecycle-summary">实时授权视图尚未加载。</div>
+          <div class="history-list" id="document-lifecycle-list" aria-live="polite"><div class="output-box">活动文档尚未加载。</div></div>
         </section>
 
         <section class="workbench-card full" id="maintenance-history" data-construction-flow="maintenance" hidden aria-labelledby="history-title">
           <div class="workbench-head"><div><h2 id="history-title">发布与版本</h2><p>查看当前生效和历史版本。先比较知识变化，再确认回滚；服务器会重新校验来源、知识模型与生效版本。</p></div></div>
           <div class="workbench-actions"><button class="button" id="history-refresh-button" type="button">刷新历史</button></div>
           <div class="history-list" id="history-list" aria-live="polite"><div class="output-box">发布历史尚未加载。</div></div>
-        </section>
-
-        <section class="workbench-card full" id="maintenance-document-lifecycle" data-construction-flow="maintenance" hidden aria-labelledby="document-lifecycle-title">
-          <div class="workbench-head"><div><h2 id="document-lifecycle-title">来源资料维护</h2><p>核对来源资料及其知识引用。存在发布引用或审核任务时，先处理依赖再撤回；撤回后退出当前检索，原始资料和审核历史继续保留。</p><details><summary>撤回技术范围</summary><p>不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></details></div></div>
-          <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="document-lifecycle-refresh-button" type="button">刷新活动文档</button></div>
-          <div class="exact-evidence" id="document-lifecycle-summary">实时授权视图尚未加载。</div>
-          <div class="history-list" id="document-lifecycle-list" aria-live="polite"><div class="output-box">活动文档尚未加载。</div></div>
         </section>
       </div>
     </div>
@@ -1869,7 +1869,7 @@
           ? [['step-ontology', '01 保存并启用本体'], ['source-upload-slot', '02 上传权威文档并抽取'], ['step-abox', '03 编辑和确认实例'], ['baseline-publication-slot', '04 发布权威图谱']]
           : flow === 'business'
             ? [['business-upload-slot', '05 上传业务文档'], ['step-review', '06 编辑和确认实例'], ['step-publication', '07 发布业务知识']]
-            : flow === 'browse' ? [['knowledge-browser', '实体、关系与来源']] : [['maintenance-inventory', '知识与资料维护'], ['maintenance-quality', '图谱质量'], ['maintenance-history', '发布历史'], ['maintenance-document-lifecycle', '活动文档']];
+            : flow === 'browse' ? [['knowledge-browser', '实体、关系与来源']] : [['maintenance-quality', '质量检查'], ['maintenance-inventory', '知识与资料维护'], ['maintenance-history', '发布与版本']];
         $('construction-flow-description').textContent = flow === 'baseline'
           ? '先配置本体，再从权威文档抽取，编辑确认后发布权威图谱。'
           : flow === 'business'
@@ -2278,6 +2278,7 @@
           });
           if (identityEpoch !== state.identityEpoch) return;
           completeConstructionOperation();
+          state.knowledgeBrowser?.reset();
           showConstructionResult(payload);
           state.lastConstructionScope = metadata.knowledge_scope;
           state.lastConstructionMode = extractionMode;
@@ -3490,14 +3491,15 @@
 
       async function loadActiveDocuments() {
         const identityEpoch = state.identityEpoch;
+        const requestEpoch=state.activeDocumentRequestEpoch=(state.activeDocumentRequestEpoch||0)+1;
         elements.documentLifecycleSummary.textContent = '正在读取当前 JWT 完整可见的实时活动文档…';
         try {
           const payload = await apiRequest('/v1/knowledge/documents?limit=100');
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || requestEpoch!==state.activeDocumentRequestEpoch) return;
           state.activeDocuments = Array.isArray(payload.items) ? payload.items : [];
           renderActiveDocuments();
         } catch (error) {
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || requestEpoch!==state.activeDocumentRequestEpoch) return;
           state.activeDocuments = [];
           const message = error.status === 403
             ? '当前身份缺少 knowledge:lifecycle，或没有完整可见的活动文档。'
@@ -3555,6 +3557,7 @@
           try { sessionStorage.removeItem(operation.storageKey); } catch (_) {}
           if (identityEpoch !== state.identityEpoch) return;
           showToast(`文档已受治理撤回：${shortId(payload.document_id)} · corpus revision ${payload.corpus_revision}`);
+          state.knowledgeBrowser?.reset();
           resetRetrievalResult();
           await Promise.allSettled([loadActiveDocuments(), loadConstructionJobs(), loadReviews(), loadPublicationCandidates(), loadHistory(), loadInventory(), loadQuality(), loadQualityHistory()]);
         } catch (error) {
@@ -3594,7 +3597,7 @@
         finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
-      async function correctPublishedRecord(recordId) {
+      async function correctPublishedRecord(recordId, expectedRevisionId = null) {
         if(state.reviewBusy || state.publicationBusy)throw new Error('正在审核或发布，请稍候。');
         if([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled))throw new Error('请先保存或取消正在编辑的内容。');
         const identity=state.identityEpoch;
@@ -3603,9 +3606,11 @@
         try{
           let item=(await read()).items?.[0];if(identity!==state.identityEpoch)return;
           if(!item)throw new Error('没有找到可访问的知识记录。');
+          if(expectedRevisionId && item.revision_id!==expectedRevisionId && ['APPROVED','PUBLISHED'].includes(item.trust.status))throw new Error('已有更新的审核版本，请先刷新并核对修订历史。');
           if(['APPROVED','PUBLISHED'].includes(item.trust.status)){
             const payload=await apiRequest('/v1/knowledge/reviews:batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decisions:[{record_kind:item.record_kind,record_id:item.record_id,expected_revision:item.revision,decision:'QUARANTINED',notes:'从知识维护发起修正，等待重新审核与发布。'}]})});
-            if(identity!==state.identityEpoch)return;trackReviewedOutcomes(payload.outcomes||[]);invalidatePublicationPreview();
+            if(identity!==state.identityEpoch)return;state.knowledgeBrowser?.reset();
+          trackReviewedOutcomes(payload.outcomes||[]);invalidatePublicationPreview();
           }else if(!['CANDIDATE','QUARANTINED'].includes(item.trust.status))throw new Error('该记录不能直接修正，请刷新审核队列。');
           await Promise.allSettled([loadReviews(),loadPublicationCandidates()]);if(identity!==state.identityEpoch)return;
           item=(await read()).items?.[0];if(identity!==state.identityEpoch)return;
@@ -3680,6 +3685,7 @@
           output(elements.publicationOutput,payload);
           state.approvedRevisions.clear();state.selectedCandidateRevisions.clear();
           elements.publicationRevisions.value='';elements.publicationRemovals.value='';
+          state.knowledgeBrowser?.reset();
           showToast(`知识 ${shortId(payload.publication_id)} 已发布`);
           await Promise.allSettled([loadPublicationCandidates(),loadHistory(),loadInventory(),loadQuality(),loadQualityHistory(),loadActiveDocuments()]);
         } catch(error) {
@@ -3701,6 +3707,7 @@
           });
           if (identityEpoch !== state.identityEpoch) return;
           refreshReviewResolutions(identityEpoch);
+          state.knowledgeBrowser?.reset();
           showToast(`已回滚并激活 generation ${payload.generation}`);
           await Promise.allSettled([loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         } catch (error) {

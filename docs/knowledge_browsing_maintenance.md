@@ -49,7 +49,7 @@ Original values, units, temporal context and exact source positions are retained
 | B4 | Source catalogue and bidirectional knowledge navigation | 1,046 unit + 18 HTTP + 55 security + 2 Neo4j; exact text checks | Complete |
 | B5 | Readable quality checks and durable human dispositions | 1,050 unit + 18 HTTP + 56 security + real-Neo4j decision lifecycle | Complete |
 | B6 | Contextual corrections, removal impact, publication comparison | 1,054 unit + 18 HTTP + 57 security + 2 Neo4j lifecycle checks | Complete |
-| B7 | Unified states, visual QA and complete regression | Four business journeys, complete dev-mini checks | Pending |
+| B7 | Unified states, visual QA and complete regression | Two matching 1,314-test dev-mini workflows; live HTTP; visual QA unavailable | Automated complete; visual QA pending |
 
 Each completed step has its own checked commit pushed to origin/main. Validation
 results are appended here, with failures and limitations recorded honestly.
@@ -202,3 +202,98 @@ The corrected fixtures exercise valid publication operations. UI wording
 assertions were updated to the authorized Chinese redesign; behavioral guards
 remain tested. JavaScript, compilation and diff/secret checks passed. Chrome and
 in-app browser are both unavailable, so visual QA remains unverified.
+
+## B7 implementation and live checks
+
+The final pass aligns industrial entity/relation labels, preserves raw temporal
+wording, adapts dossiers and dialogs to the existing light/dark theme, and makes
+source filtering explicit, persistent on refresh and removable. Source controls
+and entity controls no longer overlap. Publication, correction and source changes
+invalidate cached browsing views. Maintenance cards follow their navigation order.
+
+Suggested human checks display business object names and related issue actions.
+The established sampler selects from issue-bearing objects; the UI explains that
+it is reproducible triage, not a population-accuracy estimate. Historical reports
+and their automatic findings remain immutable.
+
+Live HTTP checks found that adding general graph-read scopes had duplicated the
+industrial administrator's graph scope. The strict authenticator correctly rejected
+that JWT. The issuer now uses the shared scope tuple once; all eleven ordinary and
+industrial personas pass real signature/claim verification and exact scope checks.
+Authentication strictness and identity permissions were not weakened. Correction
+also pins the revision selected in the UI: an intervening approved/published
+revision is rejected before any write, instead of being silently quarantined.
+The final DOM guard checks and unit capture verify this concurrent-review case.
+
+The retained workbench was restarted on localhost:8002 with corpus reuse and provider
+warm-up skipped. Migration 013 only added its audit uniqueness/index definitions;
+record counts before and after the restart and read-only checks are identical.
+Initial readiness and one cold source read failed during concurrent validation;
+an unchanged retry passed without extending timeouts or changing corpus state.
+Provider connectivity was not tested by these read-only checks.
+
+The industrial administrator's live graph returned 66 entities, 80 relationships
+and 5 property records; source browsing, exact text, graph evidence, publication
+history and self-comparison all returned HTTP 200. Live quality returned a passing
+report with zero issues. No synthetic human decisions or publications were written
+to the retained user database. Temporary restart credentials were removed.
+
+Both browser entry points report unavailable. Executed module/DOM-state checks and
+live HTTP checks are not substitutes for screenshots or manual visual acceptance;
+visual QA remains open. Complete regression/baseline results follow below.
+
+### Reviewed baseline update
+
+Baseline 1.15.0 retains all prior business metrics and all previously passing test
+IDs. Its deterministic projection differs from 1.14.0 only in migration identity
+(additive migration 013), security-manifest identity and test coverage: 20 added
+unit tests, 5 added Neo4j tests and 3 added security tests. No prior migration hash,
+gold case, provider configuration, score, quality target or measured result changed.
+Security manifest 1.1.0 requires all 57 discovered security checks, strengthening
+the previous 11-check required subset. No negative test was removed.
+
+The capture passed 1,056 unit, 181 real-Neo4j, 57 security, 18 HTTP E2E and 2
+regression tests, plus the locked industrial knowledge-quality gate. The unit
+capture was refreshed after the live persona-token correction. The final baseline
+semantic digest is `05337e55c79a283bb5e04920a0c51dded766b2e4e176bee324dd5c44d1ee6d9a`.
+The capture report was rebuilt from its unchanged raw observations after assigning
+security-manifest version 1.1.0; the earlier console digest is superseded by the
+final report JSON. A fresh full workflow against this reviewed baseline is the
+final reproduction gate.
+
+### Existing-database upgrade
+
+New databases receive migration 013 through the existing schema workflow. Before
+reusing another retained database, apply
+`src/graphrag_prod/graph/migrations/013_quality_review_decisions.cypher` to that
+explicitly selected database and verify the schema. Both statements are additive
+and idempotent. The reuse launcher intentionally verifies rather than silently
+reinitializing an existing corpus; do not rerun fixture ingestion as an upgrade.
+
+Reproduce the final automated workflow with a new output directory:
+
+```sh
+uv run --locked python scripts/check_playground_assets.py
+sh scripts/run_stage8_validation.sh --repeat 2 --output-dir /tmp/knowledge-browsing-validation
+```
+
+This remains dev-mini validation with deterministic providers and owned disposable
+Neo4j containers. It does not renew the historical Stage 9 production qualification.
+
+### Final reproduction result
+
+The clean verification workflow passed 1,056 unit, 181 real-Neo4j, 57 security,
+18 HTTP E2E and 2 regression tests: 1,314 per workflow. The final unit artifact
+was refreshed after the concurrent-review UI guard. The two 181-test database
+runs took 1,434.254 and 1,375.864 seconds within unchanged dev-mini container caps.
+The locked industrial knowledge-quality gate passed in both runs.
+
+`compare_evaluation_reports.py` reproduced the final semantic digest exactly.
+Gold/corpus rebuild checks, acceptance/profile validation, locked dependency
+validation, source and wheel builds, compilation, shell syntax, all 13 first-party
+JavaScript/inline-script checks, whitespace and staged-secret checks passed.
+Both owned integration containers were removed; retained local databases remain.
+
+Implementation and automated verification are complete. Browser visual acceptance
+is still pending because neither browser surface is available in this session.
+No screenshot, responsive-layout inspection or manual graph interaction is claimed.
