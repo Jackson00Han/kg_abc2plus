@@ -46,7 +46,7 @@ Original values, units, temporal context and exact source positions are retained
 | B1 | Scope, terms, capability mapping and execution record | 1,037 unit + 18 HTTP E2E + 54 security; compile/diff/secret checks | Complete |
 | B2 | Four flows, entity dossiers and exact evidence | Executed JS, API/security contracts, existing suites | Complete |
 | B3 | Linked graph with separate model/loading/layout/rendering | 36 UI/module + 18 HTTP E2E + 54 security; syntax checks | Complete |
-| B4 | Source catalogue and bidirectional knowledge navigation | Source/version/permission and browser tests | Pending |
+| B4 | Source catalogue and bidirectional knowledge navigation | 1,046 unit + 18 HTTP + 55 security + 2 Neo4j; exact text checks | Complete |
 | B5 | Readable quality checks and durable human dispositions | Neo4j persistence, scope, replay and stale-version checks | Pending |
 | B6 | Contextual corrections, removal impact, publication comparison | Review/publication/retirement/rollback regression | Pending |
 | B7 | Unified states, visual QA and complete regression | Four business journeys, complete dev-mini checks | Pending |
@@ -127,3 +127,21 @@ browser/graph regression, 18 HTTP E2E and 54 security checks. JavaScript and inl
 script syntax and whitespace passed. No graph query authorization or expansion
 limits changed; B2's three Neo4j checks cover the reused backend. Live visual QA
 remains unavailable and is not inferred from these checks.
+
+## B4 implementation and validation
+
+`POST /v1/knowledge/sources:query` provides keyset-paged active source metadata;
+`POST /v1/knowledge/sources:read` reads one exact Chunk by document, expected
+version and ordinal. Both require retrieval read, not lifecycle write privileges.
+They reuse the active-source ownership/complete ACL predicates, retain the human
+publication gate, validate text location/checksum and recheck authorization before
+return. Lists expose only whether visible published records exist, not hidden
+record counts. The source view links both ways to dossiers and exact evidence.
+
+Passed: 1,046 unit tests, 48 final focused checks, 18 HTTP E2E, 55 security and two
+owned Neo4j checks (82.207 seconds). New HTTP success coverage caught whitespace
+stripping inherited from the generic DTO; the source field now explicitly
+preserves whitespace, and the complete relevant focused/security/E2E set was
+rerun successfully. The new security case's discovery placement was corrected
+and its exact test ID was executed before the complete 55-test run. JavaScript,
+compilation and diff checks passed. No original source data was modified.

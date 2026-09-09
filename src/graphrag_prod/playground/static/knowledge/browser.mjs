@@ -1,3 +1,4 @@
+import {mountSources} from './sources.mjs';
 import {mountGraph} from './graph-view.mjs';
 import {label,escape as e,valueLabel,contextLabel,entityPage,readDirectory} from './model.mjs';
 const $=id=>document.getElementById(id);
@@ -23,7 +24,8 @@ export function mountBrowser({api,epoch,maintain}) {
     try{
       const result=await api('/v1/knowledge/graph:evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({view_token:token,revision_ids:ids.slice(0,10)})});
       if(id!==evidenceRequest || identity!==epoch())return;
-      content.innerHTML=result.items.length?result.items.map(evidenceMarkup).join(''):'当前版本未找到可访问的依据，请刷新知识后重试。';
+      content.innerHTML=result.items.length?result.items.map((item,index)=>evidenceMarkup(item)+`<button class="button" data-source="${index}">查看所在资料</button>`).join(''):'当前版本未找到可访问的依据，请刷新知识后重试。';
+      content.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>{const c=result.items[Number(b.dataset.source)].evidence.citation;dialog.close();tab('sources');sources?.openDocument(c.document_id,c.version_id,c.ordinal);});
     }catch(error){if(id===evidenceRequest && identity===epoch())content.textContent=error.status===403?'当前身份没有查看该依据的权限。':error.status===409?'知识或来源权限已变化，请刷新知识。':`依据读取失败：${error.message}`;}
   }
   function select(entityId){
@@ -65,5 +67,6 @@ export function mountBrowser({api,epoch,maintain}) {
     attachGraph(value){graph=value;if(directory)graph.setDirectory(directory);if(active==='graph')graph.activate();},
     attachSources(value){sources=value;if(active==='sources')sources.activate();}};
   graph=mountGraph({api,epoch,browser:controller});
+  sources=mountSources({api,epoch,browser:controller,maintain});
   return controller;
 }

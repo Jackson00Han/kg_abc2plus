@@ -97,6 +97,8 @@ class OperationKind(str, Enum):
     KNOWLEDGE_INVENTORY = "knowledge_inventory"
     KNOWLEDGE_DOCUMENTS = "knowledge_documents"
     KNOWLEDGE_DOCUMENT_RETIRE = "knowledge_document_retire"
+    SOURCE_LIST = "source_list"
+    SOURCE_READ = "source_read"
     GRAPH_QUERY = "graph_query"
     GRAPH_EVIDENCE = "graph_evidence"
     INDUSTRIAL_SOURCES = "industrial_sources"
@@ -142,6 +144,8 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_QUALITY_RUN,
             self.KNOWLEDGE_INVENTORY,
             self.KNOWLEDGE_DOCUMENTS,
+            self.SOURCE_LIST,
+            self.SOURCE_READ,
             self.GRAPH_QUERY,
             self.GRAPH_EVIDENCE,
             self.INDUSTRIAL_SOURCES,
@@ -184,6 +188,8 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_INVENTORY: "knowledge:quality",
         OperationKind.KNOWLEDGE_DOCUMENTS: "knowledge:lifecycle",
         OperationKind.KNOWLEDGE_DOCUMENT_RETIRE: "knowledge:lifecycle",
+        OperationKind.SOURCE_LIST: "retrieval:read",
+        OperationKind.SOURCE_READ: "retrieval:read",
         OperationKind.GRAPH_QUERY: "knowledge:graph:read",
         OperationKind.GRAPH_EVIDENCE: "knowledge:graph:read",
         OperationKind.INDUSTRIAL_SOURCES: "retrieval:read",

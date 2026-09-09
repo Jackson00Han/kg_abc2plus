@@ -66,6 +66,7 @@ from .quality_history_contracts import (
     PublishedGraphQualityRunRequest,
     PublishedGraphQualityRunResponse,
 )
+from .source_contracts import SourceListRequest, SourceListResponse, SourceReadRequest, SourceReadResponse
 from .graph_contracts import (
     GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
     IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
@@ -1196,6 +1197,8 @@ class GraphRAGApplicationBackend:
 
         principal = _trusted_principal(envelope)
         graph_operations = {
+            OperationKind.SOURCE_LIST: (SourceListRequest, SourceListResponse, "library_list"),
+            OperationKind.SOURCE_READ: (SourceReadRequest, SourceReadResponse, "library_read"),
             OperationKind.GRAPH_QUERY: (GraphBrowseRequest, GraphBrowseResponse, "query"),
             OperationKind.GRAPH_EVIDENCE: (GraphEvidenceRequest, GraphEvidenceResponseEnvelope, "evidence"),
             OperationKind.INDUSTRIAL_SOURCES: (IndustrialSourcesRequest, IndustrialSourcesResponse, "source_list"),

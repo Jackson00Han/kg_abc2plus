@@ -150,6 +150,30 @@ class GraphBrowsingAPISecurityTests(unittest.TestCase):
             result = client.post("/v1/knowledge/graph:query", headers=self.auth, json={})
             self.assertEqual(result.status_code, 503)
 
+    def test_general_source_library_requires_read_scope_and_rejects_identity_injection(self):
+        calls=[]
+        def read(principal, **kwargs):
+            calls.append(principal)
+            if kwargs.get('document_id'):
+                text='  原文😀\n'
+                return dict(document_id='doc',version_id='version',version_number=1,title='资料',source_name='上传',canonical_uri='urn:test:source',chunk_count=1,chunk_id='chunk',ordinal=0,char_start=10,char_end=10+len(text),text=text,checksum=content_checksum(text),page_number=None,section=None)
+            return {"items":[],"has_more":False,"next_after":None}
+        with patch('graphrag_prod.knowledge.source_library.Neo4jSourceLibrary.read',side_effect=read):
+            with TestClient(_app(self.backend)) as client:
+                result=client.post('/v1/knowledge/sources:query',headers=self.auth,json={})
+                self.assertEqual(result.status_code,200,result.text)
+                self.assertEqual(calls[0].tenant_id,fixture.TENANT)
+                detail=client.post('/v1/knowledge/sources:read',headers=self.auth,json={'document_id':'doc','version_id':'version'})
+                self.assertEqual(detail.status_code,200,detail.text)
+                self.assertEqual(detail.json()['text'],'  原文😀\n')
+                for body in ({'tenant_id':'victim'},{'limit':101},{'after':True}):
+                    self.assertEqual(client.post('/v1/knowledge/sources:query',headers=self.auth,json=body).status_code,422)
+                for route,body in (('/v1/knowledge/sources:query',{}),('/v1/knowledge/sources:read',{'document_id':'doc','version_id':'version'})):
+                    self.assertEqual(client.post(route,json=body).status_code,401)
+                    headers=_headers(_token(scope='ontology:read'))
+                    self.assertEqual(client.post(route,headers=headers,json=body).status_code,403)
+        self.assertEqual(len(calls),2)
+
 
 if __name__ == "__main__":
     unittest.main()

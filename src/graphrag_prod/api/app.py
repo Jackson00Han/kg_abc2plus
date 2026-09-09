@@ -95,6 +95,7 @@ from .quality_history_contracts import (
     PublishedGraphQualityRunListResponse,
     PublishedGraphQualityRunResponse,
 )
+from .source_contracts import SourceListRequest, SourceListResponse, SourceReadRequest, SourceReadResponse
 from .graph_contracts import (
     GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
     IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
@@ -749,6 +750,14 @@ def create_app(
             OperationKind.ANSWER,
             body.model_dump(mode="python"),
         )
+
+    @app.post("/v1/knowledge/sources:query", response_model=SourceListResponse)
+    async def source_library_list(request: Request, body: SourceListRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.SOURCE_LIST, body.model_dump(mode="python"))
+
+    @app.post("/v1/knowledge/sources:read", response_model=SourceReadResponse)
+    async def source_library_read(request: Request, body: SourceReadRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.SOURCE_READ, body.model_dump(mode="python"))
 
     @app.post("/v1/knowledge/graph:query", response_model=GraphBrowseResponse)
     async def graph_query(request: Request, body: GraphBrowseRequest, identity: IdentityDependency) -> Any:

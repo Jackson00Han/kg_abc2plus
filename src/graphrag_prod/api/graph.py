@@ -10,6 +10,7 @@ from graphrag_prod.domain.access import Principal
 from graphrag_prod.graph.browse_models import GraphBrowseLimitExceeded, GraphViewChanged
 from graphrag_prod.retrieval.models import VersionFilter
 
+from .source_contracts import SourceListRequest, SourceListResponse, SourceReadRequest, SourceReadResponse
 from .graph_contracts import (
     GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
     IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
@@ -90,3 +91,15 @@ class Neo4jGraphOperations:
             return {"chunk": None if value is None else asdict(value)}
 
         return self._call(IndustrialSourceChunkEnvelope, execute)
+
+    def _library(self):
+        from graphrag_prod.knowledge.source_library import Neo4jSourceLibrary
+        return Neo4jSourceLibrary(self.browser.driver, self.browser.database)
+
+    def library_list(self, principal: Principal, request: SourceListRequest) -> BackendResult:
+        self._require(principal, "retrieval:read")
+        return self._call(SourceListResponse, lambda: self._library().read(principal, after=request.after, limit=request.limit))
+
+    def library_read(self, principal: Principal, request: SourceReadRequest) -> BackendResult:
+        self._require(principal, "retrieval:read")
+        return self._call(SourceReadResponse, lambda: self._library().read(principal, document_id=request.document_id, version_id=request.version_id, ordinal=request.ordinal))
