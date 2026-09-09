@@ -504,7 +504,7 @@ def attach_playground_routes(
     @app.get("/playground/assets/{asset_name}", include_in_schema=False)
     async def knowledge_asset(asset_name: str) -> Response:
         from fastapi import HTTPException
-        allowed = {"browser.mjs", "model.mjs", "browser.css", "graph-view.mjs", "sources.mjs", "maintenance.mjs"}
+        allowed = {"browser.mjs", "model.mjs", "browser.css", "graph-view.mjs", "sources.mjs", "maintenance.mjs", "maintenance-actions.mjs"}
         if asset_name not in allowed:
             raise HTTPException(status_code=404, detail="asset not found")
         asset = files("graphrag_prod.playground").joinpath("static", "knowledge", asset_name)

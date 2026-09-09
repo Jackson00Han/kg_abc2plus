@@ -90,6 +90,7 @@ from .runtime import (
     classify_exception,
     required_scope,
 )
+from .publication_comparison_contracts import PublicationComparisonRequest, PublicationComparisonResponse
 from .quality_review_contracts import QualityReviewRequest, QualityReviewResponse, QualityReviewListRequest, QualityReviewListResponse
 from .quality_history_contracts import (
     PublishedGraphQualityRecordRequest,
@@ -1114,6 +1115,10 @@ def create_app(
             OperationKind.KNOWLEDGE_INVENTORY,
             {"document_id": document_id, "limit": limit},
         )
+
+    @app.post("/v1/knowledge/publications:compare", response_model=PublicationComparisonResponse)
+    async def compare_publications(request: Request, body: PublicationComparisonRequest, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.PUBLICATION_COMPARISON, body.model_dump(mode="python"))
 
     @app.post("/v1/knowledge/quality/reviews", response_model=QualityReviewResponse)
     async def record_quality_review(request: Request, body: QualityReviewRequest, identity: IdentityDependency) -> Any:

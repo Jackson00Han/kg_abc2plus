@@ -159,6 +159,7 @@ from .runtime import (
     RequestValidationError,
     ResourceNotFoundError,
 )
+from .publication_comparison_contracts import PublicationComparisonRequest, PublicationComparisonResponse
 from .quality_review_contracts import QualityReviewRequest, QualityReviewResponse, QualityReviewListRequest, QualityReviewListResponse
 from .quality_history_contracts import (
     PublishedGraphQualityRunListRequest,
@@ -2141,6 +2142,17 @@ class Neo4jKnowledgeOperations:
         _require_capability(principal, "knowledge:quality")
         value=self._quality_history_call(Neo4jQualityReviewService(self.quality_history_service).list, principal, request.run_id)
         return BackendResult(_outbound(QualityReviewListResponse, value))
+
+    def publication_comparison(self, principal: Principal, request: PublicationComparisonRequest) -> BackendResult:
+        from graphrag_prod.knowledge.publication_comparison import publication_comparison
+        _require_capability(principal, "knowledge:publish")
+        try:
+            value=publication_comparison(self.publications,principal,request.target_publication_id,request.expected_active_publication_id)
+        except KnowledgePublicationConflict as error:
+            raise ConflictError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(PublicationComparisonResponse,value))
 
 
 __all__ = ["Neo4jKnowledgeOperations"]

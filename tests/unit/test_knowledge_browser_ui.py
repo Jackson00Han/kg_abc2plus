@@ -9,6 +9,38 @@ BROWSER = (ROOT / 'src/graphrag_prod/playground/static/knowledge/browser.mjs').a
 
 
 class KnowledgeBrowserTests(unittest.TestCase):
+    def test_maintenance_dialog_cancels_stale_preview_and_rechecks_removal_selection(self):
+        path=(ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance-actions.mjs').as_uri()
+        self.js(f"import {{mountActions}} from {path!r};" + """
+class Element {
+  constructor(){this.children=new Map();this.open=false;this.dataset={};}
+  set innerHTML(value){this.html=value;this.children.clear();}get innerHTML(){return this.html;}
+  querySelector(key){if(!this.children.has(key))this.children.set(key,new Element());return this.children.get(key);}
+  querySelectorAll(key){if(key==='[data-compare]'){const b=this.querySelector(key);b.dataset.compare='0';return [b];}return [];}
+  setAttribute(){}addEventListener(){}replaceChildren(){this.children.clear();this.html='';}showModal(){this.open=true;}close(){this.open=false;}
+}
+const dialogs=[];globalThis.document={createElement:()=>{const d=new Element();dialogs.push(d);return d;},body:{append(){}}};
+let epoch=0,commits=0,current=true;const calls=[];
+const actions=mountActions({api:(url,options)=>new Promise(resolve=>calls.push({url,body:JSON.parse(options.body),resolve})),epoch:()=>epoch,browser:{},navigate(){},correctRecord(){},rollback(){throw new Error('must not roll back');},toast(){}});
+actions.removals([{entity:{display_name:'Pump'}}],()=>commits++,()=>current);
+const d=dialogs[0];current=false;d.querySelector('[data-stage]').onclick();assert.equal(commits,0);assert.ok(d.open);
+current=true;d.querySelector('[data-stage]').onclick();assert.equal(commits,1);assert.equal(d.open,false);
+const container=new Element();actions.history([{publication_id:'old',status:'HISTORICAL',generation:1,published_revision_ids:[]},{publication_id:'active',status:'ACTIVE',generation:2,published_revision_ids:[]}],container);
+container.querySelector('[data-compare]').onclick();assert.equal(calls[0].body.expected_active_publication_id,'active');
+actions.reset();epoch++;calls[0].resolve({added:[],removed:[],changed:[],unchanged_count:0});await new Promise(resolve=>setImmediate(resolve));
+assert.equal(d.open,false);assert.equal(d.innerHTML,'');
+""")
+
+    def test_maintenance_comparison_preserves_raw_units_and_escapes_business_content(self):
+        path=(ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance-actions.mjs').as_uri()
+        self.js(f"import {{factTitle,comparisonMarkup}} from {path!r};" + """
+const fact={subject_name:'Pump <script>',record_kind:'ASSERTION',predicate:'RatedPower',literal_value:'37.5',unit:'kW',document_title:'Manual'};
+assert.equal(factTitle(fact),'Pump <script> · 额定功率 · 37.5 kW');
+const html=comparisonMarkup({added:[fact],removed:[],changed:[{before:fact,after:{...fact,literal_value:'40'}}],unchanged_count:2});
+assert.ok(html.includes('37.5 kW'));assert.ok(html.includes('40 kW'));assert.ok(html.includes('新增 1 条'));
+assert.ok(!html.includes('<script>'));assert.ok(html.includes('&lt;script&gt;'));
+""")
+
     def js(self, scenario):
         script = f"import assert from 'node:assert/strict'; import * as m from {MODEL!r}; import {{evidenceMarkup}} from {BROWSER!r};\n" + scenario
         result = subprocess.run(['node','--input-type=module','-e',script], capture_output=True, text=True, timeout=15)

@@ -780,17 +780,17 @@
         </section>
 
         <section class="workbench-card full" id="maintenance-inventory" data-construction-flow="maintenance" hidden aria-labelledby="inventory-title">
-          <div class="workbench-head"><div><h2 id="inventory-title">活动 A-Box 清单</h2><p>检查唯一 active publication 中经过质量校验的实体与断言。清单只返回有界治理元数据和精确证据位置，不返回证据正文；勾选 revision 后会把对应稳定 record ID 加入 06“发布业务知识”的移除列表。</p></div></div>
+          <div class="workbench-head"><div><h2 id="inventory-title">已发布知识维护</h2><p>选择具体属性、关系或来源提及进行修正，或预览从下一版本移除的影响。修正内容需要重新审核并发布；资料撤回请到下方来源资料维护。</p><details><summary>清单读取范围</summary><p>只返回有界治理元数据和精确证据位置；查看原文另行授权读取。</p></details></div></div>
           <div class="field-grid">
-            <div class="field"><label for="inventory-document-filter">按 Document ID 筛选（可选）</label><input id="inventory-document-filter" maxlength="256" placeholder="留空查看完整活动清单"></div>
+            <div class="field"><label for="inventory-document-filter">按来源编号筛选（可从来源资料带入）</label><input id="inventory-document-filter" maxlength="256" placeholder="留空查看完整活动清单"></div>
             <div class="field"><label for="inventory-limit">返回记录上限（1–500）</label><input id="inventory-limit" type="number" min="1" max="500" step="1" value="100"></div>
           </div>
           <div class="workbench-actions" style="justify-content:flex-start">
-            <button class="button" id="inventory-refresh-button" type="button">刷新活动清单</button>
-            <button class="button danger" id="inventory-add-removals-button" type="button">将勾选记录加入移除列表</button>
+            <button class="button" id="inventory-refresh-button" type="button">刷新已发布知识</button>
+            <button class="button danger" id="inventory-add-removals-button" type="button">预览移除影响</button>
           </div>
-          <div class="exact-evidence" id="inventory-summary">活动 A-Box 尚未加载。</div>
-          <div class="history-list" id="inventory-list" aria-live="polite"><div class="output-box">活动 A-Box 尚未加载。</div></div>
+          <div class="exact-evidence" id="inventory-summary">已发布知识尚未加载。</div>
+          <div class="history-list" id="inventory-list" aria-live="polite"><div class="output-box">已发布知识尚未加载。</div></div>
         </section>
 
         <section class="workbench-card full" id="maintenance-quality" data-construction-flow="maintenance" hidden aria-labelledby="quality-title">
@@ -805,13 +805,13 @@
         </section>
 
         <section class="workbench-card full" id="maintenance-history" data-construction-flow="maintenance" hidden aria-labelledby="history-title">
-          <div class="workbench-head"><div><h2 id="history-title">发布历史与回滚</h2><p>回滚会创建受预期 active publication 保护的新激活状态。</p></div></div>
+          <div class="workbench-head"><div><h2 id="history-title">发布与版本</h2><p>查看当前生效和历史版本。先比较知识变化，再确认回滚；服务器会重新校验来源、知识模型与生效版本。</p></div></div>
           <div class="workbench-actions"><button class="button" id="history-refresh-button" type="button">刷新历史</button></div>
           <div class="history-list" id="history-list" aria-live="polite"><div class="output-box">发布历史尚未加载。</div></div>
         </section>
 
         <section class="workbench-card full" id="maintenance-document-lifecycle" data-construction-flow="maintenance" hidden aria-labelledby="document-lifecycle-title">
-          <div class="workbench-head"><div><h2 id="document-lifecycle-title">活动文档与受治理撤回</h2><p>仅列出当前身份完整可见、来源链闭合的活动文档元数据。撤回会解除活动版本、检索范围与向量 generation，不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></div></div>
+          <div class="workbench-head"><div><h2 id="document-lifecycle-title">来源资料维护</h2><p>核对来源资料及其知识引用。存在发布引用或审核任务时，先处理依赖再撤回；撤回后退出当前检索，原始资料和审核历史继续保留。</p><details><summary>撤回技术范围</summary><p>不会物理删除 source、Chunk、审核 revision 或 publication 审计记录。</p></details></div></div>
           <div class="workbench-actions" style="justify-content:flex-start;margin-top:0"><button class="button" id="document-lifecycle-refresh-button" type="button">刷新活动文档</button></div>
           <div class="exact-evidence" id="document-lifecycle-summary">实时授权视图尚未加载。</div>
           <div class="history-list" id="document-lifecycle-list" aria-live="polite"><div class="output-box">活动文档尚未加载。</div></div>
@@ -1376,6 +1376,7 @@
         state.publications = [];
         state.knowledgeBrowser?.reset();
         state.qualityPresenter?.reset();
+        state.maintenanceActions?.reset();
         invalidateInventory();
         state.quality = null;
         state.qualityEpoch += 1;
@@ -1397,8 +1398,8 @@
         elements.publicationRevisions.value = '';
         elements.publicationRemovals.value = '';
         state.reviewBusy=false;state.publicationBusy=false;renderPublicationCandidates();
-        elements.inventorySummary.textContent = '活动 A-Box 尚未加载。';
-        elements.inventoryList.innerHTML = '<div class="output-box">活动 A-Box 尚未加载。</div>';
+        elements.inventorySummary.textContent = '已发布知识尚未加载。';
+        elements.inventoryList.innerHTML = '<div class="output-box">已发布知识尚未加载。</div>';
         elements.qualityContent.innerHTML = '<div class="output-box">活动图谱质量尚未加载。</div>';
         elements.documentLifecycleSummary.textContent = '实时授权视图尚未加载。';
         elements.documentLifecycleList.innerHTML = '<div class="output-box">活动文档尚未加载。</div>';
@@ -3132,6 +3133,7 @@
       }
 
       function renderHistory() {
+        if(state.maintenanceActions){state.maintenanceActions.history(state.publications,elements.historyList);return;}
         if (!state.publications.length) {
           elements.historyList.innerHTML = '<div class="output-box">当前租户尚无知识 publication。</div>';
           return;
@@ -3145,13 +3147,14 @@
 
       async function loadHistory() {
         const identityEpoch = state.identityEpoch;
+        const requestEpoch=state.historyRequestEpoch=(state.historyRequestEpoch||0)+1;
         try {
           const payload = await apiRequest('/v1/knowledge/publications?limit=100');
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || requestEpoch!==state.historyRequestEpoch) return;
           state.publications = Array.isArray(payload.items) ? payload.items : [];
           renderHistory();
         } catch (error) {
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || requestEpoch!==state.historyRequestEpoch) return;
           elements.historyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
       }
@@ -3210,10 +3213,11 @@
       function renderInventory() {
         const inventory = state.activeInventory;
         if (!inventory) {
-          elements.inventorySummary.textContent = '活动 A-Box 尚未加载。';
-          elements.inventoryList.innerHTML = '<div class="output-box">活动 A-Box 尚未加载。</div>';
+          elements.inventorySummary.textContent = '已发布知识尚未加载。';
+          elements.inventoryList.innerHTML = '<div class="output-box">已发布知识尚未加载。</div>';
           return;
         }
+        if(state.maintenanceActions){state.maintenanceActions.inventory(inventory,elements.inventoryList,elements.inventorySummary,state.selectedInventoryRevisions,(item,checked)=>{if(checked)state.selectedInventoryRevisions.add(item.revision_id);else state.selectedInventoryRevisions.delete(item.revision_id);});return;}
         const filter = inventory.document_id ? ` · Document filter ${inventory.document_id}` : '';
         elements.inventorySummary.textContent = `active publication generation ${inventory.publication_generation} · ${inventory.publication_id} · T-Box ${inventory.ontology_version_id} · manifest ${inventory.manifest_hash} · ${number(inventory.matching_record_count)} / ${number(inventory.total_record_count)} records${filter}${inventory.truncated ? ' · 返回列表已按 limit 截断' : ''}`;
         if (!Array.isArray(inventory.items) || !inventory.items.length) {
@@ -3250,14 +3254,14 @@
         const documentId = elements.inventoryDocumentFilter.value.trim();
         const limit = Number(elements.inventoryLimit.value);
         if (!elements.inventoryLimit.checkValidity() || !Number.isSafeInteger(limit)) {
-          elements.inventorySummary.textContent = '活动 A-Box 参数无效。';
+          elements.inventorySummary.textContent = '知识清单参数无效。';
           elements.inventoryList.innerHTML = '<div class="output-box">返回记录上限必须是 1–500 的整数。</div>';
           return;
         }
         const params = new URLSearchParams({limit: String(limit)});
         if (documentId) params.set('document_id', documentId);
-        elements.inventorySummary.textContent = '正在校验并读取完整 active publication…';
-        elements.inventoryList.innerHTML = '<div class="output-box">正在读取有界活动 A-Box 清单…</div>';
+        elements.inventorySummary.textContent = '正在校验当前生效版本…';
+        elements.inventoryList.innerHTML = '<div class="output-box">正在读取已发布知识清单…</div>';
         try {
           const payload = await apiRequest(`/v1/knowledge/publication-inventory?${params.toString()}`);
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.inventoryEpoch) return;
@@ -3275,7 +3279,7 @@
               : error.status === 503
                 ? '活动 A-Box 清单依赖暂不可用；未返回或缓存部分图谱。'
                 : error.message;
-          elements.inventorySummary.textContent = '活动 A-Box 实时授权视图不可用。';
+          elements.inventorySummary.textContent = '已发布知识清单暂不可用；可从质量检查定位问题。';
           elements.inventoryList.innerHTML = `<div class="output-box">${escapeHtml(message)}</div>`;
         }
       }
@@ -3301,7 +3305,13 @@
         }
       }
 
-      function addInventoryRemovals() {
+      function addInventoryRemovals(confirmed = false) {
+        if(state.maintenanceActions && confirmed!==true){
+          const inventory=state.activeInventory,epoch=state.inventoryEpoch,identity=state.identityEpoch;
+          const selected=(inventory?.items||[]).filter(i=>state.selectedInventoryRevisions.has(i.revision_id));
+          if(!selected.length){showToast('请先选择要移除的知识');return;}
+          state.maintenanceActions.removals(selected,()=>{addInventoryRemovals(true);void previewPublication();},()=>inventory===state.activeInventory && epoch===state.inventoryEpoch && identity===state.identityEpoch && selected.length===state.selectedInventoryRevisions.size && selected.every(i=>state.selectedInventoryRevisions.has(i.revision_id)));return;
+        }
         const items = state.activeInventory?.items || [];
         const selectedRecordIds = items
           .filter(item => state.selectedInventoryRevisions.has(item.revision_id))
@@ -3313,7 +3323,7 @@
         elements.publicationRemovals.value = recordIds.join('\n');
         showConstructionFlow('business', 'step-publication');
         elements.publicationRemovals.focus();
-        showToast(`已将 ${selectedRecordIds.length} 个稳定 record ID 加入 06“发布业务知识”的移除列表`);
+        showToast(`已将 ${selectedRecordIds.length} 条知识加入待移除清单`);
       }
 
       function renderQuality() {
@@ -3450,15 +3460,15 @@
       }
 
       const documentBlockerLabels = {
-        ACTIVE_KNOWLEDGE_PUBLICATION: '活动 publication 仍引用此文档',
-        CURRENT_REVIEW: '仍有当前候选 / 审核 revision',
+        ACTIVE_KNOWLEDGE_PUBLICATION: '当前生效知识仍引用此资料，请先在已发布知识维护中移除相关知识并发布',
+        CURRENT_REVIEW: '仍有待处理的候选或审核记录，请先完成审核处置',
         ACTIVE_CONSTRUCTION_JOB: '知识构建任务仍在运行',
         ACTIVE_INGESTION_JOB: '文档写入任务仍在运行',
       };
 
       function renderActiveDocuments() {
         const visibleChunks = state.activeDocuments.reduce((total, item) => total + Number(item.chunk_count || 0), 0);
-        elements.documentLifecycleSummary.textContent = `当前 JWT 完整可见的实时活动数据：${number(state.activeDocuments.length)} Documents · ${number(visibleChunks)} Chunks（有界读取最多 100 Documents）`;
+        elements.documentLifecycleSummary.textContent = `当前可维护来源：${number(state.activeDocuments.length)} 份资料 · ${number(visibleChunks)} 个片段（最多显示 100 份）`;
         if (!state.activeDocuments.length) {
           elements.documentLifecycleList.innerHTML = '<div class="output-box">当前身份没有完整可见的活动文档。</div>';
           return;
@@ -3466,12 +3476,12 @@
         elements.documentLifecycleList.innerHTML = state.activeDocuments.map((item, index) => {
           const blockers = Array.isArray(item.blocker_codes) ? item.blocker_codes : [];
           const blockerMarkup = blockers.length
-            ? `<div class="exact-evidence"><strong>撤回阻塞：</strong> ${blockers.map(code => `${escapeHtml(code)} · ${escapeHtml(documentBlockerLabels[code] || '未知稳定阻塞码')}`).join('<br>')}</div>`
-            : '<div class="exact-evidence"><strong>可撤回：</strong> 未发现活动 publication、当前审核记录或运行中任务。</div>';
+            ? `<div class="exact-evidence"><strong>撤回阻塞：</strong> ${blockers.map(code => `${escapeHtml(documentBlockerLabels[code] || '存在未识别的治理阻塞，请查看技术详情')}`).join('<br>')}</div>`
+            : '<div class="exact-evidence"><strong>可撤回：</strong> 未发现生效知识引用、待处理审核记录或运行中任务。</div>';
           const action = item.blocked
             ? ''
             : `<div class="workbench-actions"><button class="button danger" type="button" data-retire-document="${index}">确认撤回此活动文档</button></div>`;
-          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.title)} · ${escapeHtml(shortId(item.document_id))}</strong><p>${escapeHtml(item.source_name)} · ${escapeHtml(item.canonical_uri)}<br>version ${escapeHtml(item.active_version_id)}<br>snapshot ${escapeHtml(item.active_snapshot_id)} · source generation ${escapeHtml(item.source_generation)}<br>${escapeHtml(item.chunk_count)} Chunks · ACL ${escapeHtml(item.access_policy_id)} v${escapeHtml(item.access_policy_version)} · ${(item.access_groups || []).map(escapeHtml).join(', ')}</p></div><span class="trust-badge ${item.blocked ? 'danger' : 'authoritative'}">${item.blocked ? 'BLOCKED' : 'ACTIVE'}</span></div>${blockerMarkup}${action}</article>`;
+          return `<article class="governance-item" data-maintenance-document="${escapeHtml(item.document_id)}"><div class="governance-item-head"><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.source_name)} · ${escapeHtml(item.chunk_count)} 个来源片段</p></div><span class="trust-badge ${item.blocked ? 'danger' : 'authoritative'}">${item.blocked ? '需先处理依赖' : '可撤回'}</span></div>${blockerMarkup}${action}<details><summary>版本、访问范围与技术详情</summary><pre>${escapeHtml(JSON.stringify({document_id:item.document_id,source_uri:item.canonical_uri,version_id:item.active_version_id,snapshot_id:item.active_snapshot_id,access_groups:item.access_groups,blocker_codes:item.blocker_codes},null,2))}</pre></details></article>`;
         }).join('');
         elements.documentLifecycleList.querySelectorAll('[data-retire-document]').forEach(button => {
           button.addEventListener('click', () => retireActiveDocument(Number(button.dataset.retireDocument), button));
@@ -3528,7 +3538,7 @@
           showToast('文档状态已变化或仍有治理阻塞，请刷新列表');
           return;
         }
-        const confirmed = window.confirm(`确认撤回“${item.title}”？\n\n它将立即退出检索并触发向量 generation 切换；不可变 source、Chunk 与审核记录仍会保留。`);
+        const confirmed = window.confirm(`确认撤回“${item.title}”？\n\n它将立即退出当前检索；原始资料、来源片段与审核记录仍会保留。`);
         if (!confirmed) return;
         const identityEpoch = state.identityEpoch;
         const operation = nextDocumentRetirementOperation(item);
@@ -3582,6 +3592,31 @@
           document.getElementById(`review-record-${item.record_id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
         } catch(error) {if(identityEpoch===state.identityEpoch) showToast(error.message);}
         finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
+      }
+
+      async function correctPublishedRecord(recordId) {
+        if(state.reviewBusy || state.publicationBusy)throw new Error('正在审核或发布，请稍候。');
+        if([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled))throw new Error('请先保存或取消正在编辑的内容。');
+        const identity=state.identityEpoch;
+        const read=()=>apiRequest(`/v1/knowledge/records/${encodeURIComponent(recordId)}/revisions?limit=1`);
+        setReviewBusy(true);
+        try{
+          let item=(await read()).items?.[0];if(identity!==state.identityEpoch)return;
+          if(!item)throw new Error('没有找到可访问的知识记录。');
+          if(['APPROVED','PUBLISHED'].includes(item.trust.status)){
+            const payload=await apiRequest('/v1/knowledge/reviews:batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decisions:[{record_kind:item.record_kind,record_id:item.record_id,expected_revision:item.revision,decision:'QUARANTINED',notes:'从知识维护发起修正，等待重新审核与发布。'}]})});
+            if(identity!==state.identityEpoch)return;trackReviewedOutcomes(payload.outcomes||[]);invalidatePublicationPreview();
+          }else if(!['CANDIDATE','QUARANTINED'].includes(item.trust.status))throw new Error('该记录不能直接修正，请刷新审核队列。');
+          await Promise.allSettled([loadReviews(),loadPublicationCandidates()]);if(identity!==state.identityEpoch)return;
+          item=(await read()).items?.[0];if(identity!==state.identityEpoch)return;
+          if(!item || !['CANDIDATE','QUARANTINED'].includes(item.trust.status))throw new Error('审核状态已变化，请重新定位。');
+          const index=state.reviews.findIndex(r=>r.record_id===item.record_id);
+          if(index<0)state.reviews.push(item);else state.reviews[index]=item;
+          state.reviewPhase='paused';renderReviews();showConstructionFlow('business','step-review');
+          document.getElementById(`review-record-${item.record_id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
+          if(item.record_kind==='ENTITY_MENTION')void queueResolution(item);else void queueAssessment(item);
+          showToast('已定位待修正记录；保存、审核并重新发布后生效。');
+        }finally{if(identity===state.identityEpoch)setReviewBusy(false);}
       }
 
       function publicationSelection() {
@@ -3652,9 +3687,10 @@
         } finally {if(identityEpoch===state.identityEpoch) {state.publicationBusy=false;setReviewBusy(state.reviewBusy);}}
       }
 
-      async function rollbackPublication(index) {
+      async function rollbackPublication(index, expectedActive = null) {
         const target = state.publications[index];
         const active = activePublication();
+        if(expectedActive && active?.publication_id!==expectedActive)throw new Error('生效版本已变化，请重新比较。');
         if (!target || !active) { showToast('没有可用的 active publication'); return; }
         const identityEpoch = state.identityEpoch;
         invalidateInventory();
@@ -3669,6 +3705,7 @@
           await Promise.allSettled([loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
+          if(expectedActive)throw error;
         }
       }
 
@@ -3857,11 +3894,13 @@
         }
       });
 
-      Promise.all([import('/playground/assets/browser.mjs'),import('/playground/assets/maintenance.mjs')]).then(([{mountBrowser},{mountMaintenance}]) => {
+      Promise.all([import('/playground/assets/browser.mjs'),import('/playground/assets/maintenance.mjs'),import('/playground/assets/maintenance-actions.mjs')]).then(([{mountBrowser},{mountMaintenance},{mountActions}]) => {
         state.knowledgeBrowser = mountBrowser({api: apiRequest, epoch: () => state.identityEpoch,
-          maintain: () => showConstructionFlow('maintenance', 'maintenance-inventory')});
-        state.qualityPresenter=mountMaintenance({api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correct:()=>showConstructionFlow('maintenance','maintenance-inventory')});
+          maintain: item => state.maintenanceActions.maintain(item)});
+        state.qualityPresenter=mountMaintenance({api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correct:item=>state.maintenanceActions.maintain(item)});
         if(state.quality)renderQuality();
+        state.maintenanceActions=mountActions({api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correctRecord:correctPublishedRecord,toast:showToast,maintainSource:async item=>{const identity=state.identityEpoch;showConstructionFlow('maintenance','maintenance-document-lifecycle');elements.inventoryDocumentFilter.value=item.document_id;await loadActiveDocuments();if(identity!==state.identityEpoch)return;const row=[...elements.documentLifecycleList.querySelectorAll('[data-maintenance-document]')].find(el=>el.dataset.maintenanceDocument===item.document_id);if(row){row.scrollIntoView({behavior:'smooth',block:'center'});row.setAttribute('tabindex','-1');row.focus();showToast(`已定位来源：${item.title}`);}else showToast('所选来源不在当前可维护的 100 份资料中，请核对权限与来源状态。');},rollback:async(target,expected)=>{const index=state.publications.findIndex(p=>p.publication_id===target);if(index<0)throw new Error('目标版本已变化，请刷新。');await rollbackPublication(index,expected);}});
+        renderInventory();renderHistory();
         if (state.constructionFlow === 'browse') state.knowledgeBrowser.activate();
       }).catch(() => { $('kb-summary').textContent = '知识浏览组件加载失败，请刷新页面重试。'; });
       init();

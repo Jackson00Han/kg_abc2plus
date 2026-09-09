@@ -90,6 +90,7 @@ class OperationKind(str, Enum):
     KNOWLEDGE_ROLLBACK = "knowledge_rollback"
     KNOWLEDGE_HISTORY = "knowledge_history"
     KNOWLEDGE_PUBLICATION_CANDIDATES = "knowledge_publication_candidates"
+    PUBLICATION_COMPARISON = "publication_comparison"
     QUALITY_REVIEW = "quality_review"
     QUALITY_REVIEWS = "quality_reviews"
     KNOWLEDGE_QUALITY = "knowledge_quality"
@@ -142,6 +143,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_HISTORY,
             self.KNOWLEDGE_PUBLICATION_CANDIDATES,
             self.KNOWLEDGE_PUBLICATION_PREVIEW,
+            self.PUBLICATION_COMPARISON,
             self.QUALITY_REVIEWS,
             self.KNOWLEDGE_QUALITY,
             self.KNOWLEDGE_QUALITY_RUNS,
@@ -185,6 +187,7 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_ROLLBACK: "knowledge:publish",
         OperationKind.KNOWLEDGE_HISTORY: "knowledge:publish",
         OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES: "knowledge:publish",
+        OperationKind.PUBLICATION_COMPARISON: "knowledge:publish",
         OperationKind.QUALITY_REVIEW: "knowledge:review",
         OperationKind.QUALITY_REVIEWS: "knowledge:quality",
         OperationKind.KNOWLEDGE_QUALITY: "knowledge:quality",

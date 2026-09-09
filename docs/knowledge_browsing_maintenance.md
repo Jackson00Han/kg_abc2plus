@@ -48,7 +48,7 @@ Original values, units, temporal context and exact source positions are retained
 | B3 | Linked graph with separate model/loading/layout/rendering | 36 UI/module + 18 HTTP E2E + 54 security; syntax checks | Complete |
 | B4 | Source catalogue and bidirectional knowledge navigation | 1,046 unit + 18 HTTP + 55 security + 2 Neo4j; exact text checks | Complete |
 | B5 | Readable quality checks and durable human dispositions | 1,050 unit + 18 HTTP + 56 security + real-Neo4j decision lifecycle | Complete |
-| B6 | Contextual corrections, removal impact, publication comparison | Review/publication/retirement/rollback regression | Pending |
+| B6 | Contextual corrections, removal impact, publication comparison | 1,054 unit + 18 HTTP + 57 security + 2 Neo4j lifecycle checks | Complete |
 | B7 | Unified states, visual QA and complete regression | Four business journeys, complete dev-mini checks | Pending |
 
 Each completed step has its own checked commit pushed to origin/main. Validation
@@ -175,3 +175,30 @@ first-party modules. It corrects the earlier ad-hoc inline extraction, which
 spanned multiple script tags and was not a valid complete inline-script check;
 B2/B3 modules and the final full inline scripts now pass the parser-based check.
 Source compilation and diff/secret checks passed. Browser visual QA remains open.
+
+## B6 implementation and validation
+
+Maintenance uses Chinese fact summaries, contextual record correction, revision
+history, staged removal confirmation and the existing complete publication
+preview. Source maintenance displays withdrawal dependencies in business terms.
+Publication history offers a read-only, fully authorized comparison before the
+existing expected-active-publication guarded rollback. Comparison retains stable
+record identity, original units/time and revision changes, bounds each manifest
+to 500 records and rechecks the complete source scope before returning metadata.
+Identity changes and changed selections invalidate pending confirmation dialogs.
+
+The existing review lifecycle advances a published record head when correction
+starts. Consequently current quality checks can report HEAD_CURRENT_REVISION_INVALID
+until the corrected record is reviewed and explicitly replaced in a new publication.
+This limitation is explained before correction; the implementation does not weaken
+quality rules to hide it. A real database test verifies the finding and successful
+return to a passing graph after republication.
+
+Passed: 1,054 unit tests (203.808 seconds), 49 final focused checks, 18 HTTP E2E,
+57 security and two real-Neo4j lifecycle/comparison tests (121.390 seconds).
+Earlier fixtures attempted to remove a schema-required relationship or republish
+without explicit replacement; the unchanged service correctly rejected both.
+The corrected fixtures exercise valid publication operations. UI wording
+assertions were updated to the authorized Chinese redesign; behavioral guards
+remain tested. JavaScript, compilation and diff/secret checks passed. Chrome and
+in-app browser are both unavailable, so visual QA remains unverified.

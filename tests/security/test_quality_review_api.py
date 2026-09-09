@@ -10,6 +10,24 @@ from tests.e2e.test_api import _app, _headers, _token
 from tests.unit.test_api_backend import RecordingAnswerModel, RecordingDocuments, RecordingEmbedder, RecordingReadiness, RecordingRetrievalEngine, _retrieval_result
 
 class QualityReviewAPISecurityTests(unittest.TestCase):
+    def test_publication_comparison_requires_publish_scope_and_validates_response(self):
+        knowledge=Neo4jKnowledgeOperations(driver=Mock(),construction=Mock())
+        queries=GraphRAGQueryOperations(RecordingRetrievalEngine(_retrieval_result()),RecordingEmbedder(QueryEmbedding((1.0,0.0),'space-v1')),GroundedGenerationService(RecordingAnswerModel()))
+        backend=GraphRAGApplicationBackend(documents=RecordingDocuments(),queries=queries,readiness=RecordingReadiness(),knowledge=knowledge)
+        body=dict(target_publication_id='old',expected_active_publication_id='active')
+        result={**body,'target_generation':1,'added':[],'removed':[],'changed':[],'unchanged_count':3}
+        with patch('graphrag_prod.knowledge.publication_comparison.publication_comparison',return_value=result) as comparison:
+            with TestClient(_app(backend)) as client:
+                self.assertEqual(client.post('/v1/knowledge/publications:compare',json=body).status_code,401)
+                self.assertEqual(client.post('/v1/knowledge/publications:compare',headers=_headers(_token(scope='knowledge:quality')),json=body).status_code,403)
+                headers=_headers(_token(scope='knowledge:publish'))
+                self.assertEqual(client.post('/v1/knowledge/publications:compare',headers=headers,json={**body,'tenant_id':'other'}).status_code,422)
+                response=client.post('/v1/knowledge/publications:compare',headers=headers,json=body)
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertEqual(response.json(),result)
+        self.assertEqual(comparison.call_count,1)
+        self.assertIs(comparison.call_args.args[0],knowledge.publications)
+
     def test_review_write_needs_both_scopes_and_cannot_spoof_actor_or_tenant(self):
         knowledge=Neo4jKnowledgeOperations(driver=Mock(),construction=Mock())
         queries=GraphRAGQueryOperations(RecordingRetrievalEngine(_retrieval_result()),RecordingEmbedder(QueryEmbedding((1.0,0.0),'space-v1')),GroundedGenerationService(RecordingAnswerModel()))
