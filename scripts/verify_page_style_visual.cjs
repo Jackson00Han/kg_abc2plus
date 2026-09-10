@@ -17,7 +17,7 @@ const pages = [
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ deviceScaleFactor: 1 });
   const page = await context.newPage();
-  const results = { status: 'running', dataScope: null, observations: [], errors: [], blockedRequests: [], failedResponses: [] };
+  const results = { status: 'running', dataScope: null, observations: [], screenshots: [], errors: [], blockedRequests: [], failedResponses: [] };
   page.on('pageerror', error => results.errors.push(error.message));
   page.on('response', response => {
     if (response.status() >= 400) results.failedResponses.push({ path: new URL(response.url()).pathname, status: response.status() });
@@ -27,7 +27,7 @@ const pages = [
     assert.equal(bootstrap.ok(), true);
     results.dataScope = (await bootstrap.json()).data_scope;
     assert.equal(results.dataScope, 'pump-only');
-    const readPosts = new Set(['/playground/session', '/v1/knowledge/graph:query', '/v1/knowledge/sources:query', '/v1/industrial/sources:query']);
+    const readPosts = new Set(['/playground/session', '/v1/knowledge/graph:query', '/v1/knowledge/sources:query', '/v1/knowledge/sources:read', '/v1/industrial/sources:query']);
     await context.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
       const readGet = ['GET', 'HEAD'].includes(req.method()) && (
@@ -39,6 +39,10 @@ const pages = [
       results.blockedRequests.push({ method: req.method(), path: url.pathname });
       return route.abort('blockedbyclient');
     });
+    async function shot(name) {
+      await page.screenshot({ path: path.join(output, name) });
+      results.screenshots.push(name);
+    }
     for (const [width, height] of [[1366, 900], [1440, 900], [1920, 1080]]) {
       await page.setViewportSize({ width, height });
       await page.goto(base + '/industrial');
@@ -70,17 +74,41 @@ const pages = [
         if (!reference) reference = metrics;
         assert.deepEqual(metrics.heading, reference.heading, id + ': consistent heading position and typography');
         for (const key of ['radius', 'border', 'background']) assert.equal(metrics.surface[key], reference.surface[key], id + ': shared surface ' + key);
-        await page.screenshot({ path: path.join(output, `${width}-${id}.png`) });
+        await shot(`${width}-${id}.png`);
+        if (id === 'search') {
+          assert.ok((await page.locator('.search-layout').boundingBox()).width <= 1360, 'search reading width stays bounded');
+          assert.equal(await page.locator('#copy-contexts').isVisible(), false, 'copy action waits for usable results');
+          await page.locator('.retrieval-options > summary').click();
+          assert.ok(await page.locator('.retrieval-options').evaluate(node => node.scrollWidth <= node.clientWidth), 'expanded retrieval options fit the form');
+          await shot(`${width}-search-options.png`);
+          await page.locator('.retrieval-options > summary').click();
+        }
+        if (id === 'sources') {
+          const source = page.locator('.source-card').first();
+          const details = source.locator('.source-card-details');
+          const title = await source.locator('h3').textContent();
+          await details.locator('summary').focus();
+          await page.keyboard.press('Enter');
+          assert.equal(await details.evaluate(node => node.open), true, 'source provenance is keyboard accessible');
+          assert.ok(await details.locator('.record-key').isVisible(), 'document and version identifiers remain available');
+          assert.ok(await source.evaluate(node => node.scrollWidth <= node.clientWidth), 'expanded provenance fits the source card');
+          await shot(`${width}-source-details.png`);
+          await source.getByRole('button', { name: '查看原文 →', exact: true }).click();
+          await page.waitForFunction(() => document.querySelector('.source-dialog .source-quote'));
+          assert.equal(await page.locator('.source-dialog h2').textContent(), title, 'original document keeps its real title');
+          await shot(`${width}-source-original.png`);
+          await page.locator('.source-dialog').getByRole('button', { name: '关闭', exact: true }).click();
+        }
       }
       await page.locator('#build-tab-ontology').click();
       await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
-      await page.screenshot({ path: path.join(output, `${width}-ontology.png`) });
+      await shot(`${width}-ontology.png`);
     }
     assert.deepEqual(results.errors, []);
     assert.deepEqual(results.blockedRequests, []);
     assert.deepEqual(results.failedResponses, []);
     results.status = 'passed';
-    console.log(JSON.stringify({ status: results.status, screenshots: 15, output }));
+    console.log(JSON.stringify({ status: results.status, screenshots: results.screenshots.length, output }));
   } catch (error) {
     results.status = 'failed';
     results.failure = error.message;

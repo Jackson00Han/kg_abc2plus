@@ -133,23 +133,41 @@ export class SourceCatalog {
   }
   renderCard(source) {
     const card = element("article", "source-card");
+    const header = element("div", "source-card-header");
+    const mark = element("div", "source-mark", "▤");
+    mark.setAttribute("aria-hidden", "true");
+    header.append(mark, source.source_kind ? sourceTag(source.source_kind) : tag("原始文档"));
     card.append(
-      element("div", "source-mark", "▤"),
-      source.source_kind ? sourceTag(source.source_kind) : tag("原始文档"),
-      element("h3", "", source.title),
-      element("p", "", source.family ? FAMILIES[source.family] || source.family : "通用资料 · 产品范围未标注"),
-      metadata([
-        source.source_name,
-        source.version_number ? `第 ${source.version_number} 版` : null,
-        `${source.chunk_count} 个来源片段`,
-        source.asset_keys?.length ? source.asset_keys.map(assetLabel).join("、") : null,
-        source.published_at ? dateLabel(source.published_at) : null,
-      ]),
+      header,
+      element("h3", "source-card-title", source.title || "未命名文档"),
+      element("p", "source-card-scope", source.family ? FAMILIES[source.family] || source.family : "通用资料 · 产品范围未标注"),
     );
+    if (source.asset_keys?.length)
+      card.append(element("p", "source-card-scope", `适用设备：${source.asset_keys.map(assetLabel).join("、")}`));
+    const summary = element("div", "source-card-summary");
+    const facts = metadata([
+      source.version_number ? `第 ${source.version_number} 版` : null,
+      `${source.chunk_count} 个来源片段`,
+      source.published_at ? dateLabel(source.published_at) : null,
+    ]);
+    facts.className = "metadata source-card-facts";
+    summary.append(facts);
     if (typeof source.has_published_knowledge === "boolean")
-      card.append(element("p", "muted", source.has_published_knowledge
+      summary.append(element("p", "source-card-status", source.has_published_knowledge
         ? "包含当前可见的已发布知识" : "尚无当前可见的已发布知识"));
-    const actions = element("div", "evidence-actions");
+    card.append(summary);
+    const details = element("details", "source-card-details");
+    details.append(
+      element("summary", "", "来源信息"),
+      metadata([
+        source.title ? `原始标题：${source.title}` : null,
+        source.source_name ? `来源名称：${source.source_name}` : null,
+        source.canonical_uri ? `来源地址：${source.canonical_uri}` : null,
+      ]),
+      element("p", "record-key", `文档 ${source.document_id}\n版本 ${source.version_id}`),
+    );
+    card.append(details);
+    const actions = element("div", "evidence-actions source-card-actions");
     actions.append(button("查看原文 →", () => this.open(source), "text-button"));
     if (this.onSelect)
       actions.append(button("查看相关知识", () => this.select(source, "graph"), "text-button"));

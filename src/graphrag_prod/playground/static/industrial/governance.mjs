@@ -131,7 +131,9 @@ const elements = {
       }
 
       function output(element, value) {
+        element.hidden = false;
         element.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+        if (element === elements.constructionOutput || element === elements.publicationOutput) element.scrollIntoView?.({block:'nearest',behavior:'smooth'});
       }
 
 
@@ -661,7 +663,9 @@ const elements = {
         const boundedChunks = Number.isInteger(chunkLimit) && chunkLimit > 0
           ? `当前模式每份文档最多 ${chunkLimit} Chunks。` : '分块数量由服务端限制。';
         $('construct-button').textContent = sourceOnly
-          ? '上传、切块并向量化（不抽取）' : '上传、切块、向量化并抽取';
+          ? '上传并保存来源' : '上传并构建';
+        $('construction-submit-note').textContent = sourceOnly
+          ? '仅保存来源，不生成候选知识。' : '构建后先复核，再发布。';
         $('construction-mode-note').textContent = sourceOnly
           ? `${boundedChunks}仅切块与向量化，不执行 LLM 抽取或自动纠正。`
           : `${boundedChunks}${feedbackEnabled ? '每个 Chunk 的结构、本体或证据校验失败后，最多自动纠正一次（合计最多两次抽取）；模型服务错误或超时不自动重试。' : '当前配置不自动纠正校验失败。'}校验通过的候选仍需人工审核和明确发布。`;
@@ -1239,6 +1243,14 @@ const elements = {
         reviewModel();
         const saved = captureReviewUi();
         const progress = reviewProgress();
+        if (!state.reviews.length) {
+          elements.reviewList.innerHTML = state.approvedRevisions.size
+            ? '<div class="build-empty-state review-complete"><h3>当前批次已完成复核。</h3><p>已确认内容可进入发布预览，核对后再发布。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>'
+            : '<div class="build-empty-state"><h3>当前没有待确认记录。</h3><p>请先上传文档并抽取，或填写人工补充，再回来核对来源与事实。</p><div class="workbench-actions"><button class="button primary" type="button" data-review-upload>去上传资料</button><button class="button" type="button" data-review-manual>人工补充</button></div></div>';
+          bindReviewActions(elements.reviewList);
+          updateReviewBulkActions();
+          return;
+        }
         if (!progress.identities && state.reviewPhase === 'identities') state.reviewPhase = progress.facts ? 'facts' : 'paused';
         const phase = state.reviewPhase;
         const visible = state.reviews.map((item,index) => ({item,index})).filter(({item}) => phase === 'paused' ? item.trust?.status === 'QUARANTINED' : item.trust?.status !== 'QUARANTINED' && (phase === 'identities' ? item.record_kind === 'ENTITY_MENTION' : item.record_kind !== 'ENTITY_MENTION' && (state.reviewFactTab === 'relationships' ? Boolean(item.object_entity) : !item.object_entity)));
@@ -1272,7 +1284,7 @@ const elements = {
           const details=elements.reviewList.querySelector(`[data-review-details="${index}"]`);
           if (details) details.open=value.details || value.editing;
         });
-        if(state.reviewBusy) setReviewBusy(true);
+        setReviewBusy(Boolean(state.reviewBusy));
       }
       function openResolutionChoices(index) {
         if(state.reviewBusy || state.publicationBusy || reviewIsEditing(index)) {showToast('请先完成当前保存或编辑');return;}
@@ -1280,6 +1292,11 @@ const elements = {
         if(details) {details.open=true;details.scrollIntoView?.({block:'nearest',behavior:'smooth'});}
       }
       function bindReviewActions(container) {
+        container.querySelectorAll('[data-review-upload]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'source-upload-slot')));
+        container.querySelectorAll('[data-review-manual]').forEach(button=>button.addEventListener('click',()=>{
+          const panel=$('manual-fact-panel');panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'nearest'});$('manual-kind').focus({preventScroll:true});
+        }));
+        container.querySelectorAll('[data-review-select]').forEach(input=>input.addEventListener('change',updateReviewBulkActions));
         container.querySelectorAll('[data-review-existing]').forEach(button=>button.addEventListener('click',()=>openResolutionChoices(Number(button.dataset.reviewExisting))));
         container.querySelectorAll('[data-review-group]').forEach(button=>button.addEventListener('click',()=>submitReviews('APPROVED',chosenReviews(),false,true)));
         container.querySelectorAll('[data-standard-endpoint]').forEach(select=>select.addEventListener('change',()=>{
@@ -1370,6 +1387,7 @@ const elements = {
       }
       function setReviewBusy(busy) {
         state.reviewBusy=busy;updatePublicationBusy();busy=Boolean(busy || state.publicationBusy);
+        updateReviewBulkActions();
         elements.reviewList.querySelectorAll('[data-review-action], [data-review-keep], [data-resolution-apply], [data-review-save-draft]').forEach(button=> {
           const index=Number(button.dataset.reviewIndex ?? button.dataset.reviewKeep ?? button.dataset.resolutionApply ?? button.dataset.reviewSaveDraft);
           const item=state.reviews[index];
@@ -1378,6 +1396,14 @@ const elements = {
           if (!busy && !editing && item && button.dataset.reviewAction==='APPROVED') button.disabled=!reviewApproval(item,button.dataset.factIndependent==='true').allowed;
           if (!busy && item && button.dataset.reviewAction==='QUARANTINED') button.disabled=item.trust?.status==='QUARANTINED';
         });
+      }
+      function updateReviewBulkActions() {
+        const controls=$('review-bulk-actions');
+        if (!controls) return;
+        const selectable=[...elements.reviewList.querySelectorAll('[data-review-select]')];
+        controls.hidden=!selectable.length || Boolean(state.reviewLoading);
+        const disabled=Boolean(state.reviewBusy || state.publicationBusy || state.reviewLoading) || !selectable.some(input=>input.checked && !input.disabled);
+        controls.querySelectorAll('button').forEach(button=>button.disabled=disabled);
       }
       async function keepExistingFact(index) {
         if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
@@ -1575,6 +1601,7 @@ const elements = {
         invalidateAssessments();
         const identityEpoch = state.identityEpoch;
         const reviewEpoch = ++state.reviewEpoch;
+        state.reviewLoading=true;updateReviewBulkActions();
         for (const job of state.resolutionQueue.splice(0)) job.finish();
         try {
           const payload = await apiRequest(candidatesOnly ? '/v1/knowledge/review-queue?status=CANDIDATE&limit=100' : '/v1/knowledge/review-queue?status=CANDIDATE&status=QUARANTINED&limit=100');
@@ -1587,7 +1614,7 @@ const elements = {
               || ['queued', 'loading'].includes(entry.status)) state.resolutions.delete(recordId);
             else entry.reviewEpoch = reviewEpoch;
           }
-          renderReviews();
+          state.reviewLoading=false;renderReviews();
           for (const item of state.reviews) {
             if (item.record_kind === 'ENTITY_MENTION') void queueResolution(item);
             else void queueAssessment(item);
@@ -1596,6 +1623,7 @@ const elements = {
           if (identityEpoch !== state.identityEpoch || reviewEpoch !== state.reviewEpoch) return;
           invalidateReviewResolutions();
           elements.reviewList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
+          state.reviewLoading=false;updateReviewBulkActions();
         }
       }
 
@@ -1761,13 +1789,17 @@ const elements = {
         elements.publicationCandidateList?.querySelectorAll('input, [data-publication-reopen]').forEach(control=>control.disabled=busy);
         elements.publicationRevisions.disabled=busy;elements.publicationRemovals.disabled=busy;
         if(typeof document!=='undefined') {
-          const preview=$('publication-preview-button');if(preview) preview.disabled=busy;
+          const hasSelection=Boolean(elements.publicationRevisions.value.trim() || elements.publicationRemovals.value.trim() || state.selectedCandidateRevisions.size);
+          const actions=$('publication-submit-actions');if(actions) actions.hidden=!state.publicationCandidates.length && !hasSelection && !state.publicationPreview;
+          const preview=$('publication-preview-button');if(preview) preview.disabled=busy || !hasSelection;
           const publish=$('publication-button');if(publish) publish.disabled=busy || !state.publicationPreview;
         }
       }
       function renderPublicationCandidates() {
         if (!state.publicationCandidates.length) {
-          elements.publicationCandidateList.innerHTML = '<div class="output-box">没有待发布或可恢复的已确认记录。</div>';
+          elements.publicationCandidateList.innerHTML = '<div class="build-empty-state"><h3>当前没有可发布的候选。</h3><p>资料完成复核后，会在这里列出待发布或可恢复的已确认记录。</p><div class="workbench-actions"><button class="button primary" type="button" data-publication-upload>去上传资料</button><button class="button" type="button" data-publication-review>查看复核队列</button></div></div>';
+          elements.publicationCandidateList.querySelectorAll('[data-publication-upload]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'source-upload-slot')));
+          elements.publicationCandidateList.querySelectorAll('[data-publication-review]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'step-review')));
           updatePublicationBusy();return;
         }
         const selected=publicationSelectedIds(), groups=publicationCandidateGroups();
@@ -1867,6 +1899,7 @@ const elements = {
         state.inventoryHistoryRequests.clear();
         const removals = elements.publicationRemovals.value.split(/\s+/).filter(Boolean);
         elements.publicationRemovals.value = removals.filter(value => !state.inventoryRemovalRecordIds.has(value)).join('\n');
+        if (removals.length !== elements.publicationRemovals.value.split(/\s+/).filter(Boolean).length) invalidatePublicationPreview();
         state.inventoryRemovalRecordIds.clear();
         renderInventory();
         return state.inventoryEpoch;
@@ -1997,7 +2030,7 @@ const elements = {
           const inventory=state.activeInventory,epoch=state.inventoryEpoch,identity=state.identityEpoch;
           const selected=(inventory?.items||[]).filter(i=>state.selectedInventoryRevisions.has(i.revision_id));
           if(!selected.length){showToast('请先选择要移除的知识');return;}
-          state.maintenanceActions.removals(selected,()=>{addInventoryRemovals(true);void previewPublication();},()=>inventory===state.activeInventory && epoch===state.inventoryEpoch && identity===state.identityEpoch && selected.length===state.selectedInventoryRevisions.size && selected.every(i=>state.selectedInventoryRevisions.has(i.revision_id)));return;
+          state.maintenanceActions.removals(selected,()=>{addInventoryRemovals(true);void previewKnowledgePublication();},()=>inventory===state.activeInventory && epoch===state.inventoryEpoch && identity===state.identityEpoch && selected.length===state.selectedInventoryRevisions.size && selected.every(i=>state.selectedInventoryRevisions.has(i.revision_id)));return;
         }
         const items = state.activeInventory?.items || [];
         const selectedRecordIds = items
@@ -2008,6 +2041,7 @@ const elements = {
         selectedRecordIds.filter(value => !existing.includes(value)).forEach(value => state.inventoryRemovalRecordIds.add(value));
         const recordIds = [...new Set([...existing, ...selectedRecordIds])];
         elements.publicationRemovals.value = recordIds.join('\n');
+        invalidatePublicationPreview();
         showConstructionFlow('business', 'step-publication');
         elements.publicationRemovals.focus();
         showToast(`已将 ${selectedRecordIds.length} 条知识加入待移除清单`);
@@ -2371,13 +2405,15 @@ const elements = {
         });
       }
       function invalidatePublicationPreview() {
+        const hadPreview=Boolean(state.publicationPreview);
         clearPublicationIssue();
         state.publicationPreview=null;
         state.publicationPreviewEpoch=(state.publicationPreviewEpoch || 0)+1;
         const button=typeof document!=='undefined' && $('publication-button');
         if(button) button.disabled=true;
         const panel=typeof document!=='undefined' && $('publication-preview');
-        if(panel) panel.innerHTML='<p>内容或选择已变化，请重新生成发布预览。</p>';
+        if(panel) panel.innerHTML=hadPreview ? '<p>内容或选择已变化，请重新生成发布预览。</p>' : '';
+        updatePublicationBusy();
       }
       function publicationPreviewMarkup(preview) {
         const sections=[['实体',preview.entity_changes],['属性',preview.property_changes],['关系',preview.relationship_fact_changes || preview.relationship_changes]];
@@ -2427,7 +2463,7 @@ const elements = {
           showToast(`知识 ${shortId(payload.publication_id)} 已发布`);
           await Promise.allSettled([loadPublicationCandidates(),loadHistory(),loadInventory(),loadQuality(),loadQualityHistory(),loadActiveDocuments()]);
         } catch(error) {
-          if(identityEpoch===state.identityEpoch) {invalidatePublicationPreview();showPublicationIssue(error);output(elements.publicationOutput,error.message);}
+          if(identityEpoch===state.identityEpoch) {invalidatePublicationPreview();showPublicationIssue(error);output(elements.publicationOutput,error.status===409 ? `发布状态已变化，请重新查看预览。${error.message}` : error.message);}
         } finally {if(identityEpoch===state.identityEpoch) {state.publicationBusy=false;setReviewBusy(state.reviewBusy);}}
       }
 
@@ -2461,6 +2497,7 @@ const elements = {
         state.ontologies = [];
         invalidateReviewResolutions();
         elements.reviewList.innerHTML = '<div class="output-box">审核队列尚未加载。</div>';
+        state.reviewLoading=false;updateReviewBulkActions();
         state.revisionHistories.clear();
         state.constructionJobs = [];
         $('construction-validation-summary').innerHTML = '';
@@ -2523,7 +2560,8 @@ const elements = {
         $('manual-subject-type').replaceChildren();$('manual-object-type').replaceChildren();$('manual-predicate').replaceChildren();
         $('foundation-status').textContent='正在读取本体';
         elements.ontologyList.replaceChildren();elements.historyList.replaceChildren();elements.constructionJobList.replaceChildren();
-        elements.constructionOutput.textContent='选择资料开始构建。';elements.publicationOutput.textContent='选择已确认候选后生成发布预览。';
+        elements.constructionOutput.textContent='';elements.publicationOutput.textContent='';
+        elements.constructionOutput.hidden=true;elements.publicationOutput.hidden=true;
         $('construct-button').disabled=false;
         loadedIdentity=null;loadingIdentity=null;
       }

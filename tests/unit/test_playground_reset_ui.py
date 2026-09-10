@@ -56,6 +56,7 @@ assert.equal(calls.length,2);assert.equal(client.pageGeneration,'before');
     def test_identity_reset_clears_private_drafts_receipts_outputs_and_operation_locks(self):
         source = governance_source()
         code = source[source.index('function setUploadKnowledgeScope('):source.index('function showConstructionFlow(')]
+        code += source[source.index('function updateReviewBulkActions('):source.index('async function keepExistingFact(')]
         code += source[source.index('function reset()'):source.index("$('ontology-reset').addEventListener")]
         self.run_module(r"""
 const nodes=new Map();
@@ -88,6 +89,7 @@ assert.equal(state.buildView,null);
 assert.equal($('document-file-name').textContent,'尚未选择文件');
 assert.equal($('ontology-selection').open,false);
 assert.deepEqual(state.reviews,[]);assert.equal(state.resolutions.size,0);assert.equal(state.revisionHistories.size,0);
+assert.equal(state.reviewLoading,false);assert.equal($('review-bulk-actions').hidden,true);
 assert.equal(state.manualOperation,null);assert.equal(state.manualBusy,false);assert.equal(state.ontologySaving,false);
 assert.equal(state.approvedRevisions.size,0);assert.equal(state.selectedCandidateRevisions.size,0);
 assert.equal(elements.publicationRevisions.value,'');assert.equal(elements.publicationRemovals.value,'');
@@ -96,6 +98,8 @@ assert.equal(state.uploadKnowledgeScope,'BUSINESS');assert.equal(state.construct
 assert.equal($('document-knowledge-scope').value,'BUSINESS');assert.equal($('document-knowledge-scope').disabled,false);
 assert.ok(!$('manual-output').textContent.includes('private'));
 assert.equal(elements.ontologyList.innerHTML,'');assert.equal(elements.historyList.innerHTML,'');
+assert.equal(elements.constructionOutput.hidden,true);assert.equal(elements.publicationOutput.hidden,true);
+assert.equal(elements.constructionOutput.textContent,'');assert.equal(elements.publicationOutput.textContent,'');
 """, code=code)
 
     def test_old_manual_response_cannot_unlock_another_identity_operation(self):

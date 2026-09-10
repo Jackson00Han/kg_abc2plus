@@ -1,0 +1,311 @@
+{
+  "status": "passed",
+  "dataScope": "pump-only",
+  "observations": [
+    {
+      "id": "explore",
+      "width": 1366,
+      "height": 900,
+      "pageWidth": 1366,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 1064,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "search",
+      "width": 1366,
+      "height": 900,
+      "pageWidth": 1366,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 739.484375,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "sources",
+      "width": 1366,
+      "height": 900,
+      "pageWidth": 1366,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 341.328125,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "build",
+      "width": 1366,
+      "height": 900,
+      "pageWidth": 1366,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 1064,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "explore",
+      "width": 1440,
+      "height": 900,
+      "pageWidth": 1440,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 1138,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "search",
+      "width": 1440,
+      "height": 900,
+      "pageWidth": 1440,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 797.203125,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "sources",
+      "width": 1440,
+      "height": 900,
+      "pageWidth": 1440,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 366,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "build",
+      "width": 1440,
+      "height": 900,
+      "pageWidth": 1440,
+      "heading": {
+        "x": 264,
+        "y": 131.59375,
+        "fontSize": "28px",
+        "lineHeight": "39.2px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 264,
+        "width": 1138,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "explore",
+      "width": 1920,
+      "height": 1080,
+      "pageWidth": 1920,
+      "heading": {
+        "x": 273,
+        "y": 138.59375,
+        "fontSize": "31px",
+        "lineHeight": "43.4px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 273,
+        "width": 1600,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "search",
+      "width": 1920,
+      "height": 1080,
+      "pageWidth": 1920,
+      "heading": {
+        "x": 273,
+        "y": 138.59375,
+        "fontSize": "31px",
+        "lineHeight": "43.4px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 273,
+        "width": 1016,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "sources",
+      "width": 1920,
+      "height": 1080,
+      "pageWidth": 1920,
+      "heading": {
+        "x": 273,
+        "y": 138.59375,
+        "fontSize": "31px",
+        "lineHeight": "43.4px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 273,
+        "width": 440,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    },
+    {
+      "id": "build",
+      "width": 1920,
+      "height": 1080,
+      "pageWidth": 1920,
+      "heading": {
+        "x": 273,
+        "y": 138.59375,
+        "fontSize": "31px",
+        "lineHeight": "43.4px",
+        "weight": "600",
+        "color": "rgb(27, 48, 42)",
+        "eyebrowSize": "11px",
+        "eyebrowColor": "rgb(71, 120, 91)"
+      },
+      "surface": {
+        "x": 273,
+        "width": 1160,
+        "radius": "8px",
+        "border": "rgb(227, 233, 228)",
+        "background": "rgb(255, 255, 255)"
+      }
+    }
+  ],
+  "screenshots": [
+    "1366-explore.png",
+    "1366-search.png",
+    "1366-search-options.png",
+    "1366-sources.png",
+    "1366-source-details.png",
+    "1366-source-original.png",
+    "1366-build.png",
+    "1366-ontology.png",
+    "1440-explore.png",
+    "1440-search.png",
+    "1440-search-options.png",
+    "1440-sources.png",
+    "1440-source-details.png",
+    "1440-source-original.png",
+    "1440-build.png",
+    "1440-ontology.png",
+    "1920-explore.png",
+    "1920-search.png",
+    "1920-search-options.png",
+    "1920-sources.png",
+    "1920-source-details.png",
+    "1920-source-original.png",
+    "1920-build.png",
+    "1920-ontology.png"
+  ],
+  "errors": [],
+  "blockedRequests": [],
+  "failedResponses": []
+}

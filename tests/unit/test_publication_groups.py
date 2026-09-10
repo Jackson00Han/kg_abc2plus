@@ -21,6 +21,53 @@ class PublicationGroupTests(unittest.TestCase):
     def run_ui(self, scenario, extra=''):
         ui_checks.PlaygroundResolutionTests().run_ui(extra+SETUP+scenario)
 
+    def test_empty_publication_keeps_manual_removals_available_and_requires_preview(self):
+        self.run_ui(r'''
+const fields=new Map(['publication-submit-actions','publication-preview-button','publication-button','publication-preview'].map(id=>[id,{hidden:false,disabled:false,innerHTML:''}]));
+globalThis.document={getElementById:id=>fields.get(id)||null};
+renderPublicationCandidates();
+assert.ok(elements.publicationCandidateList.innerHTML.includes('data-publication-upload'));
+assert.ok(elements.publicationCandidateList.innerHTML.includes('data-publication-review'));
+assert.ok(fields.get('publication-submit-actions').hidden);
+assert.ok(fields.get('publication-preview-button').disabled);
+assert.ok(fields.get('publication-button').disabled);
+elements.publicationRemovals.value='pump-obsolete-record';invalidatePublicationPreview();
+assert.equal(fields.get('publication-submit-actions').hidden,false);
+assert.equal(fields.get('publication-preview-button').disabled,false);
+assert.ok(fields.get('publication-button').disabled);
+state.publicationPreview={preview:{preview_hash:'pump-preview'}};updatePublicationBusy();
+assert.equal(fields.get('publication-button').disabled,false);
+elements.publicationRemovals.value='pump-other-record';invalidatePublicationPreview();
+assert.equal(state.publicationPreview,null);assert.ok(fields.get('publication-button').disabled);
+assert.ok(fields.get('publication-preview').innerHTML.includes('重新生成发布预览'));
+state.publicationBusy=true;updatePublicationBusy();assert.ok(fields.get('publication-preview-button').disabled);
+assert.equal(requests.length,0);
+''')
+
+    def test_inventory_removal_updates_empty_publication_actions_and_invalidates_preview(self):
+        page=governance_source()
+        inventory=page[page.index('function addInventoryRemovals('):page.index('function renderQuality(')]
+        self.run_ui(r'''
+const fields=new Map(['publication-submit-actions','publication-preview-button','publication-button','publication-preview'].map(id=>[id,{hidden:false,disabled:false,innerHTML:''}]));
+globalThis.document={getElementById:id=>fields.get(id)||null};
+globalThis.showConstructionFlow=()=>{};elements.publicationRemovals.focus=()=>{};
+state.activeInventory={items:[{record_id:'pump-record',revision_id:'pump-revision'}]};
+state.selectedInventoryRevisions=new Set(['pump-revision']);state.inventoryRemovalRecordIds=new Set();
+renderPublicationCandidates();assert.ok(fields.get('publication-submit-actions').hidden);
+state.publicationPreview={preview:{preview_hash:'old'}};
+addInventoryRemovals(true);
+assert.equal(elements.publicationRemovals.value,'pump-record');
+assert.equal(state.publicationPreview,null);
+assert.equal(fields.get('publication-submit-actions').hidden,false);
+assert.equal(fields.get('publication-preview-button').disabled,false);
+assert.ok(fields.get('publication-button').disabled);
+let confirmRemoval,previews=0;
+state.maintenanceActions={removals(items,confirm,valid){assert.ok(valid());confirmRemoval=confirm;}};
+previewKnowledgePublication=()=>{previews+=1;assert.equal(fields.get('publication-preview-button').disabled,false);};
+addInventoryRemovals();assert.equal(previews,0);confirmRemoval();assert.equal(previews,1);
+assert.equal(requests.length,0);
+''',inventory)
+
     def test_same_entity_sources_group_but_homonyms_and_fact_kinds_stay_distinct(self):
         self.run_ui(r'''
 const first=source('a'), second=source('b',4), third=source('c');

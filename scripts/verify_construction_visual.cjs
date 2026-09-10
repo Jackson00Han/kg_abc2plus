@@ -90,6 +90,8 @@ const results = {
           sourceType: rect('#document-knowledge-scope'),
           fileDrop: rect('.file-drop'),
           fileInput: rect('#document-file'),
+          submit: rect('#construct-button'),
+          submitBar: rect('.upload-submit-bar'), accessNote: rect('#document-access-note'),
           steps: [...document.querySelectorAll('#construction-flow-steps [data-step-target]')].map(node => ({
             target: node.dataset.stepTarget, label: node.textContent.trim(), current: node.getAttribute('aria-current'),
             ...rect(`[data-step-target="${node.dataset.stepTarget}"]`),
@@ -164,7 +166,26 @@ const results = {
       const firstScreen = await metrics(name + '-upload');
       assert.ok(firstScreen.sourceType && firstScreen.sourceType.bottom <= height, name + ': source type selector must be discoverable on the first screen');
       assert.ok(firstScreen.fileInput && firstScreen.fileInput.y >= 0 && firstScreen.fileInput.bottom <= height, name + ': complete file selection control must fit on the first screen');
+      assert.ok(firstScreen.submit && firstScreen.submit.y >= 0 && firstScreen.submit.bottom <= height, name + ': main construction action must fit on the first screen');
+      assert.ok(firstScreen.accessNote.bottom <= firstScreen.submitBar.y - 8, name + ': upload action must not cover access guidance');
+      assert.equal(await page.locator('#construct-button').textContent(), '上传并构建');
       await shot(name + '-01-upload');
+      if (name === 'laptop') {
+        await page.locator('#construct-button').click();
+        await page.waitForFunction(() => {
+          const output = document.querySelector('#construction-output');
+          const bar = document.querySelector('.upload-submit-bar');
+          return !output.hidden && output.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top;
+        });
+        assert.equal(await page.locator('#construction-output').textContent(), '请选择一个文档。');
+        assert.ok(!results.requests.some(request => request.path === '/v1/knowledge:construct'), 'empty file validation must not submit a construction request');
+        await shot(name + '-06-upload-validation');
+        await page.goto(base + '/industrial');
+        await page.waitForFunction(() => document.querySelector('#node-count')?.textContent !== '—' && document.querySelector('#graph-placeholder')?.hidden);
+        await page.locator('[data-panel="build"]').click();
+        await page.waitForFunction(() => document.querySelector('#document-tbox')?.value);
+        await assertStep('source-upload-slot');
+      }
 
       await page.locator('#document-title').fill('循环水泵维护资料 · 仅界面验收草稿');
       await page.locator('.upload-options').filter({ has: page.locator('#document-uri') }).locator(':scope > summary').click();
@@ -181,6 +202,13 @@ const results = {
 
       await chooseStep('step-review');
       await assertScope('AUTHORITATIVE', expectedDraft);
+      if (await page.locator('[data-review-upload]').count()) {
+        assert.equal(await page.locator('#review-bulk-actions').isVisible(), false);
+        await page.locator('[data-review-upload]').click();
+        await assertStep('source-upload-slot');
+        await assertScope('AUTHORITATIVE', expectedDraft);
+        await chooseStep('step-review');
+      }
       await metrics(name + '-review');
       await shot(name + '-03-review');
       await page.locator('[data-panel="explore"]').first().click();
@@ -189,6 +217,14 @@ const results = {
       await assertScope('AUTHORITATIVE', expectedDraft);
       await chooseStep('step-publication');
       await assertScope('AUTHORITATIVE', expectedDraft);
+      if (await page.locator('[data-publication-review]').count()) {
+        assert.equal(await page.locator('#publication-submit-actions').isVisible(), false);
+        assert.equal(await page.locator('#publication-output').isVisible(), false);
+        await page.locator('[data-publication-review]').click();
+        await assertStep('step-review');
+        await assertScope('AUTHORITATIVE', expectedDraft);
+        await chooseStep('step-publication');
+      }
       await metrics(name + '-publication');
       await shot(name + '-04-publication');
       await page.locator('[data-panel="explore"]').first().click();

@@ -8,6 +8,26 @@ class PlaygroundGuidedReviewTests(unittest.TestCase):
     def run_ui(self, scenario: str) -> None:
         resolution_checks.PlaygroundResolutionTests().run_ui(scenario)
 
+    def test_empty_queue_offers_navigation_and_bulk_actions_require_a_selection(self) -> None:
+        self.run_ui(r'''
+const buttons=[{disabled:false},{disabled:false},{disabled:false}];
+const bulk={hidden:false,querySelectorAll:()=>buttons};
+globalThis.document={getElementById:id=>id==='review-bulk-actions'?bulk:null};
+renderReviews();
+assert.ok(bulk.hidden);
+assert.ok(elements.reviewList.innerHTML.includes('data-review-upload'));
+assert.ok(elements.reviewList.innerHTML.includes('data-review-manual'));
+assert.ok(!elements.reviewList.innerHTML.includes('data-review-phase'));
+const selected={checked:false,disabled:false};
+elements.reviewList.querySelectorAll=selector=>selector==='[data-review-select]'?[selected]:[];
+updateReviewBulkActions();assert.equal(bulk.hidden,false);assert.ok(buttons.every(button=>button.disabled));
+selected.checked=true;updateReviewBulkActions();assert.ok(buttons.every(button=>!button.disabled));
+state.reviewLoading=true;updateReviewBulkActions();assert.ok(bulk.hidden);assert.ok(buttons.every(button=>button.disabled));
+state.reviewLoading=false;state.publicationBusy=true;updateReviewBulkActions();assert.ok(buttons.every(button=>button.disabled));
+state.publicationBusy=false;updateReviewBulkActions();assert.ok(buttons.every(button=>!button.disabled));
+assert.equal(requests.length,0);
+''')
+
     def test_grouping_uses_entity_ids_and_preserves_independent_mentions(self) -> None:
         self.run_ui(r'''
 const a=item('a'), b=item('b'), homonym=item('c');

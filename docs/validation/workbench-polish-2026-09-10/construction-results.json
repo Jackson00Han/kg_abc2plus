@@ -1,0 +1,1950 @@
+{
+  "base": "http://127.0.0.1:8002",
+  "status": "passed",
+  "dataScope": "pump-only",
+  "observations": [
+    {
+      "name": "laptop-upload",
+      "width": 1280,
+      "height": 800,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1280,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 978,
+        "height": 1034.234375,
+        "bottom": 1335.203125,
+        "right": 1242
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 978,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1242
+      },
+      "upload": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 976,
+        "height": 955.234375,
+        "bottom": 1334.203125,
+        "right": 1241
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 289,
+        "y": 427.765625,
+        "width": 200,
+        "height": 44,
+        "bottom": 471.765625,
+        "right": 489
+      },
+      "fileDrop": {
+        "x": 289,
+        "y": 512.5625,
+        "width": 928,
+        "height": 87.890625,
+        "bottom": 600.453125,
+        "right": 1217
+      },
+      "fileInput": {
+        "x": 290,
+        "y": 513.5625,
+        "width": 926,
+        "height": 85.890625,
+        "bottom": 599.453125,
+        "right": 1216
+      },
+      "submit": {
+        "x": 1085,
+        "y": 743,
+        "width": 132,
+        "height": 42,
+        "bottom": 785,
+        "right": 1217
+      },
+      "submitBar": {
+        "x": 265,
+        "y": 728,
+        "width": 976,
+        "height": 72,
+        "bottom": 800,
+        "right": 1241
+      },
+      "accessNote": {
+        "x": 763,
+        "y": 693.25,
+        "width": 454,
+        "height": 20.390625,
+        "bottom": 713.640625,
+        "right": 1217
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "laptop-authoritative",
+      "width": 1280,
+      "height": 800,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1280,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 978,
+        "height": 1034.234375,
+        "bottom": 1335.203125,
+        "right": 1242
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 978,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1242
+      },
+      "upload": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 976,
+        "height": 955.234375,
+        "bottom": 1334.203125,
+        "right": 1241
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 289,
+        "y": 427.765625,
+        "width": 200,
+        "height": 44,
+        "bottom": 471.765625,
+        "right": 489
+      },
+      "fileDrop": {
+        "x": 289,
+        "y": 512.5625,
+        "width": 928,
+        "height": 87.890625,
+        "bottom": 600.453125,
+        "right": 1217
+      },
+      "fileInput": {
+        "x": 290,
+        "y": 513.5625,
+        "width": 926,
+        "height": 85.890625,
+        "bottom": 599.453125,
+        "right": 1216
+      },
+      "submit": {
+        "x": 1085,
+        "y": 743,
+        "width": 132,
+        "height": 42,
+        "bottom": 785,
+        "right": 1217
+      },
+      "submitBar": {
+        "x": 265,
+        "y": 728,
+        "width": 976,
+        "height": 72,
+        "bottom": 800,
+        "right": 1241
+      },
+      "accessNote": {
+        "x": 763,
+        "y": 693.25,
+        "width": 454,
+        "height": 20.390625,
+        "bottom": 713.640625,
+        "right": 1217
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "laptop-review",
+      "width": 1280,
+      "height": 800,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1280,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 978,
+        "height": 556.78125,
+        "bottom": 857.75,
+        "right": 1242
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 978,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1242
+      },
+      "upload": null,
+      "review": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 976,
+        "height": 477.78125,
+        "bottom": 856.75,
+        "right": 1241
+      },
+      "publication": null,
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "false",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "step",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "laptop-publication",
+      "width": 1280,
+      "height": 800,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1280,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 978,
+        "height": 508.09375,
+        "bottom": 809.0625,
+        "right": 1242
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 978,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1242
+      },
+      "upload": null,
+      "review": null,
+      "publication": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 976,
+        "height": 429.09375,
+        "bottom": 808.0625,
+        "right": 1241
+      },
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "false",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "step",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "laptop-ontology",
+      "width": 1280,
+      "height": 800,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1280,
+      "ontology": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 978,
+        "height": 760.84375,
+        "bottom": 1061.8125,
+        "right": 1242
+      },
+      "instance": null,
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 978,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1242
+      },
+      "upload": null,
+      "review": null,
+      "publication": null,
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step"
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false"
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false"
+        }
+      ]
+    },
+    {
+      "name": "desktop-upload",
+      "width": 1440,
+      "height": 1000,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1440,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 1138,
+        "height": 1034.234375,
+        "bottom": 1335.203125,
+        "right": 1402
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 1138,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1402
+      },
+      "upload": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 1136,
+        "height": 955.234375,
+        "bottom": 1334.203125,
+        "right": 1401
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 289,
+        "y": 427.765625,
+        "width": 200,
+        "height": 44,
+        "bottom": 471.765625,
+        "right": 489
+      },
+      "fileDrop": {
+        "x": 289,
+        "y": 512.5625,
+        "width": 1088,
+        "height": 87.890625,
+        "bottom": 600.453125,
+        "right": 1377
+      },
+      "fileInput": {
+        "x": 290,
+        "y": 513.5625,
+        "width": 1086,
+        "height": 85.890625,
+        "bottom": 599.453125,
+        "right": 1376
+      },
+      "submit": {
+        "x": 1245,
+        "y": 746.640625,
+        "width": 132,
+        "height": 42,
+        "bottom": 788.640625,
+        "right": 1377
+      },
+      "submitBar": {
+        "x": 265,
+        "y": 731.640625,
+        "width": 1136,
+        "height": 72,
+        "bottom": 803.640625,
+        "right": 1401
+      },
+      "accessNote": {
+        "x": 843,
+        "y": 693.25,
+        "width": 534,
+        "height": 20.390625,
+        "bottom": 713.640625,
+        "right": 1377
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "desktop-authoritative",
+      "width": 1440,
+      "height": 1000,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1440,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 1138,
+        "height": 1034.234375,
+        "bottom": 1335.203125,
+        "right": 1402
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 1138,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1402
+      },
+      "upload": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 1136,
+        "height": 955.234375,
+        "bottom": 1334.203125,
+        "right": 1401
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 289,
+        "y": 427.765625,
+        "width": 200,
+        "height": 44,
+        "bottom": 471.765625,
+        "right": 489
+      },
+      "fileDrop": {
+        "x": 289,
+        "y": 512.5625,
+        "width": 1088,
+        "height": 87.890625,
+        "bottom": 600.453125,
+        "right": 1377
+      },
+      "fileInput": {
+        "x": 290,
+        "y": 513.5625,
+        "width": 1086,
+        "height": 85.890625,
+        "bottom": 599.453125,
+        "right": 1376
+      },
+      "submit": {
+        "x": 1245,
+        "y": 746.640625,
+        "width": 132,
+        "height": 42,
+        "bottom": 788.640625,
+        "right": 1377
+      },
+      "submitBar": {
+        "x": 265,
+        "y": 731.640625,
+        "width": 1136,
+        "height": 72,
+        "bottom": 803.640625,
+        "right": 1401
+      },
+      "accessNote": {
+        "x": 843,
+        "y": 693.25,
+        "width": 534,
+        "height": 20.390625,
+        "bottom": 713.640625,
+        "right": 1377
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "desktop-review",
+      "width": 1440,
+      "height": 1000,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1440,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 1138,
+        "height": 556.78125,
+        "bottom": 857.75,
+        "right": 1402
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 1138,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1402
+      },
+      "upload": null,
+      "review": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 1136,
+        "height": 477.78125,
+        "bottom": 856.75,
+        "right": 1401
+      },
+      "publication": null,
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "false",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "step",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "desktop-publication",
+      "width": 1440,
+      "height": 1000,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1440,
+      "ontology": null,
+      "instance": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 1138,
+        "height": 508.09375,
+        "bottom": 809.0625,
+        "right": 1402
+      },
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 1138,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1402
+      },
+      "upload": null,
+      "review": null,
+      "publication": {
+        "x": 265,
+        "y": 378.96875,
+        "width": 1136,
+        "height": 429.09375,
+        "bottom": 808.0625,
+        "right": 1401
+      },
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "false",
+          "x": 289,
+          "y": 323.96875,
+          "width": 92,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 381
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 381,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 523
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "step",
+          "x": 523,
+          "y": 323.96875,
+          "width": 142,
+          "height": 32,
+          "bottom": 355.96875,
+          "right": 665
+        }
+      ]
+    },
+    {
+      "name": "desktop-ontology",
+      "width": 1440,
+      "height": 1000,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1440,
+      "ontology": {
+        "x": 264,
+        "y": 300.96875,
+        "width": 1138,
+        "height": 738.75,
+        "bottom": 1039.71875,
+        "right": 1402
+      },
+      "instance": null,
+      "tabs": {
+        "x": 264,
+        "y": 238.171875,
+        "width": 1138,
+        "height": 38.796875,
+        "bottom": 276.96875,
+        "right": 1402
+      },
+      "upload": null,
+      "review": null,
+      "publication": null,
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step"
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false"
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false"
+        }
+      ]
+    },
+    {
+      "name": "wide-desktop-upload",
+      "width": 1920,
+      "height": 1080,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1920,
+      "ontology": null,
+      "instance": {
+        "x": 273,
+        "y": 316.171875,
+        "width": 1160,
+        "height": 1034.234375,
+        "bottom": 1350.40625,
+        "right": 1433
+      },
+      "tabs": {
+        "x": 273,
+        "y": 253.375,
+        "width": 1160,
+        "height": 38.796875,
+        "bottom": 292.171875,
+        "right": 1433
+      },
+      "upload": {
+        "x": 274,
+        "y": 394.171875,
+        "width": 1158,
+        "height": 955.234375,
+        "bottom": 1349.40625,
+        "right": 1432
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 298,
+        "y": 442.96875,
+        "width": 200,
+        "height": 44,
+        "bottom": 486.96875,
+        "right": 498
+      },
+      "fileDrop": {
+        "x": 298,
+        "y": 527.765625,
+        "width": 1110,
+        "height": 87.890625,
+        "bottom": 615.65625,
+        "right": 1408
+      },
+      "fileInput": {
+        "x": 299,
+        "y": 528.765625,
+        "width": 1108,
+        "height": 85.890625,
+        "bottom": 614.65625,
+        "right": 1407
+      },
+      "submit": {
+        "x": 1276,
+        "y": 761.84375,
+        "width": 132,
+        "height": 42,
+        "bottom": 803.84375,
+        "right": 1408
+      },
+      "submitBar": {
+        "x": 274,
+        "y": 746.84375,
+        "width": 1158,
+        "height": 72,
+        "bottom": 818.84375,
+        "right": 1432
+      },
+      "accessNote": {
+        "x": 863,
+        "y": 708.453125,
+        "width": 545,
+        "height": 20.390625,
+        "bottom": 728.84375,
+        "right": 1408
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 298,
+          "y": 339.171875,
+          "width": 92,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 390
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 390,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 532
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 532,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 674
+        }
+      ]
+    },
+    {
+      "name": "wide-desktop-authoritative",
+      "width": 1920,
+      "height": 1080,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1920,
+      "ontology": null,
+      "instance": {
+        "x": 273,
+        "y": 316.171875,
+        "width": 1160,
+        "height": 1034.234375,
+        "bottom": 1350.40625,
+        "right": 1433
+      },
+      "tabs": {
+        "x": 273,
+        "y": 253.375,
+        "width": 1160,
+        "height": 38.796875,
+        "bottom": 292.171875,
+        "right": 1433
+      },
+      "upload": {
+        "x": 274,
+        "y": 394.171875,
+        "width": 1158,
+        "height": 955.234375,
+        "bottom": 1349.40625,
+        "right": 1432
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 298,
+        "y": 442.96875,
+        "width": 200,
+        "height": 44,
+        "bottom": 486.96875,
+        "right": 498
+      },
+      "fileDrop": {
+        "x": 298,
+        "y": 527.765625,
+        "width": 1110,
+        "height": 87.890625,
+        "bottom": 615.65625,
+        "right": 1408
+      },
+      "fileInput": {
+        "x": 299,
+        "y": 528.765625,
+        "width": 1108,
+        "height": 85.890625,
+        "bottom": 614.65625,
+        "right": 1407
+      },
+      "submit": {
+        "x": 1276,
+        "y": 761.84375,
+        "width": 132,
+        "height": 42,
+        "bottom": 803.84375,
+        "right": 1408
+      },
+      "submitBar": {
+        "x": 274,
+        "y": 746.84375,
+        "width": 1158,
+        "height": 72,
+        "bottom": 818.84375,
+        "right": 1432
+      },
+      "accessNote": {
+        "x": 863,
+        "y": 708.453125,
+        "width": 545,
+        "height": 20.390625,
+        "bottom": 728.84375,
+        "right": 1408
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 298,
+          "y": 339.171875,
+          "width": 92,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 390
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 390,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 532
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 532,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 674
+        }
+      ]
+    },
+    {
+      "name": "wide-desktop-review",
+      "width": 1920,
+      "height": 1080,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1920,
+      "ontology": null,
+      "instance": {
+        "x": 273,
+        "y": 316.171875,
+        "width": 1160,
+        "height": 556.78125,
+        "bottom": 872.953125,
+        "right": 1433
+      },
+      "tabs": {
+        "x": 273,
+        "y": 253.375,
+        "width": 1160,
+        "height": 38.796875,
+        "bottom": 292.171875,
+        "right": 1433
+      },
+      "upload": null,
+      "review": {
+        "x": 274,
+        "y": 394.171875,
+        "width": 1158,
+        "height": 477.78125,
+        "bottom": 871.953125,
+        "right": 1432
+      },
+      "publication": null,
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "false",
+          "x": 298,
+          "y": 339.171875,
+          "width": 92,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 390
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "step",
+          "x": 390,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 532
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 532,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 674
+        }
+      ]
+    },
+    {
+      "name": "wide-desktop-publication",
+      "width": 1920,
+      "height": 1080,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1920,
+      "ontology": null,
+      "instance": {
+        "x": 273,
+        "y": 316.171875,
+        "width": 1160,
+        "height": 508.09375,
+        "bottom": 824.265625,
+        "right": 1433
+      },
+      "tabs": {
+        "x": 273,
+        "y": 253.375,
+        "width": 1160,
+        "height": 38.796875,
+        "bottom": 292.171875,
+        "right": 1433
+      },
+      "upload": null,
+      "review": null,
+      "publication": {
+        "x": 274,
+        "y": 394.171875,
+        "width": 1158,
+        "height": 429.09375,
+        "bottom": 823.265625,
+        "right": 1432
+      },
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "false",
+          "x": 298,
+          "y": 339.171875,
+          "width": 92,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 390
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 390,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 532
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "step",
+          "x": 532,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 674
+        }
+      ]
+    },
+    {
+      "name": "wide-desktop-ontology",
+      "width": 1920,
+      "height": 1080,
+      "scrollY": 0,
+      "fullscreen": false,
+      "pageWidth": 1920,
+      "ontology": {
+        "x": 273,
+        "y": 316.171875,
+        "width": 1160,
+        "height": 738.75,
+        "bottom": 1054.921875,
+        "right": 1433
+      },
+      "instance": null,
+      "tabs": {
+        "x": 273,
+        "y": 253.375,
+        "width": 1160,
+        "height": 38.796875,
+        "bottom": 292.171875,
+        "right": 1433
+      },
+      "upload": null,
+      "review": null,
+      "publication": null,
+      "sourceType": null,
+      "fileDrop": null,
+      "fileInput": null,
+      "submit": null,
+      "submitBar": null,
+      "accessNote": null,
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step"
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false"
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false"
+        }
+      ]
+    },
+    {
+      "name": "wide-desktop-fullscreen",
+      "width": 1920,
+      "height": 1080,
+      "scrollY": 0,
+      "fullscreen": true,
+      "pageWidth": 1920,
+      "ontology": null,
+      "instance": {
+        "x": 273,
+        "y": 316.171875,
+        "width": 1160,
+        "height": 1034.234375,
+        "bottom": 1350.40625,
+        "right": 1433
+      },
+      "tabs": {
+        "x": 273,
+        "y": 253.375,
+        "width": 1160,
+        "height": 38.796875,
+        "bottom": 292.171875,
+        "right": 1433
+      },
+      "upload": {
+        "x": 274,
+        "y": 394.171875,
+        "width": 1158,
+        "height": 955.234375,
+        "bottom": 1349.40625,
+        "right": 1432
+      },
+      "review": null,
+      "publication": null,
+      "sourceType": {
+        "x": 298,
+        "y": 442.96875,
+        "width": 200,
+        "height": 44,
+        "bottom": 486.96875,
+        "right": 498
+      },
+      "fileDrop": {
+        "x": 298,
+        "y": 527.765625,
+        "width": 1110,
+        "height": 87.890625,
+        "bottom": 615.65625,
+        "right": 1408
+      },
+      "fileInput": {
+        "x": 299,
+        "y": 528.765625,
+        "width": 1108,
+        "height": 85.890625,
+        "bottom": 614.65625,
+        "right": 1407
+      },
+      "submit": {
+        "x": 1276,
+        "y": 761.84375,
+        "width": 132,
+        "height": 42,
+        "bottom": 803.84375,
+        "right": 1408
+      },
+      "submitBar": {
+        "x": 274,
+        "y": 746.84375,
+        "width": 1158,
+        "height": 72,
+        "bottom": 818.84375,
+        "right": 1432
+      },
+      "accessNote": {
+        "x": 863,
+        "y": 708.453125,
+        "width": 545,
+        "height": 20.390625,
+        "bottom": 728.84375,
+        "right": 1408
+      },
+      "steps": [
+        {
+          "target": "source-upload-slot",
+          "label": "01 上传资料",
+          "current": "step",
+          "x": 298,
+          "y": 339.171875,
+          "width": 92,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 390
+        },
+        {
+          "target": "step-review",
+          "label": "02 复核候选",
+          "current": "false",
+          "x": 390,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 532
+        },
+        {
+          "target": "step-publication",
+          "label": "03 发布知识",
+          "current": "false",
+          "x": 532,
+          "y": 339.171875,
+          "width": 142,
+          "height": 32,
+          "bottom": 371.171875,
+          "right": 674
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    "laptop-01-upload.png",
+    "laptop-06-upload-validation.png",
+    "laptop-02-authoritative.png",
+    "laptop-03-review.png",
+    "laptop-04-publication.png",
+    "laptop-05-ontology.png",
+    "desktop-01-upload.png",
+    "desktop-02-authoritative.png",
+    "desktop-03-review.png",
+    "desktop-04-publication.png",
+    "desktop-05-ontology.png",
+    "wide-desktop-01-upload.png",
+    "wide-desktop-02-authoritative.png",
+    "wide-desktop-03-review.png",
+    "wide-desktop-04-publication.png",
+    "wide-desktop-05-ontology.png",
+    "wide-desktop-06-fullscreen.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "failedResponses": [],
+  "blockedRequests": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/industrial"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workbench.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/app.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape-dagre.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/core.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph-model.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/source-catalog.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/retrieval-options.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workspaces.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance-template.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/playground/bootstrap"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance-actions.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/sources.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/graph-view.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/model.mjs"
+    },
+    {
+      "method": "POST",
+      "path": "/playground/session"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/ontologies"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/construction-jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/review-queue"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publication-candidates"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publications"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/knowledge/graph:query"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workbench.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/app.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape-dagre.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/core.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph-model.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/source-catalog.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/retrieval-options.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workspaces.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance-template.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/playground/bootstrap"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance-actions.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/sources.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/graph-view.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/model.mjs"
+    },
+    {
+      "method": "POST",
+      "path": "/playground/session"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/ontologies"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/construction-jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/review-queue"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publication-candidates"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publications"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/knowledge/graph:query"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workbench.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/app.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape-dagre.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/core.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph-model.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/source-catalog.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/retrieval-options.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workspaces.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance-template.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/playground/bootstrap"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance-actions.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/sources.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/graph-view.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/model.mjs"
+    },
+    {
+      "method": "POST",
+      "path": "/playground/session"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/ontologies"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/construction-jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/review-queue"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publication-candidates"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publications"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/knowledge/graph:query"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workbench.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/app.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/vendor/cytoscape-dagre.min.js"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.css"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/core.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/graph-model.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/source-catalog.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/retrieval-options.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/workspaces.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/governance-template.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/playground/bootstrap"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/browser.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/maintenance-actions.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/sources.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/graph-view.mjs"
+    },
+    {
+      "method": "GET",
+      "path": "/industrial/assets/knowledge/model.mjs"
+    },
+    {
+      "method": "POST",
+      "path": "/playground/session"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/ontologies"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/construction-jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/review-queue"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publication-candidates"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/knowledge/publications"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/knowledge/graph:query"
+    }
+  ],
+  "limitations": [
+    "No upload, extraction, review decision, ontology save, import, preview or publication is submitted."
+  ]
+}

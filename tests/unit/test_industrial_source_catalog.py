@@ -101,6 +101,49 @@ const nav=content.children.at(-1);assert.equal(nav.children[0].disabled,false);a
 catalog.reset();assert.equal(catalog.dialog,null);
 """)
 
+    def test_source_cards_group_facts_without_replacing_titles_or_provenance(self):
+        self.run_module(r"""
+const calls=[],selected=[];
+const {catalog}=make(async(path,body)=>{calls.push({path,body});return chunk(body.ordinal);},
+  async(value,action)=>selected.push({value,action}));
+const row={...source(),title:'authoritative_source',source_name:'local-controlled-upload',
+  canonical_uri:'urn:local:authoritative_source.txt',asset_keys:['BC-P-101'],source_kind:'USER_UPLOAD',
+  has_published_knowledge:true};
+const before=JSON.stringify(row),card=catalog.renderCard(row);
+const title=card.children.find(n=>n.className==='source-card-title');
+assert.equal(title.textContent,row.title);
+const summary=card.children.find(n=>n.className==='source-card-summary');
+assert.match(summary.textContent,/第 1 版/);assert.match(summary.textContent,/2 个来源片段/);
+assert.match(summary.textContent,/包含当前可见的已发布知识/);
+assert.doesNotMatch(summary.textContent,/local-controlled-upload|authoritative_source/);
+assert.match(card.children.find(n=>n.className==='source-card-header').textContent,/用户上传/);
+assert.match(card.textContent,/BC-P-101/);
+const details=card.children.find(n=>n.tagName==='details');
+assert.equal(details.open,false);assert.match(details.textContent,/原始标题：authoritative_source/);
+assert.match(details.textContent,/来源名称：local-controlled-upload/);
+assert.match(details.textContent,/urn:local:authoritative_source.txt/);
+assert.match(details.textContent,/文档 doc\n版本 v1/);
+const actions=card.children.at(-1);
+await actions.children[1].events.click();
+assert.equal(selected[0].action,'graph');assert.deepEqual(selected[0].value,row);
+await actions.children[0].events.click();
+assert.deepEqual(calls[0].body,{document_id:'doc',version_id:'v1',ordinal:0});
+assert.equal(JSON.stringify(row),before);
+""")
+
+    def test_source_cards_do_not_infer_publication_or_authority_from_filenames(self):
+        self.run_module(r"""
+const {catalog}=make(async()=>{});
+const row={...source(),title:'authoritative_source',source_kind:null};
+const unpublished=catalog.renderCard(row);
+assert.match(unpublished.textContent,/尚无当前可见的已发布知识/);
+assert.match(unpublished.children.find(n=>n.className==='source-card-header').textContent,/原始文档/);
+assert.doesNotMatch(unpublished.textContent,/权威导入|官方发布/);
+delete row.has_published_knowledge;
+const unknown=catalog.renderCard(row);
+assert.doesNotMatch(unknown.textContent,/当前可见的已发布知识/);
+""")
+
     def test_version_mismatch_and_out_of_order_chunks_do_not_render(self):
         self.run_module(r"""
 const first=deferred(),later=deferred();let reads=0;
