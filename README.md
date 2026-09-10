@@ -4,8 +4,9 @@
 应用代码位于 `src/graphrag_prod/`，通过版本化文档、精确 Chunk 坐标、
 受治理的实体和关系，将检索结果追溯到原文。
 
-默认中文演示使用 4 份文档、6 个 Chunk。独立工业工作台支持 Canalis KT
-和 EvoPacT HVX 的代表性语料、图谱探索与受控上传。模型抽取产生待审核候选，
+Industrial 是统一操作页面，包含专家本体、知识构建、审核发布、图谱探索、
+证据检索与质量维护，支持通用资料以及 Canalis KT 和 EvoPacT HVX 工业语料。
+默认中文开发演示使用 4 份文档、6 个 Chunk。模型抽取产生待审核候选，
 人工审核和发布后才能用于相应的已发布图谱。
 
 ## 本地启动
@@ -21,8 +22,16 @@ cp -n .env.example .env
 ./scripts/run_playground.sh
 ```
 
-默认入口：<http://127.0.0.1:8000/playground>。启动器创建独立临时 Neo4j，
-退出时移除自己的临时数据库。运行中的工业库与该演示分开管理。
+当前使用 8002 水泵测试库时，请双击根目录的 `quick_start.command`，或运行：
+
+```sh
+./quick_start.command
+```
+
+入口：<http://127.0.0.1:8002/industrial>。该脚本复用原数据库、后台启动或重启服务，
+保持仅水泵测试包隔离；配置和日志位置见 [quick_start.md](quick_start.md)。
+日常重启不要使用上方旧开发演示启动器，也不要重新初始化或导入历史语料。
+旧 `/playground` 页面地址重定向到 `/industrial`。
 
 - [中文最小演示、数据库隔离与重置](docs/playground_mini_demo.md)
 - [运行配置、provider 限制和故障处理](docs/local_playground.md)
@@ -31,15 +40,18 @@ cp -n .env.example .env
 - [实体档案、关系图谱、来源资料与质量维护](docs/knowledge_browsing.md)
 - [知识构建操作指南](docs/industrial_demo_walkthrough.md)
 - [工业工作台使用指南](docs/industrial_workbench.md)
+- [当前仅循环水泵测试包：隔离范围与验证](docs/pump-only-isolation.md)
+- [项目知识库、两种身份与当前库重置](docs/project-knowledge-bases.md)
+- [统一工作台迁移方案与验证记录](docs/industrial-workbench-migration.md)
 - [复用已有工业数据库与上传恢复](docs/industrial_runtime_and_uploads.md)
 
 默认启动器校验官方 DashScope HTTPS endpoint，`.env.example` 与此保持一致。
 请填写自己的密钥并确认模型权限；API 核心通过依赖注入接入 provider。
-Playground 的检索页面返回 Chunk、出处、子图和检索轨迹；最终回答生成未在该页面启用。
+证据检索页面返回 Chunk、出处、子图和检索轨迹；最终回答生成未在该页面启用。
 构建页面按需调用 chat model 抽取候选。
 
-知识管理分为“建立专家基准、扩充业务知识、知识浏览、质量与维护”。知识浏览
-提供实体档案、可探索的关系图谱和原文资料；维护提供问题核查、知识修正、
+知识构建以“上传资料、复核候选、发布知识”为主流程，顶部折叠区维护专家基准与本体。
+图谱、检索和来源资料各有独立入口，实体档案从图谱进入；侧栏底部的质量与维护提供问题核查、知识修正、
 移除影响预览以及发布版本比较。原文按需授权读取，修正经审核和发布后生效。
 
 ## 项目结构

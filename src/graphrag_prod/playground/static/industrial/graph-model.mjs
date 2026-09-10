@@ -1,12 +1,14 @@
 import { TYPE_LABELS, PREDICATE_LABELS } from "./core.mjs";
 
 export const TYPE_COLORS = Object.freeze({
+  Equipment: ["#dceedd", "#7faa8a"],
+  Risk: ["#f5e4de", "#bd9183"],
   EquipmentClass: ["#ecf0e3", "#a9bb87"],
   ProductFamily: ["#e1eede", "#80a571"],
   ProductModel: ["#e1eee4", "#79a38b"],
   Site: ["#e3e7db", "#9aa78a"],
   IndustrialSystem: ["#e5eade", "#a3b492"],
-  InstalledAsset: ["#d7edda", "#71a27b"],
+  InstalledAsset: ["#d4eddf", "#438364"],
   Component: ["#e3edf5", "#8ba6bf"],
   Symptom: ["#f6e9d7", "#c8a071"],
   FaultMode: ["#f4e0db", "#c69583"],
@@ -18,37 +20,47 @@ export const TYPE_COLORS = Object.freeze({
   SourceEdition: ["#e6edef", "#98b1b4"],
 });
 export const VIEWS = Object.freeze({
-  composition: {
-    label: "组成层级",
-    direction: "BT",
-    predicates: ["PART_OF", "INSTALLED_AT", "LOCATED_AT"],
-  },
-  classification: {
-    label: "分类层级",
-    direction: "BT",
-    predicates: ["SUBTYPE_OF", "IN_FAMILY", "CLASSIFIED_AS", "INSTANCE_OF"],
-  },
-  diagnostic: {
-    label: "诊断关系",
-    direction: "LR",
-    predicates: [
-      "HAS_SYMPTOM",
-      "MAY_INDICATE",
-      "CHECKED_BY",
-      "ADDRESSED_BY",
-      "OBSERVED_ON",
-      "OBSERVES",
-      "DESCRIBES",
-    ],
-  },
-  connection: {
-    label: "电气连接",
-    direction: "LR",
-    predicates: ["CONNECTS_TO"],
-  },
-  all: { label: "全部关系", direction: "LR", predicates: [] },
-  ontology: { label: "本体模型", direction: "LR", predicates: [] },
+  all: { label: "实例图谱", direction: "LR" },
+  ontology: { label: "本体模型", direction: "LR" },
 });
+export function ontologyGraphFilters(schema = {}) {
+  const relations = (schema.relationship_types || []).slice(0, 128);
+  const declared = new Set(relations.map(relation => relation.name));
+  const hierarchies = (schema.hierarchies || []).slice(0, 32)
+    .filter(hierarchy => declared.has(hierarchy.relationship_type));
+  return [
+    ...hierarchies.map(hierarchy => ({
+      value: `hierarchy:${hierarchy.name}`, label: hierarchy.name,
+      group: '本体层级', predicates: [hierarchy.relationship_type],
+    })),
+    ...relations.map(relation => ({
+      value: `relation:${relation.name}`,
+      label: PREDICATE_LABELS[relation.name] || relation.name,
+      group: '关系类型', predicates: [relation.name],
+    })),
+  ];
+}
+export function graphEmptyState(view, pin = {}, filterLabel = null) {
+  if (view === 'ontology') return {
+    title: '当前范围没有可显示的本体模型',
+    detail: '请核对本体是否已启用，以及当前知识库和访问范围。',
+    showAll: false,
+  };
+  if (filterLabel) return {
+    title: `“${filterLabel}”下没有匹配的关系`,
+    detail: '此处只显示当前本体筛选的关系，不代表知识尚未发布。可切换到全部关系查看。',
+    showAll: true,
+  };
+  return pin.publication_id ? {
+    title: '当前筛选范围没有匹配的已发布节点',
+    detail: '知识库已有发布版本，请核对事实范围、来源筛选和当前身份的访问权限。',
+    showAll: false,
+  } : {
+    title: '当前知识库尚无可见的已发布知识',
+    detail: '请在知识构建中审核并发布，然后刷新图谱。',
+    showAll: false,
+  };
+}
 export function validateGraphPage(page) {
   if (
     !page ||
@@ -82,6 +94,13 @@ export function validateGraphPage(page) {
 }
 export function graphElements(page) {
   validateGraphPage(page);
+  // Counts describe this authorized page only, never the unseen whole graph.
+  const degree = new Map(page.nodes.map(node => [node.entity_id, 0]));
+  for (const edge of page.edges) {
+    degree.set(edge.source, degree.get(edge.source) + 1);
+    if (edge.source !== edge.target)
+      degree.set(edge.target, degree.get(edge.target) + 1);
+  }
   return [
     ...page.nodes.map((node) => {
       const colors = TYPE_COLORS[node.entity_type] || ["#e9ece7", "#a9b1a3"];
@@ -91,11 +110,14 @@ export function graphElements(page) {
           label: node.label,
           typeLabel: TYPE_LABELS[node.entity_type] || node.entity_type,
           displayLabel: `${node.label}\n${TYPE_LABELS[node.entity_type] || node.entity_type}`,
+          searchText: [node.label, node.entity_id, node.canonical_key,
+            TYPE_LABELS[node.entity_type], node.entity_type].filter(Boolean).join(" ").toLocaleLowerCase(),
+          visibleDegree: degree.get(node.entity_id),
           fill: colors[0],
           border: colors[1],
           entity: node,
         },
-        classes: "instance",
+        classes: `instance${node.entity_type === "InstalledAsset" ? " asset" : ""}`,
       };
     }),
     ...page.edges.map((edge) => ({
@@ -104,12 +126,13 @@ export function graphElements(page) {
         source: `n:${edge.source}`,
         target: `n:${edge.target}`,
         label: PREDICATE_LABELS[edge.predicate] || edge.predicate,
+        displayLabel: `${PREDICATE_LABELS[edge.predicate] || edge.predicate}${edge.source_count > 1 ? ` · ${edge.source_count} 源` : ""}${edge.fact_distinction ? " · 独立" : ""}`,
         assertion: edge,
       },
       classes:
-        (edge.authority_levels || [edge.authority_level]).includes("AUTHORITATIVE")
+        ((edge.authority_levels || [edge.authority_level]).includes("AUTHORITATIVE")
           ? "authoritative"
-          : "secondary",
+          : "secondary") + (edge.fact_distinction ? " independent" : ""),
     })),
   ];
 }
@@ -126,6 +149,7 @@ export function ontologyElements(schema) {
         id: `t:${type.name}`,
         label: TYPE_LABELS[type.name] || type.name,
         displayLabel: `${TYPE_LABELS[type.name] || type.name}\n${type.name}`,
+        searchText: `${TYPE_LABELS[type.name] || type.name} ${type.name}`.toLocaleLowerCase(),
         fill: colors[0],
         border: colors[1],
         definition: type,
@@ -146,6 +170,7 @@ export function ontologyElements(schema) {
               source: `t:${source}`,
               target: `t:${target}`,
               label: PREDICATE_LABELS[relation.name] || relation.name,
+              displayLabel: PREDICATE_LABELS[relation.name] || relation.name,
               definition: relation,
             },
             classes: "schema-edge",

@@ -1,5 +1,7 @@
 """Small checks for safe publication errors and the existing correction UI."""
 from dataclasses import asdict
+from tests.fixtures.workbench_ui import governance_source
+
 import json
 from pathlib import Path
 import subprocess
@@ -65,7 +67,7 @@ class PublicationIssueTests(unittest.TestCase):
             PublicationIssue('PROPERTY_VALUES_DIFFER', self.issue().targets * 51)
 
     def test_page_marks_exact_record_expands_and_keeps_selection(self):
-        page = Path('src/graphrag_prod/playground/static/index.html').read_text()
+        page = governance_source()
         functions = page[page.index('function clearPublicationIssue('):page.index('function invalidatePublicationPreview(')]
         start = page.index('const escapeHtml =')
         escape = page[start:page.index('\n', start)]
@@ -92,6 +94,7 @@ section.parentElement=root;
 const locate={dataset:{publicationLocate:'0'}};
 const panel={innerHTML:'',querySelectorAll:()=>[locate]};
 const document={getElementById:()=>panel};
+const $=id=>document.getElementById(id);
 const elements={publicationCandidateList:root};
 function reviewPropertyLabel(value){return value;}
 function reviewEntity(item){return item.subject;}

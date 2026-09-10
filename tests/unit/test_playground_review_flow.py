@@ -131,9 +131,28 @@ const html=elements.reviewList.innerHTML;
 assert.ok(html.includes('review-facts'));
 assert.ok(html.includes('额定功率：37.5 kW'));
 assert.ok(html.includes('2026-12-31'));
-assert.ok(html.includes('确认并追加来源'));
+assert.ok(html.includes('确认事实'));
+assert.ok(html.includes('确认后本次来源进入待发布列表'));
 assert.ok(html.includes('<details class="review-technical"'));
 assert.ok(html.includes('data-review-editor="0" disabled'));
+''')
+
+    def test_fact_actions_stay_stable_across_assessment_states(self) -> None:
+        self.run_ui(r'''
+const fact=item('pump-seal',1,'ASSERTION');
+state.reviews=[fact];reviewModel();
+const buttons=html=>[...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map(match=>match[1]);
+const expected=['确认事实','作为独立事实确认','不采纳','暂缓处理'];
+for(const status of ['READY','DUPLICATE','CONFLICT','BLOCKED']) {
+  state.reviewAssessments.set(fact.record_id,{revision:1,identityEpoch:0,reviewEpoch:0,status,summary:status,dependencies:[],matches:[]});
+  assert.deepEqual(buttons(reviewActions(fact,0)),expected);
+  assert.equal(reviewApproval(fact).allowed,['READY','DUPLICATE'].includes(status));
+}
+fact.fact_distinction={reason:'人工明确区分'};
+assert.deepEqual(buttons(reviewActions(fact,0)),expected);
+assert.equal(reviewConfirmLabel(fact,true),'作为独立事实确认');
+fact.object_entity=null;
+assert.equal(reviewConfirmLabel(fact),'确认事实');
 ''')
 
     def test_blocked_batch_never_sends_partial_approval(self) -> None:

@@ -66,6 +66,27 @@ class IndustrialUploadSecurityTests(unittest.TestCase):
         self.assertFalse(self.pipeline.requests)
         self.assertFalse(self.audit.jobs)
 
+    def test_generic_industrial_tenant_document_keeps_jwt_acl_and_no_product_provenance(self):
+        body = {**self.body, "canonical_uri": "urn:local:controlled-upload:general-report", "industrial_context": None}
+        response = self.client.post("/v1/knowledge:construct", headers=self.headers, json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        job = self.audit.jobs[response.json()["job_id"]]
+        self.assertEqual(job.tenant_id, INDUSTRIAL_TENANT)
+        self.assertEqual(job.access_groups, frozenset({"maintenance"}))
+        self.assertIsNone(job.industrial_context_json)
+        self.policy.persist.assert_not_called()
+        self.policy.resolver.resolve.assert_not_called()
+
+    def test_generic_documents_cannot_expand_acl_or_promote_authority_without_import(self):
+        body = {**self.body, "canonical_uri": "urn:local:controlled-upload:generic-protected", "industrial_context": None}
+        for changed in ({**body, "access_groups": ["engineering"]},
+                        {**body, "knowledge_scope": "AUTHORITATIVE", "extraction_mode": "LLM"}):
+            with self.subTest(changed=changed):
+                response = self.client.post("/v1/knowledge:construct", headers=self.headers, json=changed)
+                self.assertEqual(response.status_code, 403, response.text)
+        self.assertFalse(self.pipeline.requests)
+        self.assertFalse(self.audit.jobs)
+
     def test_rendered_utf8_budget_returns_422_before_any_source_write(self):
         body = {**self.body, "title": "题" * 512,
                 "content_base64": base64.b64encode(("测" * 900).encode()).decode()}

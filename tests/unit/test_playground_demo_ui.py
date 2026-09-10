@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.workbench_ui import governance_source
+
 import hashlib
 import json
 from pathlib import Path
@@ -22,65 +24,36 @@ class PlaygroundDemoUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.kit = get_industrial_demo_kit()
-        cls.source = (
-            Path(__file__).parents[2]
-            / "src/graphrag_prod/playground/static/index.html"
-        ).read_text(encoding="utf-8")
+        cls.source = governance_source()
 
-    def test_workbench_uses_one_operator_for_all_steps(self) -> None:
+    def test_workbench_uses_only_the_explicitly_selected_identity_for_all_steps(self) -> None:
         from graphrag_prod.playground.demo_corpus import load_demo_corpus
 
         node = shutil.which("node")
         self.assertIsNotNone(node)
         bootstrap = PlaygroundCatalog(load_demo_corpus(), secrets.token_bytes(32)).bootstrap()
-        start = self.source.index("      function currentPersona() {")
-        end = self.source.index("      function renderDocumentAccessGroups()", start)
-        script = """
-const assert = require('node:assert/strict');
-const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
-const state = {bootstrap: input.bootstrap, view: 'governance'};
-const elements = {query: {value: ''}};
-eval(input.code);
-function resetRetrievalResult() {}
-function renderDocumentAccessGroups() {}
-function updateMode() {}
-const operator = currentPersona();
-assert.ok(operator);
-assert.equal(operator.tenant_id, 'demo-a');
-for (const persona of state.bootstrap.personas) {
-  assert.equal(currentPersona().id, operator.id);
-  for (const scope of ['ontology:write', 'ontology:publish', 'knowledge:import',
-    'knowledge:construct', 'knowledge:review', 'knowledge:publish',
-    'knowledge:quality', 'knowledge:lifecycle']) {
-    assert.ok(currentPersona().scopes.includes(scope));
+        line = next(line for line in self.source.splitlines() if "const currentPersona=" in line)
+        script = r"""
+const assert=require('node:assert/strict');
+const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const bootstrap=input.bootstrap,client={personaId:null};
+eval(input.code.replace('const currentPersona=', 'globalThis.currentPersona='));
+assert.equal(currentPersona(),null);
+for(const selected of bootstrap.personas) {
+  client.personaId=selected.id;
+  assert.equal(currentPersona(),selected);
+  assert.deepEqual(currentPersona().scopes,selected.scopes);
+  // Changing a tab or form never substitutes a privileged identity.
+  for(const view of ['baseline','business','browse','maintenance']) {
+    client.view=view;assert.equal(currentPersona().id,selected.id);
   }
-  state.view = 'retrieval';
-  assert.equal(currentPersona().id, operator.id);
-  state.view = 'governance';
 }
-for (const question of state.bootstrap.questions) {
-  selectQuestion(question.id, {closeDrawer: false});
-  assert.equal(elements.query.value, question.query);
-  assert.equal(currentPersona().id, operator.id);
-}
-state.bootstrap = {personas: []};
-assert.equal(currentPersona(), null);
+client.personaId='unknown';assert.equal(currentPersona(),null);
 """
-        result = subprocess.run(
-            [node, "-e", script],
-            input=json.dumps({"bootstrap": bootstrap, "code": self.source[start:end] +
-                self.source[self.source.index("      function selectQuestion("):
-                            self.source.index("      async function jsonRequest(")]}),
-            text=True, capture_output=True, check=False,
-        )
+        result = subprocess.run([node, "-e", script], input=json.dumps({"bootstrap": bootstrap, "code": line}),
+                                text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("governance-persona-select", self.source)
-        self.assertNotIn("governance-scope-note", self.source)
-        self.assertNotIn("persona-select", self.source)
-        self.assertNotIn("elements.persona", self.source)
-        for removed in ("identity-card", "identity-label", "identity-tenant",
-                        "identity-groups", "renderIdentity"):
-            self.assertNotIn(removed, self.source)
+        self.assertNotIn("required.every(scope", self.source)
 
     def run_js(self, scenario: str, *, upload: bool = False, detail: bool = False) -> None:
         node = shutil.which("node")
@@ -88,6 +61,10 @@ assert.equal(currentPersona(), null);
         code = self.source[
             self.source.index("function demoKit()"):
             self.source.index("function detectedMime(file)")
+        ]
+        code += self.source[
+            self.source.index("function setUploadKnowledgeScope("):
+            self.source.index("function showConstructionFlow(")
         ]
         if upload:
             code += self.source[
@@ -116,7 +93,8 @@ function $(id) {
 const kit = input.kit;
 const source = kit.files.find(item => item.id === 'authoritative_source');
 const state = {bootstrap: {defaults: {industrial_demo: kit}}, identityEpoch: 0,
-  constructionBusy: false, demoSourceBinding: null, constructionJobs: []};
+  constructionBusy: false, uploadKnowledgeScope: 'BUSINESS', demoSourceBinding: null, constructionJobs: []};
+$('document-knowledge-scope').value = 'BUSINESS';
 const elements = {aboxEditor: {value: 'user draft'}, aboxOutput: {},
   ontologyEditor: {value: ''}, constructionOutput: {textContent: ''}};
 const metadata = {canonical_uri: source.metadata.canonical_uri,
@@ -131,12 +109,16 @@ const context = vm.createContext({$, fields, kit, source, state, elements, metad
   escapeHtml: String, shortId: String, showToast() {}, output: (element, value) => {
     element.textContent = typeof value === 'string' ? value : JSON.stringify(value);
   }, currentPersona: () => ({id: 'persona-steward'}),
-  selectedDocumentAccessGroups: () => ['alpha-finance'], detectedMime: () => 'text/plain',
+  uploadContext: () => null, selectedDocumentAccessGroups: () => ['alpha-finance'], detectedMime: () => 'text/plain',
   bytesToBase64: () => 'bounded-upload',
-  constructionFingerprint: async () => JSON.stringify({content_sha256: source.sha256}),
+  constructionFingerprint: async (bytes, metadata) => {
+    state.fingerprints ??= []; state.fingerprints.push(metadata);
+    return JSON.stringify({content_sha256: source.sha256, ...metadata});
+  },
   nextConstructionOperation: () => 'demo-operation-key', completeConstructionOperation() {state.completedOperations = (state.completedOperations || 0) + 1;},
   loadConstructionJobs: async () => {}, loadReviews: async () => {},
   loadActiveDocuments: async () => {}, showConstructionFlow(flow) {state.constructionFlow = flow;},
+  activeOntology: () => null,
   requirePublishedConstructionOntology: async () => true,
   apiRequest: (url, options) => new Promise((resolve, reject) => requests.push({url, options, resolve, reject})),
   flush: () => new Promise(resolve => setImmediate(resolve)),
@@ -226,13 +208,16 @@ assert.equal($('abox-prepare-button').hidden, false);
         self.run_js(r"""
 prepareDemoUpload('authoritative_source');
 assert.equal($('document-extraction-mode').value, 'LLM');
+assert.equal($('document-knowledge-scope').value, 'AUTHORITATIVE');
 assert.equal($('document-uri').value, source.metadata.canonical_uri);
 assert.equal($('document-file').value, '');
 assert.match($('construct-button').textContent, /抽取/);
 prepareDemoUpload('maintenance_report');
 assert.equal($('document-extraction-mode').value, 'LLM');
+assert.equal($('document-knowledge-scope').value, 'BUSINESS');
 loadDemoOntology();
 assert.equal(JSON.parse(elements.ontologyEditor.value).key, kit.ontology.key);
+assert.equal($('document-knowledge-scope').value, 'BUSINESS');
 assert.equal(requests.length, 0);
 """)
 
@@ -252,17 +237,64 @@ $('document-uri').value = 'urn:local:controlled-upload:authoritative_source.txt'
 $('document-file').files = [{size: 8, arrayBuffer: async () => new Uint8Array([1]).buffer}];
 const first = constructKnowledge();
 const duplicate = constructKnowledge();
+assert.equal($('document-knowledge-scope').disabled, true);
 await flush();
 assert.equal(requests.length, 1);
 assert.equal(JSON.parse(requests[0].options.body).extraction_mode, 'LLM');
 assert.equal(JSON.parse(requests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
+assert.equal(state.fingerprints[0].knowledge_scope, 'AUTHORITATIVE');
 requests[0].resolve(result());
 await Promise.all([first, duplicate]);
 assert.equal(elements.aboxEditor.value, 'user draft');
 assert.equal(state.demoSourceBinding, null);
 assert.equal(state.constructionBusy, false);
 assert.equal($('construct-button').disabled, false);
+assert.equal($('document-knowledge-scope').disabled, false);
 assert.match($('construction-next-note').textContent, /未抽取到可审核/);
+""", upload=True)
+
+    def test_upload_captures_scope_before_preflight_and_rejects_mid_upload_type_change(self) -> None:
+        self.run_js(r"""
+prepareDemoUpload('authoritative_source');
+$('document-file').files = [{size: 8, arrayBuffer: async () => new Uint8Array([1]).buffer}];
+let completePreflight;
+requirePublishedConstructionOntology = () => new Promise(resolve => {completePreflight = resolve;});
+const pending = constructKnowledge();
+assert.equal($('document-knowledge-scope').disabled, true);
+assert.equal(requests.length, 0);
+$('document-knowledge-scope').value = 'BUSINESS';
+setUploadKnowledgeScope('BUSINESS');
+assert.equal($('document-knowledge-scope').value, 'AUTHORITATIVE');
+assert.equal(state.uploadKnowledgeScope, 'AUTHORITATIVE');
+// Navigation and even a later DOM change cannot change this upload's captured metadata.
+showConstructionFlow('business', 'step-review');
+$('document-knowledge-scope').value = 'BUSINESS';
+completePreflight(true);
+await flush();
+assert.equal(requests.length, 1);
+assert.equal(JSON.parse(requests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
+assert.equal(state.fingerprints[0].knowledge_scope, 'AUTHORITATIVE');
+requests[0].resolve(result());
+await pending;
+assert.equal(state.lastConstructionScope, 'AUTHORITATIVE');
+assert.equal($('document-knowledge-scope').disabled, false);
+""", upload=True)
+
+    def test_invalid_upload_scope_is_rejected_before_preflight_or_request(self) -> None:
+        self.run_js(r"""
+prepareDemoUpload('maintenance_report');
+$('document-file').files = [{size: 8, arrayBuffer: async () => new Uint8Array([1]).buffer}];
+let preflights = 0;
+requirePublishedConstructionOntology = async () => {preflights++; return true;};
+for (const scope of ['', 'APPROVED', 'unknown']) {
+  $('document-knowledge-scope').value = scope;
+  await constructKnowledge();
+  assert.equal(preflights, 0);
+  assert.equal(requests.length, 0);
+  assert.equal(state.constructionBusy, false);
+  assert.equal($('document-knowledge-scope').disabled, false);
+  assert.match(elements.constructionOutput.textContent, /资料类型|来源类型/);
+}
 """, upload=True)
 
     def test_identity_change_discards_inflight_upload_result_and_generated_draft(self) -> None:
@@ -273,12 +305,16 @@ const pending = constructKnowledge();
 await flush();
 assert.equal(requests.length, 1);
 state.identityEpoch++;
+state.constructionBusy = true;
+$('document-knowledge-scope').disabled = true;
 elements.constructionOutput.textContent = 'new identity';
 requests[0].resolve(result());
 await pending;
 assert.equal(elements.aboxEditor.value, 'user draft');
 assert.equal(elements.constructionOutput.textContent, 'new identity');
 assert.equal(state.demoSourceBinding, null);
+assert.equal(state.constructionBusy, true);
+assert.equal($('document-knowledge-scope').disabled, true);
 """, upload=True)
 
     def test_terminal_ingestion_failure_clears_only_confirmed_operation_without_auto_retry(self) -> None:

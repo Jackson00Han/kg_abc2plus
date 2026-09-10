@@ -525,6 +525,9 @@ class IndustrialStaticRouteTests(unittest.TestCase):
     def test_page_and_local_modules_have_restrictive_script_and_connection_policy(self) -> None:
         for path, media_type in (("/industrial", "text/html"),
                                  ("/industrial/assets/core.mjs", "text/javascript"),
+                                 ("/industrial/assets/knowledge/browser.mjs", "text/javascript"),
+                                 ("/industrial/assets/knowledge/maintenance.mjs", "text/javascript"),
+                                 ("/industrial/assets/knowledge/browser.css", "text/css"),
                                  ("/industrial/assets/vendor/cytoscape.min.js", "text/javascript"),
                                  ("/industrial/assets/vendor/sources.v1.json", "application/json")):
             with self.subTest(path=path):
@@ -546,7 +549,9 @@ class IndustrialStaticRouteTests(unittest.TestCase):
         for suffix in ("%2e%2e/index.html", "%2e%2e%2findex.html", "%252e%252e%252findex.html",
                        "vendor/%2e%2e/%2e%2e/index.html", "vendor%5c..%5cindex.html",
                        "vendor//cytoscape.min.js", "core.mjs%00", "中文.js", "README.md",
-                       "index.html", "vendor/cytoscape-dagre.min.js.map", "missing.js"):
+                       "index.html", "vendor/cytoscape-dagre.min.js.map", "missing.js",
+                       "knowledge/index.html", "knowledge/core.mjs", "knowledge/private.json",
+                       "knowledge/extra/browser.mjs", "knowledge/%2e%2e/index.html"):
             with self.subTest(suffix=suffix):
                 response = self.client.get("/industrial/assets/" + suffix)
                 self.assertEqual(response.status_code, 404)

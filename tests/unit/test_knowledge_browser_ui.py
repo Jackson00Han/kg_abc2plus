@@ -53,7 +53,7 @@ assert.equal(browser.getDirectory(),null);assert.equal(document.getElementById('
     def test_maintenance_dialog_cancels_stale_preview_and_rechecks_removal_selection(self):
         path=(ROOT / 'src/graphrag_prod/playground/static/knowledge/maintenance-actions.mjs').as_uri()
         # A stale displayed publication must not unapprove a newer review head.
-        page=(ROOT / 'src/graphrag_prod/playground/static/index.html').as_uri()
+        page=(ROOT / 'src/graphrag_prod/playground/static/industrial/governance.mjs').as_uri()
         self.js(f"""
 import vm from 'node:vm';import fs from 'node:fs';
 const html=fs.readFileSync(new URL({page!r}),'utf8');

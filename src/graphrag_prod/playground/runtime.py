@@ -17,7 +17,7 @@ import time
 from typing import Any, Mapping, Protocol
 
 from fastapi import FastAPI, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 import jwt
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -265,6 +265,7 @@ class PlaygroundCatalog:
         if type(enable_industrial) is not bool:
             raise TypeError("enable_industrial must be boolean")
         self.enable_industrial = enable_industrial
+        self.workspaces = None
         self.fixture = fixture
         self._signing_key = signing_key
         self._embedding_metadata = (
@@ -379,6 +380,8 @@ class PlaygroundCatalog:
         }
 
     def issue_session(self, persona_id: str, *, now: int | None = None) -> dict[str, Any]:
+        if self.workspaces is not None:
+            return self.workspaces.issue_session(persona_id)
         if not isinstance(persona_id, str) or _PERSONA_ID.fullmatch(persona_id) is None:
             raise KeyError("unknown Playground persona")
         persona = self.personas_by_id.get(persona_id)
@@ -455,7 +458,8 @@ class FixtureQueryEmbedder:
 class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    persona_id: str = Field(min_length=10, max_length=10, pattern=r"^persona-[0-9]{2}$")
+    persona_id: str = Field(min_length=10, max_length=96,
+        pattern=r"^(persona-[0-9]{2}|workspace-[0-9a-f-]{36}-[1-9][0-9]*-(admin|user))$")
 
 
 def attach_playground_routes(
@@ -473,39 +477,22 @@ def attach_playground_routes(
             raise TypeError("reset_controller must be PlaygroundResetController")
         reset_controller.install_middleware(app)
         reset_controller.attach_routes(app)
-    page = (
-        files("graphrag_prod.playground")
-        .joinpath("static")
-        .joinpath("index.html")
-        .read_text(encoding="utf-8")
-    )
-    security_headers = {
-        "Cache-Control": "no-store",
-        "Content-Security-Policy": (
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-            "connect-src 'self'; object-src 'none'; base-uri 'none'; "
-            "frame-ancestors 'none'; form-action 'self'"
-        ),
-        "Referrer-Policy": "no-referrer",
-        "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-    }
+    from .industrial_web import HEADERS, KNOWLEDGE_ASSETS, attach_industrial_web
+
+    security_headers = HEADERS
 
     @app.get("/", include_in_schema=False)
     async def playground_root() -> RedirectResponse:
-        return RedirectResponse("/playground", status_code=307)
+        return RedirectResponse("/industrial", status_code=307, headers=security_headers)
 
-    @app.get("/playground", response_class=HTMLResponse, include_in_schema=False)
-    async def playground_page() -> HTMLResponse:
-        return HTMLResponse(page, headers=security_headers)
+    @app.get("/playground", include_in_schema=False)
+    async def playground_page() -> RedirectResponse:
+        return RedirectResponse("/industrial", status_code=307, headers=security_headers)
 
     @app.get("/playground/assets/{asset_name}", include_in_schema=False)
     async def knowledge_asset(asset_name: str) -> Response:
         from fastapi import HTTPException
-        allowed = {"browser.mjs", "model.mjs", "browser.css", "graph-view.mjs", "sources.mjs", "maintenance.mjs", "maintenance-actions.mjs"}
-        if asset_name not in allowed:
+        if asset_name not in KNOWLEDGE_ASSETS:
             raise HTTPException(status_code=404, detail="asset not found")
         asset = files("graphrag_prod.playground").joinpath("static", "knowledge", asset_name)
         if not asset.is_file():
@@ -516,6 +503,18 @@ def attach_playground_routes(
     async def playground_bootstrap(response: Response) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
         payload = catalog.bootstrap()
+        if catalog.workspaces is not None:
+            payload.update(catalog.workspaces.bootstrap())
+            payload["capabilities"]["knowledge_bases"] = True
+            payload["capabilities"]["knowledge_base_reset"] = True
+        if getattr(catalog, "pump_only", False):
+            payload["data_scope"] = "pump-only"
+            payload["industrial"] = {"enabled": False}
+            payload["questions"] = []
+            payload["enabled_tenants"] = sorted({p["tenant_id"] for p in payload["personas"]})
+            payload["dataset"] = {"id": "industrial-demo-v1", "version": "1", "embedding": catalog._embedding_metadata}
+            payload["defaults"]["question_id"] = None
+            payload["defaults"]["industrial_tbox_template"] = deepcopy(get_industrial_demo_kit()["ontology"])
         if reset_controller is not None:
             payload["local_reset"] = reset_controller.bootstrap()
         return payload
@@ -524,6 +523,11 @@ def attach_playground_routes(
     async def playground_demo_file(filename: str) -> Response:
         # This allowlist serves committed synthetic teaching material only.
         # Runtime documents and filesystem paths never enter this route.
+        if filename in {"ontology.json", "authoritative_instances.template.json"}:
+            resource = files("graphrag_prod.playground").joinpath("static", "industrial-demo-v1", filename)
+            return Response(resource.read_bytes(), media_type="application/json", headers={
+                **security_headers, "Content-Disposition": f'attachment; filename="{filename}"',
+            })
         item = next(
             (entry for entry in get_industrial_demo_kit()["files"]
              if entry["filename"] == filename),
@@ -555,7 +559,5 @@ def attach_playground_routes(
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="session identity not found") from None
-
-    from .industrial_web import attach_industrial_web
 
     attach_industrial_web(app)

@@ -1,0 +1,90 @@
+{
+  "base": "http://127.0.0.1:8002",
+  "observations": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "pageWidth": 1440,
+      "canvasTop": 379.359375,
+      "canvasHeight": 520,
+      "zoom": 1.05,
+      "nodes": 4,
+      "minimumNodeFont": 13.65,
+      "fullscreen": false,
+      "nodeBounds": {
+        "x1": 297.73,
+        "x2": 838.27,
+        "y1": 96.095,
+        "y2": 423.905,
+        "w": 540.54,
+        "h": 327.80999999999995
+      },
+      "canvasWidth": 1136
+    },
+    {
+      "name": "fullscreen-selected",
+      "width": 1440,
+      "height": 1000,
+      "pageWidth": 1440,
+      "canvasTop": 163.375,
+      "canvasHeight": 433.625,
+      "zoom": 1.05,
+      "nodes": 4,
+      "minimumNodeFont": 13.65,
+      "fullscreen": true,
+      "nodeBounds": {
+        "x1": 443.9025000000001,
+        "x2": 996.0975,
+        "y1": 52.78,
+        "y2": 381.22,
+        "w": 552.1949999999999,
+        "h": 328.44000000000005
+      },
+      "canvasWidth": 1440
+    },
+    {
+      "name": "laptop",
+      "width": 1280,
+      "height": 720,
+      "pageWidth": 1280,
+      "canvasTop": 379.359375,
+      "canvasHeight": 380,
+      "zoom": 0.9609224855861628,
+      "nodes": 4,
+      "minimumNodeFont": 12.491992312620116,
+      "fullscreen": false,
+      "nodeBounds": {
+        "x1": 240.6585522101217,
+        "x2": 735.3414477898783,
+        "y1": 40,
+        "y2": 340,
+        "w": 494.68289557975663,
+        "h": 300
+      },
+      "canvasWidth": 976
+    },
+    {
+      "name": "large-desktop",
+      "width": 1920,
+      "height": 1080,
+      "pageWidth": 1920,
+      "canvasTop": 386.359375,
+      "canvasHeight": 561.59375,
+      "zoom": 1.05,
+      "nodes": 4,
+      "minimumNodeFont": 13.65,
+      "fullscreen": false,
+      "nodeBounds": {
+        "x1": 528.73,
+        "x2": 1069.27,
+        "y1": 117.095,
+        "y2": 444.905,
+        "w": 540.54,
+        "h": 327.80999999999995
+      },
+      "canvasWidth": 1598
+    }
+  ],
+  "pageErrors": []
+}

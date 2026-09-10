@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.workbench_ui import governance_source
+
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -601,36 +603,28 @@ class PlaygroundRuntimeTests(unittest.TestCase):
     def test_ui_exposes_bounded_retrieval_contract_and_discards_stale_results(
         self,
     ) -> None:
-        source = (
-            Path(__file__).parents[2]
-            / "src"
-            / "graphrag_prod"
-            / "playground"
-            / "static"
-            / "index.html"
-        ).read_text()
+        source = governance_source()
 
-        for field in asdict(PLAYGROUND_RETRIEVAL_LIMITS):
-            self.assertIn(f'data-retrieval-limit="{field}"', source)
-        for control_id in (
-            "filter-document-ids",
-            "filter-version-ids",
-            "filter-published-before",
-            "include-graph",
-            "graph-trust-policy",
-            "retrieval-defaults-button",
-        ):
-            self.assertIn(f'id="{control_id}"', source)
-        self.assertIn("version_filter: versionFilter()", source)
-        self.assertIn("limits: readRetrievalLimits()", source)
-        self.assertIn("include_graph: elements.includeGraph.checked", source)
-        self.assertIn("graph_trust_policy: elements.graphTrustPolicy.value", source)
-        self.assertIn("const requestEpoch = ++state.retrievalEpoch", source)
-        self.assertIn("const controller = new AbortController()", source)
-        self.assertIn("state.retrievalController?.abort()", source)
-        self.assertIn("if (requestEpoch !== state.retrievalEpoch) return", source)
-        self.assertNotIn("elements.persona", source)
-        self.assertIn("const identity = currentPersona();", source)
+        app_source = (Path(__file__).parents[2] / "src/graphrag_prod/playground/static/industrial/app.mjs").read_text()
+        client_source = (Path(__file__).parents[2] / "src/graphrag_prod/playground/static/industrial/core.mjs").read_text()
+        self.assertIn('client.request("/v1/retrieval"', app_source)
+        self.assertIn("retrievalOptions?.requestOptions()", app_source)
+        self.assertIn("options.version_filter={...filter,...sourceVersionFilter(searchSource)}", app_source)
+        self.assertIn("!filter[key].includes(id)", app_source)
+        self.assertIn("{include_graph:false}", app_source)
+        self.assertIn("retrievalOptions?.renderDiagnostics(result", app_source)
+        self.assertIn("epoch = ++searchEpoch", app_source)
+        self.assertIn("if (identity !== client.epoch || epoch !== searchEpoch) return", app_source)
+        self.assertIn("citation.char_start", app_source)
+        self.assertIn("citation.char_end", app_source)
+        self.assertIn("citation.version_id", app_source)
+        self.assertIn("chunk.text", app_source)
+        self.assertIn("async function copyContexts()", app_source)
+        self.assertNotIn("/v1/answers", app_source)
+        self.assertIn("const controller = new AbortController()", client_source)
+        self.assertIn("for (const item of this.controllers) item.abort()", client_source)
+        self.assertIn("if (epoch !== this.epoch) throw new StaleResponse()", client_source)
+        self.assertIn("const currentPersona=()=>bootstrap.personas.find(item=>item.id===client.personaId)", source)
         self.assertIn("if (identityEpoch !== state.identityEpoch) return", source)
         self.assertIn("activeOntology(item.key)?.tbox_id", source)
         self.assertIn('data-load-tbox="${index}"', source)
@@ -640,18 +634,9 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         self.assertIn("Math.max(0, ...versions) + 1", source)
         self.assertIn("schema: 'graphrag-property-tbox-export-v1'", source)
         self.assertIn("URL.revokeObjectURL(objectUrl)", source)
-        self.assertIn("Candidate cosine ranking", source)
-        self.assertNotIn("Candidate rerank", source)
 
     def test_ui_exposes_acl_safe_active_abox_inventory(self) -> None:
-        source = (
-            Path(__file__).parents[2]
-            / "src"
-            / "graphrag_prod"
-            / "playground"
-            / "static"
-            / "index.html"
-        ).read_text()
+        source = governance_source()
 
         for control_id in (
             "inventory-document-filter",
@@ -694,10 +679,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node.js is required for executable Playground UI checks")
-        source = (
-            Path(__file__).parents[2]
-            / "src/graphrag_prod/playground/static/index.html"
-        ).read_text()
+        source = governance_source()
         inventory = source[
             source.index("function inventoryLiteralMarkup") : source.index(
                 "function renderQuality"
@@ -705,7 +687,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
         ]
         publication = source[
             source.index("function publicationSelection") : source.index(
-                "async function init"
+                "function reset("
             )
         ]
         publication += source[
@@ -762,7 +744,7 @@ function snapshot(id, revision = 'revision-1') {
       evidence: {document_id: 'document-1', version_id: 'version-1', chunk_id: 'chunk-1',
         ordinal: 0, char_start: 0, char_end: 4}}]};
 }
-const context = vm.createContext({state, elements, requests, apiRequest, snapshot,
+const context = vm.createContext({$:()=>null,state, elements, requests, apiRequest, snapshot,
   showConstructionFlow() {},
   flush: () => new Promise(resolve => setImmediate(resolve)),
   URLSearchParams, assert, showToast() {}, escapeHtml: String, number: String,
@@ -989,81 +971,21 @@ for (const [status, expected] of [[403, '全部 ACL'], [404, '未找到'], [409,
             )
 
         self.assertEqual(root.status_code, 307)
-        self.assertEqual(root.headers["location"], "/playground")
+        self.assertEqual(root.headers["location"], "/industrial")
         self.assertEqual(page.status_code, 200)
-        self.assertIn("GraphRAG Local Playground", page.text)
-        self.assertIn("知识库启动基线", page.text)
-        self.assertIn("静态启动 fixture，不随上传或撤回变化", page.text)
-        self.assertNotIn("知识库状态 <span>LIVE</span>", page.text)
-        self.assertIn('id="query-input"', page.text)
-        self.assertIn("/v1/retrieval", page.text)
-        self.assertIn("/v1/knowledge:construct", page.text)
-        self.assertIn("/v1/knowledge/construction-jobs?limit=25", page.text)
-        self.assertIn("/v1/knowledge/records/", page.text)
-        self.assertIn("/v1/knowledge/publication-candidates?limit=100", page.text)
-        self.assertIn('id="construction-job-list"', page.text)
-        self.assertIn('id="publication-candidate-list"', page.text)
-        self.assertIn('id="quality-content"', page.text)
-        self.assertIn('id="quality-refresh-button"', page.text)
-        self.assertIn("/v1/knowledge/quality", page.text)
-        self.assertIn("当前身份缺少 knowledge:quality", page.text)
-        self.assertIn("绝不返回源文本", page.text)
-        self.assertIn('id="document-lifecycle-list"', page.text)
-        self.assertIn('id="document-lifecycle-summary"', page.text)
-        self.assertIn("当前可维护来源", page.text)
-        self.assertIn("实时授权视图不可用；未用启动 fixture 数字代替", page.text)
-        self.assertIn('id="document-lifecycle-refresh-button"', page.text)
-        self.assertIn("/v1/knowledge/documents?limit=100", page.text)
-        self.assertIn("/v1/knowledge/documents/${encodeURIComponent(item.document_id)}:retire", page.text)
-        self.assertIn("graphrag-document-retirement-operation", page.text)
-        self.assertIn("expected_active_snapshot_id: item.active_snapshot_id", page.text)
-        self.assertIn("source_generation: item.source_generation", page.text)
-        self.assertIn("if (!item || item.blocked || (item.blocker_codes || []).length)", page.text)
-        self.assertIn("window.confirm", page.text)
-        self.assertIn("不会物理删除 source、Chunk", page.text)
-        self.assertNotIn("/v1/documents/${encodeURIComponent(item.document_id)}", page.text)
-        self.assertIn("graphrag-construction-operation", page.text)
-        self.assertIn("constructionFingerprint(bytes", page.text)
-        self.assertIn("globalThis.crypto.subtle.digest('SHA-256', bytes)", page.text)
-        self.assertIn("operation_key: operationKey", page.text)
-        self.assertIn("completeConstructionOperation();", page.text)
-        self.assertNotIn("operation_key: `playground-${nonce}`", page.text)
-        self.assertIn("requires_replacement", page.text)
-        self.assertIn("replace_record_ids: replaceRecordIds", page.text)
-        self.assertIn('id="publication-removals"', page.text)
-        self.assertIn("remove_record_ids: removeRecordIds", page.text)
-        self.assertIn("!revisionIds.length && !removeRecordIds.length", page.text)
-        self.assertIn("同一记录不能同时移除和替换", page.text)
-        self.assertIn("不会删除 source", page.text)
-        self.assertIn('id="inventory-list"', page.text)
-        self.assertIn('id="inventory-summary"', page.text)
-        self.assertIn("/v1/knowledge/publication-inventory?", page.text)
-        self.assertIn("只返回有界治理元数据和精确证据位置", page.text)
-        self.assertIn("预览从下一版本移除的影响", page.text)
-        self.assertIn("/v1/ontologies:import", page.text)
-        self.assertIn('id="tab-graph"', page.text)
-        self.assertIn('id="governance-workspace"', page.text)
-        self.assertIn("literal_semantics", page.text)
-        self.assertIn("raw_literal", page.text)
-        self.assertNotIn("edit.literal_value", page.text)
-        self.assertIn("同一区域点击“发布专家基准”", page.text)
-        self.assertIn("/v1/knowledge/entity-resolution/", page.text)
-        self.assertIn("/v1/knowledge/entity-resolution:apply", page.text)
-        self.assertIn("resolution?.revision !== item.revision", page.text)
-        self.assertIn("实体确认不会自动批准它的属性或关系", page.text)
-        self.assertIn("请输入本次实体链接的人工审核依据", page.text)
-        self.assertIn('id="document-access-groups"', page.text)
-        self.assertIn("access_groups: accessGroups", page.text)
-        self.assertIn("至少选择一个新文档访问组", page.text)
-        self.assertIn('id="construction-cost-note"', page.text)
-        self.assertIn("item.ontology_version_id", page.text)
-        self.assertNotIn("/v1/answers", page.text)
-        self.assertNotIn("生成有据回答", page.text)
-        self.assertIn("自定义文本使用阿里 Embedding", page.text)
-        self.assertNotIn("自定义文本当前只启用 BM25", page.text)
-        self.assertNotIn("ACL experiment", page.text)
-        self.assertNotIn('id="persona-select"', page.text)
-        self.assertNotIn("https://", page.text)
+        self.assertEqual(page.url.path, "/industrial")
+        self.assertEqual(page.history[0].status_code, 307)
+        self.assertEqual(page.history[0].headers["location"], "/industrial")
+        self.assertIn('id="panel-explore"', page.text)
+        self.assertIn('id="panel-search"', page.text)
+        self.assertIn('id="panel-sources"', page.text)
+        self.assertIn('id="panel-build"', page.text)
+        self.assertIn('/industrial/assets/app.mjs', page.text)
+        self.assertNotIn('GraphRAG Local Playground', page.text)
+        directives = {part.split()[0]: part.split()[1:]
+                      for part in page.headers['content-security-policy'].split(';') if part.strip()}
+        self.assertEqual(directives['script-src'], ["'self'"])
+        self.assertEqual(directives['connect-src'], ["'self'"])
         self.assertEqual(page.headers["cache-control"], "no-store")
         self.assertIn("frame-ancestors 'none'", page.headers["content-security-policy"])
         self.assertEqual(bootstrap.status_code, 200)

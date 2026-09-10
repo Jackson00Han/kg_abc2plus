@@ -2116,8 +2116,8 @@ class Neo4jKnowledgeConstructionWorkflow:
                 "source access groups must be a principal-group subset"
             )
         deadline = self._monotonic_now() + self.config.deadline_seconds
-        industrial = principal.tenant_id == INDUSTRIAL_TENANT or metadata.industrial_context is not None
-        if industrial:
+        industrial = metadata.industrial_context is not None
+        if principal.tenant_id == INDUSTRIAL_TENANT or industrial:
             if self.industrial_upload_policy is None:
                 raise ConstructionConflict("industrial upload policy is unavailable")
             try:

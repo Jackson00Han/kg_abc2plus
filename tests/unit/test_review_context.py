@@ -1,5 +1,7 @@
 """Context display and explicit identity selection boundaries."""
 
+from tests.fixtures.workbench_ui import governance_source
+
 import unittest
 from pathlib import Path
 
@@ -28,7 +30,7 @@ class ReviewContextTests(unittest.TestCase):
         self.assertEqual(context_window('x'*17000, 100, 104, view='document', offset=8000), (8000,16000))
 
     def test_actual_page_highlights_context_and_offers_unpublished_targets(self):
-        page = Path('src/graphrag_prod/playground/static/index.html').read_text()
+        page = governance_source()
         escape = next(line for line in page.splitlines() if 'const escapeHtml =' in line).replace('const escapeHtml =', 'escapeHtml =')
         ui_checks.PlaygroundResolutionTests().run_ui(escape + r'''
 const html=evidenceContextMarkup({text:'😀设备 BC-P-101 的循环水泵正在运行',char_start:14,char_end:18,context_start:0,context_end:23,document_title:'台账<script>',version_id:'v1',chunk_id:'c1',document_accessible:true,total_characters:23,view:'paragraph'});

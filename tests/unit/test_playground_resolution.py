@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.fixtures.workbench_ui import governance_source
+
 import json
 from pathlib import Path
 import shutil
@@ -14,10 +16,7 @@ class PlaygroundResolutionTests(unittest.TestCase):
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node.js is required for executable Playground UI checks")
-        page = (
-            Path(__file__).parents[2]
-            / "src/graphrag_prod/playground/static/index.html"
-        ).read_text()
+        page = governance_source()
         source = page[
             page.index("function reviewEdit(") : page.index("function chosenReviews(")
         ]
@@ -28,7 +27,7 @@ class PlaygroundResolutionTests(unittest.TestCase):
             page.index("async function publishOntology(") : page.index("async function importABox(")
         ]
         source += page[
-            page.index("function publicationSelection(") : page.index("async function init(")
+            page.index("function publicationSelection(") : page.index("function reset(")
         ]
         source += page[
             page.index("function publicationSelectedIds(") : page.index("async function loadPublicationCandidates(")
@@ -93,7 +92,7 @@ function resolution(id, revision = 1, outcome = 'AUTO_LINK') {
     target: outcome === 'NO_MATCH' || outcome === 'CONFLICT' ? null : {
       entity_id: 'authority-' + id, canonical_name: 'Authority ' + id}, evidence: []}]};
 }
-const context = vm.createContext({state, elements, requests, panels, draft, item, resolution,
+const context = vm.createContext({$:id=>context.document?.getElementById(id)||null,state, elements, requests, panels, draft, item, resolution,
   assert, apiRequest, flush: () => new Promise(resolve => setImmediate(resolve)),
   showToast() {}, escapeHtml: String, shortId: String, literalSemantics: item => item.literal_semantics || {}, parseJsonEditor: editor => JSON.parse(editor.value),
   relationshipPropertiesMarkup: () => '', literalSemanticsMarkup: () => '',

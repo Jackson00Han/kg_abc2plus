@@ -6,7 +6,7 @@ from typing import Any
 from neo4j import Query
 
 from graphrag_prod.api.backend import GraphRAGQueryOperations
-from graphrag_prod.api.contracts import IndustrialScopeRequest, RetrievalLimitsRequest
+from graphrag_prod.api.contracts import RetrievalLimitsRequest
 from graphrag_prod.industrial.construction import (
     INDUSTRIAL_TENANT, INDUSTRIAL_TBOX_KEY, INDUSTRIAL_RERANK_PROFILE, INDUSTRIAL_UPLOAD_CHUNK_CHARS,
 )
@@ -54,7 +54,8 @@ def industrial_bootstrap() -> dict[str, Any]:
 
 
 def verify_existing_industrial_runtime(driver: Any, database: str, embedding_space_id: str) -> None:
-    tbox = Neo4jTBoxStore(driver, database).active(INDUSTRIAL_TENANT, INDUSTRIAL_TBOX_KEY)
+    tbox_store = Neo4jTBoxStore(driver, database)
+    tbox = tbox_store.active(INDUSTRIAL_TENANT, INDUSTRIAL_TBOX_KEY)
     if tbox is None or tbox.status is not TBoxStatus.PUBLISHED:
         raise RuntimeError("industrial runtime requires the previously loaded published ontology")
     manager = Neo4jEmbeddingIndexManager(driver, database)
@@ -71,25 +72,33 @@ def verify_existing_industrial_runtime(driver: Any, database: str, embedding_spa
             MATCH (state:TenantCorpusState {tenant_id:$tenant})
             MATCH (:KnowledgePublicationState {tenant_id:$tenant})-[:ACTIVE_KNOWLEDGE_PUBLICATION]->
                   (publication:KnowledgePublication {tenant_id:$tenant,status:'ACTIVE'})
-            WHERE state.corpus_revision=$revision AND publication.ontology_version_id=$tbox_id
-            RETURN run.load_id AS load_id LIMIT 1
+            WHERE state.corpus_revision=$revision
+            RETURN run.load_id AS load_id, publication.ontology_version_id AS ontology_version_id LIMIT 1
             """, timeout=2.0), tenant=INDUSTRIAL_TENANT, revision=generation.corpus_revision,
-            tbox_id=tbox.tbox_id).single()
+            ).single()
     if row is None:
         raise RuntimeError("industrial runtime requires a completed industrial corpus load")
+    try:
+        published_tbox = tbox_store.get(INDUSTRIAL_TENANT, row["ontology_version_id"])
+        current_tbox = tbox_store.active(INDUSTRIAL_TENANT, published_tbox.key)
+    except (KeyError, ValueError) as error:
+        raise RuntimeError("active knowledge publication has no valid tenant ontology") from error
+    if (published_tbox.tbox_id != row["ontology_version_id"] or published_tbox.tenant_id != INDUSTRIAL_TENANT
+            or published_tbox.status is not TBoxStatus.PUBLISHED
+            or current_tbox is None or current_tbox.tbox_id != published_tbox.tbox_id
+            or current_tbox.tenant_id != INDUSTRIAL_TENANT or current_tbox.status is not TBoxStatus.PUBLISHED):
+        raise RuntimeError("active knowledge publication must use its current published tenant ontology")
 
 
 class TenantQueryOperations:
-    """The authenticated tenant selects its engine and mandatory default scope."""
+    """Explicit product scope selects industrial retrieval; general knowledge remains visible."""
     def __init__(self, legacy: Any, industrial: Any) -> None:
         self.legacy, self.industrial = legacy, industrial
 
     def _dispatch(self, method: str, principal: Any, request: Any):
-        if principal.tenant_id != INDUSTRIAL_TENANT:
+        if principal.tenant_id != INDUSTRIAL_TENANT or request.industrial_scope is None:
             return getattr(self.legacy, method)(principal, request)
         updates = {}
-        if request.industrial_scope is None:
-            updates["industrial_scope"] = IndustrialScopeRequest()
         limits_field = "limits" if method == "retrieve" else "retrieval_limits"
         if getattr(request, limits_field) == RetrievalLimitsRequest():
             updates[limits_field] = RetrievalLimitsRequest.model_validate(asdict(INDUSTRIAL_RETRIEVAL_LIMITS))

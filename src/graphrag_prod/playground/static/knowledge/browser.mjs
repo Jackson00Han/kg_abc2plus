@@ -9,7 +9,7 @@ export function evidenceMarkup(item) {
   if(start<0 || end>chars.length || chars.slice(start,end).join('')!==evidence.quoted_text) throw new Error('原文位置校验失败。');
   return `<article><h3>${e(c.document_title || c.source_name || '来源文档')}</h3><p>${e(c.source_name)} · 第 ${e(c.version_number ?? "未记录")} 版 · 片段 ${e(c.ordinal ?? c.chunk_ordinal ?? '')} · 字符 ${e(evidence.char_start)}–${e(evidence.char_end)}</p><p class="kb-muted">${item.authority_level==='AUTHORITATIVE'?'权威来源':'业务来源'} · ${e(origins[item.origin]||item.origin)} · 已发布；${item.reviewed_by?`审核人：${e(item.reviewed_by)}`:'未记录人工审核人'}</p>${distinctionMarkup(item)}<pre>${e(chars.slice(0,start).join(''))}<mark>${e(chars.slice(start,end).join(''))}</mark>${e(chars.slice(end).join(''))}</pre><details><summary>技术详情</summary><pre>${e(JSON.stringify({revision_id:item.revision_id,record_id:item.record_id,version_id:c.version_id,provenance:evidence.provenance},null,2))}</pre></details></article>`;
 }
-export function mountBrowser({api,epoch,maintain}) {
+export function mountBrowser({api,epoch,maintain,onExplore=null,onSource=null}) {
   let directory=null,request=0,selected=null,page=0,active='entities',scope={},scopeTitle='',evidenceRequest=0,graph=null,sources=null;
   const dialog=document.createElement('dialog');dialog.className='kb-evidence';dialog.setAttribute('aria-label','来源依据');
   dialog.innerHTML='<button class="button" type="button" data-close>关闭依据</button><div data-content></div>';document.body.append(dialog);
@@ -29,7 +29,7 @@ export function mountBrowser({api,epoch,maintain}) {
       content.insertAdjacentHTML('beforeend', `<p>来源记录 ${offset+1}–${Math.min(offset+10,ids.length)} / ${ids.length}</p><div class="kb-actions">${offset?'<button class="button" data-prev-evidence>上一页来源</button>':''}${offset+10<ids.length?'<button class="button" data-next-evidence>下一页来源</button>':''}</div>`);
       content.querySelector('[data-prev-evidence]')?.addEventListener('click',()=>evidence(ids,token,offset-10));
       content.querySelector('[data-next-evidence]')?.addEventListener('click',()=>evidence(ids,token,offset+10));
-      content.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>{const c=result.items[Number(b.dataset.source)].evidence.citation;dialog.close();tab('sources');sources?.openDocument(c.document_id,c.version_id,c.ordinal);});
+      content.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>{const c=result.items[Number(b.dataset.source)].evidence.citation;dialog.close();if(onSource)onSource(c);else{tab('sources');sources?.openDocument(c.document_id,c.version_id,c.ordinal);}});
     }catch(error){if(id===evidenceRequest && identity===epoch())content.textContent=error.status===403?'当前身份没有查看该依据的权限。':error.status===409?'知识或来源权限已变化，请刷新知识。':`依据读取失败：${error.message}`;}
   }
   function select(entityId){
@@ -42,7 +42,7 @@ export function mountBrowser({api,epoch,maintain}) {
     $('kb-dossier').querySelectorAll('[data-relation-evidence]').forEach(b=>b.onclick=()=>{const f=n.relations[Number(b.dataset.relationEvidence)];evidence(f.revision_ids||[f.revision_id]);});
     $('kb-dossier').querySelectorAll('[data-entity]').forEach(b=>b.onclick=()=>select(b.dataset.entity));
     $('kb-dossier').querySelector('[data-maintain]').onclick=()=>maintain(n);
-    $('kb-dossier').querySelector('[data-locate]').onclick=()=>{tab('graph');graph?.locate(n.entity_id);};
+    $('kb-dossier').querySelector('[data-locate]').onclick=()=>{if(onExplore)onExplore(n.entity_id);else{tab('graph');graph?.locate(n.entity_id);}};
   }
   function renderList(){
     if(!directory)return;
@@ -72,7 +72,7 @@ export function mountBrowser({api,epoch,maintain}) {
   const controller = {activate(){if(active==='sources')sources?.activate();if(!directory)return load();if(active==='graph')graph?.activate();},reset,load,evidence,select,tab,getDirectory:()=>directory,
     attachGraph(value){graph=value;if(directory)graph.setDirectory(directory);if(active==='graph')graph.activate();},
     attachSources(value){sources=value;if(active==='sources')sources.activate();}};
-  graph=mountGraph({api,epoch,browser:controller});
-  sources=mountSources({api,epoch,browser:controller,maintain});
+  if(!onExplore)graph=mountGraph({api,epoch,browser:controller});
+  if(!onSource)sources=mountSources({api,epoch,browser:controller,maintain});
   return controller;
 }

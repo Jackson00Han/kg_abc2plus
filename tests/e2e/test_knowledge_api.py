@@ -794,7 +794,7 @@ class KnowledgeAPIEndToEndTests(unittest.TestCase):
                 }],
             },
         ]
-        page = files("graphrag_prod.playground").joinpath("static/index.html").read_text()
+        page = files("graphrag_prod.playground").joinpath("static/industrial/governance.mjs").read_text()
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node.js is required for the UI/API contract check")
         generated = subprocess.run(
@@ -842,6 +842,7 @@ for (const [start, end] of [
   ['function literalSemantics(', 'function literalSemanticsMarkup('],
   ['function reviewEdit(', 'function resolutionMarkup('],
   ['function reviewModel(', 'function reviewTechnical('],
+  ['function reviewConfirmLabel(', 'function reviewActions('],
   ['function setReviewBusy(', 'async function keepExistingFact('],
   ['function publicationSelectedIds(', 'function publicationCandidateGroups('],
   ['function updatePublicationBusy(', 'function renderPublicationCandidates('],

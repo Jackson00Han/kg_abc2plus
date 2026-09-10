@@ -777,7 +777,10 @@ def build_playground_app(
     skip_provider_warmup: bool = False,
     enable_industrial: bool = False,
     corpus_profile: str = "dev-corpus-v1",
+    pump_only: bool = False,
 ):
+    if pump_only and not (enable_industrial and reuse_existing_corpus and skip_provider_warmup):
+        raise ValueError("pump-only requires the existing workbench and disabled fixture warm-up")
     if type(enable_industrial) is not bool:
         raise ValueError("enable_industrial must be boolean")
     if enable_industrial and not reuse_existing_corpus:
@@ -796,7 +799,7 @@ def build_playground_app(
     if enable_industrial and corpus_profile != "dev-corpus-v1":
         raise ValueError("industrial service requires its retained regression corpus")
     corpus_options = {} if corpus_profile == "dev-corpus-v1" else {"corpus_profile": corpus_profile}
-    fixture = (
+    fixture = load_demo_corpus() if pump_only else (
         _reuse_corpus(driver, database, embedder, **corpus_options)
         if reuse_existing_corpus
         else _load_corpus(driver, database, embedder, **corpus_options)
@@ -805,10 +808,16 @@ def build_playground_app(
         INDUSTRIAL_TENANT, TenantQueryOperations, build_industrial_query_operations,
         verify_existing_industrial_runtime,
     )
-    if enable_industrial:
+    if enable_industrial and not pump_only:
         verify_existing_industrial_runtime(driver, database, embedder.embedding_space_id)
     enabled_tenants = tuple(sorted({plan.tenant_id for plan in fixture.plans}
                                   | ({INDUSTRIAL_TENANT} if enable_industrial else set())))
+    if pump_only:
+        from graphrag_prod.playground.workspaces import Neo4jWorkspaceStore
+        visible_projects = Neo4jWorkspaceStore(driver, database, pump_only=True).list()
+        if not visible_projects:
+            raise ValueError("pump-only requires an already isolated empty project")
+        enabled_tenants = tuple(sorted(p["active_tenant_id"] for p in visible_projects))
     catalog = PlaygroundCatalog(
         fixture,
         signing_key,
@@ -842,6 +851,9 @@ def build_playground_app(
             "construction_limits": dict(_PLAYGROUND_CONSTRUCTION_LIMITS),
         },
     )
+    catalog.pump_only = pump_only
+    if pump_only:
+        catalog.enable_industrial = False
     retrieval_engine = Neo4jRetrievalEngine(
         driver,
         database,
@@ -864,7 +876,7 @@ def build_playground_app(
     from graphrag_prod.api.graph import Neo4jGraphOperations
     from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser
     graph_operations = Neo4jGraphOperations(browser=Neo4jPublishedGraphBrowser(driver, database))
-    if enable_industrial:
+    if enable_industrial and not pump_only:
         from graphrag_prod.api.graph import Neo4jGraphOperations
         from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser
         from graphrag_prod.industrial.retrieval import Neo4jIndustrialScopeResolver
@@ -901,8 +913,8 @@ def build_playground_app(
         extractor_factory=lambda tbox: _build_playground_extractor(
             embedder.client, extraction_model, tbox,
         ),
-        industrial_upload_policy=Neo4jIndustrialUploadPolicy(driver, database) if enable_industrial else None,
-        industrial_parser=industrial_upload_parser() if enable_industrial else None,
+        industrial_upload_policy=Neo4jIndustrialUploadPolicy(driver, database) if enable_industrial and not pump_only else None,
+        industrial_parser=industrial_upload_parser() if enable_industrial and not pump_only else None,
         config=ConstructionConfig(
             extractor_signature=f"openai-compatible:{extraction_model}:v3",
             prompt_signature=prompt_signature,
@@ -940,16 +952,32 @@ def build_playground_app(
             lambda: reset_playground_corpus(driver, database, cached_fixture),
         )
         backend = reset_controller.wrap_backend(backend)
-    app = create_app(
-        authenticator=JWTAuthenticator(
-            JWTAuthConfig(
+    auth_config = JWTAuthConfig(
                 issuer=PLAYGROUND_ISSUER,
                 audience=PLAYGROUND_AUDIENCE,
                 secret=signing_key,
                 leeway_seconds=0,
                 max_lifetime_seconds=PLAYGROUND_TOKEN_LIFETIME_SECONDS,
             )
-        ),
+    workspace_registry = None
+    authenticator = JWTAuthenticator(auth_config)
+    if enable_industrial:
+        from graphrag_prod.playground.workspaces import (
+            Neo4jWorkspaceStore, WorkspaceRegistry, WorkspaceAuthenticator, attach_workspace_routes, prepare_workspace_tenant,
+        )
+        workspace_store = Neo4jWorkspaceStore(driver, database, pump_only=pump_only)
+        if not pump_only:
+            workspace_store.initialize(catalog.personas)
+
+        workspace_registry = WorkspaceRegistry(
+            workspace_store, signing_key,
+            lambda tenant_id: prepare_workspace_tenant(driver, database, embedder, tenant_id),
+        )
+        catalog.workspaces = workspace_registry
+        backend = workspace_registry.wrap_backend(backend)
+        authenticator = WorkspaceAuthenticator(auth_config, workspace_registry)
+    app = create_app(
+        authenticator=authenticator,
         backend=backend,
         settings=APISettings(
             service_name="sample-graphrag-local-playground",
@@ -966,7 +994,10 @@ def build_playground_app(
         ),
         shutdown_callbacks=(driver.close,),
     )
+    app.state.pump_only = pump_only
     attach_playground_routes(app, catalog, reset_controller=reset_controller)
+    if workspace_registry is not None:
+        attach_workspace_routes(app, workspace_registry, authenticator)
     app.state.playground_gold_questions = tuple(fixture.build.questions)
     return app
 
@@ -977,9 +1008,9 @@ def _run_http_check(app: Any) -> None:
     from fastapi.testclient import TestClient
 
     with TestClient(app) as client:
-        page = client.get("/playground")
-        if page.status_code != 200 or "GraphRAG Local Playground" not in page.text:
-            raise RuntimeError("Playground page check failed")
+        page = client.get("/industrial")
+        if page.status_code != 200 or 'id="governance-host"' not in page.text:
+            raise RuntimeError("Industrial workbench page check failed")
         bootstrap_response = client.get("/playground/bootstrap")
         if bootstrap_response.status_code != 200:
             raise RuntimeError("Playground bootstrap check failed")
@@ -1208,6 +1239,7 @@ def main() -> None:
         raise SystemExit("--port must be between 1 and 65535")
 
     load_dotenv(ROOT / ".env")
+    pump_only = os.environ.get("PLAYGROUND_PUMP_ONLY") == "1"
     api_key = _required_environment("OPENAI_API_KEY")
     base_url = _required_environment("OPENAI_BASE_URL")
     embedding_model = _required_environment("EMBEDDING_MODEL")
@@ -1278,6 +1310,7 @@ def main() -> None:
             signing_key=secrets.token_bytes(32),
             embedder=embedder,
             extraction_model=extraction_model,
+            pump_only=pump_only,
             reuse_existing_corpus=args.reuse_existing_corpus,
             enable_industrial=args.enable_industrial,
             corpus_profile=args.corpus_profile or ("dev-corpus-v1" if args.enable_industrial else "demo-mini-zh-v1"),
@@ -1300,7 +1333,7 @@ def main() -> None:
         )
         return
 
-    url = f"http://{f'[{host}]' if ':' in host else host}:{args.port}/playground"
+    url = f"http://{f'[{host}]' if ':' in host else host}:{args.port}/industrial"
     print(f"[5/5] Playground ready: {url}", flush=True)
     print(
         "      Press Ctrl-C to stop; existing corpus data is preserved."

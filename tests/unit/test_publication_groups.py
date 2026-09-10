@@ -6,7 +6,7 @@ from pathlib import Path
 from tests.unit import test_playground_resolution as ui_checks
 
 
-PAGE = Path('src/graphrag_prod/playground/static/index.html')
+from tests.fixtures.workbench_ui import governance_source
 SETUP = r'''
 function source(id,revision=2,entityId='pump-1') {
   const record=item(id,revision);record.entity.entity_id=entityId;
@@ -83,7 +83,7 @@ assert.equal(renders,1); // Selection must preserve open source context and focu
 ''')
 
     def test_late_candidate_refresh_cannot_restore_old_revision_or_revoked_identity(self):
-        page=PAGE.read_text()
+        page=governance_source()
         loader=page[page.index('async function loadPublicationCandidates('):page.index('function renderHistory(')]
         self.run_ui(r'''
 const old=source('a'), current=source('a',4);
@@ -101,7 +101,7 @@ assert.equal(state.publicationCandidates.length,0);
 ''',loader)
 
     def test_return_to_review_removes_dependent_versions_and_blocks_publish_during_save(self):
-        page=PAGE.read_text()
+        page=governance_source()
         reopen=page[page.index('async function reopenPublicationCandidate('):page.index('function publicationSelection(')]
         self.run_ui(r'''
 state.publicationCandidates=[source('a'),source('fact',3)];

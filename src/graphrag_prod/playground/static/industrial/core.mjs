@@ -1,5 +1,7 @@
 export const $ = (id) => document.getElementById(id);
 export const TYPE_LABELS = Object.freeze({
+  Equipment: "设备",
+  Risk: "风险",
   EquipmentClass: "设备类别",
   ProductFamily: "产品系列",
   ProductModel: "产品型号",
@@ -22,6 +24,8 @@ export const PREDICATE_LABELS = Object.freeze({
   CLASSIFIED_AS: "归类为",
   INSTANCE_OF: "对应型号",
   PART_OF: "组成于",
+  CONTAINS: "包含部件",
+  EXPOSED_TO: "存在风险",
   INSTALLED_AT: "安装于",
   LOCATED_AT: "位于",
   CONNECTS_TO: "电气连接",
@@ -226,6 +230,33 @@ export class WorkbenchClient {
     this.controllers = new Set();
     this.personaId = null;
     this.renewal = null;
+    this.pageGeneration = null;
+    this.environmentConfigured = false;
+    this.environmentError = null;
+  }
+  configureBootstrap(bootstrap) {
+    const reset = bootstrap?.local_reset;
+    const generation = reset?.enabled ? reset.generation : null;
+    if (this.environmentConfigured && generation !== this.pageGeneration) {
+      this.blockEnvironment("PLAYGROUND_RESET_STALE");
+      throw this.environmentError;
+    }
+    if (generation !== null && (typeof generation !== "string" || !generation))
+      throw new Error("服务未返回有效的环境版本，请刷新后重试。");
+    this.pageGeneration = generation;
+    this.environmentConfigured = true;
+    if (reset?.enabled && reset.state !== "READY")
+      this.blockEnvironment(reset.state === "FAILED"
+        ? "PLAYGROUND_RESET_FAILED" : "PLAYGROUND_RESET_RUNNING");
+    // A reload establishes a new page generation. A persona change or a
+    // repeated bootstrap must never silently acknowledge a reset for old forms.
+  }
+  blockEnvironment(code) {
+    const error = new Error("知识环境已更新或正在恢复，请刷新页面后继续。");
+    error.code = code;
+    error.status = code === "PLAYGROUND_RESET_STALE" ? 409 : 503;
+    this.environmentError = error;
+    for (const controller of this.controllers) controller.abort();
   }
   clear() {
     this.epoch++;
@@ -258,6 +289,7 @@ export class WorkbenchClient {
   }
   async request(path, body, options = {}) {
     const epoch = this.epoch;
+    if (this.environmentError) throw this.environmentError;
     if (!this.session) throw new Error("请先选择查看身份。");
     if (this.session.expires_at * 1000 < Date.now() + 30000) {
       this.renewal ||= this.issueSession(this.personaId, epoch).finally(() => {
@@ -266,25 +298,42 @@ export class WorkbenchClient {
       await this.renewal;
     }
     if (epoch !== this.epoch) throw new StaleResponse();
+    if (this.environmentError) throw this.environmentError;
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) controller.abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
     this.controllers.add(controller);
     try {
+      const method = (options.method || (body === undefined ? "GET" : "POST")).toUpperCase();
+      const headers = {};
+      for (const [name, value] of new Headers(options.headers || {})) {
+        if (!["authorization", "x-playground-generation", "content-type"].includes(name))
+          headers[name] = value;
+      }
+      headers.Authorization = `Bearer ${this.session.access_token}`;
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      if (this.pageGeneration && path.startsWith("/v1/") && !["GET", "HEAD"].includes(method))
+        headers["X-Playground-Generation"] = this.pageGeneration;
       const response = await this.fetcher(path, {
-        method: options.method || (body === undefined ? "GET" : "POST"),
-        headers: {
-          Authorization: `Bearer ${this.session.access_token}`,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
+        method,
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
         cache: "no-store",
       });
       if (epoch !== this.epoch) throw new StaleResponse();
-      const payload = await response.json();
+      let payload;
+      try { payload = await response.json(); } catch (error) {
+        if (epoch !== this.epoch) throw new StaleResponse();
+        if (response.ok) throw error;
+        payload = {};
+      }
       if (epoch !== this.epoch) throw new StaleResponse();
+      if (this.environmentError) throw this.environmentError;
       if (!response.ok) {
         const code =
-          payload.error?.code || payload.code || `HTTP_${response.status}`;
+          payload?.error?.code || payload?.code || `HTTP_${response.status}`;
         const error = new Error(
           code === "GRAPH_VIEW_CHANGED" || code === "graph_view_changed"
             ? "图谱版本或可见范围已变化，请刷新图谱。"
@@ -301,19 +350,36 @@ export class WorkbenchClient {
                     construction_input_limit:
                       "资料超出本地构建的处理范围，请缩短正文、标题或分批上传。",
                   }[code] ||
-                  payload.error?.message ||
-                  payload.message ||
+                  payload?.error?.message ||
+                  payload?.message ||
                   `请求未完成（${code}）`,
         );
         error.code = code;
         error.status = response.status;
         error.payload = payload;
+        const issue = payload?.publication_issue;
+        if (response.status === 409 && issue && typeof issue.message === "string" &&
+            issue.message.length <= 256 && Array.isArray(issue.targets) && issue.targets.length <= 50) {
+          error.publicationIssue = issue;
+          error.message = issue.message;
+        }
+        if (["PLAYGROUND_RESET_STALE", "PLAYGROUND_RESET_RUNNING", "PLAYGROUND_RESET_FAILED"].includes(code)) {
+          this.blockEnvironment(code);
+          error.message = this.environmentError.message;
+        }
         throw error;
       }
       return payload;
     } finally {
       this.controllers.delete(controller);
+      options.signal?.removeEventListener("abort", abort);
     }
+  }
+  requestOptions(path, options = {}) {
+    // The native governance modules use fetch-style JSON options; route those
+    // through the selected identity instead of issuing a separate admin token.
+    const body = typeof options.body === "string" ? JSON.parse(options.body) : options.body;
+    return this.request(path, body, options);
   }
   hasScope(scope) {
     return this.session?.identity?.scopes?.includes(scope) || false;

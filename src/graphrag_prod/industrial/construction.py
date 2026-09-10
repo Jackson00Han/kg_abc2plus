@@ -72,6 +72,13 @@ class Neo4jIndustrialUploadPolicy:
             if context is not None:
                 raise IndustrialUploadRejected("industrial context requires industrial tenant")
             return
+        if context is None:
+            # Generic knowledge uses the ordinary provenance and ontology path.
+            # It cannot replace curated sources or bypass the scoped upload
+            # policy by dropping context from an industrial upload request.
+            if urlsplit(metadata.canonical_uri).scheme in {"industrial", "industrial-upload"}:
+                raise IndustrialUploadRejected("generic uploads cannot use reserved industrial source namespaces")
+            return
         if not isinstance(context, IndustrialUploadContext) or metadata.tbox_key != INDUSTRIAL_TBOX_KEY:
             raise IndustrialUploadRejected("industrial uploads require the composed industrial ontology and context")
         if not metadata.access_groups <= frozenset({"public", "engineering", "maintenance"}):
