@@ -121,7 +121,8 @@ def instance_snapshot(records: tuple, evidence: list[dict]) -> dict:
 def publication_preview(*, publication_id: str, ontology_version_id: str,
                         manifest_hash: str, base_publication_id: str | None,
                         before: tuple, after: tuple, source_revision_ids: tuple[str, ...],
-                        removed_record_ids: tuple[str, ...], replaced_record_ids: tuple[str, ...]) -> dict:
+                        removed_record_ids: tuple[str, ...], replaced_record_ids: tuple[str, ...],
+                        source_scope: dict | None = None) -> dict:
     previous = {item.record_id: item for item in before}
     final = {item.record_id: item for item in after}
     payload = {
@@ -130,6 +131,7 @@ def publication_preview(*, publication_id: str, ontology_version_id: str,
         "ontology_version_id": ontology_version_id,
         "base_publication_id": base_publication_id,
         "manifest_hash": manifest_hash,
+        "source_scope": source_scope or {"added": [], "removed": [], "unchanged_count": 0},
         "source_revision_ids": list(source_revision_ids),
         "removed_record_ids": list(removed_record_ids),
         "replaced_record_ids": list(replaced_record_ids),

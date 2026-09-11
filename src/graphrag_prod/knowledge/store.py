@@ -113,6 +113,8 @@ def _revision_properties(record: EntityMentionRecord | AssertionRecord) -> dict[
         **_evidence_properties(record.evidence),
         **_trust_properties(record.trust),
     }
+    if isinstance(record, EntityMentionRecord) and record.assignment_source_revision_id is not None:
+        properties["assignment_source_revision_id"] = record.assignment_source_revision_id
     if isinstance(record, AssertionRecord):
         if record.fact_distinction is not None:
             properties["fact_distinction_json"] = json.dumps(record.fact_distinction.to_mapping(), ensure_ascii=False)
@@ -219,6 +221,7 @@ def _stored_mention(properties: dict[str, Any]) -> EntityMentionRecord:
         confidence=properties["confidence"],
         trust=_stored_trust(properties),
         created_at=_native_datetime(properties["created_at"], "created_at"),
+        assignment_source_revision_id=properties.get("assignment_source_revision_id"),
     )
 
 

@@ -992,6 +992,20 @@ class _Driver:
         return _RowsSession(self)
 
 
+class _NoDuplicatePreflight:
+    def check(self, *args: object, **kwargs: object) -> dict[str, object]:
+        return dict(checksum="a" * 64, original_checksum="b" * 64, exact_matches=[],
+                    similar_matches=[], similarity_checked=True, truncated=False,
+                    truncation_reasons=[], compared_versions=0,
+                    method="character-5-shingle-jaccard-v1", threshold=0.85)
+
+
+class _UploadGuard:
+    def hold(self, *args: object) -> object:
+        from contextlib import nullcontext
+        return nullcontext()
+
+
 class _Construction:
     def __init__(self, *, status: str = "CANDIDATE") -> None:
         self.call = None
@@ -1324,6 +1338,8 @@ class KnowledgeAdapterTests(unittest.TestCase):
             driver=driver,
             allow_legacy_authoritative_import=True,
             construction=construction or _Construction(),
+            upload_preflight=_NoDuplicatePreflight(),
+            upload_guard=_UploadGuard(),
             tboxes=tboxes or _TBoxes(),
             knowledge=store,
             reviews=reviews or SimpleNamespace(),

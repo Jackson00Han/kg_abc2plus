@@ -13,7 +13,7 @@ export class GraphSession {
 }
 import {label,escape as e,entityPage} from './model.mjs';
 const $=id=>document.getElementById(id);
-export function mountGraph({api,epoch,browser}) {
+export function mountGraph({api,epoch,browser,feedback=()=>()=>{}}) {
   const session=new GraphSession(api,epoch);let renderer=null,creating=null,directory=null,seed=null,uiRequest=0;
   $('kb-graph').innerHTML=`<div class="kb-actions"><button class="button" id="kb-graph-load">按当前筛选查看</button><label>探索深度 <select id="kb-hops"><option value="1">一层关系</option><option value="2">两层关系</option></select></label><label>方向 <select id="kb-direction"><option value="both">全部方向</option><option value="outgoing">指向其他实体</option><option value="incoming">来自其他实体</option></select></label><label>关系 <select id="kb-predicate"><option value="">全部关系</option></select></label><button class="button" id="kb-graph-next" disabled>下一组</button></div><p id="kb-graph-status" role="status">先加载知识，再探索图谱。</p><div class="kb-workspace"><div><div class="kb-graph-canvas" id="kb-graph-canvas" aria-label="已发布关系图谱"></div><div class="kb-actions"><button class="button" id="kb-zoom-in">放大</button><button class="button" id="kb-zoom-out">缩小</button><button class="button" id="kb-fit">适应画布</button><button class="button" id="kb-reset-graph">恢复范围</button></div><p class="kb-muted">箭头表示已发布关系方向；同一关系聚合为一条线；实线表示含权威来源，虚线表示仅含业务来源，各来源等级分别保留。布局位置不表示工艺顺序或因果关系。</p><div id="kb-graph-accessible"></div></div><div id="kb-detail-graph"></div></div>`;
   async function ensureRenderer(){
@@ -41,7 +41,8 @@ export function mountGraph({api,epoch,browser}) {
   }
   async function load(next=false){
     if(!directory){$('kb-graph-status').textContent='请先刷新知识，或在来源资料中缩小范围。';return;}
-    const id=++uiRequest,identity=epoch();renderer?.clear();$('kb-graph-next').disabled=true;$('kb-graph-status').textContent='正在读取受权限保护的关系图谱…';
+    const finish=feedback($(next?'kb-graph-next':'kb-graph-load'));
+    const id=++uiRequest,identity=epoch();renderer?.clear();$('kb-graph-next').disabled=true;$('kb-graph-status').textContent='';
     try{
       let page;
       if(next)page=await session.next();
@@ -53,7 +54,7 @@ export function mountGraph({api,epoch,browser}) {
         page=await session.read({page_size:100,version_filter:directory.version_filter,seed_entity_ids:seeds,entity_types:seed?[]:type?[type]:[],predicates:predicate?[predicate]:[],hops:Number($('kb-hops').value),direction:$('kb-direction').value},{token:directory.view_token});
       }
       await draw(page,id);
-    }catch(error){if(id===uiRequest && identity===epoch()){$('kb-graph-status').textContent=error.status===409?'知识版本或权限已变化，请刷新知识后重试。':`图谱读取失败：${error.message}`;$('kb-graph-accessible').replaceChildren();}}
+    }catch(error){if(id===uiRequest && identity===epoch()){$('kb-graph-status').textContent=error.status===409?'知识版本或权限已变化，请刷新知识后重试。':`图谱读取失败：${error.message}`;$('kb-graph-accessible').replaceChildren();}}finally{finish();if(id===uiRequest)$('kb-graph-next').disabled=!session.page?.page.has_more;}
   }
   $('kb-graph-load').onclick=()=>{seed=null;load();};$('kb-graph-next').onclick=()=>load(true);
   $('kb-hops').onchange=()=>load();$('kb-direction').onchange=()=>load();$('kb-predicate').onchange=()=>load();

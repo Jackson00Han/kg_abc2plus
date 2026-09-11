@@ -15,12 +15,13 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
+from uuid import uuid5
 
 from neo4j import unit_of_work
 
 from graphrag_prod.domain.facts import literal_signature
 from graphrag_prod.domain.access import Principal
-from graphrag_prod.domain.ids import assertion_id, mention_id
+from graphrag_prod.domain.ids import ID_NAMESPACE, assertion_id, mention_id
 from graphrag_prod.domain.models import (
     RelationshipPropertyValue,
     TypedLiteralValue,
@@ -37,7 +38,7 @@ from graphrag_prod.ontology.models import (
 from .quality import IssueSeverity
 
 PUBLISHED_QUALITY_CAPABILITIES = frozenset({"knowledge:quality", "knowledge:review"})
-PUBLISHED_QUALITY_RULESET_VERSION = "published-governed-graph-quality-v2"
+PUBLISHED_QUALITY_RULESET_VERSION = "published-governed-graph-quality-v3"
 
 _MAX_REVISIONS = 50_000
 _MAX_ENTITIES = 50_000
@@ -294,7 +295,8 @@ RETURN publication {
        AND NOT EXISTS {
            MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->
                  (snapshot:KnowledgeSnapshot)
-           MATCH (document:Document)-[:ACTIVE_SNAPSHOT]->(snapshot)
+           MATCH (snapshot)-[:OF_VERSION]->(version:DocumentVersion)
+           MATCH (document:Document)-[:HAS_VERSION]->(version)
            WHERE document.tenant_id <> $tenant_id
               OR snapshot.tenant_id <> $tenant_id
               OR none(group IN $groups
@@ -335,7 +337,14 @@ CALL (revision) {
     OPTIONAL MATCH (head)-[pointer:CURRENT_REVISION]->(current)
     RETURN count(DISTINCT head) AS head_count,
            count(pointer) AS current_pointer_count,
-           count(CASE WHEN current.revision_id = revision.revision_id
+           count(CASE WHEN current.tenant_id = head.tenant_id
+                            AND current.record_id = head.record_id
+                            AND current.revision = head.current_revision
+                            AND current.revision >= revision.revision
+                            AND ((head.record_kind = 'ENTITY_MENTION'
+                                  AND current:GovernedEntityMentionRevision)
+                                 OR (head.record_kind = 'ASSERTION'
+                                     AND current:GovernedAssertionRevision))
                       THEN 1 END) AS matching_current_count,
            min(head.tenant_id) AS head_tenant_id,
            min(head.record_kind) AS head_record_kind,
@@ -343,22 +352,35 @@ CALL (revision) {
 }
 CALL (publication, revision) {
     OPTIONAL MATCH (revision)-[edge:IN_CHUNK|EVIDENCED_BY]->(chunk:Chunk)
-    OPTIONAL MATCH (document:Document {document_id: revision.document_id})
-          -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot)
+    OPTIONAL MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->
+          (snapshot:KnowledgeSnapshot)
           -[:INCLUDES_CHUNK]->(chunk)
-    OPTIONAL MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion)
-    OPTIONAL MATCH (snapshot)-[:OF_VERSION]->(snapshot_version:DocumentVersion)
+    OPTIONAL MATCH (snapshot)-[:OF_VERSION]->(version:DocumentVersion)
+    OPTIONAL MATCH (document:Document {document_id: revision.document_id})
+          -[:HAS_VERSION]->(version)
     WITH publication, revision, edge, chunk, document, snapshot, version,
-         snapshot_version,
          CASE WHEN edge IS NOT NULL
                    AND chunk.tenant_id = $tenant_id
                    AND document.tenant_id = $tenant_id
                    AND version.tenant_id = $tenant_id
                    AND snapshot.tenant_id = $tenant_id
-                   AND snapshot.build_state = 'PUBLISHED'
+                   AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+                   AND snapshot.retirement_id IS NULL
+                   AND version.retirement_id IS NULL
+                   AND document.retirement_id IS NULL
+                   AND document.retirement_request_fingerprint IS NULL
+                   AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                   AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                   AND snapshot.document_id = document.document_id
+                   AND version.document_id = document.document_id
+                   AND snapshot.version_id = version.version_id
                    AND revision.document_id = document.document_id
                    AND revision.version_id = version.version_id
-                   AND revision.version_id = snapshot_version.version_id
+                   AND chunk.document_id = document.document_id
+                   AND chunk.version_id = version.version_id
+                   AND EXISTS { MATCH (version)-[:HAS_CHUNK]->(chunk) }
+                   AND COUNT { MATCH (snapshot)-[:OF_VERSION]->() } = 1
+                   AND COUNT { MATCH (:Document)-[:HAS_VERSION]->(version) } = 1
                    AND revision.chunk_id = chunk.chunk_id
                    AND revision.access_policy_id = chunk.access_policy_id
                    AND revision.access_policy_version = chunk.access_policy_version
@@ -698,7 +720,7 @@ RETURN revision {
            .authority_level, .document_id, .version_id, .chunk_id,
            .access_policy_id, .access_policy_version, .access_groups,
            .evidence_char_start, .evidence_char_end, .confidence,
-           .extractor_version, .surface,
+           .extractor_version, .surface, .assignment_source_revision_id,
            .entity_id, .entity_type, .canonical_key,
            .subject_entity_id, .subject_entity_type, .subject_canonical_key,
            .predicate, .object_kind, .object_entity_id,
@@ -965,7 +987,7 @@ def _publication_boundary(
     manifest_values = row.get("manifest_revision_ids")
     if (
         manifest_count is None
-        or manifest_count <= 0
+        or manifest_count < 0
         or isinstance(manifest_values, (str, bytes))
         or not isinstance(manifest_values, Sequence)
     ):
@@ -1074,7 +1096,7 @@ def _expected_navigation_mention_id(
             char_end,
         ):
             return None
-        return mention_id(
+        identifier = mention_id(
             str(chunk_id),
             str(entity_type),
             int(char_start),
@@ -1082,6 +1104,20 @@ def _expected_navigation_mention_id(
             str(surface),
             str(extractor),
         )
+        if revision.get("assignment_source_revision_id") is not None:
+            if _text(revision.get("assignment_source_revision_id")) is None:
+                return None
+            record_id = _text(revision.get("record_id"))
+            if record_id is None:
+                return None
+            # Match the already-published identity scheme for per-property
+            # ownership decisions; ordinary extracted mentions keep their ID.
+            payload = json.dumps(
+                ["property-assignment-mention:v1", identifier, record_id],
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            )
+            return str(uuid5(ID_NAMESPACE, payload))
+        return identifier
     except (TypeError, ValueError):
         return None
 
@@ -1319,7 +1355,7 @@ def _audit_revision(
         and row.get("head_tenant_id") == boundary.tenant_id
         and row.get("head_record_kind") == kind
         and revision_number is not None
-        and row.get("head_current_revision") == revision_number
+        and (_integer(row.get("head_current_revision")) or 0) >= revision_number
     )
     if not head_ok:
         issues.add(
@@ -1327,7 +1363,7 @@ def _audit_revision(
             IssueSeverity.ERROR,
             "KnowledgeRevision",
             revision_id,
-            "record head does not point uniquely to the published current revision",
+            "record head is inconsistent with the published revision history",
         )
     edge_kinds = row.get("publication_record_kinds")
     if (
@@ -1360,7 +1396,7 @@ def _audit_revision(
             IssueSeverity.ERROR,
             "KnowledgeRevision",
             revision_id,
-            "source evidence is not exact, unique, ACL-consistent, and active",
+            "source evidence is not exact, unique, authorized, and bound to this publication",
         )
 
     if kind == "ENTITY_MENTION":

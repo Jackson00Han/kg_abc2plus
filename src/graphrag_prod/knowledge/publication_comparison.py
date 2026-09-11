@@ -2,13 +2,18 @@
 from hashlib import sha256
 from neo4j import Query
 from graphrag_prod.knowledge.review import KnowledgePublicationConflict
+from .publication_sources import compare_source_summaries
 
 _QUERY = """
 MATCH (p:KnowledgePublication {tenant_id:$tenant_id})-[:PUBLISHES_KNOWLEDGE_REVISION]->(r)
 MATCH (r)-[:IN_CHUNK|EVIDENCED_BY]->(c:Chunk {tenant_id:$tenant_id})
-MATCH (d:Document {tenant_id:$tenant_id,document_id:r.document_id})-[:ACTIVE_VERSION]->(v:DocumentVersion {tenant_id:$tenant_id,version_id:r.version_id})
-MATCH (d)-[:ACTIVE_SNAPSHOT]->(s:KnowledgeSnapshot {tenant_id:$tenant_id,build_state:'PUBLISHED'})-[:INCLUDES_CHUNK]->(c)
+MATCH (d:Document {tenant_id:$tenant_id,document_id:r.document_id})-[:HAS_VERSION]->(v:DocumentVersion {tenant_id:$tenant_id,version_id:r.version_id})
+MATCH (p)-[:USES_KNOWLEDGE_SNAPSHOT]->(s:KnowledgeSnapshot {tenant_id:$tenant_id})-[:INCLUDES_CHUNK]->(c)
+MATCH (s)-[:OF_VERSION]->(v)
 WHERE p.publication_id IN $ids AND r.tenant_id=$tenant_id
+ AND s.build_state IN ['PUBLISHED','RETIRED']
+ AND coalesce(d.lifecycle_status,'ACTIVE')='ACTIVE' AND coalesce(v.lifecycle_status,'ACTIVE')='ACTIVE'
+ AND d.retirement_id IS NULL AND s.retirement_id IS NULL AND v.retirement_id IS NULL
  AND any(g IN $groups WHERE g IN coalesce(r.access_groups,[]))
  AND any(g IN $groups WHERE g IN coalesce(c.access_groups,[]))
  AND any(g IN $groups WHERE g IN coalesce(d.access_groups,[]))
@@ -23,6 +28,17 @@ RETURN p.publication_id AS publication_id,r.revision_id AS revision_id,r.record_
  r.literal_raw_unit AS unit,r.literal_raw_valid_from AS valid_from,r.literal_raw_valid_to AS valid_to,r.literal_raw_observed_at AS observed_at,
  d.title AS document_title,r.relationship_properties_json AS qualifiers
 ORDER BY p.publication_id,r.record_id LIMIT 1001
+"""
+
+
+_SOURCE_QUERY = """
+MATCH (p:KnowledgePublication {tenant_id:$tenant_id})-[:USES_KNOWLEDGE_SNAPSHOT]->(s:KnowledgeSnapshot {tenant_id:$tenant_id})
+MATCH (s)-[:OF_VERSION]->(v:DocumentVersion {tenant_id:$tenant_id})
+MATCH (d:Document {tenant_id:$tenant_id})-[:HAS_VERSION]->(v)
+WHERE p.publication_id IN $ids AND any(g IN $groups WHERE g IN coalesce(d.access_groups,[]))
+RETURN p.publication_id AS publication_id,s.snapshot_id AS snapshot_id,
+       d.document_id AS document_id,v.version_id AS version_id,d.title AS title
+ORDER BY publication_id,document_id,version_id LIMIT 1001
 """
 
 
@@ -44,18 +60,27 @@ def publication_comparison(service,principal,target_id,expected_id):
     params=dict(tenant_id=principal.tenant_id,groups=sorted(principal.groups),ids=sorted(selected))
     with service.driver.session(database=service.database) as session:
         rows=[dict(r) for r in session.run(Query(_QUERY,timeout=15.0),**params)]
+        source_rows=[dict(r) for r in session.run(Query(_SOURCE_QUERY,timeout=15.0),**params)]
     if len(rows)>1000:raise KnowledgePublicationConflict('publication comparison exceeds its safety bound')
     for key,p in selected.items():
         actual=[r['revision_id'] for r in rows if r['publication_id']==key]
         if set(actual)!=set(p.published_revision_ids) or len(actual)!=len(p.published_revision_ids):
             raise KnowledgePublicationConflict('publication comparison is incomplete')
+    for key,p in selected.items():
+        actual=[r['snapshot_id'] for r in source_rows if r['publication_id']==key]
+        if sorted(actual)!=sorted(p.source_snapshot_ids):
+            raise KnowledgePublicationConflict('publication comparison source scope is incomplete')
     with service.driver.session(database=service.database) as session:
+        source_again=[dict(r) for r in session.run(Query(_SOURCE_QUERY,timeout=15.0),**params)]
         again=[dict(r) for r in session.run(Query(_QUERY,timeout=15.0),**params)]
-    if again!=rows or service.history(principal,limit=100)!=publications:
+    if source_again!=source_rows or again!=rows or service.history(principal,limit=100)!=publications:
         raise KnowledgePublicationConflict('publication comparison changed during read')
     groups={key:[] for key in selected}
     for row in rows:
         key=row.pop('publication_id');qualifiers=row.pop('qualifiers') or ''
         row['qualifier_digest']=sha256(qualifiers.encode()).hexdigest()
         groups[key].append(row)
-    return dict(expected_active_publication_id=expected_id,target_publication_id=target_id,target_generation=by_id[target_id].generation,**compare_records(groups[expected_id],groups[target_id]))
+    source_groups={key:[] for key in selected}
+    for row in source_rows:
+        source_groups[row['publication_id']].append({name:row[name] for name in ('document_id','version_id','title')})
+    return dict(source_scope=compare_source_summaries(source_groups[expected_id],source_groups[target_id]),expected_active_publication_id=expected_id,target_publication_id=target_id,target_generation=by_id[target_id].generation,**compare_records(groups[expected_id],groups[target_id]))

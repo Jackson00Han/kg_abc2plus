@@ -26,6 +26,8 @@ class SchemaExpectation:
 
 
 EXPECTED_SCHEMA = (
+    SchemaExpectation("upload_reservation_id_unique", "constraint", "UNIQUENESS", "UploadReservation", ("reservation_id",)),
+    SchemaExpectation("graphrag_chunk_text_v3", "index", "FULLTEXT", "Chunk", ("text", "publication_scope")),
     SchemaExpectation("quality_review_decision_id_unique", "constraint", "UNIQUENESS", "QualityReviewDecision", ("review_id",)),
     SchemaExpectation("quality_review_decision_run_lookup", "index", "RANGE", "QualityReviewDecision", ("tenant_id", "run_id", "recorded_at")),
     SchemaExpectation(

@@ -94,6 +94,7 @@ function resolution(id, revision = 1, outcome = 'AUTO_LINK') {
 }
 const context = vm.createContext({$:id=>context.document?.getElementById(id)||null,state, elements, requests, panels, draft, item, resolution,
   assert, apiRequest, flush: () => new Promise(resolve => setImmediate(resolve)),
+  foregroundAction: (_label,action)=>action, beginButtonFeedback:()=>()=>{}, clearButtonFeedback(){},
   showToast() {}, escapeHtml: String, shortId: String, literalSemantics: item => item.literal_semantics || {}, parseJsonEditor: editor => JSON.parse(editor.value),
   relationshipPropertiesMarkup: () => '', literalSemanticsMarkup: () => '',
   prompt: () => { promptCount += 1; return null; },
@@ -398,6 +399,9 @@ for (const action of [() => publishOntology(0), () => publishKnowledge(), () => 
   const before = requests.length;
   const mutation = action();
   state.identityEpoch += 1;
+  // Switching identity runs reset(), including review/publication busy state.
+  state.reviewBusy = false;
+  state.publicationBusy = false;
   elements.publicationRevisions.value = 'new-identity-draft';
   elements.publicationOutput.textContent = 'new-identity-output';
   requests[before].resolve({tbox_id: 'old-tbox', publication_id: 'old-publication', generation: 2});

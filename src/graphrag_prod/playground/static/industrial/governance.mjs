@@ -1,5 +1,5 @@
 import template from './governance-template.mjs';
-import {toast} from './core.mjs';
+import {toast, beginButtonFeedback, clearButtonFeedback} from './core.mjs';
 
 /** Mature review/publication workflow mounted in the Industrial shell. */
 export async function mountGovernance(host, {client, bootstrap, onNavigate = () => {}, onPublished = async () => {}, onExplore=null, onSource=null}) {
@@ -80,9 +80,28 @@ const elements = {
   Object.defineProperty(state,'identityEpoch',{get:()=>client.epoch});
   const currentPersona=()=>bootstrap.personas.find(item=>item.id===client.personaId)||null;
   const showToast=toast;
+  // The full user action owns its button, including follow-up reads.
+  function beginOperationFeedback(_label, {button=null}={}) {
+    return beginButtonFeedback(button, {disable:false});
+  }
+  function foregroundAction(_label, action) {
+    return async event => {
+      const button=event?.currentTarget;
+      if(button?.getAttribute('aria-busy')==='true') return;
+      const disabled=button?.disabled;
+      if(button) button.disabled=true;
+      const finish=beginOperationFeedback('',{button});
+      try {return await action(event);} finally {
+        finish();
+        if(button?.isConnected) button.disabled=Boolean(disabled);
+        setReviewBusy(Boolean(state.reviewBusy));
+      }
+    };
+  }
   const apiRequest=async(url,options={})=>{
     const identity=client.epoch;
-    const result=await client.requestOptions(url,options);
+    const {feedback,...requestOptions}=options;
+    const result=await client.requestOptions(url,requestOptions);
     if(identity===client.epoch && options.method==='POST' && (/publications:publish$/.test(url)||/:rollback$/.test(url))) {
       void Promise.resolve(onPublished([])).catch(error=>showToast(error.message));
     }
@@ -132,6 +151,7 @@ const elements = {
 
       function output(element, value) {
         element.hidden = false;
+        element.classList.remove('upload-check');
         element.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
         if (element === elements.constructionOutput || element === elements.publicationOutput) element.scrollIntoView?.({block:'nearest',behavior:'smooth'});
       }
@@ -225,16 +245,16 @@ const elements = {
           return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}<br>${relationshipContracts || 'Relationship contracts: —'}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml({DRAFT:'未启用',PUBLISHED:'已启用',RETIRED:'已停用'}[item.status] || item.status)}</span></div><div class="workbench-actions"><button class="button" type="button" data-load-tbox="${index}">载入并校验</button><button class="button" type="button" data-copy-tbox="${index}">复制为下一版本</button><button class="button" type="button" data-download-tbox="${index}">导出 JSON</button>${item.status === 'DRAFT' ? `<button class="button primary" type="button" data-publish-tbox="${index}">启用此版本</button>` : ''}</div></article>`;
         }).join('');
         elements.ontologyList.querySelectorAll('[data-load-tbox]').forEach(button => {
-          button.addEventListener('click', () => loadOntologyIntoEditor(Number(button.dataset.loadTbox), false));
+          button.addEventListener('click', foregroundAction('', () => loadOntologyIntoEditor(Number(button.dataset.loadTbox), false)));
         });
         elements.ontologyList.querySelectorAll('[data-copy-tbox]').forEach(button => {
-          button.addEventListener('click', () => loadOntologyIntoEditor(Number(button.dataset.copyTbox), true));
+          button.addEventListener('click', foregroundAction('', () => loadOntologyIntoEditor(Number(button.dataset.copyTbox), true)));
         });
         elements.ontologyList.querySelectorAll('[data-download-tbox]').forEach(button => {
-          button.addEventListener('click', () => downloadOntology(Number(button.dataset.downloadTbox)));
+          button.addEventListener('click', foregroundAction('', () => downloadOntology(Number(button.dataset.downloadTbox))));
         });
         elements.ontologyList.querySelectorAll('[data-publish-tbox]').forEach(button => {
-          button.addEventListener('click', () => publishOntology(Number(button.dataset.publishTbox)));
+          button.addEventListener('click', foregroundAction('', () => publishOntology(Number(button.dataset.publishTbox))));
         });
       }
 
@@ -290,6 +310,8 @@ const elements = {
       }
 
       async function loadOntologies() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('ontology-list-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         try {
           const payload = await apiRequest('/v1/ontologies?limit=100');
@@ -300,6 +322,7 @@ const elements = {
           if (identityEpoch !== state.identityEpoch) return;
           elements.ontologyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
+        } finally {finish();}
       }
 
       async function importOntology() {
@@ -356,7 +379,7 @@ const elements = {
         try {
           const draftText = elements.aboxEditor.value;
           const body = parseJsonEditor(elements.aboxEditor, '权威 A-Box');
-          output(elements.aboxOutput, '正在校验 T-Box、当前文档版本、ACL 与精确证据…');
+          elements.aboxOutput.textContent = '';
           const payload = await apiRequest('/v1/knowledge/authoritative:import', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
           });
@@ -439,6 +462,46 @@ const elements = {
       }
 
       // Source type belongs to the upload draft, independently of page navigation.
+      function clearConstructionResult() {
+        state.uploadDraftEpoch = (state.uploadDraftEpoch || 0) + 1;
+        elements.constructionOutput.textContent = '';
+        elements.constructionOutput.hidden = true;
+        elements.constructionOutput.classList.remove('upload-check');
+        $('construction-validation-summary').innerHTML = '';
+        $('construction-next').hidden = true;
+        $('construction-next-note').textContent = '';
+        state.lastConstructionMode = null;
+        state.lastConstructionScope = null;
+      }
+
+      function resetUploadDraft() {
+        clearConstructionResult();
+        for (const id of ['document-file', 'document-title', 'document-uri', 'document-asset']) $(id).value = '';
+        $('document-file-name').textContent = '尚未选择文件';
+        state.uploadAutoTitle = null;
+        state.uploadAutoUri = null;
+        state.uploadDraftCompleted = false;
+      }
+
+      function selectUploadFile(file) {
+        clearConstructionResult();
+        $('document-file-name').textContent = file ? file.name : '尚未选择文件';
+        if (!file) return;
+        const title = $('document-title'), uri = $('document-uri');
+        // Follow a new file for generated metadata. A consumed draft must never
+        // silently assign a different source to the previous document either.
+        if (!title.value.trim() || title.value === state.uploadAutoTitle || state.uploadDraftCompleted) {
+          title.value = file.name.replace(/\.[^.]+$/, '');
+          state.uploadAutoTitle = title.value;
+        }
+        if (!uri.value.trim() || uri.value === state.uploadAutoUri || state.uploadDraftCompleted) {
+          const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'document';
+          uri.value = defaultDocumentUri(safeName);
+          state.uploadAutoUri = uri.value;
+        }
+        state.uploadDraftCompleted = false;
+      }
+
       function setUploadKnowledgeScope(scope) {
         const select = $('document-knowledge-scope');
         if (state.constructionBusy) {
@@ -447,6 +510,7 @@ const elements = {
           return false;
         }
         if (!['BUSINESS', 'AUTHORITATIVE'].includes(scope)) return false;
+        if (scope !== state.uploadKnowledgeScope) resetUploadDraft();
         state.uploadKnowledgeScope = scope;
         select.value = scope;
         $('document-knowledge-scope-note').textContent = scope === 'AUTHORITATIVE'
@@ -565,7 +629,7 @@ const elements = {
         $('upload-demo-prepare').hidden = false;
         $('demo-files').innerHTML = kit.files.map(item => `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.label)}</strong><p>${escapeHtml(item.filename)} · ${escapeHtml(item.characters)} 字符 · ${escapeHtml(item.expected_chunks)} Chunk<br>${escapeHtml(item.metadata.title)}</p></div></div><div class="workbench-actions"><a class="button" href="/playground/demo-files/${encodeURIComponent(item.filename)}" download="${escapeHtml(item.filename)}">下载文件</a><button class="button" type="button" data-demo-prepare="${escapeHtml(item.id)}">${item.construction_mode === 'SOURCE_ONLY' ? '填写权威来源信息' : '填写业务资料信息'}</button></div></article>`).join('');
         $('demo-files').querySelectorAll('[data-demo-prepare]').forEach(button => {
-          button.addEventListener('click', () => prepareDemoUpload(button.dataset.demoPrepare));
+          button.addEventListener('click', foregroundAction('', () => prepareDemoUpload(button.dataset.demoPrepare)));
         });
       }
 
@@ -664,7 +728,7 @@ const elements = {
           ? `当前模式每份文档最多 ${chunkLimit} Chunks。` : '分块数量由服务端限制。';
         $('construct-button').textContent = sourceOnly
           ? '上传并保存来源' : '上传并构建';
-        $('construction-submit-note').textContent = sourceOnly
+        if (!state.constructionBusy) $('construction-submit-note').textContent = sourceOnly
           ? '仅保存来源，不生成候选知识。' : '构建后先复核，再发布。';
         $('construction-mode-note').textContent = sourceOnly
           ? `${boundedChunks}仅切块与向量化，不执行 LLM 抽取或自动纠正。`
@@ -792,7 +856,7 @@ const elements = {
         }
         elements.constructionJobList.innerHTML = state.constructionJobs.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(({RUNNING:'处理中', RETRY_WAIT:'已中断，等待重试', FAILED:'已失败', COMPLETED:'已完成'})[item.status] || item.status)} · ${escapeHtml(shortId(item.job_id))}</strong><p>${escapeHtml(item.completed_chunks)} / ${escapeHtml(item.expected_chunks)} Chunks · document ${escapeHtml(shortId(item.document_id))}<br>updated ${escapeHtml(item.updated_at)}</p></div><span class="trust-badge ${item.status === 'COMPLETED' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${constructionFailureMarkup(item)}<div class="workbench-actions"><button class="button" type="button" data-construction-job-detail="${index}">查看任务明细</button></div></article>`).join('');
         elements.constructionJobList.querySelectorAll('[data-construction-job-detail]').forEach(button => {
-          button.addEventListener('click', () => loadConstructionJob(Number(button.dataset.constructionJobDetail), button));
+          button.addEventListener('click', foregroundAction('', () => loadConstructionJob(Number(button.dataset.constructionJobDetail), button)));
         });
       }
 
@@ -807,6 +871,8 @@ const elements = {
       }
 
       async function loadConstructionJobs() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('construction-jobs-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         try {
           const payload = await apiRequest('/v1/knowledge/construction-jobs?limit=25');
@@ -817,16 +883,18 @@ const elements = {
           if (identityEpoch !== state.identityEpoch) return;
           elements.constructionJobList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
+        } finally {finish();}
       }
 
       async function loadConstructionJob(index, button) {
         const item = state.constructionJobs[index];
         if (!item) { showToast('构建任务列表已变化，请刷新'); return; }
         const identityEpoch = state.identityEpoch;
+        const draftEpoch = state.uploadDraftEpoch;
         button.disabled = true;
         try {
           const payload = await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(item.job_id)}`);
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || draftEpoch !== state.uploadDraftEpoch) return;
           showConstructionResult(payload);
           if (payload.status === 'FAILED' || payload.status === 'RETRY_WAIT') {
             $('construction-validation-summary').innerHTML = constructionFailureMarkup(payload) + $('construction-validation-summary').innerHTML;
@@ -838,7 +906,35 @@ const elements = {
         }
       }
 
-      async function constructKnowledge() {
+      function showUploadPreflight(report, fingerprint) {
+        const matches = [...report.exact_matches, ...report.similar_matches];
+        const exact = report.exact_matches.length > 0;
+        const box = elements.constructionOutput;
+        box.hidden = false;
+        box.classList.add('upload-check');
+        box.innerHTML = `<strong>${exact ? '这份资料已经存在，已暂停重复构建' : matches.length ? '发现高度相似的资料，请先核对变化' : '相似资料检查未覆盖全部范围'}</strong>
+          <p>${exact ? '文件名或来源地址不同，也会按内容识别。保留已有资料即可，无需再次抽取和审核。' : '相似不代表相同。设备编号、数值或事实发生变化时，可以按当前来源信息继续构建。'}</p>
+          ${matches.map((item,index) => `<article class="upload-match"><div><strong>${escapeHtml(item.title)}</strong><span class="trust-badge">${item.match_kind === 'EXACT' ? '内容相同' : `文本相似度 ${(item.similarity * 100).toFixed(1)}%`}</span></div><p>${escapeHtml(item.canonical_uri)}</p>
+            ${item.difference ? `<div class="upload-difference"><div><span>已有资料 · 首处差异附近</span><pre>${escapeHtml(item.difference.before)}</pre></div><div><span>本次上传 · 首处差异附近</span><pre>${escapeHtml(item.difference.after)}</pre></div></div>` : ''}
+            ${onSource ? `<button class="text-button" type="button" data-upload-existing="${index}">查看已有原文</button>` : ''}</article>`).join('')}
+          ${report.truncated ? '<p class="field-note">本次相似检查受范围限制，未覆盖所有可见资料；没有列出不代表不存在相似内容。最多比较 50 个长度接近的版本，每份不超过 20 万字，完整内容仍按校验和查重。</p>' : ''}
+          <div class="workbench-actions"><button class="button primary" type="button" data-upload-skip>${exact ? '不重复构建' : '暂不构建'}</button>${exact ? '' : '<button class="button" type="button" data-upload-continue>已核对，继续构建</button>'}</div>
+          ${exact ? '<details><summary>仍需使用当前设置重新构建</summary><p>仅在需要独立保留另一来源，或更改抽取方式、本体等设置时继续；这可能新增待审核记录。</p><button class="button" type="button" data-upload-continue>确认重新构建</button></details>' : ''}`;
+        box.querySelector('[data-upload-skip]').onclick = () => {
+          completeConstructionOperation();
+          output(box, '已取消本次构建。已有资料和审核结果继续保留，未调用抽取模型。');
+        };
+        box.querySelector('[data-upload-continue]').onclick = () => constructKnowledge({fingerprint, token: report.review_token});
+        box.querySelectorAll('[data-upload-existing]').forEach(button => {
+          button.onclick = () => {
+            const item = matches[Number(button.dataset.uploadExisting)];
+            onSource({document_id:item.document_id, version_id:item.version_id, document_title:item.title, ordinal:0});
+          };
+        });
+        box.scrollIntoView?.({block:'nearest',behavior:'smooth'});
+      }
+
+      async function constructKnowledge(acknowledgment = null) {
         if (state.constructionBusy) return;
         const file = $('document-file').files?.[0];
         if (!file) { output(elements.constructionOutput, '请选择一个文档。'); return; }
@@ -848,11 +944,17 @@ const elements = {
         if (!['BUSINESS', 'AUTHORITATIVE'].includes(knowledgeScope)) { output(elements.constructionOutput, '请选择有效的资料类型。'); return; }
         state.uploadKnowledgeScope = knowledgeScope;
         state.constructionBusy = true;
+        clearConstructionResult();
+        const draftControls = [...$('upload-card').querySelectorAll('input, select')];
+        const disabledControls = draftControls.map(control => control.disabled);
         $('document-knowledge-scope').disabled = true;
         $('construction-next').hidden = true;
         $('construction-next-button').hidden = false;
         $('construction-validation-summary').innerHTML = '';
         $('construct-button').disabled = true;
+        let finishFeedback = beginOperationFeedback('正在检查上传资料…', {button:$('construct-button')});
+
+        let uploadRequest = null, uploadFingerprint = null;
         try {
           const mime = detectedMime(file);
           const title = $('document-title').value.trim();
@@ -865,8 +967,9 @@ const elements = {
           const accessGroups = selectedDocumentAccessGroups();
           if (!title || !canonicalUri || !sourceName || !tboxKey || !language) throw new Error('请完整填写文档元数据');
           if (!accessGroups.length) throw new Error('至少选择一个新文档访问组');
+          draftControls.forEach(control => { control.disabled = true; });
           if (!await requirePublishedConstructionOntology(tboxKey, identityEpoch)) return;
-          output(elements.constructionOutput, extractionMode === 'SOURCE_ONLY' ? '正在上传、解析、切块与向量化；此模式不调用抽取模型…' : '正在上传、解析、切块、向量化，并按已启用本体调用抽取模型…');
+
           const bytes = new Uint8Array(await file.arrayBuffer());
           if (identityEpoch !== state.identityEpoch) return;
           const industrialContext = uploadContext();
@@ -886,26 +989,36 @@ const elements = {
           const fingerprint = await constructionFingerprint(bytes, metadata);
           if (identityEpoch !== state.identityEpoch) return;
           const operationKey = nextConstructionOperation(fingerprint);
+          uploadFingerprint = fingerprint;
+          uploadRequest = {
+            operation_key: operationKey, canonical_uri: canonicalUri, title,
+            source_name: sourceName, mime_type: mime, language, tbox_key: tboxKey,
+            extraction_mode: extractionMode, knowledge_scope: metadata.knowledge_scope,
+            industrial_context: industrialContext, access_groups: accessGroups,
+            max_attempts: 1, content_base64: bytesToBase64(bytes),
+          };
+          const preflight = await apiRequest('/v1/knowledge:preflight', {
+            method:'POST', feedback:false, headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(uploadRequest),
+          });
+          if (identityEpoch !== state.identityEpoch) return;
+          const needsReview = preflight.exact_matches.length || preflight.similar_matches.length || preflight.truncated;
+          if (needsReview && (acknowledgment?.fingerprint !== fingerprint || acknowledgment?.token !== preflight.review_token)) {
+            showUploadPreflight(preflight, fingerprint);
+            return;
+          }
+          if (needsReview) uploadRequest.preflight_token = preflight.review_token;
+          finishFeedback();
+          const progress = extractionMode === 'SOURCE_ONLY' ? '正在入库与向量化…' : '正在构建，解析与抽取可能需要一些时间…';
+          finishFeedback = beginOperationFeedback(progress, {button:$('construct-button')});
+
           const payload = await apiRequest('/v1/knowledge:construct', {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-              operation_key: operationKey,
-              canonical_uri: canonicalUri,
-              title,
-              source_name: sourceName,
-              mime_type: mime,
-              language,
-              tbox_key: tboxKey,
-              extraction_mode: extractionMode,
-              knowledge_scope: metadata.knowledge_scope,
-              industrial_context: industrialContext,
-              access_groups: accessGroups,
-              max_attempts: 1,
-              content_base64: bytesToBase64(bytes),
-            }),
+            method:'POST', feedback:false, headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(uploadRequest),
           });
           if (identityEpoch !== state.identityEpoch) return;
           completeConstructionOperation();
+          state.uploadDraftCompleted = true;
           state.knowledgeBrowser?.reset();
           showConstructionResult(payload);
           state.lastConstructionScope = metadata.knowledge_scope;
@@ -925,6 +1038,13 @@ const elements = {
           await Promise.allSettled([loadConstructionJobs(), loadReviews(), loadActiveDocuments()]);
         } catch (error) {
           if (identityEpoch === state.identityEpoch) {
+            if (error.code === 'upload_review_required' && uploadRequest) {
+              try {
+                const checked = await apiRequest('/v1/knowledge:preflight', {method:'POST', feedback:false, headers:{'Content-Type':'application/json'}, body:JSON.stringify(uploadRequest)});
+                if (identityEpoch === state.identityEpoch) showUploadPreflight(checked, uploadFingerprint);
+              } catch (checkError) { if (identityEpoch === state.identityEpoch) output(elements.constructionOutput, checkError.message); }
+              return;
+            }
             if (error.code === 'construction_ingestion_failed') {
               completeConstructionOperation();
               output(elements.constructionOutput, '来源入库或向量化失败，本次任务已结束。请查看下方任务原因；依赖恢复后，再点击上传会创建新任务，保留旧任务记录。');
@@ -932,7 +1052,13 @@ const elements = {
             await loadConstructionJobs();
           }
         } finally {
-          if (identityEpoch === state.identityEpoch) {state.constructionBusy = false;$('construct-button').disabled = false;$('document-knowledge-scope').disabled = false;}
+          finishFeedback();
+          if (identityEpoch === state.identityEpoch) {
+            state.constructionBusy = false;
+            draftControls.forEach((control, index) => { control.disabled = disabledControls[index]; });
+            $('construct-button').disabled = false;
+            updateConstructionMode();
+          }
         }
       }
 
@@ -973,6 +1099,69 @@ const elements = {
           if (semantics[field] != null) edit.literal[field] = semantics[field];
         }
         return edit;
+      }
+
+      function propertyAssignment(item) {
+        const entry=state.propertyAssignments?.get(item.record_id);
+        return entry?.revision===item.revision && entry.identityEpoch===state.identityEpoch && entry.reviewEpoch===state.reviewEpoch ? entry : null;
+      }
+      function assignmentEntityLabel(entity, properties=[]) {
+        const identity=properties.map(value=>`${reviewPropertyLabel(value.name)}：${value.value}${value.unit ? ` ${value.unit}` : ''}`).join(' · ');
+        return `${entity.canonical_name} · ${identity || entity.canonical_key || shortId(entity.entity_id)}`;
+      }
+      function propertyAssignmentMarkup(item,index) {
+        if(item.record_kind!=='ASSERTION' || item.object_entity) return '';
+        const entry=propertyAssignment(item), current=entry?.current;
+        const label=assignmentEntityLabel(item.subject,current?.identity_properties);
+        const header=`<div class="property-assignment-current"><span>当前归属：<strong>${escapeHtml(label)}</strong></span><button class="button" type="button" data-assignment-toggle="${index}">${entry?.open ? '取消更改' : '更改归属'}</button></div>`;
+        if(!entry?.open) return header;
+        const choices=new Map([[item.subject.entity_id,{entity:item.subject,identity_properties:current?.identity_properties || [],selectable:true}]]);
+        for(const target of entry.items || []) choices.set(target.entity.entity_id,target);
+        const selected=choices.get(entry.selected);
+        return header+`<div class="property-assignment-editor"><label>搜索实体<input data-assignment-query="${index}" value="${escapeHtml(entry.query || '')}" maxlength="200" placeholder="输入名称、编号或实体 ID"></label><button class="button${entry.loading ? ' button-pending' : ''}" ${entry.loading ? 'disabled aria-busy="true"' : ''} type="button" data-assignment-search="${index}">搜索</button><label class="property-assignment-wide">所属实体<select data-assignment-select="${index}" ${entry.loading ? 'disabled' : ''}>${[...choices.values()].map(target=>`<option value="${escapeHtml(target.entity.entity_id)}" ${target.entity.entity_id===entry.selected?'selected':''} ${target.selectable?'':'disabled'}>${escapeHtml(assignmentEntityLabel(target.entity,target.identity_properties))}${target.selectable?'':' · 身份冲突'}</option>`).join('')}</select></label>${entry.error?`<p role="alert">${escapeHtml(entry.error)}</p>`:''}${entry.truncated?'<p>仅显示前 20 个匹配实体，请缩小搜索范围。</p>':''}${selected?.evidence?`<details class="property-assignment-wide"><summary>查看所选实体的来源依据</summary><blockquote>${escapeHtml(selected.evidence.quoted_text)}</blockquote></details>`:''}<label class="property-assignment-wide">更改依据<textarea data-assignment-notes="${index}" maxlength="2000" rows="2" placeholder="说明原文中的编号或上下文为何对应所选实体">${escapeHtml(entry.notes || '')}</textarea></label><p class="property-assignment-wide review-muted">只更改这条属性的归属。保存后重新检查，再确认事实；找不到正确实体时可取消并暂缓处理。</p><button class="button primary" type="button" data-assignment-save="${index}" ${entry.loading || entry.error || !selected?.selectable || entry.selected===item.subject.entity_id?'disabled':''}>保存归属并重新检查</button></div>`;
+      }
+      function renderPropertyAssignment(item) {
+        const index=state.reviews.findIndex(value=>value.record_id===item.record_id && value.revision===item.revision);
+        const panel=elements.reviewList.querySelector(`[data-property-assignment="${index}"]`);
+        if(panel) {panel.innerHTML=propertyAssignmentMarkup(item,index);bindReviewActions(panel);}
+        updateReviewAvailability(item);setReviewBusy(Boolean(state.reviewBusy));
+      }
+      async function loadPropertyAssignment(item,open=false,query='') {
+        if(!item || item.record_kind!=='ASSERTION' || item.object_entity) return;
+        state.propertyAssignments ||= new Map();
+        const old=propertyAssignment(item);
+        const entry={revision:item.revision,identityEpoch:state.identityEpoch,reviewEpoch:state.reviewEpoch,
+          ...old,open:open || Boolean(old?.open),selected:old?.selected || item.subject.entity_id,query,loading:true,error:null};
+        state.propertyAssignments.set(item.record_id,entry);renderPropertyAssignment(item);
+        try {
+          const result=await apiRequest(`/v1/knowledge/property-assignment/${encodeURIComponent(item.record_id)}?expected_revision=${item.revision}&query=${encodeURIComponent(entry.open ? query : item.subject.entity_id)}`);
+          if(propertyAssignment(item)!==entry) return;
+          if(result.record_id!==item.record_id || result.revision!==item.revision) throw new Error('记录版本已变化，请刷新审核队列');
+          Object.assign(entry,result);
+          if(!result.items.some(target=>target.entity.entity_id===entry.selected)) entry.selected=item.subject.entity_id;
+        } catch(error) {if(propertyAssignment(item)===entry) entry.error=error.message;}
+        finally {if(propertyAssignment(item)===entry) {entry.loading=false;renderPropertyAssignment(item);}}
+      }
+      async function savePropertyAssignment(index) {
+        const item=state.reviews[index], entry=item && propertyAssignment(item);
+        if(state.reviewBusy || state.publicationBusy || !entry?.open || entry.loading || entry.error) return;
+        if(elements.reviewList.querySelector(`[data-review-editor="${index}"]`)?.disabled===false) {showToast('请先保存或取消内容编辑');return;}
+        const target=entry.items?.find(value=>value.entity.entity_id===entry.selected);
+        if(!target?.selectable || target.entity.entity_id===item.subject.entity_id) {showToast('请选择需要更改到的实体');return;}
+        const notes=entry.notes?.trim();
+        if(!notes || notes.length>2000) {showToast('请填写 1–2000 字的更改依据');return;}
+        const identityEpoch=state.identityEpoch;
+        setReviewBusy(true,[item.record_id]);
+        try {
+          const result=await apiRequest('/v1/knowledge/property-assignment:apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({record_id:item.record_id,expected_revision:item.revision,target_entity_id:target.entity.entity_id,target_record_id:target.record_id,target_expected_revision:target.revision,notes})});
+          if(identityEpoch!==state.identityEpoch) return;
+          trackReviewedOutcomes(result.outcomes || []);invalidatePublicationPreview();
+          state.propertyAssignments.delete(item.record_id);state.reviewPhase='paused';
+          showToast('属性归属已更改；请在暂缓区核对重新检查结果，再确认事实');
+          await loadReviews({anchorRecordId:item.record_id,impact:reviewRefreshImpact(result.outcomes || [],target.entity)});
+          if(identityEpoch===state.identityEpoch) void loadPublicationCandidates();
+        } catch(error) {if(identityEpoch===state.identityEpoch) showToast(error.message);}
+        finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
       function standardizedTitle(item) {
@@ -1052,7 +1241,7 @@ const elements = {
       }
 
       function reviewIsEditing(index) {
-        return elements.reviewList.querySelector(`[data-review-editor="${index}"]`)?.disabled === false;
+        return Boolean(state.reviews[index] && propertyAssignment(state.reviews[index])?.open) || elements.reviewList.querySelector(`[data-review-editor="${index}"]`)?.disabled === false;
       }
 
       function setReviewEditing(index, enabled) {
@@ -1083,14 +1272,14 @@ const elements = {
       function resolutionMarkup(item, index) {
         if (item.record_kind !== 'ENTITY_MENTION') return '';
         const result=state.resolutions.get(item.record_id);
-        const label=(result?.suggestions?.some(value=>value.target) || result?.review_targets?.some(value=>value.selectable)) ? '找到候选，身份尚待确认' : result?.status==='ready' ? '未找到可确认的匹配目标' : '匹配中';
-        return `<details class="review-resolution" data-resolution-details="${index}"><summary>实体匹配与消歧 · ${label}</summary>${resolutionContent(item,index)}</details>`;
+        const label=(result?.suggestions?.some(value=>value.target) || result?.review_targets?.some(value=>value.selectable)) ? '找到候选，身份尚待确认' : result?.status==='ready' ? '未找到可确认的匹配目标' : '身份尚待确认';
+        return `<details class="review-resolution" ${!result || ['queued','loading'].includes(result.status)?'open':''} data-resolution-details="${index}"><summary>实体匹配与消歧 · ${label}</summary>${resolutionContent(item,index)}</details>`;
       }
       function resolutionContent(item, index) {
         if (item.record_kind !== 'ENTITY_MENTION') return '';
         const resolution = state.resolutions.get(item.record_id);
-        if (!resolution || resolution.revision !== item.revision) return '<div class="provider-note">等待自动匹配权威实体。</div>';
-        if (['queued', 'loading'].includes(resolution.status)) return `<div class="provider-note">${resolution.status === 'queued' ? '等待自动匹配' : '正在自动匹配权威实体'}… 匹配只生成建议。</div>`;
+        if (!resolution || resolution.revision !== item.revision) return `<button class="button button-pending" disabled aria-busy="true" data-resolution-load="${index}">匹配实体</button>`;
+        if (['queued', 'loading'].includes(resolution.status)) return `<button class="button button-pending" disabled aria-busy="true" data-resolution-load="${index}">匹配实体</button>`;
         if (resolution.error) return `<div class="output-box">自动匹配失败：${escapeHtml(resolution.error)}。请先保留此记录，恢复后重新匹配。</div><div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">重新匹配</button></div>`;
         const outcomeLabels = {AUTO_LINK: '唯一匹配建议 · 待人工确认', REVIEW: '存在相似或多个目标 · 需人工判断', NO_MATCH: '没有匹配目标 · 保留为新实体候选', CONFLICT: '需要人工判断 · 不自动关联'};
         const properties = (resolution.identity_properties || []).map(value => `${escapeHtml(value.name)} = ${escapeHtml(value.canonical_value)}${value.canonical_unit ? ` ${escapeHtml(value.canonical_unit)}` : ''}`).join(' · ');
@@ -1161,16 +1350,16 @@ const elements = {
         const panel=details.querySelector('[data-evidence-context]');
         const identityEpoch=state.identityEpoch, request=(details.contextRequest || 0)+1;
         details.contextRequest=request;
-        panel.innerHTML='<p>正在读取原文上下文…</p>';
+        panel.innerHTML='<button class="button button-pending" disabled aria-busy="true">读取原文</button>';
         try {
           const value=await apiRequest('/v1/knowledge/review-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({record_id:details.dataset.evidenceRecord,expected_revision:Number(details.dataset.evidenceRevision),view,offset})});
           if(identityEpoch!==state.identityEpoch || details.contextRequest!==request || details.isConnected===false) return;
           panel.innerHTML=evidenceContextMarkup(value);
-          panel.querySelectorAll('[data-evidence-view]').forEach(button=>button.addEventListener('click',()=>loadEvidenceContext(details,button.dataset.evidenceView,Number(button.dataset.evidenceOffset || 0))));
+          panel.querySelectorAll('[data-evidence-view]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>loadEvidenceContext(details,button.dataset.evidenceView,Number(button.dataset.evidenceOffset || 0)))));
         } catch(error) {
           if(identityEpoch!==state.identityEpoch || details.contextRequest!==request || details.isConnected===false) return;
           panel.innerHTML=`<p>无法读取原文：${escapeHtml(error.message)}</p><button type="button" class="button" data-evidence-retry>重试</button>`;
-          panel.querySelector('[data-evidence-retry]')?.addEventListener('click',()=>loadEvidenceContext(details,view,offset));
+          panel.querySelector('[data-evidence-retry]')?.addEventListener('click',foregroundAction('', ()=>loadEvidenceContext(details,view,offset)));
         }
       }
       function bindEvidenceActions(container) {
@@ -1187,7 +1376,7 @@ const elements = {
         if (item.record_kind === 'ENTITY_MENTION') {
           const result = state.resolutions.get(item.record_id);
           if(result?.error) return {allowed:false,note:'无法读取审核依据，请刷新匹配后重试'};
-          if (!result || result.revision !== item.revision || result.identityEpoch !== state.identityEpoch || result.reviewEpoch !== state.reviewEpoch || result.status !== 'ready') return {allowed:false, note:'等待身份匹配完成'};
+          if (!result || result.revision !== item.revision || result.identityEpoch !== state.identityEpoch || result.reviewEpoch !== state.reviewEpoch || result.status !== 'ready') return {allowed:false, note:''};
           const permission=result.identity_actions?.independent;
           if(permission) return {allowed:permission.allowed === true, note:permission.note};
           if (result.suggestions?.some(value => value.outcome === 'NO_MATCH')) return {allowed:true, note:'核对原文后，可确认为独立实体'};
@@ -1195,7 +1384,7 @@ const elements = {
           return {allowed:false, note:'身份依据不足或冲突，请暂缓处理'};
         }
         const result = reviewAssessment(item);
-        return {allowed:(independentFact?['READY','DUPLICATE','CONFLICT']:['READY','DUPLICATE']).includes(result?.status), note:result?.summary || result?.error || '正在检查关联实体与已有事实'};
+        return {allowed:(independentFact?['READY','DUPLICATE','CONFLICT']:['READY','DUPLICATE']).includes(result?.status), note:result?.summary || result?.error || ''};
       }
       function reviewTechnical(item, index) {
         return `<details class="review-technical" data-review-details="${index}"><summary>${standardizedTitle(item)}</summary>${standardEndpointMarkup(item,index)}<textarea id="review-editor-${index}" class="json-editor compact" data-review-editor="${index}" disabled spellcheck="false" aria-label="${standardizedTitle(item)} JSON">${escapeHtml(JSON.stringify(standardizedReview(item), null, 2))}</textarea><button class="button" type="button" data-review-edit-toggle="${index}" aria-expanded="false" aria-controls="review-editor-${index}">编辑内容</button><div data-review-edit-panel="${index}" hidden><p>修改名称、类型或事实内容后保存，系统重新校验再确认。ID、原文引用和来源等级由系统维护；文档之外的事实请使用人工补充。</p><button class="button" type="button" data-review-save-draft="${index}">保存修改并重新检查</button></div><details><summary>修订历史</summary><div data-review-history-panel="${index}">${revisionHistoryMarkup(item, index)}</div></details></details>`;
@@ -1216,7 +1405,7 @@ const elements = {
       }
       function assessmentMarkup(item, index) {
         const result = reviewAssessment(item);
-        if (!result || ['queued','loading'].includes(result.status)) return '<div class="review-check pending">正在检查：关联实体是否确认、是否已有相同事实…</div>';
+        if (!result || ['queued','loading'].includes(result.status)) return `<button class="button button-pending" disabled aria-busy="true" data-review-assess="${index}">检查事实</button>`;
         if (result.error) return `<div class="review-check blocked">检查未完成：${escapeHtml(result.error)}。请先保留此记录。</div><button class="button" data-review-assess="${index}">重新检查</button>`;
         const labels = {READY:'可以审核', BLOCKED:'先处理关联实体', DUPLICATE:'已有相同的已发布事实', CONFLICT:'存在差异，需要核对', UNAVAILABLE:'检查信息不完整'};
         const dependencies = (result.dependencies || []).filter(value => !value.ready).map(value => `<li>${escapeHtml(value.role === 'subject' || value.role === 'SUBJECT' ? '所属实体' : '关联实体')}“${escapeHtml(value.name)}”：尚未确认${value.mention_record_id ? ` <button class="button link" type="button" data-review-dependency="${escapeHtml(value.mention_record_id)}">去处理这个实体</button>` : ''}</li>`).join('');
@@ -1230,16 +1419,53 @@ const elements = {
         const paused = state.reviews.length - active.length;
         return {identities, facts, paused};
       }
+      function stableReviewOrder(previous, incoming) {
+        // Ordering is presentation only: identity is still the stable entity ID.
+        const groups=new Map(), records=new Map(previous.map((item,index)=>[item.record_id,index]));
+        for(const item of [...previous,...incoming]) if(!groups.has(reviewGroupKey(item))) groups.set(reviewGroupKey(item),groups.size);
+        return [...incoming].sort((a,b)=>groups.get(reviewGroupKey(a))-groups.get(reviewGroupKey(b))
+          || (records.get(a.record_id) ?? Infinity)-(records.get(b.record_id) ?? Infinity));
+      }
+      function captureReviewViewport(preferredRecordId=null) {
+        const rows=[...elements.reviewList.querySelectorAll('[data-review-record]')];
+        const visible=row=>{const rect=row.getBoundingClientRect?.();return rect && rect.bottom>100 && rect.top<(globalThis.innerHeight || 900);};
+        const row=rows.find(row=>row.dataset.reviewRecord===preferredRecordId && visible(row)) || rows.find(visible);
+        if(!row) return null;
+        const card=row.closest?.('[data-review-group-key]');
+        return {recordId:row.dataset.reviewRecord,groupKey:card?.dataset.reviewGroupKey,
+          top:row.getBoundingClientRect().top,cardTop:card?.getBoundingClientRect().top,
+          peers:[...(card?.querySelectorAll('[data-review-record]') || [])].map(peer=>peer.dataset.reviewRecord),
+          following:rows.slice(rows.indexOf(row)+1).map(peer=>peer.dataset.reviewRecord)};
+      }
+      function restoreReviewViewport(anchor) {
+        if(!anchor) return;
+        const rows=[...elements.reviewList.querySelectorAll('[data-review-record]')];
+        let target=rows.find(row=>row.dataset.reviewRecord===anchor.recordId), top=anchor.top;
+        if(!target) {
+          target=rows.find(row=>anchor.peers.includes(row.dataset.reviewRecord));
+          if(target) top=Math.max(110,Math.min(anchor.top,(globalThis.innerHeight || 900)-160));
+        }
+        if(!target) {
+          target=rows.find(row=>anchor.following.includes(row.dataset.reviewRecord));
+          top=110;
+        }
+        if(!target) target=[...elements.reviewList.querySelectorAll('[data-review-group-key]')].find(card=>card.dataset.reviewGroupKey===anchor.groupKey);
+        if(!target) return;
+        const delta=target.getBoundingClientRect().top-top;
+        if(Math.abs(delta)>1) globalThis.scrollBy?.({top:delta,left:0,behavior:'instant'});
+      }
       function captureReviewUi() {
         const saved = new Map();
         elements.reviewList.querySelectorAll('[data-review-record]').forEach(row => {
           const editor = row.querySelector('[data-review-editor]');
           const select = row.querySelector('[data-review-select]');
-          saved.set(`${row.dataset.reviewRecord}:${row.dataset.reviewRevision}`, {value:editor?.value, editing:editor && !editor.disabled, selected:select?.checked, details:row.querySelector('[data-review-details]')?.open});
+          saved.set(`${row.dataset.reviewRecord}:${row.dataset.reviewRevision}`, {value:editor?.value, editing:editor && !editor.disabled, selected:select?.checked,
+            details:row.querySelector('[data-review-details]')?.open, resolution:row.querySelector('[data-resolution-details]')?.open,
+            evidence:[...row.querySelectorAll('.review-evidence')].map(details=>details.open)});
         });
         return saved;
       }
-      function renderReviews() {
+      function renderReviews({anchor=null}={}) {
         reviewModel();
         const saved = captureReviewUi();
         const progress = reviewProgress();
@@ -1268,8 +1494,8 @@ const elements = {
           const mentions = rows.filter(row=>row.item.record_kind === 'ENTITY_MENTION');
           const facts = rows.filter(row=>row.item.record_kind !== 'ENTITY_MENTION');
           const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
-          const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
-          return `<article class="review-entity-card"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span>${mentions.length ? '<span class="trust-badge">待确认分组</span>' : ''}<span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${mentions.length ? '<p class="provider-note">同组是抽取时的候选归属，请逐条核对。已确认的实体可以接收其他提及；同名不代表同一实体。</p>' : ''}${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
+          const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p><div class="property-assignment" data-property-assignment="${index}">${propertyAssignmentMarkup(item,index)}</div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
+          return `<article class="review-entity-card" data-review-group-key="${escapeHtml(reviewGroupKey(rows[0].item))}"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span>${mentions.length ? '<span class="trust-badge">待确认分组</span>' : ''}<span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${mentions.length ? '<p class="provider-note">同组是抽取时的候选归属，请逐条核对。已确认的实体可以接收其他提及；同名不代表同一实体。</p>' : ''}${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
         }).join('');
         const identityBatch=state.reviewPhase==='identities' && progress.identities ? '<div class="provider-note">确认所选提及时，默认分别建立独立实体。若所选提及描述同一对象，可使用下面的合并建档操作。<div class="workbench-actions"><button class="button" type="button" data-review-group>所选提及归为同一独立实体</button></div></div>' : '';
         elements.reviewList.innerHTML = navigation + identityBatch + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && state.approvedRevisions.size ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
@@ -1283,8 +1509,13 @@ const elements = {
           if (editor && value.editing) { setReviewEditing(index,true); editor.value=value.value; }
           const details=elements.reviewList.querySelector(`[data-review-details="${index}"]`);
           if (details) details.open=value.details || value.editing;
+          const row=elements.reviewList.querySelector(`[data-review-record="${item.record_id}"]`);
+          const resolution=row?.querySelector('[data-resolution-details]');
+          if(resolution) resolution.open=Boolean(value.resolution);
+          row?.querySelectorAll('.review-evidence').forEach((details,position)=>{details.open=Boolean(value.evidence?.[position]);});
         });
         setReviewBusy(Boolean(state.reviewBusy));
+        restoreReviewViewport(anchor);
       }
       function openResolutionChoices(index) {
         if(state.reviewBusy || state.publicationBusy || reviewIsEditing(index)) {showToast('请先完成当前保存或编辑');return;}
@@ -1292,24 +1523,46 @@ const elements = {
         if(details) {details.open=true;details.scrollIntoView?.({block:'nearest',behavior:'smooth'});}
       }
       function bindReviewActions(container) {
-        container.querySelectorAll('[data-review-upload]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'source-upload-slot')));
+        container.querySelectorAll('[data-assignment-toggle]').forEach(button=>button.addEventListener('click',()=>{
+          const index=Number(button.dataset.assignmentToggle),item=state.reviews[index];
+          if(state.reviewBusy || state.publicationBusy) return;
+          if(elements.reviewList.querySelector(`[data-review-editor="${index}"]`)?.disabled===false) {showToast('请先保存或取消内容编辑');return;}
+          const entry=propertyAssignment(item);
+          if(entry?.open) {entry.open=false;entry.selected=item.subject.entity_id;entry.notes='';renderPropertyAssignment(item);}
+          else void loadPropertyAssignment(item,true);
+        }));
+        container.querySelectorAll('[data-assignment-search]').forEach(button=>button.addEventListener('click',()=>{
+          const item=state.reviews[Number(button.dataset.assignmentSearch)];
+          if(!state.reviewBusy && !state.publicationBusy) void loadPropertyAssignment(item,true,propertyAssignment(item)?.query || '');
+        }));
+        container.querySelectorAll('[data-assignment-query], [data-assignment-notes]').forEach(input=>input.addEventListener('input',()=>{
+          const index=Number(input.dataset.assignmentQuery ?? input.dataset.assignmentNotes),entry=propertyAssignment(state.reviews[index]);
+          if(entry) entry[input.dataset.assignmentQuery===undefined?'notes':'query']=input.value;
+        }));
+        container.querySelectorAll('[data-assignment-select]').forEach(select=>select.addEventListener('change',()=>{
+          const item=state.reviews[Number(select.dataset.assignmentSelect)],entry=propertyAssignment(item);
+          if(entry && !state.reviewBusy && !state.publicationBusy) {entry.selected=select.value;renderPropertyAssignment(item);}
+        }));
+        container.querySelectorAll('[data-assignment-save]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>savePropertyAssignment(Number(button.dataset.assignmentSave)))));
+        container.querySelectorAll('[data-review-upload]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>showConstructionFlow(state.constructionFlow,'source-upload-slot'))));
         container.querySelectorAll('[data-review-manual]').forEach(button=>button.addEventListener('click',()=>{
           const panel=$('manual-fact-panel');panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'nearest'});$('manual-kind').focus({preventScroll:true});
         }));
         container.querySelectorAll('[data-review-select]').forEach(input=>input.addEventListener('change',updateReviewBulkActions));
-        container.querySelectorAll('[data-review-existing]').forEach(button=>button.addEventListener('click',()=>openResolutionChoices(Number(button.dataset.reviewExisting))));
-        container.querySelectorAll('[data-review-group]').forEach(button=>button.addEventListener('click',()=>submitReviews('APPROVED',chosenReviews(),false,true)));
+        container.querySelectorAll('[data-review-existing]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>openResolutionChoices(Number(button.dataset.reviewExisting)))));
+        container.querySelectorAll('[data-review-group]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>submitReviews('APPROVED',chosenReviews(),false,true))));
         container.querySelectorAll('[data-standard-endpoint]').forEach(select=>select.addEventListener('change',()=>{
           const editor=elements.reviewList.querySelector(`[data-review-editor="${select.dataset.standardEndpoint}"]`);
           try {const value=JSON.parse(editor.value);value[select.dataset.standardField]=select.value;editor.value=JSON.stringify(value,null,2);}
           catch(_) {showToast('请先修正 JSON 格式，再选择关联实体');}
         }));
-        container.querySelectorAll('[data-review-action]').forEach(button => button.addEventListener('click', () => submitReviews(button.dataset.reviewAction,[Number(button.dataset.reviewIndex)],button.dataset.saveEdits === 'true',false,button.dataset.factIndependent === 'true')));
+        container.querySelectorAll('[data-review-action]').forEach(button => button.addEventListener('click', foregroundAction('', () => submitReviews(button.dataset.reviewAction,[Number(button.dataset.reviewIndex)],button.dataset.saveEdits === 'true',false,button.dataset.factIndependent === 'true'))));
         container.querySelectorAll('[data-review-edit-toggle]').forEach(button => button.addEventListener('click', () => {
           if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
+          if(propertyAssignment(state.reviews[Number(button.dataset.reviewEditToggle)])?.open) {showToast('请先保存或取消归属更改');return;}
           setReviewEditing(Number(button.dataset.reviewEditToggle),button.getAttribute('aria-expanded') !== 'true');
         }));
-        container.querySelectorAll('[data-revision-history]').forEach(button => button.addEventListener('click', () => loadRevisionHistory(Number(button.dataset.revisionHistory),button)));
+        container.querySelectorAll('[data-revision-history]').forEach(button => button.addEventListener('click', foregroundAction('', () => loadRevisionHistory(Number(button.dataset.revisionHistory),button))));
         container.querySelectorAll('[data-review-phase]').forEach(button => button.addEventListener('click', () => {
           if ([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled)) { showToast('请先保存或取消当前编辑'); return; }
           state.reviewPhase=button.dataset.reviewPhase; renderReviews();
@@ -1318,9 +1571,9 @@ const elements = {
           if([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled)) {showToast('请先保存或取消当前编辑');return;}
           state.reviewFactTab=button.dataset.reviewFactTab;renderReviews();
         }));
-        container.querySelectorAll('[data-review-save-draft]').forEach(button=>button.addEventListener('click',()=>submitReviews('QUARANTINED',[Number(button.dataset.reviewSaveDraft)],true)));
+        container.querySelectorAll('[data-review-save-draft]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>submitReviews('QUARANTINED',[Number(button.dataset.reviewSaveDraft)],true))));
         container.querySelectorAll('[data-review-pending-only]').forEach(button=>button.addEventListener('click',()=>loadReviews({candidatesOnly:true})));
-        container.querySelectorAll('[data-review-next]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'step-publication')));
+        container.querySelectorAll('[data-review-next]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>showConstructionFlow(state.constructionFlow,'step-publication'))));
         container.querySelectorAll('[data-review-dependency]').forEach(button=>button.addEventListener('click',()=> {
           if ([...elements.reviewList.querySelectorAll('[data-review-editor]')].some(editor=>!editor.disabled)) { showToast('请先保存或取消当前编辑'); return; }
           const target=state.reviews.find(item=>item.record_id === button.dataset.reviewDependency);
@@ -1328,8 +1581,8 @@ const elements = {
           state.reviewPhase=target.trust?.status === 'QUARANTINED' ? 'paused' : 'identities'; renderReviews();
           $(`review-record-${target.record_id}`)?.scrollIntoView({behavior:'smooth',block:'center'});
         }));
-        container.querySelectorAll('[data-review-assess]').forEach(button=>button.addEventListener('click',()=>queueAssessment(state.reviews[Number(button.dataset.reviewAssess)],true)));
-        container.querySelectorAll('[data-review-keep]').forEach(button=>button.addEventListener('click',()=>keepExistingFact(Number(button.dataset.reviewKeep))));
+        container.querySelectorAll('[data-review-assess]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>queueAssessment(state.reviews[Number(button.dataset.reviewAssess)],true))));
+        container.querySelectorAll('[data-review-keep]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>keepExistingFact(Number(button.dataset.reviewKeep)))));
         bindResolutionActions(container);
       }
       function updateReviewAvailability(item) {
@@ -1371,6 +1624,8 @@ const elements = {
               if(!currentAssessmentJob(job)) return;
               if(result.record_id!==job.item.record_id || result.revision!==job.item.revision) throw new Error('记录版本已变化，请刷新审核队列');
               Object.assign(job.entry,result);
+              if(!job.item.object_entity && !propertyAssignment(job.item))
+                await loadPropertyAssignment(job.item);
             } catch(error) {if(currentAssessmentJob(job)) Object.assign(job.entry,{status:'error',error:error.message});}
             finally {if(currentAssessmentJob(job)) renderAssessment(job.item);state.assessmentActive-=1;job.finish();pumpAssessments();}
           })();
@@ -1385,8 +1640,22 @@ const elements = {
         state.assessmentQueue.push({item,entry,identityEpoch:state.identityEpoch,reviewEpoch:state.reviewEpoch,finish});
         renderAssessment(item);pumpAssessments();return done;
       }
-      function setReviewBusy(busy) {
+      function setReviewBusy(busy, recordIds=null) {
+        if(recordIds) state.reviewBusyRecords=new Set(recordIds);
+        if(!busy) state.reviewBusyRecords=null;
+        elements.reviewList.setAttribute?.('aria-busy',String(Boolean(busy || state.reviewLoading)));
+        elements.reviewList.querySelectorAll('[data-review-record]').forEach(row=>{
+          const pending=busy && state.reviewBusyRecords?.has(row.dataset.reviewRecord);
+          row.classList?.toggle('review-saving',Boolean(pending));
+          row.querySelector('[data-review-operation]')?.remove();
+
+        });
         state.reviewBusy=busy;updatePublicationBusy();busy=Boolean(busy || state.publicationBusy);
+        elements.reviewList.querySelectorAll('[data-assignment-toggle], [data-assignment-search], [data-assignment-query], [data-assignment-notes], [data-assignment-select], [data-assignment-save]').forEach(control=>{
+          const index=Number(control.dataset.assignmentToggle ?? control.dataset.assignmentSearch ?? control.dataset.assignmentQuery ?? control.dataset.assignmentNotes ?? control.dataset.assignmentSelect ?? control.dataset.assignmentSave);
+          const item=state.reviews[index],entry=item && propertyAssignment(item);
+          control.disabled=busy || Boolean(entry?.loading) || (control.dataset.assignmentSave!==undefined && Boolean(entry?.error || !entry?.items?.some(target=>target.selectable && target.entity.entity_id===entry.selected && entry.selected!==item.subject.entity_id)));
+        });
         updateReviewBulkActions();
         elements.reviewList.querySelectorAll('[data-review-action], [data-review-keep], [data-resolution-apply], [data-review-save-draft]').forEach(button=> {
           const index=Number(button.dataset.reviewIndex ?? button.dataset.reviewKeep ?? button.dataset.resolutionApply ?? button.dataset.reviewSaveDraft);
@@ -1394,7 +1663,8 @@ const elements = {
           const editing=item && reviewIsEditing(index);
           button.disabled=busy || button.dataset.resolutionBlocked==='true' || Boolean(editing && button.dataset.reviewSaveDraft === undefined);
           if (!busy && !editing && item && button.dataset.reviewAction==='APPROVED') button.disabled=!reviewApproval(item,button.dataset.factIndependent==='true').allowed;
-          if (!busy && item && button.dataset.reviewAction==='QUARANTINED') button.disabled=item.trust?.status==='QUARANTINED';
+          if (!busy && !editing && item && button.dataset.reviewAction==='QUARANTINED') button.disabled=item.trust?.status==='QUARANTINED';
+          if(button.getAttribute?.('aria-busy')==='true') button.disabled=true;
         });
       }
       function updateReviewBulkActions() {
@@ -1403,7 +1673,7 @@ const elements = {
         const selectable=[...elements.reviewList.querySelectorAll('[data-review-select]')];
         controls.hidden=!selectable.length || Boolean(state.reviewLoading);
         const disabled=Boolean(state.reviewBusy || state.publicationBusy || state.reviewLoading) || !selectable.some(input=>input.checked && !input.disabled);
-        controls.querySelectorAll('button').forEach(button=>button.disabled=disabled);
+        controls.querySelectorAll('button').forEach(button=>button.disabled=disabled || button.getAttribute?.('aria-busy')==='true');
       }
       async function keepExistingFact(index) {
         if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
@@ -1411,12 +1681,12 @@ const elements = {
         const item=state.reviews[index];const result=item && reviewAssessment(item);
         if(!item || result?.status!=='DUPLICATE' || !result.matches?.length) {showToast('比对结果已变化，请重新检查');return;}
         const identityEpoch=state.identityEpoch;
-        setReviewBusy(true);
+        setReviewBusy(true,[item.record_id]);
         try {
           await apiRequest('/v1/knowledge/reviews:batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decisions:[{record_kind:'ASSERTION',record_id:item.record_id,expected_revision:item.revision,decision:'REJECTED',duplicate_of_revision_id:result.matches[0].record.revision_id,notes:'与当前权威事实语义一致；保留已有事实，不重复入图。本次原文与审核记录保留。'}]})});
           if(identityEpoch!==state.identityEpoch)return;
           showToast('已保留权威事实；本次来源和处理原因已留存');
-          await loadReviews();
+          await loadReviews({anchorRecordId:item.record_id});
         } catch(error) {if(identityEpoch===state.identityEpoch)showToast(error.message);}
         finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
@@ -1453,10 +1723,10 @@ const elements = {
           if(item) void queueResolution(item,{refresh:true,query:input?.value.trim() || ''});
         }));
         container.querySelectorAll('[data-resolution-load]').forEach(button => {
-          button.addEventListener('click', () => loadResolution(Number(button.dataset.resolutionLoad), button));
+          button.addEventListener('click', foregroundAction('', () => loadResolution(Number(button.dataset.resolutionLoad), button)));
         });
         container.querySelectorAll('[data-resolution-apply]').forEach(button => {
-          button.addEventListener('click', () => applyResolution(Number(button.dataset.resolutionApply), Number(button.dataset.resolutionSuggestion), button, button.dataset.resolutionManual === undefined ? null : Number(button.dataset.resolutionManual)));
+          button.addEventListener('click', foregroundAction('', () => applyResolution(Number(button.dataset.resolutionApply), Number(button.dataset.resolutionSuggestion), button, button.dataset.resolutionManual === undefined ? null : Number(button.dataset.resolutionManual))));
         });
       }
 
@@ -1564,13 +1834,16 @@ const elements = {
         const suggestion = manual ? {target:manual.entity} : resolution?.suggestions?.[suggestionIndex];
         if (!item || resolution?.revision !== item.revision || resolution.identityEpoch !== state.identityEpoch
           || resolution.reviewEpoch !== state.reviewEpoch || resolution.status !== 'ready' || !suggestion?.target) { showToast('消歧建议已变化，请重新匹配'); return; }
+        // The user explicitly confirms the suggestion. Reuse a selectable target from
+        // this same ready response so the server can validate its exact revision.
+        const selectedTarget=manual || resolution.review_targets?.find(target=>target.selectable && target.entity.entity_id===suggestion.target.entity_id);
         const reviewNotes = globalThis.prompt('请输入本次实体链接的人工审核依据：', '已核对双方原文上下文，确认指向同一实体。');
         if (reviewNotes === null) return;
         if (!reviewNotes.trim()) { showToast('审核依据不能为空'); return; }
         if (!globalThis.confirm(`确认将“${item.entity?.canonical_name || item.record_id}”链接到已有实体“${suggestion.target.canonical_name}”？依赖事实只重绑，不会自动批准。`)) return;
         const identityEpoch = state.identityEpoch;
         button.disabled = true;
-        setReviewBusy(true);
+        setReviewBusy(true,[item.record_id]);
         try {
           const payload = await apiRequest('/v1/knowledge/entity-resolution:apply', {
             method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1579,7 +1852,7 @@ const elements = {
               expected_revision: item.revision,
               target_entity_id: suggestion.target.entity_id,
               notes: reviewNotes.trim(),
-              ...(manual ? {target_record_id:manual.record_id,target_expected_revision:manual.revision} : {}),
+              ...(selectedTarget ? {target_record_id:selectedTarget.record_id,target_expected_revision:selectedTarget.revision} : {}),
             }),
           });
           if (identityEpoch !== state.identityEpoch) return;
@@ -1588,15 +1861,36 @@ const elements = {
           invalidatePublicationPreview();
           state.resolutions.delete(item.record_id);
           showToast(`实体已链接；${Math.max(0, outcomes.length - 1)} 条依赖事实已重绑并保留待审核状态`);
-          await Promise.allSettled([loadReviews({refreshResolutions:true}), loadActiveDocuments(), loadPublicationCandidates()]);
+          await loadReviews({anchorRecordId:item.record_id,impact:reviewRefreshImpact(outcomes,suggestion.target)});
+          if(identityEpoch===state.identityEpoch) void Promise.allSettled([loadActiveDocuments(), loadPublicationCandidates()]);
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
           button.disabled = false;
         } finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
       }
 
-      async function loadReviews({refreshResolutions = false, candidatesOnly = false} = {}) {
+      function reviewRefreshImpact(outcomes, targetEntity=null) {
+        const recordIds=new Set(outcomes.map(item=>item.record_id)), entityIds=new Set(), entityTypes=new Set();
+        for(const item of state.reviews.filter(item=>recordIds.has(item.record_id))) {
+          for(const entity of [reviewEntity(item),item.object_entity].filter(Boolean)) if(entity.entity_id) entityIds.add(entity.entity_id);
+          if(item.record_kind==='ENTITY_MENTION' && item.entity?.entity_type) entityTypes.add(item.entity.entity_type);
+        }
+        if(targetEntity?.entity_id) entityIds.add(targetEntity.entity_id);
+        if(targetEntity?.entity_type) entityTypes.add(targetEntity.entity_type);
+        return {recordIds,entityIds,entityTypes};
+      }
+      function reviewCheckUnaffected(item, impact, assignment=false) {
+        if(!impact || impact.recordIds.has(item.record_id)) return false;
+        const entities=[reviewEntity(item),item.object_entity].filter(Boolean);
+        if(entities.some(entity=>impact.entityIds.has(entity.entity_id))) return false;
+        // A new confirmed identity changes the available matching/assignment targets of its type.
+        return !(item.record_kind==='ENTITY_MENTION' || assignment) || !entities.some(entity=>impact.entityTypes.has(entity.entity_type));
+      }
+      async function loadReviews({refreshResolutions = false, candidatesOnly = false, anchorRecordId = null, impact = null} = {}) {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('review-refresh-button'));
+        try {
         reviewModel();
+        const previousAssessments=new Map(state.reviewAssessments), previousAssignments=new Map(state.propertyAssignments);
         const previousRecords = new Set(state.reviews.map(item=>item.record_id));
         invalidateAssessments();
         const identityEpoch = state.identityEpoch;
@@ -1604,17 +1898,34 @@ const elements = {
         state.reviewLoading=true;updateReviewBulkActions();
         for (const job of state.resolutionQueue.splice(0)) job.finish();
         try {
-          const payload = await apiRequest(candidatesOnly ? '/v1/knowledge/review-queue?status=CANDIDATE&limit=100' : '/v1/knowledge/review-queue?status=CANDIDATE&status=QUARANTINED&limit=100');
+          const payload = await apiRequest(candidatesOnly ? '/v1/knowledge/review-queue?status=CANDIDATE&limit=100' : '/v1/knowledge/review-queue?status=CANDIDATE&status=QUARANTINED&limit=100', {feedback:state.reviewBusy ? '正在更新审核队列…' : false});
           if (identityEpoch !== state.identityEpoch || reviewEpoch !== state.reviewEpoch) return;
-          state.reviews = Array.isArray(payload.items) ? payload.items : [];
+          const anchor=captureReviewViewport(anchorRecordId);
+          state.reviews = stableReviewOrder(state.reviews,Array.isArray(payload.items) ? payload.items : []);
           if (state.reviews.some(item=>item.record_kind==='ENTITY_MENTION' && item.trust?.status!=='QUARANTINED' && !previousRecords.has(item.record_id))) state.reviewPhase='identities';
           const current = new Map(state.reviews.map(item => [item.record_id, item.revision]));
+          const itemsById=new Map(state.reviews.map(item=>[item.record_id,item]));
+          // Reuse only completed checks on unchanged, unrelated records. Requests from the
+          // previous epoch still fail their current-job checks and cannot overwrite these.
+          for(const [recordId,entry] of previousAssessments) {
+            const item=itemsById.get(recordId);
+            if(item && entry.identityEpoch===identityEpoch && entry.revision===item.revision
+              && !['queued','loading','error'].includes(entry.status) && reviewCheckUnaffected(item,impact)) {
+              entry.reviewEpoch=reviewEpoch;state.reviewAssessments.set(recordId,entry);
+            }
+          }
+          state.propertyAssignments=new Map();
+          for(const [recordId,entry] of previousAssignments) {
+            const item=itemsById.get(recordId);
+            if(item && entry.identityEpoch===identityEpoch && entry.revision===item.revision && !entry.loading && !entry.error
+              && reviewCheckUnaffected(item,impact,true)) {entry.reviewEpoch=reviewEpoch;state.propertyAssignments.set(recordId,entry);}
+          }
           for (const [recordId, entry] of state.resolutions) {
-            if (refreshResolutions || entry.identityEpoch !== identityEpoch || current.get(recordId) !== entry.revision
+            if (refreshResolutions || (impact && !reviewCheckUnaffected(itemsById.get(recordId) || {},impact)) || entry.identityEpoch !== identityEpoch || current.get(recordId) !== entry.revision
               || ['queued', 'loading'].includes(entry.status)) state.resolutions.delete(recordId);
             else entry.reviewEpoch = reviewEpoch;
           }
-          state.reviewLoading=false;renderReviews();
+          state.reviewLoading=false;renderReviews({anchor});
           for (const item of state.reviews) {
             if (item.record_kind === 'ENTITY_MENTION') void queueResolution(item);
             else void queueAssessment(item);
@@ -1625,6 +1936,7 @@ const elements = {
           elements.reviewList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
           state.reviewLoading=false;updateReviewBulkActions();
         }
+        } finally {finish();}
       }
 
       function chosenReviews() {
@@ -1653,11 +1965,12 @@ const elements = {
         if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
         const identityEpoch=state.identityEpoch, reviewEpoch=state.reviewEpoch;
         if (!indexes.length) { showToast('请先勾选审核记录'); return; }
-        setReviewBusy(true);
+        setReviewBusy(true, indexes.map(index=>state.reviews[index]?.record_id).filter(Boolean));
         try {
           const decisions = indexes.map(index => {
             const item = state.reviews[index];
             if (!item) throw new Error('审核队列已变化，请刷新');
+            if(propertyAssignment(item)?.open) throw new Error('请先保存或取消归属更改，再审核此记录');
             if (decision==='APPROVED') {
               const check=reviewApproval(item,independentFact);
               if (!check.allowed) throw new Error(check.note);
@@ -1714,7 +2027,8 @@ const elements = {
           invalidatePublicationPreview();
           if(saveEdits) state.reviewPhase='paused';
           showToast(saveEdits ? '修改已保存到暂缓区；新版本重新检查后，再确认采用' : `${payload.outcomes?.length || 0} 条审核决定已保存`);
-          await Promise.allSettled([loadReviews({refreshResolutions:true}), loadActiveDocuments(), loadPublicationCandidates()]);
+          await loadReviews({anchorRecordId:decisions[0].record_id,impact:reviewRefreshImpact(payload.outcomes || [])});
+          if(identityEpoch===state.identityEpoch) void Promise.allSettled([loadActiveDocuments(), loadPublicationCandidates()]);
         } catch (error) {
           if(identityEpoch===state.identityEpoch)showToast(error.message);
         } finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
@@ -1744,6 +2058,8 @@ const elements = {
         writePublicationSelection(ids);updatePublicationSelection();
       }
       function trackReviewedOutcomes(outcomes) {
+        // A previous background list must not prune revisions approved by a newer action.
+        state.publicationCandidatesEpoch=(state.publicationCandidatesEpoch || 0)+1;
         const selected=publicationSelectedIds();
         for(const outcome of outcomes) {
           selected.delete(outcome.previous_revision_id);
@@ -1791,15 +2107,15 @@ const elements = {
         if(typeof document!=='undefined') {
           const hasSelection=Boolean(elements.publicationRevisions.value.trim() || elements.publicationRemovals.value.trim() || state.selectedCandidateRevisions.size);
           const actions=$('publication-submit-actions');if(actions) actions.hidden=!state.publicationCandidates.length && !hasSelection && !state.publicationPreview;
-          const preview=$('publication-preview-button');if(preview) preview.disabled=busy || !hasSelection;
-          const publish=$('publication-button');if(publish) publish.disabled=busy || !state.publicationPreview;
+          const preview=$('publication-preview-button');if(preview) preview.disabled=busy || !hasSelection || preview.getAttribute?.('aria-busy')==='true';
+          const publish=$('publication-button');if(publish) publish.disabled=busy || !state.publicationPreview || publish.getAttribute?.('aria-busy')==='true';
         }
       }
       function renderPublicationCandidates() {
         if (!state.publicationCandidates.length) {
           elements.publicationCandidateList.innerHTML = '<div class="build-empty-state"><h3>当前没有可发布的候选。</h3><p>资料完成复核后，会在这里列出待发布或可恢复的已确认记录。</p><div class="workbench-actions"><button class="button primary" type="button" data-publication-upload>去上传资料</button><button class="button" type="button" data-publication-review>查看复核队列</button></div></div>';
-          elements.publicationCandidateList.querySelectorAll('[data-publication-upload]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'source-upload-slot')));
-          elements.publicationCandidateList.querySelectorAll('[data-publication-review]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'step-review')));
+          elements.publicationCandidateList.querySelectorAll('[data-publication-upload]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>showConstructionFlow(state.constructionFlow,'source-upload-slot'))));
+          elements.publicationCandidateList.querySelectorAll('[data-publication-review]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>showConstructionFlow(state.constructionFlow,'step-review'))));
           updatePublicationBusy();return;
         }
         const selected=publicationSelectedIds(), groups=publicationCandidateGroups();
@@ -1812,7 +2128,7 @@ const elements = {
           return `<article class="review-entity-card" data-publication-entity="${escapeHtml(group.key)}" data-publication-entity-id="${escapeHtml(group.entity.entity_id||'')}" tabindex="-1"><p class="publication-problem-note" data-publication-problem-note hidden></p><header><input type="checkbox" data-publication-group="${groupIndex}" aria-label="选择${escapeHtml(group.entity.canonical_name)}的本批全部记录" ${count===group.rows.length?'checked':''}><h3>${escapeHtml(group.entity.canonical_name || '未命名实体')}</h3><span class="trust-badge">${escapeHtml(group.entity.entity_type)}</span><span>来源提及 ${mentions.length} · 属性 ${properties.length} · 关系 ${relationships.length}</span></header><div class="review-mention"><p>实体 ID：${escapeHtml(group.entity.entity_id || '尚未确定')} · <span data-publication-selected-count="${groupIndex}">本组已选 ${count}/${group.rows.length} 条记录</span></p>${!mentions.length?'<p>本批仅包含此实体的事实变更；发布预览会校验并带入所需的实体身份。</p>':''}${sections}</div></article>`;
         }).join('');
         elements.publicationCandidateList.innerHTML=`<p>本批按 ${groups.length} 个实体汇总，共 ${state.publicationCandidates.length} 条记录。同一实体的多处提及保留各自来源，每条记录只选择一个有效版本；完整写入内容见下方发布预览。</p>${state.publicationCandidates.length>=100?'<p>本批最多显示 100 条记录，来源数量可能不完整。完成本批后请刷新继续处理。</p>':''}${cards}`;
-        elements.publicationCandidateList.querySelectorAll('[data-publication-reopen]').forEach(button=>button.addEventListener('click',()=>reopenPublicationCandidate(Number(button.dataset.publicationReopen))));
+        elements.publicationCandidateList.querySelectorAll('[data-publication-reopen]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>reopenPublicationCandidate(Number(button.dataset.publicationReopen)))));
         elements.publicationCandidateList.querySelectorAll('[data-publication-candidate]').forEach(input=>input.addEventListener('change',()=> {
           const item=state.publicationCandidates[Number(input.dataset.publicationCandidate)]?.record;
           if(item) changePublicationSelection([item.revision_id],input.checked);
@@ -1827,6 +2143,8 @@ const elements = {
       }
 
       async function loadPublicationCandidates() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('publication-candidates-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         const epoch=state.publicationCandidatesEpoch=(state.publicationCandidatesEpoch || 0)+1;
         try {
@@ -1849,22 +2167,21 @@ const elements = {
           invalidatePublicationPreview();
           elements.publicationCandidateList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
+        } finally {finish();}
       }
 
       function renderHistory() {
         if(state.maintenanceActions){state.maintenanceActions.history(state.publications,elements.historyList);return;}
         if (!state.publications.length) {
-          elements.historyList.innerHTML = '<div class="output-box">当前租户尚无知识 publication。</div>';
+          elements.historyList.innerHTML = '<div class="output-box">当前工作区尚未发布知识。</div>';
           return;
         }
-        const active = activePublication();
-        elements.historyList.innerHTML = state.publications.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><div><strong>generation ${escapeHtml(item.generation)} · ${escapeHtml(shortId(item.publication_id))}</strong><p>${escapeHtml(item.status)} · ${escapeHtml(item.published_revision_ids?.length || 0)} published revisions<br>T-Box ${escapeHtml(item.ontology_version_id || 'legacy / unavailable')}<br>${escapeHtml(item.created_at)}</p></div><span class="trust-badge ${item.status === 'ACTIVE' ? 'authoritative' : ''}">${escapeHtml(item.status)}</span></div>${active && item.publication_id !== active.publication_id ? `<div class="workbench-actions"><button class="button" type="button" data-rollback-publication="${index}">回滚到此版本</button></div>` : ''}</article>`).join('');
-        elements.historyList.querySelectorAll('[data-rollback-publication]').forEach(button => {
-          button.addEventListener('click', () => rollbackPublication(Number(button.dataset.rollbackPublication)));
-        });
+        elements.historyList.innerHTML = ''+state.publications.map(item => `<article class="governance-item"><div class="governance-item-head"><div><strong>第 ${escapeHtml(item.generation)} 版</strong><p>${escapeHtml(item.published_revision_ids?.length || 0)} 条知识记录 · ${escapeHtml(item.created_at)}</p></div><span class="trust-badge ${item.status === 'ACTIVE' ? 'authoritative' : ''}">${item.status === 'ACTIVE' ? '当前生效' : '历史版本 · 当前未生效'}</span></div></article>`).join('');
       }
 
       async function loadHistory() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('history-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         const requestEpoch=state.historyRequestEpoch=(state.historyRequestEpoch||0)+1;
         try {
@@ -1876,6 +2193,7 @@ const elements = {
           if (identityEpoch !== state.identityEpoch || requestEpoch!==state.historyRequestEpoch) return;
           elements.historyList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
         }
+        } finally {finish();}
       }
 
       function inventoryLiteralMarkup(literal) {
@@ -1964,11 +2282,13 @@ const elements = {
           });
         });
         elements.inventoryList.querySelectorAll('[data-inventory-history]').forEach(button => {
-          button.addEventListener('click', () => loadInventoryRevisionHistory(Number(button.dataset.inventoryHistory), button));
+          button.addEventListener('click', foregroundAction('', () => loadInventoryRevisionHistory(Number(button.dataset.inventoryHistory), button)));
         });
       }
 
       async function loadInventory() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('inventory-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         const requestEpoch = invalidateInventory();
         const documentId = elements.inventoryDocumentFilter.value.trim();
@@ -1980,8 +2300,8 @@ const elements = {
         }
         const params = new URLSearchParams({limit: String(limit)});
         if (documentId) params.set('document_id', documentId);
-        elements.inventorySummary.textContent = '正在校验当前生效版本…';
-        elements.inventoryList.innerHTML = '<div class="output-box">正在读取已发布知识清单…</div>';
+        elements.inventorySummary.textContent = '';
+        elements.inventoryList.innerHTML = '';
         try {
           const payload = await apiRequest(`/v1/knowledge/publication-inventory?${params.toString()}`);
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.inventoryEpoch) return;
@@ -2002,6 +2322,7 @@ const elements = {
           elements.inventorySummary.textContent = '已发布知识清单暂不可用；可从质量检查定位问题。';
           elements.inventoryList.innerHTML = `<div class="output-box">${escapeHtml(message)}</div>`;
         }
+        } finally {finish();}
       }
 
       async function loadInventoryRevisionHistory(index, button) {
@@ -2077,11 +2398,13 @@ const elements = {
       }
 
       async function loadQuality() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('quality-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         const requestEpoch = ++state.qualityEpoch;
         state.quality = null;
         state.qualityPresenter?.invalidate(elements.qualityContent);
-        elements.qualityContent.innerHTML = '<div class="output-box">正在检查当前生效版本…</div>';
+        elements.qualityContent.innerHTML = '';
         try {
           const payload = await apiRequest('/v1/knowledge/quality');
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityEpoch) return;
@@ -2092,6 +2415,7 @@ const elements = {
           state.quality = null;
           elements.qualityContent.innerHTML = `<div class="output-box">${escapeHtml(qualityErrorMessage(error))}</div>`;
         }
+        } finally {finish();}
       }
 
       function qualityErrorMessage(error) {
@@ -2111,17 +2435,19 @@ const elements = {
           ? state.qualityHistory.map((item, index) => `<article class="governance-item"><div class="governance-item-head"><strong>历史检查 · 第 ${escapeHtml(item.publication_generation)} 版</strong><span class="trust-badge ${item.passed ? 'authoritative' : 'danger'}">${item.passed ? '自动检查通过' : '发现阻断性错误'}</span></div><p>问题 ${escapeHtml(item.total_issue_count)} 项 · 错误 ${escapeHtml(item.total_error_count)} 项${item.issues_truncated ? ' · 仍有未显示的问题' : ''}<br>保存人 ${escapeHtml(item.recorded_by)} · ${escapeHtml(item.recorded_at)}</p><details><summary>版本与审计标识</summary><p>${escapeHtml(item.run_id)}<br>${escapeHtml(item.publication_id)}<br>${escapeHtml(item.ontology_version_id)}</p></details><div class="workbench-actions"><button class="button" type="button" data-quality-history="${index}">查看历史报告</button></div></article>`).join('')
           : '<div class="output-box">当前身份和筛选范围内没有已保存的质量审计。</div>';
         elements.qualityHistoryList.querySelectorAll('[data-quality-history]').forEach(button => {
-          button.addEventListener('click', () => loadQualityRun(state.qualityHistory[Number(button.dataset.qualityHistory)]?.run_id));
+          button.addEventListener('click', foregroundAction('', () => loadQualityRun(state.qualityHistory[Number(button.dataset.qualityHistory)]?.run_id)));
         });
       }
 
       async function loadQualityHistory() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('quality-history-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         const requestEpoch = ++state.qualityHistoryEpoch;
         state.qualityHistory = [];
         state.qualityDetailEpoch += 1;
         state.qualityPresenter?.invalidate(elements.qualityHistoryDetail);
-        elements.qualityHistoryList.innerHTML = '<div class="output-box">正在读取最近 10 条可见质量审计…</div>';
+        elements.qualityHistoryList.innerHTML = '';
         elements.qualityHistoryDetail.innerHTML = '<div class="output-box">选择历史记录查看当时的观察；历史结果不代表当前图谱状态。</div>';
         const params = new URLSearchParams({limit: '10'});
         const publicationId = elements.qualityHistoryPublication.value.trim();
@@ -2135,6 +2461,7 @@ const elements = {
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityHistoryEpoch) return;
           elements.qualityHistoryList.innerHTML = `<div class="output-box">${escapeHtml(qualityErrorMessage(error))}</div>`;
         }
+        } finally {finish();}
       }
 
       async function loadQualityRun(runId) {
@@ -2142,7 +2469,7 @@ const elements = {
         const identityEpoch = state.identityEpoch;
         const requestEpoch = ++state.qualityDetailEpoch;
         state.qualityPresenter?.invalidate(elements.qualityHistoryDetail);
-        elements.qualityHistoryDetail.innerHTML = '<div class="output-box">正在读取不可变历史观察…</div>';
+        elements.qualityHistoryDetail.innerHTML = '';
         try {
           const payload = await apiRequest(`/v1/knowledge/quality/runs/${encodeURIComponent(runId)}`);
           if (identityEpoch !== state.identityEpoch || requestEpoch !== state.qualityDetailEpoch) return;
@@ -2161,7 +2488,7 @@ const elements = {
         const isCurrent = () => identityEpoch === state.identityEpoch && requestEpoch === state.qualitySaveEpoch;
         state.qualitySaving = true;
         elements.qualitySaveButton.disabled = true;
-        elements.qualitySaveOutput.textContent = '正在审计并保存不可变质量记录…';
+        elements.qualitySaveOutput.textContent = '';
         try {
           const payload = await apiRequest('/v1/knowledge/quality/runs', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}',
@@ -2205,14 +2532,16 @@ const elements = {
           return `<article class="governance-item" data-maintenance-document="${escapeHtml(item.document_id)}"><div class="governance-item-head"><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.source_name)} · ${escapeHtml(item.chunk_count)} 个来源片段</p></div><span class="trust-badge ${item.blocked ? 'danger' : 'authoritative'}">${item.blocked ? '需先处理依赖' : '可撤回'}</span></div>${blockerMarkup}${action}<details><summary>版本、访问范围与技术详情</summary><pre>${escapeHtml(JSON.stringify({document_id:item.document_id,source_uri:item.canonical_uri,version_id:item.active_version_id,snapshot_id:item.active_snapshot_id,access_groups:item.access_groups,blocker_codes:item.blocker_codes},null,2))}</pre></details></article>`;
         }).join('');
         elements.documentLifecycleList.querySelectorAll('[data-retire-document]').forEach(button => {
-          button.addEventListener('click', () => retireActiveDocument(Number(button.dataset.retireDocument), button));
+          button.addEventListener('click', foregroundAction('', () => retireActiveDocument(Number(button.dataset.retireDocument), button)));
         });
       }
 
       async function loadActiveDocuments() {
+        const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('document-lifecycle-refresh-button'));
+        try {
         const identityEpoch = state.identityEpoch;
         const requestEpoch=state.activeDocumentRequestEpoch=(state.activeDocumentRequestEpoch||0)+1;
-        elements.documentLifecycleSummary.textContent = '正在读取当前 JWT 完整可见的实时活动文档…';
+        elements.documentLifecycleSummary.textContent = '';
         try {
           const payload = await apiRequest('/v1/knowledge/documents?limit=100');
           if (identityEpoch !== state.identityEpoch || requestEpoch!==state.activeDocumentRequestEpoch) return;
@@ -2227,6 +2556,7 @@ const elements = {
           elements.documentLifecycleSummary.textContent = '实时授权视图不可用；未用启动 fixture 数字代替。';
           elements.documentLifecycleList.innerHTML = `<div class="output-box">${escapeHtml(message)}</div>`;
         }
+        } finally {finish();}
       }
 
       function retirementStorageKey(item) {
@@ -2397,7 +2727,10 @@ const elements = {
           const found=publicationProblemNodes(target).length>0;
           return `<li><strong>${escapeHtml(name)} · ${escapeHtml(detail)}${issue.property_name?` · ${escapeHtml(reviewPropertyLabel(issue.property_name))}`:''}</strong> ${found?`<button class="button" type="button" data-publication-locate="${index}">定位问题</button>`:'<span>该记录不在当前候选列表，请在已有知识中核对或刷新候选。</span>'}</li>`;
         }).join('');
-        panel.innerHTML=`<p role="alert"><strong>无法发布：</strong>${escapeHtml(issue.message)}</p>${locations?`<ul>${locations}</ul>${hasVisibleLocation?'<p>已标记当前列表中的相关内容，可使用原有“返回修改”按钮处理后重新预览。</p>':''}`:''}${issue.truncated?'<p>这里只列出前 50 条相关记录，处理后请重新检查。</p>':''}`;
+        const sourceHelp=issue.reason==='SOURCE_VERSION_CONFLICT'
+          ? '<p>本次候选与将保留的已发布知识引用了同一文档的不同版本。不同资料若沿用同一个“稳定来源 URI”，会被识别为同一文档的更新。</p><p>若是独立业务资料，请回到上传步骤，重新选择文件并核对来源 URI，再构建、审核；本批误用来源的候选请返回复核后不采纳。若确为原文更新，请在知识维护中核对旧版记录的移除影响，统一版本后重新预览。无需清空知识库。</p><button class="button" type="button" data-publication-upload>返回上传资料</button>' : '';
+        panel.innerHTML=`<p role="alert"><strong>无法发布：</strong>${escapeHtml(issue.message)}</p>${sourceHelp}${locations?`<ul>${locations}</ul>${hasVisibleLocation?'<p>已标记当前列表中的相关内容，可使用原有“返回修改”按钮处理后重新预览。</p>':''}`:''}${issue.truncated?'<p>这里只列出前 50 条相关记录，处理后请重新检查。</p>':''}`;
+        panel.querySelector('[data-publication-upload]')?.addEventListener('click',foregroundAction('', ()=>showConstructionFlow('business','source-upload-slot')));
         applyPublicationIssue();
         panel.querySelectorAll('[data-publication-locate]').forEach(button=>button.onclick=()=> {
           const node=publicationProblemNodes(issue.targets[Number(button.dataset.publicationLocate)])[0];
@@ -2408,6 +2741,10 @@ const elements = {
         const hadPreview=Boolean(state.publicationPreview);
         clearPublicationIssue();
         state.publicationPreview=null;
+        if (elements.publicationOutput) {
+          elements.publicationOutput.textContent = '';
+          elements.publicationOutput.hidden = true;
+        }
         state.publicationPreviewEpoch=(state.publicationPreviewEpoch || 0)+1;
         const button=typeof document!=='undefined' && $('publication-button');
         if(button) button.disabled=true;
@@ -2419,7 +2756,10 @@ const elements = {
         const sections=[['实体',preview.entity_changes],['属性',preview.property_changes],['关系',preview.relationship_fact_changes || preview.relationship_changes]];
         const labels={CREATE:'新增',UPDATE:'更新',REMOVE:'移除'};
         const summary=sections.map(([label,rows])=>`${label}：${['CREATE','UPDATE','REMOVE'].map(op=>`${labels[op]} ${rows.filter(row=>row.operation===op).length}`).join('，')}`).join(' · ');
-        return `<p><strong>${summary}</strong></p><p>检查通过：审核状态、实体依赖、本体约束和精确引用有效。以下内容尚未发布。</p>`+sections.map(([label,rows])=>rows.map(change=>{
+        const scope=preview.source_scope;
+        const sourceRows=items=>items.map(item=>`<li>${escapeHtml(item.title)}<details><summary>文档版本</summary><p>${escapeHtml(item.document_id)} · ${escapeHtml(item.version_id)}</p></details></li>`).join('') || '<li>无</li>';
+        const sources=scope?`<h4>正式检索的文档范围</h4><p>发布后加入 ${scope.added.length} 个文档版本、退出 ${scope.removed.length} 个文档版本；保持 ${scope.unchanged_count} 个。</p><details ${scope.added.length?'open':''}><summary>加入检索</summary><ul>${sourceRows(scope.added)}</ul></details><details ${scope.removed.length?'open':''}><summary>退出检索</summary><ul>${sourceRows(scope.removed)}</ul></details>`:'';
+        return `<p><strong>${summary}</strong></p><p>检查通过：审核状态、实体依赖、本体约束和精确引用有效。以下内容尚未发布。</p>${sources}`+sections.map(([label,rows])=>rows.map(change=>{
           const after=change.after || change.before;
           const title=after.standard_name || after.property_name || after.relationship_type || after.entity_id;
           return `<article class="publication-preview-card"><strong>${label} · ${escapeHtml(title)} · ${label==='关系' && change.operation==='UPDATE'?'更新来源':labels[change.operation]}</strong>${label==='关系'?`<p>新增来源 ${change.sources_added?.length||0} 条 · 移除来源 ${change.sources_removed?.length||0} 条${change.after?` · 发布后保留 ${change.after.source_count||1} 条来源`:''}</p>`:''}${provenanceBadges({authority:after.authority_level,origin:after.origin})}${after.fact_distinction?`<p>人工确认为独立事实，发布后独立保留。区分理由（审核判断）：${escapeHtml(after.fact_distinction.reason)}</p>`:''}<pre>${escapeHtml(JSON.stringify(change.after || change.before,null,2))}</pre>${change.before && change.after ? `<details><summary>更新前</summary><pre>${escapeHtml(JSON.stringify(change.before,null,2))}</pre></details>`:''}</article>`;
@@ -2432,12 +2772,12 @@ const elements = {
         const panel=$('publication-preview');
         try {
           const selection=publicationSelection(), selectionKey=JSON.stringify(selection);
-          panel.innerHTML='<p>正在校验并生成完整发布预览…</p>';
+          panel.innerHTML='';
           const preview=await apiRequest('/v1/knowledge/publications:preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)});
           if(identityEpoch!==state.identityEpoch || epoch!==state.publicationPreviewEpoch || selectionKey!==JSON.stringify(publicationSelection())) return;
           state.publicationPreview={selection,selectionKey,preview};
           panel.innerHTML=publicationPreviewMarkup(preview);
-          panel.querySelector('[data-publication-back]')?.addEventListener('click',()=>showConstructionFlow(state.constructionFlow,'step-review'));
+          panel.querySelector('[data-publication-back]')?.addEventListener('click',foregroundAction('', ()=>showConstructionFlow(state.constructionFlow,'step-review')));
           $('publication-button').disabled=false;
         } catch(error) {if(identityEpoch===state.identityEpoch && epoch===state.publicationPreviewEpoch) showPublicationIssue(error);}
       }
@@ -2456,24 +2796,26 @@ const elements = {
           });
           if(identityEpoch!==state.identityEpoch) return;
           invalidateInventory();invalidatePublicationPreview();refreshReviewResolutions(identityEpoch);
-          output(elements.publicationOutput,payload);
           state.approvedRevisions.clear();state.selectedCandidateRevisions.clear();
           elements.publicationRevisions.value='';elements.publicationRemovals.value='';
           state.knowledgeBrowser?.reset();
           showToast(`知识 ${shortId(payload.publication_id)} 已发布`);
           await Promise.allSettled([loadPublicationCandidates(),loadHistory(),loadInventory(),loadQuality(),loadQualityHistory(),loadActiveDocuments()]);
+          if(identityEpoch===state.identityEpoch) output(elements.publicationOutput,payload);
         } catch(error) {
           if(identityEpoch===state.identityEpoch) {invalidatePublicationPreview();showPublicationIssue(error);output(elements.publicationOutput,error.status===409 ? `发布状态已变化，请重新查看预览。${error.message}` : error.message);}
         } finally {if(identityEpoch===state.identityEpoch) {state.publicationBusy=false;setReviewBusy(state.reviewBusy);}}
       }
 
       async function rollbackPublication(index, expectedActive = null) {
+        if(state.reviewBusy || state.publicationBusy) throw new Error('正在审核或发布，请稍候再切换版本。');
         const target = state.publications[index];
         const active = activePublication();
         if(expectedActive && active?.publication_id!==expectedActive)throw new Error('生效版本已变化，请重新比较。');
         if (!target || !active) { showToast('当前没有可用的生效版本，请刷新发布历史'); return; }
         const identityEpoch = state.identityEpoch;
-        invalidateInventory();
+        state.publicationBusy=true;setReviewBusy(state.reviewBusy);
+        invalidateInventory();invalidatePublicationPreview();
         try {
           const payload = await apiRequest(`/v1/knowledge/publications/${encodeURIComponent(target.publication_id)}:rollback`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
@@ -2482,12 +2824,12 @@ const elements = {
           if (identityEpoch !== state.identityEpoch) return;
           refreshReviewResolutions(identityEpoch);
           state.knowledgeBrowser?.reset();
-          showToast(`回滚成功，当前生效：第 ${payload.generation} 版`);
-          await Promise.allSettled([loadHistory(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
+          showToast(`已切换至第 ${payload.generation} 版，文档与知识同步生效`);
+          await Promise.allSettled([loadHistory(), loadPublicationCandidates(), loadInventory(), loadQuality(), loadQualityHistory(), loadActiveDocuments()]);
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
           if(expectedActive)throw error;
-        }
+        } finally {if(identityEpoch===state.identityEpoch) {state.publicationBusy=false;setReviewBusy(state.reviewBusy);}}
       }
 
 
@@ -2502,6 +2844,7 @@ const elements = {
         state.constructionJobs = [];
         $('construction-validation-summary').innerHTML = '';
         state.constructionOperation = null;
+        resetUploadDraft();
         clearDemoSourceBinding();
         state.expertRevisionIds = [];
         state.expertImportMayReplace = false;
@@ -2535,6 +2878,7 @@ const elements = {
         elements.publicationRevisions.value = '';
         elements.publicationRemovals.value = '';
         state.reviewBusy=false;state.publicationBusy=false;renderPublicationCandidates();
+        clearButtonFeedback(host);
         elements.inventorySummary.textContent = '已发布知识尚未加载。';
         elements.inventoryList.innerHTML = '<div class="output-box">已发布知识尚未加载。</div>';
         elements.qualityContent.innerHTML = '<div class="output-box">活动图谱质量尚未加载。</div>';
@@ -2558,7 +2902,7 @@ const elements = {
         $('expert-abox').open=false;
         $('document-access-groups').replaceChildren();
         $('manual-subject-type').replaceChildren();$('manual-object-type').replaceChildren();$('manual-predicate').replaceChildren();
-        $('foundation-status').textContent='正在读取本体';
+        $('foundation-status').textContent='';
         elements.ontologyList.replaceChildren();elements.historyList.replaceChildren();elements.constructionJobList.replaceChildren();
         elements.constructionOutput.textContent='';elements.publicationOutput.textContent='';
         elements.constructionOutput.hidden=true;elements.publicationOutput.hidden=true;
@@ -2569,15 +2913,15 @@ const elements = {
       $('ontology-reset').addEventListener('click', () => {
         elements.ontologyEditor.value = JSON.stringify(state.bootstrap.defaults.industrial_tbox_template, null, 2);
       });
-      $('ontology-list-button').addEventListener('click', loadOntologies);
-      $('ontology-import-button').addEventListener('click', importOntology);
-      $('abox-import-button').addEventListener('click', importABox);
+      $('ontology-list-button').addEventListener('click', foregroundAction('正在读取本体…', loadOntologies));
+      $('ontology-import-button').addEventListener('click', foregroundAction('', importOntology));
+      $('abox-import-button').addEventListener('click', foregroundAction('', importABox));
       elements.aboxEditor.addEventListener('input', () => { invalidateExpertImportReceipt(); refreshABoxPreparation(); });
       $('abox-prepare-button').addEventListener('click', () => { if (setUploadKnowledgeScope('AUTHORITATIVE')) showConstructionFlow('business', 'source-upload-slot'); });
-      $('abox-publish-button').addEventListener('click', publishImportedABox);
-      $('abox-next-button').addEventListener('click', () => showConstructionFlow('business', 'business-upload-slot'));
+      $('abox-publish-button').addEventListener('click', foregroundAction('', publishImportedABox));
+      $('abox-next-button').addEventListener('click', foregroundAction('', () => showConstructionFlow('business', 'business-upload-slot')));
       host.querySelectorAll('[data-build-view]').forEach(button => {
-        button.addEventListener('click', () => selectBuildView(button.dataset.buildView));
+        button.addEventListener('click', foregroundAction('', () => selectBuildView(button.dataset.buildView)));
         button.addEventListener('keydown', event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
@@ -2586,59 +2930,52 @@ const elements = {
           $(`build-tab-${view}`).focus();
         });
       });
-      $('inspect-build-ontology').addEventListener('click', () => selectBuildView('ontology'));
+      $('inspect-build-ontology').addEventListener('click', foregroundAction('', () => selectBuildView('ontology')));
       $('document-tbox').addEventListener('input', renderConstructionOntology);
       $('document-knowledge-scope').addEventListener('change', event => setUploadKnowledgeScope(event.currentTarget.value));
-      host.querySelectorAll('[data-flow-go]').forEach(button => button.addEventListener('click', () => showConstructionFlow(button.dataset.flowGo, button.dataset.flowTarget)));
+      host.querySelectorAll('[data-flow-go]').forEach(button => button.addEventListener('click', foregroundAction('', () => showConstructionFlow(button.dataset.flowGo, button.dataset.flowTarget))));
 
       $('construct-button').addEventListener('click', constructKnowledge);
       $('document-extraction-mode').addEventListener('change', updateConstructionMode);
-      $('demo-load-tbox').addEventListener('click', loadDemoOntology);
-      $('upload-demo-prepare').addEventListener('click', () => prepareDemoUpload($('document-knowledge-scope').value === 'AUTHORITATIVE' ? 'authoritative_source' : 'maintenance_report'));
-      $('construction-jobs-refresh-button').addEventListener('click', loadConstructionJobs);
+      $('demo-load-tbox').addEventListener('click', foregroundAction('', loadDemoOntology));
+      $('upload-demo-prepare').addEventListener('click', foregroundAction('', () => prepareDemoUpload($('document-knowledge-scope').value === 'AUTHORITATIVE' ? 'authoritative_source' : 'maintenance_report')));
+      $('construction-jobs-refresh-button').addEventListener('click', foregroundAction('正在读取构建任务…', loadConstructionJobs));
       $('manual-fact-panel').addEventListener('toggle', () => { if ($('manual-fact-panel').open) refreshManualForm(); });
       $('manual-kind').addEventListener('change', refreshManualForm);
       $('manual-subject-type').addEventListener('change', refreshManualForm);
-      $('manual-save-button').addEventListener('click', submitManualFact);
-      $('review-refresh-button').addEventListener('click', () => loadReviews({refreshResolutions: true}));
-      $('review-approve-button').addEventListener('click', () => submitReviews('APPROVED', chosenReviews()));
-      $('review-reject-button').addEventListener('click', () => submitReviews('REJECTED', chosenReviews()));
-      $('review-quarantine-button').addEventListener('click', () => submitReviews('QUARANTINED', chosenReviews()));
-      $('publication-button').addEventListener('click', publishKnowledge);
-      $('publication-preview-button').addEventListener('click', previewKnowledgePublication);
+      $('manual-save-button').addEventListener('click', foregroundAction('', submitManualFact));
+      $('review-refresh-button').addEventListener('click', foregroundAction('正在刷新审核与匹配…', () => loadReviews({refreshResolutions: true})));
+      $('review-approve-button').addEventListener('click', foregroundAction('', () => submitReviews('APPROVED', chosenReviews())));
+      $('review-reject-button').addEventListener('click', foregroundAction('', () => submitReviews('REJECTED', chosenReviews())));
+      $('review-quarantine-button').addEventListener('click', foregroundAction('', () => submitReviews('QUARANTINED', chosenReviews())));
+      $('publication-button').addEventListener('click', foregroundAction('', publishKnowledge));
+      $('publication-preview-button').addEventListener('click', foregroundAction('', previewKnowledgePublication));
       elements.publicationRevisions.addEventListener('input',syncPublicationTextSelection);
       elements.publicationRemovals.addEventListener('input',invalidatePublicationPreview);
-      $('publication-candidates-refresh-button').addEventListener('click', loadPublicationCandidates);
-      $('history-refresh-button').addEventListener('click', loadHistory);
-      $('inventory-refresh-button').addEventListener('click', loadInventory);
+      $('publication-candidates-refresh-button').addEventListener('click', foregroundAction('正在读取待发布内容…', loadPublicationCandidates));
+      $('history-refresh-button').addEventListener('click', foregroundAction('正在读取发布历史…', loadHistory));
+      $('inventory-refresh-button').addEventListener('click', foregroundAction('正在读取已发布知识…', loadInventory));
       $('inventory-add-removals-button').addEventListener('click', addInventoryRemovals);
       elements.inventoryDocumentFilter.addEventListener('keydown', event => {
         if (event.key === 'Enter') loadInventory();
       });
-      $('quality-refresh-button').addEventListener('click', loadQuality);
-      elements.qualitySaveButton.addEventListener('click', saveQualityRun);
-      $('quality-history-refresh-button').addEventListener('click', loadQualityHistory);
+      $('quality-refresh-button').addEventListener('click', foregroundAction('正在检查知识质量…', loadQuality));
+      elements.qualitySaveButton.addEventListener('click', foregroundAction('', saveQualityRun));
+      $('quality-history-refresh-button').addEventListener('click', foregroundAction('正在读取质量检查历史…', loadQualityHistory));
       elements.qualityHistoryPublication.addEventListener('keydown', event => {
         if (event.key === 'Enter') loadQualityHistory();
       });
-      $('document-lifecycle-refresh-button').addEventListener('click', loadActiveDocuments);
+      $('document-lifecycle-refresh-button').addEventListener('click', foregroundAction('正在读取来源状态…', loadActiveDocuments));
       $('document-file').addEventListener('change', event => {
-        const file = event.currentTarget.files?.[0];
-        $('document-file-name').textContent = file ? file.name : '尚未选择文件';
-        if (!file) return;
-        if (!$('document-title').value.trim()) $('document-title').value = file.name.replace(/\.[^.]+$/, '');
-        if (!$('document-uri').value.trim()) {
-          const safeName = file.name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'document';
-          $('document-uri').value = defaultDocumentUri(safeName);
-        }
+        selectUploadFile(event.currentTarget.files?.[0]);
       });
 
       const componentsReady = Promise.all([import('/industrial/assets/knowledge/browser.mjs'),import('/industrial/assets/knowledge/maintenance.mjs'),import('/industrial/assets/knowledge/maintenance-actions.mjs')]).then(([{mountBrowser},{mountMaintenance},{mountActions}]) => {
-        state.knowledgeBrowser = mountBrowser({api: apiRequest, epoch: () => state.identityEpoch, onExplore, onSource,
+        state.knowledgeBrowser = mountBrowser({feedback:beginButtonFeedback,api: apiRequest, epoch: () => state.identityEpoch, onExplore, onSource,
           maintain: item => state.maintenanceActions.maintain(item)});
-        state.qualityPresenter=mountMaintenance({api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correct:item=>state.maintenanceActions.maintain(item)});
+        state.qualityPresenter=mountMaintenance({feedback:beginButtonFeedback,api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correct:item=>state.maintenanceActions.maintain(item)});
         if(state.quality)renderQuality();
-        state.maintenanceActions=mountActions({api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correctRecord:correctPublishedRecord,toast:showToast,maintainSource:async item=>{const identity=state.identityEpoch;showConstructionFlow('maintenance','maintenance-document-lifecycle');elements.inventoryDocumentFilter.value=item.document_id;await loadActiveDocuments();if(identity!==state.identityEpoch)return;const row=[...elements.documentLifecycleList.querySelectorAll('[data-maintenance-document]')].find(el=>el.dataset.maintenanceDocument===item.document_id);if(row){row.scrollIntoView({behavior:'smooth',block:'center'});row.setAttribute('tabindex','-1');row.focus();showToast(`已定位来源：${item.title}`);}else showToast('所选来源不在当前可维护的 100 份资料中，请核对权限与来源状态。');},rollback:async(target,expected)=>{const index=state.publications.findIndex(p=>p.publication_id===target);if(index<0)throw new Error('目标版本已变化，请刷新。');await rollbackPublication(index,expected);}});
+        state.maintenanceActions=mountActions({feedback:beginButtonFeedback,api:apiRequest,epoch:()=>state.identityEpoch,browser:state.knowledgeBrowser,navigate:showConstructionFlow,correctRecord:correctPublishedRecord,toast:showToast,maintainSource:async item=>{const identity=state.identityEpoch;showConstructionFlow('maintenance','maintenance-document-lifecycle');elements.inventoryDocumentFilter.value=item.document_id;await loadActiveDocuments();if(identity!==state.identityEpoch)return;const row=[...elements.documentLifecycleList.querySelectorAll('[data-maintenance-document]')].find(el=>el.dataset.maintenanceDocument===item.document_id);if(row){row.scrollIntoView({behavior:'smooth',block:'center'});row.setAttribute('tabindex','-1');row.focus();showToast(`已定位来源：${item.title}`);}else showToast('所选来源不在当前可维护的 100 份资料中，请核对权限与来源状态。');},rollback:async(target,expected)=>{const index=state.publications.findIndex(p=>p.publication_id===target);if(index<0)throw new Error('目标版本已变化，请刷新。');await rollbackPublication(index,expected);}});
         renderInventory();renderHistory();
         if (state.constructionFlow === 'browse') state.knowledgeBrowser.activate();
       }).catch(() => { $('kb-summary').textContent = '知识浏览组件加载失败，请刷新页面重试。'; });

@@ -50,6 +50,8 @@ from .knowledge_contracts import (
     DocumentLifecycleListResponse,
     DocumentRetirementRequest,
     DocumentRetirementResponse,
+    PropertyAssignmentApplyRequest,
+    PropertyAssignmentResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionResponse,
@@ -57,6 +59,7 @@ from .knowledge_contracts import (
     ReviewEvidenceResponse,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
+    KnowledgeUploadPreflightResponse,
     MAX_BASE64_DOCUMENT_CHARS,
     OntologyImportRequest,
     OntologyListResponse,
@@ -854,6 +857,19 @@ def create_app(
             body.model_dump(mode="python"),
         )
 
+    @app.post("/v1/knowledge:preflight", response_model=KnowledgeUploadPreflightResponse)
+    async def preflight_knowledge_upload(
+        request: Request,
+        body: KnowledgeConstructionRequest,
+        identity: IdentityDependency,
+    ) -> Any:
+        if not frozenset(body.access_groups).issubset(identity.principal.groups):
+            raise AuthorizationError()
+        return await run_operation(
+            request, identity, OperationKind.KNOWLEDGE_PREFLIGHT,
+            body.model_dump(mode="python"),
+        )
+
     @app.post(
         "/v1/knowledge:construct",
         response_model=KnowledgeConstructionResponse,
@@ -967,6 +983,20 @@ def create_app(
     async def review_evidence(request: Request, body: ReviewEvidenceRequest, identity: IdentityDependency) -> Any:
         return await run_operation(request, identity, OperationKind.KNOWLEDGE_REVIEW_EVIDENCE,
                                    body.model_dump(mode="python"))
+
+    @app.get("/v1/knowledge/property-assignment/{record_id}", response_model=PropertyAssignmentResponse)
+    async def property_assignment(request: Request, record_id: KnowledgeRecordPath,
+        identity: IdentityDependency,
+        expected_revision: Annotated[int, Query(ge=1, le=2_147_483_647)],
+        query: Annotated[str, Query(max_length=200)] = "") -> Any:
+        return await run_operation(request, identity, OperationKind.PROPERTY_ASSIGNMENT,
+            {"record_id": record_id, "expected_revision": expected_revision, "query": query})
+
+    @app.post("/v1/knowledge/property-assignment:apply", response_model=ReviewBatchResponse)
+    async def apply_property_assignment(request: Request, body: PropertyAssignmentApplyRequest,
+        identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.PROPERTY_ASSIGNMENT_APPLY,
+            body.model_dump(mode="python"))
 
     @app.get(
         "/v1/knowledge/entity-resolution/{record_id}",

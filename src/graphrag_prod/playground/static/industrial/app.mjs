@@ -22,6 +22,7 @@ import {
   empty,
   safeError,
   WorkbenchClient,
+  beginButtonFeedback, clearButtonFeedback,
 } from "./core.mjs";
 import { IndustrialGraph } from "./graph.mjs";
 import { TYPE_COLORS, VIEWS, samePin, graphEmptyState, ontologyGraphFilters } from "./graph-model.mjs";
@@ -83,7 +84,7 @@ function loadingGraph(
   busy = true,
 ) {
   const placeholder = $("graph-placeholder");
-  placeholder.hidden = false;
+  placeholder.hidden = busy;
   placeholder.querySelector(".graph-empty-actions")?.remove();
   placeholder.querySelector("strong").textContent = text;
   placeholder.querySelector("p").textContent = detail;
@@ -182,7 +183,8 @@ function graphBody(extra = {}) {
     ...extra,
   };
 }
-async function loadGraph(extra = {}) {
+async function loadGraph(extra = {}, trigger = $('reload-graph')) {
+  const finish=beginButtonFeedback(trigger);
   const epoch = ++graphEpoch;
   selectionEpoch++;
   const identity = client.epoch;
@@ -194,7 +196,7 @@ async function loadGraph(extra = {}) {
   $("type-count").textContent = "—";
   $("type-legend").replaceChildren();
   $("graph-timing").textContent = "";
-  $("next-page").hidden = true;
+  $("next-page").hidden = trigger !== $('next-page');
   loadingGraph();
   const started = performance.now();
   const query = graphBody(extra);
@@ -202,7 +204,7 @@ async function loadGraph(extra = {}) {
     const result = await client.request("/v1/knowledge/graph:query", query);
     if (epoch !== graphEpoch || identity !== client.epoch) return;
     if (syncGraphFilters(result.schema) && view !== "ontology") {
-      await loadGraph();
+      await loadGraph({}, trigger);
       return;
     }
     page = result;
@@ -236,7 +238,7 @@ async function loadGraph(extra = {}) {
       loadingGraph("图谱暂未载入", text, false);
       message(text, true);
     }
-  }
+  } finally {finish();}
 }
 function detailField(label, value) {
   const n = element("div", "detail-field");
@@ -406,13 +408,15 @@ async function selectGraph(selected) {
   const evidenceArea = element("div", "detail-section");
   evidenceArea.append(
     element("h3", "", "来源与事实依据"),
-    element("p", "", "正在核对来源…"),
+
   );
-  target.append(evidenceArea);
+  const evidenceRead=button('读取来源依据',()=>loadEvidence(0,evidenceRead));
+  target.append(evidenceRead,evidenceArea);
   let evidenceSerial = 0;
-  async function loadEvidence(offset=0) {
+  async function loadEvidence(offset=0,trigger=evidenceRead) {
+    const finish=beginButtonFeedback(trigger);
     const serial = ++evidenceSerial;
-    clear(evidenceArea).append(element("p", "", "正在核对来源…"));
+
     try {
       const data = await client.request("/v1/knowledge/graph:evidence", {
         view_token: current.view_token,
@@ -432,8 +436,8 @@ async function selectGraph(selected) {
         evidenceArea.append(empty("当前身份没有可见的来源记录。"));
       for (const item of data.items) evidenceArea.append(renderEvidence(item));
       evidenceArea.append(element("p", "muted", `来源记录 ${offset+1}–${Math.min(offset+10,revisions.length)} / ${revisions.length}`));
-      if(offset) evidenceArea.append(button("上一页来源",()=>loadEvidence(offset-10)));
-      if(offset+10<revisions.length) evidenceArea.append(button("下一页来源",()=>loadEvidence(offset+10)));
+      if(offset) evidenceArea.append(button("上一页来源",event=>loadEvidence(offset-10,event.currentTarget)));
+      if(offset+10<revisions.length) evidenceArea.append(button("下一页来源",event=>loadEvidence(offset+10,event.currentTarget)));
     } catch (error) {
       if (
         serial !== evidenceSerial || epoch !== graphEpoch ||
@@ -445,7 +449,7 @@ async function selectGraph(selected) {
       if (text) {
         clear(evidenceArea).append(element("p", "danger-text", text));
       }
-    }
+    } finally {finish();}
   }
   await loadEvidence();
 }
@@ -644,7 +648,7 @@ async function search(event) {
   const submit = $("search-submit");
   submit.disabled = true;
   submit.classList.add("busy");
-  $("search-summary").textContent = "正在检索、核对适用范围并排序证据…";
+  $("search-summary").textContent = "";
   clear($("search-results"));
   $("search-diagnostics")?.replaceChildren();
   const start = performance.now();
@@ -766,6 +770,7 @@ async function changePersona() {
   if ($("copy-contexts")) $("copy-contexts").disabled = true;
   searchEpoch++;
   searchBusy = false;
+  clearButtonFeedback();
   clear($("search-results")).append(
     empty("输入问题后，相关片段会显示在这里。"),
   );
@@ -980,13 +985,13 @@ $("export-graph").addEventListener("click", () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-$("next-page").addEventListener("click", () => {
+$("next-page").addEventListener("click", event => {
   if (page?.page.next_cursor)
     void loadGraph({
       ...pageQuery,
       view_token: page.view_token,
       cursor: page.page.next_cursor,
-    });
+    }, event.currentTarget);
 });
 $("search-family").addEventListener("change", () => {
   searchSource = null;

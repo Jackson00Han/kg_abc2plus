@@ -35,11 +35,17 @@ elements.publicationRemovals.value='pump-obsolete-record';invalidatePublicationP
 assert.equal(fields.get('publication-submit-actions').hidden,false);
 assert.equal(fields.get('publication-preview-button').disabled,false);
 assert.ok(fields.get('publication-button').disabled);
+elements.publicationOutput={textContent:'previous publication receipt',hidden:false};
 state.publicationPreview={preview:{preview_hash:'pump-preview'}};updatePublicationBusy();
 assert.equal(fields.get('publication-button').disabled,false);
 elements.publicationRemovals.value='pump-other-record';invalidatePublicationPreview();
 assert.equal(state.publicationPreview,null);assert.ok(fields.get('publication-button').disabled);
+assert.equal(elements.publicationOutput.hidden,true);assert.equal(elements.publicationOutput.textContent,'');
 assert.ok(fields.get('publication-preview').innerHTML.includes('重新生成发布预览'));
+fields.get('publication-preview-button').getAttribute=()=> 'true';
+updatePublicationBusy();assert.ok(fields.get('publication-preview-button').disabled);
+fields.get('publication-preview-button').getAttribute=()=> null;
+updatePublicationBusy();assert.equal(fields.get('publication-preview-button').disabled,false);
 state.publicationBusy=true;updatePublicationBusy();assert.ok(fields.get('publication-preview-button').disabled);
 assert.equal(requests.length,0);
 ''')

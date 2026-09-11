@@ -85,6 +85,9 @@ from .knowledge_contracts import (
     DocumentLifecycleListResponse,
     DocumentRetirementRequest,
     DocumentRetirementResponse,
+    PropertyAssignmentRequest,
+    PropertyAssignmentApplyRequest,
+    PropertyAssignmentResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
@@ -93,6 +96,7 @@ from .knowledge_contracts import (
     EntityResolutionResponse,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
+    KnowledgeUploadPreflightResponse,
     OntologyImportRequest,
     OntologyListRequest,
     OntologyListResponse,
@@ -291,6 +295,10 @@ class KnowledgeOperations(Protocol):
         self, principal: Principal, request: AuthoritativeImportRequest
     ) -> BackendResult: ...
 
+    def upload_preflight(
+        self, principal: Principal, request: KnowledgeConstructionRequest
+    ) -> BackendResult: ...
+
     def construct(
         self, principal: Principal, request: KnowledgeConstructionRequest
     ) -> BackendResult: ...
@@ -317,6 +325,10 @@ class KnowledgeOperations(Protocol):
     def review_batch(
         self, principal: Principal, request: ReviewBatchRequest
     ) -> BackendResult: ...
+
+    def property_assignment(self, principal: Principal,
+        request: PropertyAssignmentRequest | PropertyAssignmentApplyRequest,
+        *, apply: bool = False) -> BackendResult: ...
 
     def review_assessment(
         self, principal: Principal, request: ReviewAssessmentRequest
@@ -1060,6 +1072,7 @@ class GraphRAGQueryOperations:
             request,
             limits=request.retrieval_limits.to_domain(),
         )
+        self._validate_answer_context(principal, result)
         generation_started = float(self._monotonic())
         generated = self._generate(
             GenerationRequest(
@@ -1069,6 +1082,7 @@ class GraphRAGQueryOperations:
             )
         )
         generation_ms = _elapsed_ms(generation_started, self._monotonic)
+        self._validate_answer_context(principal, result)
         # Empty authorized context takes the deterministic refusal path and
         # does not invoke the answer provider.
         answer_usage = generated.usage if result.chunks else ProviderUsage()
@@ -1083,7 +1097,12 @@ class GraphRAGQueryOperations:
         )
         return _response(
             BackendResult(
-                generated.answer,
+                {
+                    **asdict(generated.answer),
+                    "knowledge_publication_id": result.trace.knowledge_publication_id,
+                    "knowledge_publication_generation": result.trace.knowledge_publication_generation,
+                    "knowledge_activation_generation": result.trace.knowledge_activation_generation,
+                },
                 UsageMetadata(
                     retrieval_ms=retrieval_usage.retrieval_ms,
                     generation_ms=generation_ms,
@@ -1094,6 +1113,22 @@ class GraphRAGQueryOperations:
             ),
             AnswerResponse,
         )
+
+    def _validate_answer_context(self, principal: Principal, result: RetrievalResult) -> None:
+        # Native retrieval rechecks both the version pin and source ACL before
+        # sending evidence to a model and again after its potentially slow call.
+        # Deterministic non-Neo4j adapters can supply the same validation hook.
+        validate = getattr(self._retrieval_engine, "validate_result", None)
+        if not callable(validate):
+            return
+        try:
+            validate(principal, result)
+        except GraphViewChanged as error:
+            raise GraphViewChangedError() from error
+        except RetrievalBackendTimeout as error:
+            raise DependencyTimeoutError() from error
+        except (RetrievalBackendError, RetrievalUnavailable) as error:
+            raise DependencyUnavailableError() from error
 
 
 def _validated(model: type[Any], payload: Mapping[str, Any]) -> Any:
@@ -1220,6 +1255,7 @@ class GraphRAGApplicationBackend:
             OperationKind.ONTOLOGY_IMPORT,
             OperationKind.ONTOLOGY_PUBLISH,
             OperationKind.KNOWLEDGE_IMPORT,
+            OperationKind.KNOWLEDGE_PREFLIGHT,
             OperationKind.KNOWLEDGE_CONSTRUCT,
             OperationKind.KNOWLEDGE_CONSTRUCTION_JOB,
             OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS,
@@ -1227,6 +1263,8 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_REVISION_HISTORY,
             OperationKind.KNOWLEDGE_REVIEW_BATCH,
             OperationKind.ENTITY_RESOLUTION_SUGGEST,
+            OperationKind.PROPERTY_ASSIGNMENT,
+            OperationKind.PROPERTY_ASSIGNMENT_APPLY,
             OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT,
             OperationKind.ENTITY_RESOLUTION_APPLY,
             OperationKind.KNOWLEDGE_REVIEW_EVIDENCE,
@@ -1277,6 +1315,12 @@ class GraphRAGApplicationBackend:
                     self._knowledge.authoritative_import(principal, request),
                     AuthoritativeImportResponse,
                 )
+            if envelope.operation is OperationKind.KNOWLEDGE_PREFLIGHT:
+                request = _validated(KnowledgeConstructionRequest, envelope.payload)
+                return _response(
+                    self._knowledge.upload_preflight(principal, request),
+                    KnowledgeUploadPreflightResponse,
+                )
             if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCT:
                 request = _validated(KnowledgeConstructionRequest, envelope.payload)
                 if not frozenset(request.access_groups).issubset(principal.groups):
@@ -1323,6 +1367,12 @@ class GraphRAGApplicationBackend:
                     self._knowledge.review_batch(principal, request),
                     ReviewBatchResponse,
                 )
+            if envelope.operation is OperationKind.PROPERTY_ASSIGNMENT:
+                request = _validated(PropertyAssignmentRequest, envelope.payload)
+                return _response(self._knowledge.property_assignment(principal, request), PropertyAssignmentResponse)
+            if envelope.operation is OperationKind.PROPERTY_ASSIGNMENT_APPLY:
+                request = _validated(PropertyAssignmentApplyRequest, envelope.payload)
+                return _response(self._knowledge.property_assignment(principal, request, apply=True), ReviewBatchResponse)
             if envelope.operation is OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT:
                 request = _validated(ReviewAssessmentRequest, envelope.payload)
                 return _response(

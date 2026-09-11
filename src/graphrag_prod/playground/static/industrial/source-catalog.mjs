@@ -1,5 +1,5 @@
 import {
-  element, button, clear, tag, metadata, sourceTag, sourceLink,
+  element, button, clear, tag, beginButtonFeedback, metadata, sourceTag, sourceLink,
   assetLabel, dateLabel, empty, safeError,
 } from "./core.mjs";
 
@@ -44,10 +44,10 @@ export class SourceCatalog {
     this.previousButton = button("← 上一页资料", () => {
       if (!this.history.length) return;
       const previous = this.history.slice(0, -1);
-      void this.readPage(this.history.at(-1), previous);
+      return this.readPage(this.history.at(-1), previous, this.previousButton);
     });
     this.nextButton = button("下一页资料 →", () => {
-      if (this.next) void this.readPage(this.next, [...this.history, this.after]);
+      if (this.next) return this.readPage(this.next, [...this.history, this.after], this.nextButton);
     });
     this.pager.append(this.previousButton, this.nextButton);
     list.insertAdjacentElement("afterend", this.pager);
@@ -74,15 +74,16 @@ export class SourceCatalog {
     this.family = FAMILIES[family] ? family : null;
     return this.readPage(null, []);
   }
-  async readPage(after, history) {
+  async readPage(after, history, trigger = document.getElementById('refresh-sources')) {
+    const finish=beginButtonFeedback(trigger);
     const serial = ++this.serial, identity = this.client.epoch, family = this.family;
     clear(this.list);
     this.rows = [];
     this.next = null;
-    this.summary.textContent = "正在读取当前身份可见的原始文档…";
+    this.summary.textContent = "";
     this.previousButton.disabled = true;
     this.nextButton.disabled = true;
-    this.pager.hidden = true;
+    this.pager.hidden = trigger !== this.previousButton && trigger !== this.nextButton;
     try {
       let rows, hasMore, nextAfter = null, metadataNote = "";
       if (family) {
@@ -129,7 +130,7 @@ export class SourceCatalog {
         clear(this.list).append(empty(text));
       }
       return null;
-    }
+    } finally {finish();if(serial===this.serial && identity===this.client.epoch){this.previousButton.disabled=!this.history.length;this.nextButton.disabled=!this.next;}}
   }
   renderCard(source) {
     const card = element("article", "source-card");
@@ -168,7 +169,7 @@ export class SourceCatalog {
     );
     card.append(details);
     const actions = element("div", "evidence-actions source-card-actions");
-    actions.append(button("查看原文 →", () => this.open(source), "text-button"));
+    actions.append(button("查看原文 →", event => this.open(source, 0, event.currentTarget), "text-button"));
     if (this.onSelect)
       actions.append(button("查看相关知识", () => this.select(source, "graph"), "text-button"));
     card.append(actions);
@@ -185,7 +186,7 @@ export class SourceCatalog {
       if (text) this.summary.textContent = text;
     }
   }
-  async open(source, ordinal = 0) {
+  async open(source, ordinal = 0, trigger = null) {
     this.dialog?.close();
     const modal = document.createElement("dialog");
     this.dialog = modal;
@@ -200,17 +201,20 @@ export class SourceCatalog {
       if (this.dialog === modal) { this.dialog = null; this.detailSerial++; }
       modal.remove();
     });
-    modal.showModal();
-    await this.readChunk(source, ordinal, modal, content);
+    const read = trigger || button('读取原文', () => this.readChunk(source, ordinal, modal, content, read));
+    if(!trigger) {heading.append(read);modal.showModal();}
+    await this.readChunk(source, ordinal, modal, content, read);
+    if(this.dialog===modal && !modal.open) modal.showModal();
   }
-  async readChunk(source, ordinal, modal, content) {
+  async readChunk(source, ordinal, modal, content, trigger) {
+    const finish=beginButtonFeedback(trigger);
     const serial = ++this.detailSerial, identity = this.client.epoch;
-    clear(content).append(element("p", "muted", "正在授权读取指定版本的原文…"));
+
     try {
       const result = await this.client.request("/v1/knowledge/sources:read", {
         document_id: source.document_id, version_id: source.version_id, ordinal,
       });
-      if (serial !== this.detailSerial || identity !== this.client.epoch || !modal.open) return;
+      if (serial !== this.detailSerial || identity !== this.client.epoch || this.dialog !== modal) return;
       if (result.document_id !== source.document_id || result.version_id !== source.version_id || result.ordinal !== ordinal)
         throw new Error("资料版本或片段位置已变化，请刷新来源资料后重新打开。");
       clear(content);
@@ -228,8 +232,8 @@ export class SourceCatalog {
       if (link) provenance.append(link);
       content.append(provenance);
       const nav = element("div", "form-footer");
-      const previous = button("← 上一片段", () => this.readChunk(source, ordinal - 1, modal, content));
-      const next = button("下一片段 →", () => this.readChunk(source, ordinal + 1, modal, content));
+      const previous = button("← 上一片段", event => this.readChunk(source, ordinal - 1, modal, content, event.currentTarget));
+      const next = button("下一片段 →", event => this.readChunk(source, ordinal + 1, modal, content, event.currentTarget));
       previous.disabled = ordinal === 0;
       next.disabled = ordinal + 1 >= result.chunk_count;
       nav.append(previous, next);
@@ -239,11 +243,11 @@ export class SourceCatalog {
       }
       content.append(nav);
     } catch (error) {
-      if (serial !== this.detailSerial || identity !== this.client.epoch || !modal.open) return;
+      if (serial !== this.detailSerial || identity !== this.client.epoch || this.dialog !== modal) return;
       const text = error.status === 409
         ? "来源版本、完整性或访问权限已变化，请刷新资料列表。" : safeError(error);
       if (text) clear(content).append(empty(text));
-    }
+    } finally {finish();}
   }
   destroy() { this.reset(); this.pager.remove(); }
 }

@@ -175,7 +175,7 @@ const results = {
         await page.waitForFunction(() => {
           const output = document.querySelector('#construction-output');
           const bar = document.querySelector('.upload-submit-bar');
-          return !output.hidden && output.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top;
+          return !output.hidden && output.getBoundingClientRect().top >= bar.getBoundingClientRect().bottom;
         });
         assert.equal(await page.locator('#construction-output').textContent(), '请选择一个文档。');
         assert.ok(!results.requests.some(request => request.path === '/v1/knowledge:construct'), 'empty file validation must not submit a construction request');

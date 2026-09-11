@@ -15,6 +15,10 @@ PUBLICATION_ISSUE_MESSAGES = MappingProxyType({
     "REPLACEMENT_REQUIRED": "这条记录已有发布版本，请刷新候选并按替换版本重新预览。",
     "ACTIVE_VERSION_CHANGED": "生效发布版本已变化，请刷新可发布候选和发布历史，再重新生成预览。",
     "PREVIEW_CHANGED": "内容或预览已变化，请重新生成完整发布预览。",
+    "SOURCE_SCOPE_UNAVAILABLE": "该版本的来源已撤回、证据不完整或当前无权访问，请先处理来源状态。",
+    "SOURCE_VERSION_CONFLICT": "同一次发布包含同一文档的不同版本，请统一该文档的知识记录后重新预览。",
+    "INDEX_NOT_READY": "该版本的原文索引尚未完整就绪，请完成来源索引构建后再发布或恢复。",
+    "EMBEDDING_SPACE_CHANGED": "该版本使用的向量模型与当前配置不同，请准备兼容的检索配置后再恢复。",
     "ALREADY_PUBLISHED": "这批内容已经发布，请刷新可发布候选。",
 })
 

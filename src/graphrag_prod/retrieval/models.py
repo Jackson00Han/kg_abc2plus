@@ -215,7 +215,7 @@ class RetrievalTrace:
     method: str
     tenant_id: str
     corpus_revision: int
-    embedding_generation_id: str
+    embedding_generation_id: str | None
     embedding_space_id: str
     vector_recall: tuple[TraceHit, ...]
     bm25_recall: tuple[TraceHit, ...]

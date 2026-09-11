@@ -104,14 +104,16 @@ const actions=mountActions({epoch:()=>epoch,browser:{},toast(){},api:async(url,o
 const container=new Element(),active={publication_id:'current',status:'ACTIVE',generation:2,published_revision_ids:[],created_at:'2026-09-09T00:00:00Z'},old={...active,publication_id:'old',status:'SUPERSEDED',generation:1};
 actions.history([],container);assert.match(container.innerHTML,/首次发布/);assert.match(container.innerHTML,/data-open-rollback disabled/);
 await container.querySelector('[data-open-rollback]').onclick();assert.equal(comparisons.length,0);
-actions.history([active],container);assert.match(container.innerHTML,/暂无历史版本可回滚/);
+actions.history([active],container);assert.match(container.innerHTML,/暂无其他版本可切换/);
 actions.history([old],container);assert.match(container.innerHTML,/没有可访问的生效版本/);
 actions.history([active,old],container);
 const select=container.querySelector('[data-rollback-target]'),button=container.querySelector('[data-open-rollback]');
 select.value='current';select.onchange();assert.equal(button.disabled,true);
 select.value='old';select.onchange();assert.equal(button.disabled,false);
 await button.onclick();assert.deepEqual(comparisons[0],{url:'/v1/knowledge/publications:compare',body:{target_publication_id:'old',expected_active_publication_id:'current'}});
-assert.equal(rollbacks.length,0);assert.match(dialog.querySelector('[data-comparison]').innerHTML,/确认回滚到第 1 版/);
+assert.equal(rollbacks.length,0);assert.match(dialog.querySelector('[data-comparison]').innerHTML,/确认将第 1 版设为当前版本/);
+assert.match(dialog.querySelector('[data-comparison]').innerHTML,/正式检索、问答和图谱统一使用/);
+assert.match(dialog.querySelector('[data-comparison]').innerHTML,/原文与审核记录不会删除/);
 const confirm=dialog.querySelector('[data-confirm]');confirm.disabled=false;
 const pending=confirm.onclick();await confirm.onclick();assert.equal(rollbacks.length,1);assert.deepEqual(rollbacks[0],['old','current']);
 finishRollback.resolve();await pending;assert.equal(dialog.open,false);
@@ -123,6 +125,17 @@ assert.equal(failing.disabled,true);assert.match(dialog.querySelector('[data-sta
 await failing.onclick();assert.equal(rollbacks.length,2);
 failComparison=true;await button.onclick();assert.equal(dialog.querySelector('[data-comparison]').innerHTML,undefined);
 assert.equal(rollbacks.length,2);assert.match(dialog.querySelector('[data-status]').textContent,/请刷新后重试/);
+failComparison=false;
+const restored={...old,status:'ACTIVE'},newer={...active,status:'SUPERSEDED',source_document_count:2};
+actions.history([newer,restored],container);
+assert.match(container.innerHTML,/历史版本 · 当前未生效/);
+assert.match(container.innerHTML,/2 份来源资料/);
+assert.match(container.innerHTML,/设为当前版本…/);
+const forwardSelect=container.querySelector('[data-rollback-target]');forwardSelect.value='current';forwardSelect.onchange();
+const forwardButton=container.querySelector('[data-open-rollback]');assert.equal(forwardButton.disabled,false);await forwardButton.onclick();
+assert.deepEqual(comparisons.at(-1).body,{target_publication_id:'current',expected_active_publication_id:'old'});
+const forwardConfirm=dialog.querySelector('[data-confirm]');forwardConfirm.disabled=false;
+const restoring=forwardConfirm.onclick();assert.deepEqual(rollbacks.at(-1),['current','old']);finishRollback.resolve();await restoring;assert.equal(dialog.open,false);
 """)
 
     def test_maintenance_comparison_preserves_raw_units_and_escapes_business_content(self):
@@ -133,6 +146,10 @@ assert.equal(factTitle(fact),'Pump <script> · 额定功率 · 37.5 kW');
 const html=comparisonMarkup({added:[fact],removed:[],changed:[{before:fact,after:{...fact,literal_value:'40'}}],unchanged_count:2});
 assert.ok(html.includes('37.5 kW'));assert.ok(html.includes('40 kW'));assert.ok(html.includes('新增 1 条'));
 assert.ok(!html.includes('<script>'));assert.ok(html.includes('&lt;script&gt;'));
+const withSources=comparisonMarkup({added:[],removed:[],changed:[],unchanged_count:2,source_scope:{added:[{document_id:'doc-new',version_id:'v2',title:'homonym_report <script>'}],removed:[{document_id:'doc-old',version_id:'v1',title:'循环水泵旧版'}],unchanged_count:1}});
+assert.match(withSources,/正式检索的文档范围/);assert.match(withSources,/加入 1 个文档版本、退出 1 个文档版本；保持 1 个/);
+assert.ok(withSources.includes('homonym_report &lt;script&gt;'));assert.ok(!withSources.includes('<script>'));
+assert.ok(withSources.indexOf('正式检索的文档范围')<withSources.indexOf('实体、关系与属性'));
 """)
 
     def js(self, scenario):

@@ -108,17 +108,25 @@ def build_rerank_scope_context(asset_keys: tuple[str, ...]) -> str | None:
 _STATE_QUERY = """
 // industrial-scope:state
 OPTIONAL MATCH (state:TenantCorpusState {tenant_id:$tenant_id})
-RETURN state.corpus_revision AS corpus_revision
+OPTIONAL MATCH (publication_state:KnowledgePublicationState {tenant_id:$tenant_id})
+OPTIONAL MATCH (publication_state)-[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication:KnowledgePublication)
+RETURN state.corpus_revision AS corpus_revision,
+       publication.publication_id AS publication_id,
+       publication_state.activation_generation AS activation_generation
 """
 
 _SOURCE_MATCH = """
-MATCH (document:Document {tenant_id:$tenant_id})-[:ACTIVE_VERSION]->
+MATCH (:KnowledgePublicationState {tenant_id:$tenant_id})-[:ACTIVE_KNOWLEDGE_PUBLICATION]->
+      (:KnowledgePublication {tenant_id:$tenant_id,status:'ACTIVE'})-[:USES_KNOWLEDGE_SNAPSHOT]->
+      (snapshot:KnowledgeSnapshot {tenant_id:$tenant_id})-[:OF_VERSION]->
       (version:DocumentVersion {tenant_id:$tenant_id})
-MATCH (document)-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-      tenant_id:$tenant_id,build_state:'PUBLISHED'})-[:INCLUDES_CHUNK]->
-      (chunk:Chunk {tenant_id:$tenant_id})
-MATCH (snapshot)-[:OF_VERSION]->(version)
-WHERE version.document_id=document.document_id
+MATCH (document:Document {tenant_id:$tenant_id})-[:HAS_VERSION]->(version)
+MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk:Chunk {tenant_id:$tenant_id})
+WHERE snapshot.build_state IN ['PUBLISHED','RETIRED']
+  AND coalesce(document.lifecycle_status,'ACTIVE')='ACTIVE'
+  AND document.retirement_id IS NULL AND document.retired_at IS NULL
+  AND snapshot.retirement_id IS NULL AND version.retirement_id IS NULL
+  AND version.document_id=document.document_id
   AND snapshot.document_id=document.document_id AND snapshot.version_id=version.version_id
   AND chunk.document_id=document.document_id AND chunk.version_id=version.version_id
   AND chunk.access_policy_id=document.access_policy_id

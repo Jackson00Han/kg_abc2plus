@@ -9,7 +9,7 @@ from graphrag_prod.retrieval import RetrievalLimits, RetrievalRequest, Retrieval
 from graphrag_prod.retrieval.engine import (
     ADJACENT_QUERY, BM25_RECALL_QUERY, CANDIDATE_VECTOR_QUERY, CORPUS_STATE_QUERY,
     GRAPH_EXPANSION_QUERY, HYDRATE_QUERY, VECTOR_RECALL_QUERY,
-    Neo4jRetrievalEngine, RerankAttemptedFailure,
+    Neo4jRetrievalEngine, RerankAttemptedFailure, _PUBLISHED_VERSIONS_QUERY,
 )
 from graphrag_prod.retrieval.reranking import RerankCandidate, RerankResponse, RerankScore, RerankingError
 
@@ -57,6 +57,8 @@ class FixtureDriver:
         self.queries.append((self.reads, query, parameters))
         if query == CORPUS_STATE_QUERY:
             return [dict(self.state)]
+        if query == _PUBLISHED_VERSIONS_QUERY:
+            return [dict(version_id=row["version_id"]) for row in self.rows.values()]
         if query in (VECTOR_RECALL_QUERY, BM25_RECALL_QUERY, CANDIDATE_VECTOR_QUERY):
             candidates = parameters.get("candidate_ids", self.rows)
             return [dict(chunk_id=k, score=0.99 - i / 1000) for i, k in enumerate(self.rows)

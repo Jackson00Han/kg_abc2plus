@@ -78,6 +78,40 @@ export function button(text, action, className = "button secondary") {
   node.addEventListener("click", action);
   return node;
 }
+// Each visible operation owns one button; transport requests never create UI.
+const pendingButtons = new Map();
+export function beginButtonFeedback(button, {disable = true} = {}) {
+  if (!button) return () => {};
+  let entry = pendingButtons.get(button);
+  if (!entry) {
+    entry = {count:0, disabled:Boolean(button.disabled), disable:false};
+    pendingButtons.set(button, entry);
+  }
+  entry.count++;
+  entry.disable ||= disable;
+  if (disable) button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.classList?.add('button-pending');
+  let finished = false;
+  return () => {
+    if (finished || pendingButtons.get(button) !== entry) return;
+    finished = true;
+    if (--entry.count) return;
+    pendingButtons.delete(button);
+    button.removeAttribute?.('aria-busy');
+    button.classList?.remove('button-pending');
+    if (entry.disable) button.disabled = entry.disabled;
+  };
+}
+export function clearButtonFeedback(root = document) {
+  for (const [button, entry] of pendingButtons) {
+    if (!root.contains(button)) continue;
+    pendingButtons.delete(button);
+    button.removeAttribute('aria-busy');
+    button.classList?.remove('button-pending');
+    if (entry.disable) button.disabled = entry.disabled;
+  }
+}
 export function clear(node) {
   node.replaceChildren();
   return node;

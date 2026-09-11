@@ -21,7 +21,8 @@ from neo4j.exceptions import (
     TransientError,
 )
 
-from graphrag_prod.domain import retrieval_scope_token
+from graphrag_prod.domain import Principal, retrieval_scope_token
+from graphrag_prod.graph.browse_models import GraphViewChanged
 
 from .models import (
     Citation,
@@ -44,7 +45,8 @@ from .reranking import (
 )
 
 
-FULLTEXT_INDEX_NAME = "graphrag_chunk_text_v2"
+FULLTEXT_INDEX_NAME = "graphrag_chunk_text_v3"
+MAX_PUBLISHED_SOURCE_VERSIONS = 500
 METHOD = "vector cosine + BM25 + RRF(k=60) + Resource Allocation"
 _LUCENE_TERM = re.compile(r"[^\W_]+", re.UNICODE)
 _TRANSACTION_TIMEOUT_CODES = frozenset(
@@ -99,7 +101,7 @@ class _PreparedRerank:
 
 
 CORPUS_STATE_QUERY = """
-MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
+OPTIONAL MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
 OPTIONAL MATCH (state)-[:ACTIVE_EMBEDDING_INDEX]->(
     generation:EmbeddingIndexGeneration {tenant_id: $tenant_id, state: 'ACTIVE'}
 )
@@ -109,11 +111,14 @@ OPTIONAL MATCH (publication_state)-[:ACTIVE_KNOWLEDGE_PUBLICATION]->(
     publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'}
 )
 OPTIONAL MATCH (publication)-[tbox_binding:USES_TBOX_VERSION]->(tbox:TBoxVersion)
-RETURN state.corpus_revision AS corpus_revision,
+RETURN coalesce(state.corpus_revision, 0) AS corpus_revision,
        generation.generation_id AS generation_id,
        generation.embedding_space_id AS embedding_space_id,
        generation.dimensions AS dimensions,
        publication.publication_id AS knowledge_publication_id,
+       coalesce(publication.embedding_space_id, publication.legacy_embedding_space_id) AS knowledge_embedding_space_id,
+       coalesce(publication.manifest_version, 3) AS knowledge_manifest_version,
+       COUNT { MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->() } AS knowledge_source_document_count,
        coalesce(publication_state.activation_generation, 0) AS knowledge_activation_generation,
        coalesce(publication.generation, 0) AS knowledge_publication_generation,
        publication.ontology_version_id AS knowledge_tbox_id,
@@ -124,7 +129,21 @@ RETURN state.corpus_revision AS corpus_revision,
 """
 
 
-_ACTIVE_CORPUS_GUARD = """
+_PUBLICATION_GUARD = """
+CALL () {
+    MATCH (publication_state:KnowledgePublicationState {tenant_id: $tenant_id})
+          -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(read_publication:KnowledgePublication {
+              tenant_id: $tenant_id, publication_id: $knowledge_publication_id, status: 'ACTIVE'
+          })
+    WHERE publication_state.activation_generation = $knowledge_activation_generation
+      AND (coalesce(read_publication.embedding_space_id, read_publication.legacy_embedding_space_id) IS NULL
+           OR coalesce(read_publication.embedding_space_id, read_publication.legacy_embedding_space_id) = $embedding_space_id)
+    RETURN true AS active_publication_guard
+}
+"""
+
+
+_ACTIVE_CORPUS_GUARD = _PUBLICATION_GUARD + """
 CALL () {
     MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
           -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
@@ -140,7 +159,7 @@ CALL () {
 """
 
 
-VECTOR_RECALL_QUERY = """
+VECTOR_RECALL_QUERY = _PUBLICATION_GUARD + """
 CALL () {
     MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
           -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
@@ -157,10 +176,11 @@ CALL () {
            generation.dimensions AS active_dimensions
 }
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
@@ -175,6 +195,23 @@ WHERE embedding.embedding_space_id = active_embedding_space_id
   AND size($query_vector) = active_dimensions
   AND any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN chunk.access_groups WHERE group IN $groups)
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
@@ -182,25 +219,6 @@ WHERE embedding.embedding_space_id = active_embedding_space_id
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
 WITH DISTINCT chunk, embedding
 WITH chunk, vector.similarity.cosine(embedding.vector, $query_vector) AS score
 WHERE score >= $minimum_score
@@ -216,10 +234,11 @@ CALL db.index.fulltext.queryNodes(
 )
 YIELD node AS chunk, score
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk)
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
@@ -228,6 +247,23 @@ WHERE chunk:Chunk
   AND score >= $minimum_score
   AND any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN chunk.access_groups WHERE group IN $groups)
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
@@ -235,25 +271,6 @@ WHERE chunk:Chunk
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
 RETURN DISTINCT chunk.chunk_id AS chunk_id, score
 ORDER BY score DESC, chunk_id
 LIMIT $limit
@@ -262,139 +279,163 @@ LIMIT $limit
 
 GRAPH_EXPANSION_QUERY = _ACTIVE_CORPUS_GUARD + """
 MATCH (seed_document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(seed_snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (seed_publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(seed_snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(seed:Chunk {
           tenant_id: $tenant_id, chunk_id: $seed_id
       })
-MATCH (seed_document)-[:ACTIVE_VERSION]->(seed_version:DocumentVersion {
+MATCH (seed_document)-[:HAS_VERSION]->(seed_version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (seed_snapshot)-[:OF_VERSION]->(seed_version)
-MATCH (seed_snapshot)-[seed_membership:INCLUDES_MENTION]->(
-    seed_mention:EntityMention {tenant_id: $tenant_id}
+MATCH (seed_publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->(
+    seed_mention:GovernedEntityMentionRevision {tenant_id: $tenant_id, governance_status: 'PUBLISHED'}
 )-[:IN_CHUNK]->(seed)
 MATCH (seed_mention)-[:REFERS_TO]->(entity:Entity {tenant_id: $tenant_id})
 MATCH (seed_snapshot)-[:INCLUDES_ENTITY]->(entity)
 WHERE any(group IN seed_document.access_groups WHERE group IN $groups)
   AND any(group IN seed.access_groups WHERE group IN $groups)
+  AND seed_snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND seed_snapshot.retirement_id IS NULL
+  AND seed_snapshot.retired_by_principal_id IS NULL
+  AND coalesce(seed_version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND seed_version.retirement_id IS NULL
+  AND seed_version.retired_at IS NULL
+  AND seed_version.retired_by_principal_id IS NULL
+  AND seed_snapshot.document_id = seed_document.document_id
+  AND seed_snapshot.version_id = seed_version.version_id
+  AND seed_version.document_id = seed_document.document_id
+  AND coalesce(seed_document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND seed_document.retirement_id IS NULL
+  AND seed_document.retirement_request_fingerprint IS NULL
+  AND seed_document.retired_at IS NULL
+  AND seed_document.retired_by_principal_id IS NULL
+  AND seed_document.retired_active_snapshot_id IS NULL
+  AND seed_document.retired_active_version_id IS NULL
   AND seed.document_id = seed_document.document_id
   AND seed.version_id = seed_version.version_id
   AND seed.access_policy_id = seed_document.access_policy_id
   AND seed.access_policy_version = seed_document.access_policy_version
+  AND seed_mention.document_id = seed_document.document_id
+  AND seed_mention.version_id = seed_version.version_id
+  AND seed_mention.chunk_id = seed.chunk_id
+  AND seed_mention.entity_id = entity.entity_id
+  AND seed_mention.ontology_version_id = seed_publication.ontology_version_id
+  AND seed_mention.access_policy_id = seed.access_policy_id
+  AND seed_mention.access_policy_version = seed.access_policy_version
+  AND seed_mention.access_groups = seed.access_groups
+  AND any(group IN seed_mention.access_groups WHERE group IN $groups)
   AND (size($document_ids) = 0 OR seed_document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR seed_version.version_id IN $version_ids)
   AND ($published_before IS NULL OR seed_version.published_at <= $published_before)
-  AND (NOT seed_document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = seed_version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = seed_version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
   AND coalesce(entity.governance_status, 'ACCEPTED') IN
       ['ACCEPTED', 'ACCEPTED_BY_REVIEW']
-WITH DISTINCT seed, entity, seed_membership.confidence AS mention_confidence
+WITH DISTINCT seed, entity, seed_mention.confidence AS mention_confidence
 ORDER BY mention_confidence DESC, entity.entity_id
 LIMIT $entity_limit
 CALL (entity) {
     MATCH (degree_document:Document {tenant_id: $tenant_id})
-          -[:ACTIVE_SNAPSHOT]->(degree_snapshot:KnowledgeSnapshot {
-              tenant_id: $tenant_id, build_state: 'PUBLISHED'
+    MATCH (degree_publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+          -[:USES_KNOWLEDGE_SNAPSHOT]->(degree_snapshot:KnowledgeSnapshot {
+              tenant_id: $tenant_id
           })-[:INCLUDES_CHUNK]->(linked:Chunk {tenant_id: $tenant_id})
-    MATCH (degree_document)-[:ACTIVE_VERSION]->(degree_version:DocumentVersion {
+    MATCH (degree_document)-[:HAS_VERSION]->(degree_version:DocumentVersion {
         tenant_id: $tenant_id
     })
     MATCH (degree_snapshot)-[:OF_VERSION]->(degree_version)
-    MATCH (degree_snapshot)-[:INCLUDES_MENTION]->(
-        degree_mention:EntityMention {tenant_id: $tenant_id}
+    MATCH (degree_publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->(
+        degree_mention:GovernedEntityMentionRevision {tenant_id: $tenant_id, governance_status: 'PUBLISHED'}
     )-[:IN_CHUNK]->(linked)
     MATCH (degree_mention)-[:REFERS_TO]->(entity)
     MATCH (degree_snapshot)-[:INCLUDES_ENTITY]->(entity)
     WHERE any(group IN degree_document.access_groups WHERE group IN $groups)
       AND any(group IN linked.access_groups WHERE group IN $groups)
+      AND degree_snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+      AND degree_snapshot.retirement_id IS NULL
+      AND degree_snapshot.retired_by_principal_id IS NULL
+      AND coalesce(degree_version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+      AND degree_version.retirement_id IS NULL
+      AND degree_version.retired_at IS NULL
+      AND degree_version.retired_by_principal_id IS NULL
+      AND degree_snapshot.document_id = degree_document.document_id
+      AND degree_snapshot.version_id = degree_version.version_id
+      AND degree_version.document_id = degree_document.document_id
+      AND coalesce(degree_document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+      AND degree_document.retirement_id IS NULL
+      AND degree_document.retirement_request_fingerprint IS NULL
+      AND degree_document.retired_at IS NULL
+      AND degree_document.retired_by_principal_id IS NULL
+      AND degree_document.retired_active_snapshot_id IS NULL
+      AND degree_document.retired_active_version_id IS NULL
       AND linked.document_id = degree_document.document_id
       AND linked.version_id = degree_version.version_id
       AND linked.access_policy_id = degree_document.access_policy_id
       AND linked.access_policy_version = degree_document.access_policy_version
+      AND degree_mention.document_id = degree_document.document_id
+      AND degree_mention.version_id = degree_version.version_id
+      AND degree_mention.chunk_id = linked.chunk_id
+      AND degree_mention.entity_id = entity.entity_id
+      AND degree_mention.ontology_version_id = degree_publication.ontology_version_id
+      AND degree_mention.access_policy_id = linked.access_policy_id
+      AND degree_mention.access_policy_version = linked.access_policy_version
+      AND degree_mention.access_groups = linked.access_groups
+      AND any(group IN degree_mention.access_groups WHERE group IN $groups)
       AND (size($document_ids) = 0 OR degree_document.document_id IN $document_ids)
       AND (size($version_ids) = 0 OR degree_version.version_id IN $version_ids)
       AND ($published_before IS NULL OR degree_version.published_at <= $published_before)
-  AND (NOT degree_document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = degree_version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = degree_version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
     RETURN count(DISTINCT linked) AS entity_degree
 }
 MATCH (candidate_document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(candidate_snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (candidate_publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(candidate_snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(candidate:Chunk {tenant_id: $tenant_id})
-MATCH (candidate_document)-[:ACTIVE_VERSION]->(
+MATCH (candidate_document)-[:HAS_VERSION]->(
     candidate_version:DocumentVersion {tenant_id: $tenant_id}
 )
 MATCH (candidate_snapshot)-[:OF_VERSION]->(candidate_version)
-MATCH (candidate_snapshot)-[:INCLUDES_MENTION]->(
-    candidate_mention:EntityMention {tenant_id: $tenant_id}
+MATCH (candidate_publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->(
+    candidate_mention:GovernedEntityMentionRevision {tenant_id: $tenant_id, governance_status: 'PUBLISHED'}
 )-[:IN_CHUNK]->(candidate)
 MATCH (candidate_mention)-[:REFERS_TO]->(entity)
 MATCH (candidate_snapshot)-[:INCLUDES_ENTITY]->(entity)
 WHERE candidate.chunk_id <> seed.chunk_id
   AND any(group IN candidate_document.access_groups WHERE group IN $groups)
   AND any(group IN candidate.access_groups WHERE group IN $groups)
+  AND candidate_snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND candidate_snapshot.retirement_id IS NULL
+  AND candidate_snapshot.retired_by_principal_id IS NULL
+  AND coalesce(candidate_version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND candidate_version.retirement_id IS NULL
+  AND candidate_version.retired_at IS NULL
+  AND candidate_version.retired_by_principal_id IS NULL
+  AND candidate_snapshot.document_id = candidate_document.document_id
+  AND candidate_snapshot.version_id = candidate_version.version_id
+  AND candidate_version.document_id = candidate_document.document_id
+  AND coalesce(candidate_document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND candidate_document.retirement_id IS NULL
+  AND candidate_document.retirement_request_fingerprint IS NULL
+  AND candidate_document.retired_at IS NULL
+  AND candidate_document.retired_by_principal_id IS NULL
+  AND candidate_document.retired_active_snapshot_id IS NULL
+  AND candidate_document.retired_active_version_id IS NULL
   AND candidate.document_id = candidate_document.document_id
   AND candidate.version_id = candidate_version.version_id
   AND candidate.access_policy_id = candidate_document.access_policy_id
   AND candidate.access_policy_version = candidate_document.access_policy_version
+  AND candidate_mention.document_id = candidate_document.document_id
+  AND candidate_mention.version_id = candidate_version.version_id
+  AND candidate_mention.chunk_id = candidate.chunk_id
+  AND candidate_mention.entity_id = entity.entity_id
+  AND candidate_mention.ontology_version_id = candidate_publication.ontology_version_id
+  AND candidate_mention.access_policy_id = candidate.access_policy_id
+  AND candidate_mention.access_policy_version = candidate.access_policy_version
+  AND candidate_mention.access_groups = candidate.access_groups
+  AND any(group IN candidate_mention.access_groups WHERE group IN $groups)
   AND (size($document_ids) = 0 OR candidate_document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR candidate_version.version_id IN $version_ids)
   AND ($published_before IS NULL OR candidate_version.published_at <= $published_before)
-  AND (NOT candidate_document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = candidate_version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = candidate_version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
 RETURN DISTINCT candidate.chunk_id AS chunk_id,
        entity.entity_id AS entity_id,
        entity.canonical_name AS entity_name,
@@ -404,7 +445,7 @@ LIMIT $edge_limit
 """
 
 
-CANDIDATE_VECTOR_QUERY = """
+CANDIDATE_VECTOR_QUERY = _PUBLICATION_GUARD + """
 CALL () {
     MATCH (state:TenantCorpusState {tenant_id: $tenant_id})
           -[:ACTIVE_EMBEDDING_INDEX]->(generation:EmbeddingIndexGeneration {
@@ -424,10 +465,11 @@ UNWIND $candidate_ids AS candidate_id
 MATCH (chunk:Chunk {chunk_id: candidate_id})
 USING INDEX chunk:Chunk(chunk_id)
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk)
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
@@ -443,6 +485,23 @@ WHERE chunk.tenant_id = $tenant_id
   AND size($query_vector) = active_dimensions
   AND any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN chunk.access_groups WHERE group IN $groups)
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
@@ -450,25 +509,6 @@ WHERE chunk.tenant_id = $tenant_id
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
 WITH DISTINCT chunk, embedding
 WITH chunk, vector.similarity.cosine(embedding.vector, $query_vector) AS score
 WHERE score >= $minimum_score
@@ -482,12 +522,13 @@ ADJACENT_QUERY = _ACTIVE_CORPUS_GUARD + """
 UNWIND range(0, size($anchor_ids) - 1) AS anchor_position
 WITH anchor_position, $anchor_ids[anchor_position] AS anchor_id
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(anchor:Chunk {
           tenant_id: $tenant_id, chunk_id: anchor_id
       })
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
@@ -497,6 +538,23 @@ WHERE neighbor.chunk_id <> anchor.chunk_id
   AND any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN anchor.access_groups WHERE group IN $groups)
   AND any(group IN neighbor.access_groups WHERE group IN $groups)
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND anchor.document_id = document.document_id
   AND neighbor.document_id = document.document_id
   AND anchor.version_id = version.version_id
@@ -508,25 +566,6 @@ WHERE neighbor.chunk_id <> anchor.chunk_id
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
 RETURN DISTINCT anchor_position, anchor.chunk_id AS anchor_id,
        neighbor.chunk_id AS chunk_id,
        abs(neighbor.ordinal - anchor.ordinal) AS distance,
@@ -539,17 +578,35 @@ LIMIT $limit
 HYDRATE_QUERY = _ACTIVE_CORPUS_GUARD + """
 UNWIND $chunk_ids AS requested_id
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk:Chunk {
           tenant_id: $tenant_id, chunk_id: requested_id
       })
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
 WHERE any(group IN document.access_groups WHERE group IN $groups)
   AND any(group IN chunk.access_groups WHERE group IN $groups)
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
@@ -557,25 +614,6 @@ WHERE any(group IN document.access_groups WHERE group IN $groups)
   AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
   AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
   AND ($published_before IS NULL OR version.published_at <= $published_before)
-  AND (NOT document.canonical_uri STARTS WITH 'urn:graphrag:human:' OR (
-    EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND human_revision.origin = 'HUMAN_SUPPLEMENT'
-    }
-    AND NOT EXISTS {
-      MATCH (human_head:KnowledgeRecordHead {tenant_id: $tenant_id})-[:CURRENT_REVISION]->(human_revision)
-      WHERE human_revision.version_id = version.version_id
-        AND NOT EXISTS {
-          MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
-            -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(human_publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
-            -[:PUBLISHES_KNOWLEDGE_REVISION]->(human_revision)
-          WHERE human_revision.origin = 'HUMAN_SUPPLEMENT'
-            AND human_revision.authority_level = 'SECONDARY'
-            AND human_revision.governance_status = 'PUBLISHED'
-        }
-    }
-  ))
 RETURN DISTINCT chunk.chunk_id AS chunk_id,
        chunk.text AS text,
        chunk.checksum AS chunk_checksum,
@@ -596,6 +634,43 @@ ORDER BY chunk_id
 """
 
 
+_PUBLISHED_VERSIONS_QUERY = _ACTIVE_CORPUS_GUARD + """
+MATCH (publication:KnowledgePublication {tenant_id: $tenant_id, publication_id: $knowledge_publication_id})
+      -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {tenant_id: $tenant_id})
+      -[:OF_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
+MATCH (document:Document {tenant_id: $tenant_id})-[:HAS_VERSION]->(version)
+MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
+WHERE snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND chunk.document_id = document.document_id
+  AND chunk.version_id = version.version_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
+  AND chunk.access_policy_id = document.access_policy_id
+  AND chunk.access_policy_version = document.access_policy_version
+  AND any(group IN document.access_groups WHERE group IN $groups)
+  AND any(group IN chunk.access_groups WHERE group IN $groups)
+  AND (size($document_ids) = 0 OR document.document_id IN $document_ids)
+  AND (size($version_ids) = 0 OR version.version_id IN $version_ids)
+  AND ($published_before IS NULL OR version.published_at <= $published_before)
+RETURN DISTINCT version.version_id AS version_id
+ORDER BY version_id LIMIT $source_limit
+"""
+
+
 def _query_terms(query_text: str) -> str:
     """Produce literal word terms so user text cannot become Lucene syntax."""
     return " ".join(_LUCENE_TERM.findall(query_text))
@@ -605,21 +680,25 @@ def _partitioned_lucene_query(
     query_text: str,
     tenant_id: str,
     groups: frozenset[str],
+    published_version_ids: tuple[str, ...],
 ) -> str:
-    """Apply tenant, active-version, and ACL filters inside BM25 recall."""
+    """Intersect immutable publication versions and ACL inside BM25 recall."""
 
     terms = _query_terms(query_text)
-    if not terms:
+    if not terms or not published_version_ids:
         return ""
     tenant = retrieval_scope_token("tenant", tenant_id)
     group_terms = " OR ".join(
-        f"retrieval_scope:{retrieval_scope_token('group', group)}^0"
+        f"publication_scope:{retrieval_scope_token('group', group)}^0"
         for group in sorted(groups)
     )
+    version_terms = " OR ".join(
+        f"publication_scope:{retrieval_scope_token('version', version_id)}^0"
+        for version_id in sorted(set(published_version_ids))
+    )
     return (
-        "retrieval_scope:grscopeactive^0 "
-        f"AND retrieval_scope:{tenant}^0 "
-        f"AND ({group_terms}) AND text:({terms})"
+        f"publication_scope:{tenant}^0 "
+        f"AND ({group_terms}) AND ({version_terms}) AND text:({terms})"
     )
 
 
@@ -732,6 +811,76 @@ class Neo4jRetrievalEngine:
             timeout=self.transaction_timeout_seconds,
         )(self._finalize_rerank_tx)
 
+    def validate_result(self, principal: Principal, result: RetrievalResult) -> None:
+        """Reauthorize a captured answer context before and after model execution."""
+        if not isinstance(principal, Principal) or not isinstance(result, RetrievalResult):
+            raise TypeError("result validation requires a principal and retrieval result")
+        if result.trace.tenant_id != principal.tenant_id:
+            raise GraphViewChanged()
+        work = unit_of_work(
+            metadata={"component": "graphrag-retrieval", "operation": "validate-result"},
+            timeout=self.transaction_timeout_seconds,
+        )(self._validate_result_tx)
+        try:
+            with self.driver.session(database=self.database) as session:
+                session.execute_read(work, principal, result)
+        except GraphViewChanged:
+            raise
+        except Exception as error:
+            raise RetrievalBackendUnavailable() from error
+
+    @staticmethod
+    def _validate_result_tx(tx: Any, principal: Principal, result: RetrievalResult) -> None:
+        trace, version_filter = result.trace, result.trace.version_filter
+        parameters = {
+            "tenant_id": principal.tenant_id, "groups": sorted(principal.groups),
+            "document_ids": sorted(version_filter.document_ids),
+            "version_ids": sorted(version_filter.version_ids),
+            "published_before": version_filter.published_at_or_before,
+            "corpus_revision": trace.corpus_revision,
+            "generation_id": trace.embedding_generation_id,
+            "embedding_space_id": trace.embedding_space_id,
+            "knowledge_publication_id": trace.knowledge_publication_id,
+            "knowledge_activation_generation": trace.knowledge_activation_generation,
+            "chunk_ids": list(trace.selected_chunk_ids),
+        }
+
+        def check_state() -> None:
+            rows = _records(tx, CORPUS_STATE_QUERY, parameters)
+            if len(rows) != 1:
+                raise GraphViewChanged()
+            row = rows[0]
+            Neo4jRetrievalEngine._validate_publication_embedding(row)
+            if (
+                row.get("corpus_revision") != trace.corpus_revision
+                or row.get("generation_id") != trace.embedding_generation_id
+                or (trace.embedding_generation_id is not None and row.get("embedding_space_id") != trace.embedding_space_id)
+                or Neo4jRetrievalEngine._publication_identity(row)
+                != (trace.knowledge_publication_id, trace.knowledge_activation_generation)
+                or Neo4jRetrievalEngine._tbox_identity(row)
+                != (trace.knowledge_tbox_id, trace.knowledge_tbox_checksum, trace.knowledge_publication_generation)
+            ):
+                raise GraphViewChanged()
+
+        def check_sources() -> None:
+            if tuple(chunk.citation.chunk_id for chunk in result.chunks) != trace.selected_chunk_ids:
+                raise GraphViewChanged()
+            rows = _records(tx, HYDRATE_QUERY, parameters) if result.chunks else []
+            by_id = {row["chunk_id"]: row for row in rows}
+            if len(rows) != len(result.chunks) or set(by_id) != set(trace.selected_chunk_ids):
+                raise GraphViewChanged()
+            for chunk in result.chunks:
+                current = _retrieved_chunk(by_id[chunk.citation.chunk_id], role=chunk.role,
+                                           score=chunk.score, reasons=chunk.reasons)
+                if current != chunk:
+                    raise GraphViewChanged()
+
+        check_state()
+        check_sources()
+        # Neo4j read-committed requires a second source authorization read.
+        check_sources()
+        check_state()
+
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         try:
             if self._reranker is not None:
@@ -835,10 +984,11 @@ class Neo4jRetrievalEngine:
         if len(rows) != 1:
             raise _CorpusStateChanged()
         row, trace = rows[0], prepared.result.trace
+        Neo4jRetrievalEngine._validate_publication_embedding(row)
         if (
             row.get("corpus_revision") != trace.corpus_revision
             or row.get("generation_id") != trace.embedding_generation_id
-            or row.get("embedding_space_id") != trace.embedding_space_id
+            or (trace.embedding_generation_id is not None and row.get("embedding_space_id") != trace.embedding_space_id)
             or row.get("dimensions") != len(prepared.request.query_vector)
             or Neo4jRetrievalEngine._publication_identity(row)
             != (trace.knowledge_publication_id, trace.knowledge_activation_generation)
@@ -857,6 +1007,8 @@ class Neo4jRetrievalEngine:
             "published_before": version_filter.published_at_or_before,
             "corpus_revision": previous.corpus_revision, "generation_id": previous.embedding_generation_id,
             "embedding_space_id": previous.embedding_space_id, "dimensions": len(request.query_vector),
+            "knowledge_publication_id": previous.knowledge_publication_id,
+            "knowledge_activation_generation": previous.knowledge_activation_generation,
         }
         Neo4jRetrievalEngine._check_rerank_state(tx, prepared, common)
         # The response exposes recall/rejection IDs as well as selected evidence.
@@ -947,8 +1099,16 @@ class Neo4jRetrievalEngine:
         if len(state_records) != 1:
             raise RetrievalUnavailable("tenant has multiple active embedding generations")
         state = state_records[0]
+        publication_identity = Neo4jRetrievalEngine._publication_identity(state)
+        if state.get("generation_id") is None and publication_identity[0] is None:
+            # An unpublished workspace has no formal knowledge to retrieve. It
+            # needs no index, and must not fall back to uploaded draft sources.
+            if _records(tx, CORPUS_STATE_QUERY, common) != state_records:
+                raise _CorpusStateChanged()
+            return Neo4jRetrievalEngine._unpublished_result(request, state)
         if state.get("generation_id") is None:
             raise RetrievalUnavailable("tenant has no active embedding generation")
+        Neo4jRetrievalEngine._validate_publication_embedding(state)
         if request.query_embedding_space_id != str(state["embedding_space_id"]):
             raise RetrievalUnavailable("query vector space is not the active generation")
         dimensions = int(state["dimensions"])
@@ -968,10 +1128,13 @@ class Neo4jRetrievalEngine:
                 "embedding_space_id": str(state["embedding_space_id"]),
                 "generation_id": str(state["generation_id"]),
                 "query_vector": list(request.query_vector),
+                "knowledge_publication_id": publication_identity[0],
+                "knowledge_activation_generation": publication_identity[1],
             }
         )
 
-        vector_records = [] if version_filter.match_none else _records(
+        no_published_context = version_filter.match_none or publication_identity[0] is None
+        vector_records = [] if no_published_context else _records(
             tx,
             VECTOR_RECALL_QUERY,
             {
@@ -980,10 +1143,20 @@ class Neo4jRetrievalEngine:
                 "limit": limits.vector_recall_k,
             },
         )
+        source_versions = [] if no_published_context else _records(
+            tx, _PUBLISHED_VERSIONS_QUERY,
+            {**common, "source_limit": MAX_PUBLISHED_SOURCE_VERSIONS + 1},
+        )
+        if len(source_versions) > MAX_PUBLISHED_SOURCE_VERSIONS or any(
+            not isinstance(row.get("version_id"), str) or not row["version_id"].strip()
+            for row in source_versions
+        ):
+            raise RetrievalUnavailable("published source scope is invalid or exceeds its bound")
         lucene_query = _partitioned_lucene_query(
             request.query_text,
             principal.tenant_id,
             principal.groups,
+            tuple(row["version_id"] for row in source_versions),
         )
         bm25_records = (
             _records(
@@ -998,7 +1171,7 @@ class Neo4jRetrievalEngine:
                     "limit": limits.bm25_recall_k,
                 },
             )
-            if lucene_query and not version_filter.match_none
+            if lucene_query and not no_published_context
             else []
         )
         vector_ids = _ids(vector_records)
@@ -1120,6 +1293,7 @@ class Neo4jRetrievalEngine:
         if len(final_state_records) != 1:
             raise _CorpusStateChanged()
         final_state = final_state_records[0]
+        Neo4jRetrievalEngine._validate_publication_embedding(final_state)
         try:
             final_identity = (
                 int(final_state["corpus_revision"]),
@@ -1277,6 +1451,36 @@ class Neo4jRetrievalEngine:
         return RetrievalResult(tuple(result_chunks), trace)
 
     @staticmethod
+    def _unpublished_result(request: RetrievalRequest, state: dict[str, Any]) -> RetrievalResult:
+        publication_identity = Neo4jRetrievalEngine._publication_identity(state)
+        tbox_identity = Neo4jRetrievalEngine._tbox_identity(state)
+        corpus_revision = int(state.get("corpus_revision") or 0)
+        trace = RetrievalTrace(
+            trace_id=Neo4jRetrievalEngine._trace_id(request, corpus_revision, None,
+                                                   publication_identity=publication_identity),
+            method="no published knowledge", tenant_id=request.principal.tenant_id,
+            corpus_revision=corpus_revision, embedding_generation_id=None,
+            embedding_space_id=request.query_embedding_space_id,
+            vector_recall=(), bm25_recall=(), seed_ranking=(), graph_expansion=(),
+            candidate_vector_ranking=(), final_ranking=(), decisions=(), selected_chunk_ids=(),
+            context_chars=0, limits=request.limits, version_filter=request.version_filter,
+            knowledge_publication_id=None, knowledge_activation_generation=publication_identity[1],
+            knowledge_tbox_id=tbox_identity[0], knowledge_tbox_checksum=tbox_identity[1],
+            knowledge_publication_generation=tbox_identity[2],
+        )
+        return RetrievalResult((), trace)
+
+    @staticmethod
+    def _validate_publication_embedding(state: dict[str, Any]) -> None:
+        if state.get("knowledge_publication_id") is None:
+            return
+        bound_space = state.get("knowledge_embedding_space_id")
+        if bound_space is not None and bound_space != state.get("embedding_space_id"):
+            raise RetrievalUnavailable("publication embedding space differs from the active query index")
+        if state.get("knowledge_source_document_count", 0) > 0 and bound_space is None:
+            raise RetrievalUnavailable("publication is missing its embedding space binding")
+
+    @staticmethod
     def _publication_identity(state: dict[str, Any]) -> tuple[str | None, int]:
         publication_id = state.get("knowledge_publication_id")
         generation = state.get("knowledge_activation_generation", 0)
@@ -1303,7 +1507,7 @@ class Neo4jRetrievalEngine:
     def _trace_id(
         request: RetrievalRequest,
         corpus_revision: int,
-        generation_id: str,
+        generation_id: str | None,
         *, publication_identity: tuple[str | None, int] = (None, 0),
     ) -> str:
         cutoff: datetime | None = request.version_filter.published_at_or_before

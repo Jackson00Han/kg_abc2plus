@@ -247,28 +247,49 @@ CALL (revision) {
           -[pointer:CURRENT_REVISION]->(current)
     RETURN count(DISTINCT head) AS head_count,
            count(pointer) AS current_pointer_count,
-           count(CASE WHEN current = revision THEN 1 END) AS matching_current_count,
+           count(CASE WHEN current.tenant_id = head.tenant_id
+                            AND current.record_id = head.record_id
+                            AND current.revision = head.current_revision
+                            AND current.revision >= revision.revision
+                            AND ((head.record_kind = 'ENTITY_MENTION'
+                                  AND current:GovernedEntityMentionRevision)
+                                 OR (head.record_kind = 'ASSERTION'
+                                     AND current:GovernedAssertionRevision))
+                      THEN 1 END) AS matching_current_count,
            min(head.tenant_id) AS head_tenant_id,
            min(head.record_kind) AS head_record_kind,
            min(head.current_revision) AS head_current_revision
 }
 CALL (publication, revision) {
     OPTIONAL MATCH (revision)-[evidence:IN_CHUNK|EVIDENCED_BY]->(chunk:Chunk)
+    OPTIONAL MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->
+          (snapshot:KnowledgeSnapshot {tenant_id: $tenant_id})
+          -[:INCLUDES_CHUNK]->(chunk)
+    OPTIONAL MATCH (snapshot)-[:OF_VERSION]->(version:DocumentVersion)
     OPTIONAL MATCH (document:Document {
         tenant_id: $tenant_id,
         document_id: revision.document_id
-    })-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-        tenant_id: $tenant_id,
-        build_state: 'PUBLISHED'
-    })-[:INCLUDES_CHUNK]->(chunk)
-    OPTIONAL MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion)
-    OPTIONAL MATCH (snapshot)-[:OF_VERSION]->(snapshot_version:DocumentVersion)
+    })-[:HAS_VERSION]->(version)
     WITH publication, revision, evidence, chunk, document, snapshot, version,
-         snapshot_version,
          CASE WHEN evidence IS NOT NULL
                    AND chunk.tenant_id = $tenant_id
+                   AND version.tenant_id = $tenant_id
+                   AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+                   AND snapshot.retirement_id IS NULL
+                   AND version.retirement_id IS NULL
+                   AND document.retirement_id IS NULL
+                   AND document.retirement_request_fingerprint IS NULL
+                   AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                   AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+                   AND snapshot.document_id = document.document_id
+                   AND version.document_id = document.document_id
+                   AND snapshot.version_id = version.version_id
                    AND revision.version_id = version.version_id
-                   AND revision.version_id = snapshot_version.version_id
+                   AND chunk.document_id = document.document_id
+                   AND chunk.version_id = version.version_id
+                   AND EXISTS { MATCH (version)-[:HAS_CHUNK]->(chunk) }
+                   AND COUNT { MATCH (snapshot)-[:OF_VERSION]->() } = 1
+                   AND COUNT { MATCH (:Document)-[:HAS_VERSION]->(version) } = 1
                    AND revision.chunk_id = chunk.chunk_id
                    AND revision.access_policy_id = chunk.access_policy_id
                    AND revision.access_policy_version = chunk.access_policy_version
@@ -927,7 +948,7 @@ def _decode_item(
         and _count(row, "matching_current_count") == 1
         and row.get("head_tenant_id") == tenant_id
         and row.get("head_record_kind") == kind
-        and row.get("head_current_revision") == revision_number
+        and _count(row, "head_current_revision") >= revision_number
         and _count(row, "evidence_link_count") == 1
         and _count(row, "evidence_chunk_count") == 1
         and _count(row, "evidence_document_count") == 1
@@ -1159,7 +1180,8 @@ class Neo4jActivePublicationInventoryService:
         membership_ids = manifest.get("membership_revision_ids")
         if not (
             isinstance(expected_count, int)
-            and expected_count >= 1
+            and not isinstance(expected_count, bool)
+            and expected_count >= 0
             and membership_count == expected_count
             and distinct_count == expected_count
             and valid_count == expected_count

@@ -55,13 +55,13 @@ assert.equal(calls.length,2);assert.equal(client.pageGeneration,'before');
 
     def test_identity_reset_clears_private_drafts_receipts_outputs_and_operation_locks(self):
         source = governance_source()
-        code = source[source.index('function setUploadKnowledgeScope('):source.index('function showConstructionFlow(')]
+        code = source[source.index('function clearConstructionResult('):source.index('function showConstructionFlow(')]
         code += source[source.index('function updateReviewBulkActions('):source.index('async function keepExistingFact(')]
         code += source[source.index('function reset()'):source.index("$('ontology-reset').addEventListener")]
         self.run_module(r"""
 const nodes=new Map();
 const node=()=>({value:'private draft',textContent:'private source',innerHTML:'private source',disabled:true,hidden:false,
-  replaceChildren(){this.textContent='';this.innerHTML='';},querySelectorAll(){return[];}});
+  classList:{remove(){}},replaceChildren(){this.textContent='';this.innerHTML='';},querySelectorAll(){return[];}});
 const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
 const names=['reviewList','aboxEditor','qualitySaveButton','qualitySaveOutput','qualityHistoryPublication',
   'qualityHistoryList','qualityHistoryDetail','publicationRevisions','publicationRemovals','inventorySummary',
@@ -75,6 +75,7 @@ const state={revisionHistories:new Map([['private',{}]]),selectedCandidateRevisi
   knowledgeBrowser:{reset(){}},qualityPresenter:{reset(){},invalidate(){}},maintenanceActions:{reset(){}}};
 const run=new Function('state','elements','$','host',`
   let loadedIdentity='old',loadingIdentity={identity:'old'},lastBuildFlow='baseline',buildStep='review';
+  function clearButtonFeedback(){}
   function invalidatePublicationPreview(){state.publicationPreview=null;}
   function invalidateReviewResolutions(){state.reviews=[];state.resolutions=new Map();}
   function clearDemoSourceBinding(){state.demoSourceBinding=null;}

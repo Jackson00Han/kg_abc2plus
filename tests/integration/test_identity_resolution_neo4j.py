@@ -154,6 +154,18 @@ class Neo4jIdentityResolutionIntegrationTests(unittest.TestCase):
             ),
         )
         self.document_id, self.version_id = uploaded.document_id, uploaded.version_id
+        # Publication now validates the active embedding generation and complete
+        # source coverage, so prepare the same offline space used by ingestion.
+        from graphrag_prod.domain import ChunkEmbedding, chunk_embedding_id
+        from graphrag_prod.ingestion import Neo4jEmbeddingIndexManager
+        profile = EmbeddingProfile("offline", "identity-test", "v1", 2, "l2-unit")
+        embedding = ChunkEmbedding(chunk_embedding_id(uploaded.chunks[0].chunk_id, profile.embedding_space_id),
+            self.tenant, uploaded.chunks[0].chunk_id, profile.embedding_space_id,
+            profile.provider, profile.model, profile.revision, profile.dimensions,
+            profile.normalization, NOW, (0.6, 0.8))
+        indexes = Neo4jEmbeddingIndexManager(self.driver, self.database)
+        generation = indexes.prepare(tenant_id=self.tenant, embedding_profile=embedding, generation_version=1)
+        indexes.activate(generation.generation_id, expected_active_generation_id=None)
         self.payload = build_authoritative_import(
             tbox_id=self.tbox.tbox_id,
             document_id=uploaded.document_id,
@@ -295,6 +307,132 @@ class Neo4jIdentityResolutionIntegrationTests(unittest.TestCase):
         self.assertEqual(match.match_count, 2)
         self.assertIsNone(match.target)
         self.assertIsNone(match.matched_target_value)
+
+    def _new_upload_candidate(self):
+        from graphrag_prod.knowledge.models import (
+            ABoxRecordBatch, EntityMentionRecord, EvidenceReference, RecordRevision,
+            knowledge_record_id, llm_candidate_trust,
+        )
+        from graphrag_prod.knowledge.store import Neo4jKnowledgeStore
+        from graphrag_prod.knowledge.review import Neo4jKnowledgeReviewService
+        self.principal = replace(self.principal,
+            capabilities=self.principal.capabilities | frozenset({'knowledge:review'}))
+        original = next(x for x in self.kit['files'] if x['id'] == 'authoritative_source')
+        report = next(x for x in self.kit['files'] if x['id'] == 'maintenance_report')
+        uploaded = self.operations.construction.run(self.principal, report['text'].encode(),
+            ConstructionMetadata(operation_key='same-document-new-version',
+                canonical_uri=original['metadata']['canonical_uri'], title=original['metadata']['title'],
+                source_name=original['metadata']['source_name'], mime_type='text/plain', language='zh',
+                tbox_key=self.tbox.key, access_groups=self.principal.groups, published_at=NOW,
+                extraction_mode='SOURCE_ONLY'))
+        self.assertEqual(uploaded.document_id, self.document_id)
+        self.assertNotEqual(uploaded.version_id, self.version_id)
+        with self.driver.session(database=self.database) as session:
+            row = session.run('MATCH (c:Chunk {chunk_id:$id}) RETURN c{.*} AS c',
+                              id=uploaded.chunks[0].chunk_id).single()['c']
+        name = '北辰一号循环水泵'
+        start = row['text'].index(name) + row['char_start']
+        key = 'llm-candidate:new-upload-pump'
+        candidate = EntityMentionRecord(
+            RecordRevision.next(knowledge_record_id(self.tenant, 'ENTITY_MENTION', 'new-upload-pump'), 0),
+            self.tenant, EntityIdentity(entity_id(self.tenant, 'Equipment', key), self.tenant,
+                'Equipment', key, name, ()),
+            EvidenceReference(self.tenant, uploaded.document_id, uploaded.version_id, row['chunk_id'],
+                start, start+len(name), name, row['access_policy_id'], row['access_policy_version'], frozenset(row['access_groups'])),
+            1.0, llm_candidate_trust(ontology_version_id=self.tbox.tbox_id,
+                extractor_version='pump-offline:v1', prompt_version='pump-offline:v1', extracted_at=NOW), NOW)
+        Neo4jKnowledgeStore(self.driver, self.database).persist_llm_candidates(ABoxRecordBatch(self.tenant, (candidate,), ()))
+        return candidate, Neo4jKnowledgeReviewService(self.driver, self.database)
+
+    def test_new_upload_keeps_published_identity_search_evidence_and_manual_link(self):
+        from graphrag_prod.api.knowledge_contracts import ReviewEvidenceRequest
+        candidate, review = self._new_upload_candidate()
+        match = self._match()
+        self.assertEqual(match.match_count, 1)
+        self.assertEqual(match.target.evidence[0].version_id, self.version_id)
+        for query in ('', '循环水泵', match.target.entity.entity_id):
+            choices = review.resolution_targets(self.principal, candidate, query)['items']
+            self.assertEqual(len(choices), 1)
+            self.assertTrue(choices[0]['selectable'])
+            self.assertIn('BC-P-101', [p['value'] for p in choices[0]['identity_properties']])
+        target = choices[0]
+        for view in ('paragraph', 'surrounding', 'document'):
+            context = review.evidence_context(self.principal, ReviewEvidenceRequest(
+                record_id=target['record_id'], expected_revision=target['revision'], view=view))
+            self.assertEqual(context['version_id'], self.version_id)
+            self.assertIn('BC-P-101', context['text'])
+        from graphrag_prod.api.knowledge_contracts import EntityResolutionApplyRequest
+        from unittest.mock import patch
+        exact = review.resolution_target(self.principal, candidate,
+            target['record_id'], target['revision'])
+        self.assertEqual(exact, target)
+        # The API still performs an atomic revision-bound link when the
+        # unrelated automatic matcher is unavailable.
+        with patch.object(self.operations.resolution_source, 'find_exact_canonical_key',
+                side_effect=AssertionError('manual confirmation must not rebuild suggestions')):
+            result = self.operations.apply_resolution(self.principal, EntityResolutionApplyRequest(
+                record_id=candidate.record_id, expected_revision=1,
+                target_entity_id=match.target.entity.entity_id,
+                notes='核对水泵测试包中 BC-P-101 的原文。', target_record_id=target['record_id'],
+                target_expected_revision=target['revision'])).payload
+        self.assertEqual(len(result.outcomes), 1)
+        self.assertEqual(result.outcomes[0].status, 'APPROVED')
+        self.assertEqual(self._match().match_count, 1)
+
+    def test_new_upload_does_not_expose_inaccessible_or_unpublished_old_sources(self):
+        from graphrag_prod.api.knowledge_contracts import ReviewEvidenceRequest
+        from graphrag_prod.knowledge.review import KnowledgeReviewUnavailable
+        candidate, review = self._new_upload_candidate()
+        target = review.resolution_targets(self.principal, candidate, '循环水泵')['items'][0]
+        for principal in (replace(self.principal, tenant_id='outside-pump-workspace'),
+                          replace(self.principal, groups=frozenset({'public'}))):
+            self.assertEqual(self._match(principal=principal).match_count, 0)
+            self.assertEqual(review.resolution_targets(principal, candidate, '循环水泵')['items'], [])
+            self.assertIsNone(review.resolution_target(principal, candidate,
+                target['record_id'], target['revision']))
+            with self.assertRaises(KnowledgeReviewUnavailable):
+                review.evidence_context(principal, ReviewEvidenceRequest(
+                    record_id=target['record_id'], expected_revision=target['revision']))
+        # Removing the snapshot from the active release must not expose historical evidence.
+        self.driver.execute_query("""MATCH (p:KnowledgePublication {publication_id:$id})
+            -[edge:USES_KNOWLEDGE_SNAPSHOT]->() DELETE edge""", id=self.publication_id, database_=self.database)
+        self.assertEqual(self._match().match_count, 0)
+        self.assertEqual(review.resolution_targets(self.principal, candidate, '循环水泵')['items'], [])
+        self.assertIsNone(review.resolution_target(self.principal, candidate,
+            target['record_id'], target['revision']))
+        with self.assertRaises(KnowledgeReviewUnavailable):
+            review.evidence_context(self.principal, ReviewEvidenceRequest(
+                record_id=target['record_id'], expected_revision=target['revision']))
+
+    def test_manual_apply_rechecks_revision_after_target_preflight(self):
+        from graphrag_prod.api.knowledge_contracts import EntityResolutionApplyRequest
+        from graphrag_prod.api.runtime import ConflictError
+        from unittest.mock import patch
+        candidate, review = self._new_upload_candidate()
+        target = review.resolution_targets(self.principal, candidate, '循环水泵')['items'][0]
+        request = EntityResolutionApplyRequest(record_id=candidate.record_id,
+            expected_revision=1, target_entity_id=target['entity']['entity_id'],
+            target_record_id=target['record_id'], target_expected_revision=target['revision'],
+            notes='核对水泵测试包原文后选择已有实体。')
+        original = self.operations.reviews.resolution_target
+
+        def change_target_after_read(*args):
+            selected = original(*args)
+            self.driver.execute_query("""
+                MATCH (head:KnowledgeRecordHead {tenant_id:$tenant, record_id:$record})
+                SET head.current_revision = head.current_revision + 1
+                """, tenant=self.tenant, record=target['record_id'], database_=self.database)
+            return selected
+
+        with patch.object(self.operations.reviews, 'resolution_target', side_effect=change_target_after_read):
+            with self.assertRaises(ConflictError):
+                self.operations.apply_resolution(self.principal, request)
+        from graphrag_prod.knowledge.trust import GovernanceStatus
+        stored = self.operations.knowledge.get_entity_mention(self.principal, candidate.record_id,
+            statuses=(GovernanceStatus.CANDIDATE,))
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.revision_id, candidate.revision_id)
+        self.assertEqual(stored.entity, candidate.entity)
 
     def test_corrupted_identity_evidence_or_inactive_source_cannot_match(self) -> None:
         rows, _, _ = self.driver.execute_query(

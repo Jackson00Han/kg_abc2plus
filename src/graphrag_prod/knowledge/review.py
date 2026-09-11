@@ -53,6 +53,11 @@ from .store import (
     _validate_literal_semantics,
 )
 from .trust import GovernanceStatus
+from .publication_sources import (
+    canonical_json, compare_source_summaries, index_publication_sources_tx,
+    load_publication_sources_tx, load_sources_tx, require_embedding_coverage_tx,
+    source_manifest_hash, source_summaries_tx, prepare_publication_index_tx,
+)
 
 
 MAX_REVIEW_BATCH = 100
@@ -401,6 +406,11 @@ class KnowledgePublicationView:
     activated_at: datetime | None
     rolled_back_by: str | None = None
     rolled_back_at: datetime | None = None
+    source_document_count: int = 0
+    source_chunk_count: int = 0
+    source_snapshot_ids: tuple[str, ...] = ()
+    embedding_space_id: str | None = None
+    manifest_version: int = 3
 
 
 def _publication_view(properties: dict[str, Any]) -> KnowledgePublicationView:
@@ -429,6 +439,11 @@ def _publication_view(properties: dict[str, Any]) -> KnowledgePublicationView:
                 "activated_at",
             )
         ),
+        source_document_count=int(properties.get("source_document_count", 0)),
+        source_chunk_count=int(properties.get("source_chunk_count", 0)),
+        source_snapshot_ids=tuple(properties.get("source_snapshot_ids", ())),
+        embedding_space_id=properties.get("embedding_space_id") or properties.get("legacy_embedding_space_id"),
+        manifest_version=int(properties.get("manifest_version", 3)),
         rolled_back_by=properties.get("rolled_back_by"),
         rolled_back_at=(
             None
@@ -674,12 +689,29 @@ class Neo4jKnowledgeReviewService:
         self.driver = driver
         self.database = database
 
+    def property_assignment(self, principal, request, *, reviewed_at=None):
+        from .property_assignment import property_assignment_tx, apply_property_assignment_tx
+
+        _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
+        with self.driver.session(database=self.database) as session:
+            if reviewed_at is None:
+                return session.execute_read(property_assignment_tx, principal, request)
+            return session.execute_write(apply_property_assignment_tx, principal, request, reviewed_at)
+
     def resolution_targets(self, principal, candidate, query=""):
         from .review_context import resolution_targets_tx
 
         _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
         with self.driver.session(database=self.database) as session:
             return session.execute_read(resolution_targets_tx, principal, candidate, query)
+
+    def resolution_target(self, principal, candidate, record_id, expected_revision):
+        from .review_context import resolution_target_tx
+
+        _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
+        with self.driver.session(database=self.database) as session:
+            return session.execute_read(
+                resolution_target_tx, principal, candidate, record_id, expected_revision)
 
     def evidence_context(self, principal, request):
         from .review_context import evidence_context_tx
@@ -1841,287 +1873,84 @@ class Neo4jKnowledgePublicationService:
             )
         return result
 
-    def get(
-        self,
-        principal: Principal,
-        publication_id: str,
-    ) -> KnowledgePublicationView | None:
+    def get(self, principal: Principal, publication_id: str) -> KnowledgePublicationView | None:
         _require_capability(principal, KNOWLEDGE_PUBLISH_CAPABILITY)
         publication_id = _required_text(publication_id, "publication_id")
         with self.driver.session(database=self.database) as session:
-            row = session.run(
-                """
-                MATCH (publication:KnowledgePublication {
-                    tenant_id: $tenant_id,
-                    publication_id: $publication_id
-                })
-                WHERE EXISTS {
-                    MATCH (publication)-[:USES_TBOX_VERSION]->(
-                        bound_tbox:TBoxVersion {tenant_id: $tenant_id}
-                    )
-                    WHERE bound_tbox.tbox_id =
-                          publication.ontology_version_id
-                      AND bound_tbox.status IN ['PUBLISHED', 'RETIRED']
-                }
-                  AND NOT EXISTS {
-                    MATCH (publication)-[:USES_TBOX_VERSION]->(
-                        wrong_tbox:TBoxVersion
-                    )
-                    WHERE wrong_tbox.tenant_id <> $tenant_id
-                       OR wrong_tbox.tbox_id <>
-                          publication.ontology_version_id
-                }
-                  AND EXISTS {
-                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->()
-                }
-                  AND NOT EXISTS {
-                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
-                          (revision)
-                    WHERE NOT EXISTS {
-                        MATCH (revision)-[:IN_CHUNK|EVIDENCED_BY]->
-                              (chunk:Chunk {tenant_id: $tenant_id})
-                        MATCH (document:Document {
-                            tenant_id: $tenant_id,
-                            document_id: revision.document_id
-                        })-[:ACTIVE_SNAPSHOT]->(
-                            snapshot:KnowledgeSnapshot {
-                                tenant_id: $tenant_id,
-                                build_state: 'PUBLISHED'
-                            }
-                        )-[:INCLUDES_CHUNK]->(chunk)
-                        MATCH (document)-[:ACTIVE_VERSION]->(
-                            version:DocumentVersion {
-                                tenant_id: $tenant_id,
-                                version_id: revision.version_id
-                            }
-                        )
-                        MATCH (snapshot)-[:OF_VERSION]->(version)
-                        WHERE revision.tenant_id = $tenant_id
-                          AND revision.chunk_id = chunk.chunk_id
-                          AND revision.access_policy_id =
-                              chunk.access_policy_id
-                          AND revision.access_policy_version =
-                              chunk.access_policy_version
-                          AND revision.access_groups = chunk.access_groups
-                          AND substring(
-                              chunk.text,
-                              revision.evidence_char_start - chunk.char_start,
-                              revision.evidence_char_end -
-                                  revision.evidence_char_start
-                          ) = revision.evidence_text
-                          AND any(
-                              group IN $groups
-                              WHERE group IN revision.access_groups
-                          )
-                          AND any(
-                              group IN $groups
-                              WHERE group IN chunk.access_groups
-                          )
-                          AND any(
-                              group IN $groups
-                              WHERE group IN document.access_groups
-                          )
-                    }
-                }
-                RETURN publication {.*} AS publication
-                """,
-                tenant_id=principal.tenant_id,
-                publication_id=publication_id,
-                groups=sorted(principal.groups),
-            ).single()
-        return (
-            None
-            if row is None
-            else _publication_view(dict(row["publication"]))
-        )
+            views = session.execute_read(self._read_publications_tx, principal, publication_id, False, 1)
+        return views[0] if views else None
 
-    def active(
-        self,
-        principal: Principal,
-    ) -> KnowledgePublicationView | None:
+    def active(self, principal: Principal) -> KnowledgePublicationView | None:
         _require_capability(principal, KNOWLEDGE_PUBLISH_CAPABILITY)
         with self.driver.session(database=self.database) as session:
-            row = session.run(
-                """
-                MATCH (:KnowledgePublicationState {
-                    tenant_id: $tenant_id
-                })-[:ACTIVE_KNOWLEDGE_PUBLICATION]->
-                  (publication:KnowledgePublication {
-                      tenant_id: $tenant_id,
-                      status: 'ACTIVE'
-                  })
-                WHERE EXISTS {
-                    MATCH (publication)-[:USES_TBOX_VERSION]->(
-                        bound_tbox:TBoxVersion {tenant_id: $tenant_id}
-                    )
-                    WHERE bound_tbox.tbox_id =
-                          publication.ontology_version_id
-                      AND bound_tbox.status IN ['PUBLISHED', 'RETIRED']
-                }
-                  AND NOT EXISTS {
-                    MATCH (publication)-[:USES_TBOX_VERSION]->(
-                        wrong_tbox:TBoxVersion
-                    )
-                    WHERE wrong_tbox.tenant_id <> $tenant_id
-                       OR wrong_tbox.tbox_id <>
-                          publication.ontology_version_id
-                }
-                  AND EXISTS {
-                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->()
-                }
-                  AND NOT EXISTS {
-                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
-                          (revision)
-                    WHERE NOT EXISTS {
-                        MATCH (revision)-[:IN_CHUNK|EVIDENCED_BY]->
-                              (chunk:Chunk {tenant_id: $tenant_id})
-                        MATCH (document:Document {
-                            tenant_id: $tenant_id,
-                            document_id: revision.document_id
-                        })-[:ACTIVE_SNAPSHOT]->(
-                            snapshot:KnowledgeSnapshot {
-                                tenant_id: $tenant_id,
-                                build_state: 'PUBLISHED'
-                            }
-                        )-[:INCLUDES_CHUNK]->(chunk)
-                        MATCH (document)-[:ACTIVE_VERSION]->(
-                            version:DocumentVersion {
-                                tenant_id: $tenant_id,
-                                version_id: revision.version_id
-                            }
-                        )
-                        MATCH (snapshot)-[:OF_VERSION]->(version)
-                        WHERE revision.tenant_id = $tenant_id
-                          AND revision.chunk_id = chunk.chunk_id
-                          AND revision.access_policy_id =
-                              chunk.access_policy_id
-                          AND revision.access_policy_version =
-                              chunk.access_policy_version
-                          AND revision.access_groups = chunk.access_groups
-                          AND substring(
-                              chunk.text,
-                              revision.evidence_char_start - chunk.char_start,
-                              revision.evidence_char_end -
-                                  revision.evidence_char_start
-                          ) = revision.evidence_text
-                          AND any(
-                              group IN $groups
-                              WHERE group IN revision.access_groups
-                          )
-                          AND any(
-                              group IN $groups
-                              WHERE group IN chunk.access_groups
-                          )
-                          AND any(
-                              group IN $groups
-                              WHERE group IN document.access_groups
-                          )
-                    }
-                }
-                RETURN publication {.*} AS publication
-                """,
-                tenant_id=principal.tenant_id,
-                groups=sorted(principal.groups),
-            ).single()
-        return (
-            None
-            if row is None
-            else _publication_view(dict(row["publication"]))
-        )
+            views = session.execute_read(self._read_publications_tx, principal, None, True, 1)
+        return views[0] if views else None
 
-    def history(
-        self,
-        principal: Principal,
-        *,
-        limit: int = 100,
-    ) -> tuple[KnowledgePublicationView, ...]:
+    def history(self, principal: Principal, *, limit: int = 100) -> tuple[KnowledgePublicationView, ...]:
         _require_capability(principal, KNOWLEDGE_PUBLISH_CAPABILITY)
         limit = _positive_integer(limit, "limit", MAX_REVIEW_QUEUE)
         with self.driver.session(database=self.database) as session:
-            rows = session.run(
-                """
-                MATCH (publication:KnowledgePublication {
-                    tenant_id: $tenant_id
-                })
-                WHERE EXISTS {
-                    MATCH (publication)-[:USES_TBOX_VERSION]->(
-                        bound_tbox:TBoxVersion {tenant_id: $tenant_id}
-                    )
-                    WHERE bound_tbox.tbox_id =
-                          publication.ontology_version_id
-                      AND bound_tbox.status IN ['PUBLISHED', 'RETIRED']
+            return session.execute_read(self._read_publications_tx, principal, None, False, limit)
+
+    @staticmethod
+    @unit_of_work(timeout=30.0)
+    def _read_publications_tx(tx, principal, publication_id, active_only, limit):
+        rows = tuple(tx.run("""
+            MATCH (p:KnowledgePublication {tenant_id:$tenant_id})
+            WHERE p.status IN ['ACTIVE','RETIRED']
+              AND size(p.published_revision_ids)<=500
+              AND COUNT { MATCH (p)-[:PUBLISHES_KNOWLEDGE_REVISION]->() }=size(p.published_revision_ids)
+              AND ($publication_id IS NULL OR p.publication_id=$publication_id)
+              AND (NOT $active_only OR EXISTS {
+                MATCH (:KnowledgePublicationState {tenant_id:$tenant_id})
+                      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(p)
+                WHERE p.status='ACTIVE'
+              })
+              AND EXISTS {
+                MATCH (p)-[:USES_TBOX_VERSION]->(t:TBoxVersion {tenant_id:$tenant_id})
+                WHERE t.tbox_id=p.ontology_version_id AND t.status IN ['PUBLISHED','RETIRED']
+              }
+              AND COUNT { MATCH (p)-[:USES_TBOX_VERSION]->() }=1
+              AND NOT EXISTS {
+                MATCH (p)-[:PUBLISHES_KNOWLEDGE_REVISION]->(r)
+                WHERE NOT EXISTS {
+                  MATCH (r)-[:IN_CHUNK|EVIDENCED_BY]->(c:Chunk {tenant_id:$tenant_id})
+                  MATCH (p)-[:USES_KNOWLEDGE_SNAPSHOT]->(s:KnowledgeSnapshot {tenant_id:$tenant_id})
+                        -[:INCLUDES_CHUNK]->(c)
+                  MATCH (s)-[:OF_VERSION]->(v:DocumentVersion {tenant_id:$tenant_id,version_id:r.version_id})
+                  MATCH (d:Document {tenant_id:$tenant_id,document_id:r.document_id})-[:HAS_VERSION]->(v)
+                  WHERE r.tenant_id=$tenant_id AND r.governance_status='PUBLISHED'
+                    AND (r:GovernedEntityMentionRevision OR r:GovernedAssertionRevision)
+                    AND r.ontology_version_id=p.ontology_version_id
+                    AND r.chunk_id=c.chunk_id AND c.document_id=d.document_id AND c.version_id=v.version_id
+                    AND r.access_policy_id=c.access_policy_id AND r.access_policy_version=c.access_policy_version
+                    AND r.access_groups=c.access_groups
+                    AND r.evidence_char_start>=c.char_start AND r.evidence_char_end<=c.char_end
+                    AND substring(c.text,r.evidence_char_start-c.char_start,r.evidence_char_end-r.evidence_char_start)=r.evidence_text
+                    AND any(g IN $groups WHERE g IN coalesce(r.access_groups,[]))
+                    AND any(g IN $groups WHERE g IN coalesce(c.access_groups,[]))
+                    AND any(g IN $groups WHERE g IN coalesce(d.access_groups,[]))
                 }
-                  AND NOT EXISTS {
-                    MATCH (publication)-[:USES_TBOX_VERSION]->(
-                        wrong_tbox:TBoxVersion
-                    )
-                    WHERE wrong_tbox.tenant_id <> $tenant_id
-                       OR wrong_tbox.tbox_id <>
-                          publication.ontology_version_id
-                }
-                  AND EXISTS {
-                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->()
-                }
-                  AND NOT EXISTS {
-                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
-                          (revision)
-                    WHERE NOT EXISTS {
-                        MATCH (revision)-[:IN_CHUNK|EVIDENCED_BY]->
-                              (chunk:Chunk {tenant_id: $tenant_id})
-                        MATCH (document:Document {
-                            tenant_id: $tenant_id,
-                            document_id: revision.document_id
-                        })-[:ACTIVE_SNAPSHOT]->(
-                            snapshot:KnowledgeSnapshot {
-                                tenant_id: $tenant_id,
-                                build_state: 'PUBLISHED'
-                            }
-                        )-[:INCLUDES_CHUNK]->(chunk)
-                        MATCH (document)-[:ACTIVE_VERSION]->(
-                            version:DocumentVersion {
-                                tenant_id: $tenant_id,
-                                version_id: revision.version_id
-                            }
-                        )
-                        MATCH (snapshot)-[:OF_VERSION]->(version)
-                        WHERE revision.tenant_id = $tenant_id
-                          AND revision.chunk_id = chunk.chunk_id
-                          AND revision.access_policy_id =
-                              chunk.access_policy_id
-                          AND revision.access_policy_version =
-                              chunk.access_policy_version
-                          AND revision.access_groups = chunk.access_groups
-                          AND substring(
-                              chunk.text,
-                              revision.evidence_char_start - chunk.char_start,
-                              revision.evidence_char_end -
-                                  revision.evidence_char_start
-                          ) = revision.evidence_text
-                          AND any(
-                              group IN $groups
-                              WHERE group IN revision.access_groups
-                          )
-                          AND any(
-                              group IN $groups
-                              WHERE group IN chunk.access_groups
-                          )
-                          AND any(
-                              group IN $groups
-                              WHERE group IN document.access_groups
-                          )
-                    }
-                }
-                RETURN publication {.*} AS publication
-                ORDER BY publication.generation DESC
-                LIMIT $limit
-                """,
-                tenant_id=principal.tenant_id,
-                groups=sorted(principal.groups),
-                limit=limit,
-            )
-            return tuple(
-                _publication_view(dict(row["publication"])) for row in rows
-            )
+              }
+            RETURN p{.*} AS publication,
+              [(p)-[:PUBLISHES_KNOWLEDGE_REVISION]->(r) | r.revision_id] AS revision_ids
+            ORDER BY p.generation DESC LIMIT $limit
+        """, tenant_id=principal.tenant_id, groups=sorted(principal.groups),
+            publication_id=publication_id, active_only=active_only, limit=limit))
+        views = []
+        for row in rows:
+            properties = dict(row["publication"])
+            if sorted(row["revision_ids"]) != sorted(properties.get("published_revision_ids", ())):
+                continue
+            try:
+                sources = load_publication_sources_tx(tx, principal, properties)
+            except KnowledgePublicationConflict:
+                continue
+            properties.update(source_document_count=len(sources),
+                              source_chunk_count=sum(len(item["chunks"]) for item in sources),
+                              source_snapshot_ids=[item["snapshot_id"] for item in sources])
+            views.append(_publication_view(properties))
+        return tuple(views)
 
     @staticmethod
     def _validated_ids(
@@ -2147,6 +1976,7 @@ class Neo4jKnowledgePublicationService:
         return tuple(sorted(normalized))
 
     @classmethod
+    @unit_of_work(timeout=30.0)
     def _publish_tx(
         cls,
         tx: Any,
@@ -2214,6 +2044,7 @@ class Neo4jKnowledgePublicationService:
                 principal,
                 tuple(existing.get("published_revision_ids", ())),
                 ontology_version_id=ontology_version_id,
+                publication_id=publication_id,
             )
             cls._validate_property_cardinality_tx(
                 tx,
@@ -2223,6 +2054,7 @@ class Neo4jKnowledgePublicationService:
                 require_active_tbox=False,
             )
             cls._validate_hierarchies_tx(tx, principal.tenant_id, ontology_version_id, records)
+            prepare_publication_index_tx(tx, principal, existing, bind_legacy=True)
             return
         if current_id != expected_active_id:
             raise KnowledgePublicationConflict(
@@ -2244,6 +2076,7 @@ class Neo4jKnowledgePublicationService:
                 principal,
                 tuple(current.get("published_revision_ids", ())),
                 ontology_version_id=_publication_ontology_id(current),
+                publication_id=current_id,
             )
 
         carried_by_record = {
@@ -2397,10 +2230,6 @@ class Neo4jKnowledgePublicationService:
             published_records.append(published)
             published_snapshots[published.revision_id] = snapshot_id
 
-        if not published_records:
-            raise KnowledgePublicationConflict(
-                "publication cannot activate an empty knowledge set"
-            )
         if len(published_records) > MAX_PUBLICATION_RECORDS:
             raise KnowledgePublicationConflict(
                 "active publication exceeds the bounded manifest limit"
@@ -2433,6 +2262,7 @@ class Neo4jKnowledgePublicationService:
             tx,
             principal.tenant_id,
             tuple(published_records),
+            ontology_version_id=(_publication_ontology_id(current) if not published_records and current_id else None),
             require_active_tbox=True,
         )
         cls._validate_hierarchies_tx(
@@ -2450,6 +2280,9 @@ class Neo4jKnowledgePublicationService:
             raise KnowledgePublicationConflict(
                 "publication change set does not change the active manifest"
             )
+        sources = load_sources_tx(tx, principal, tuple(sorted(set(published_snapshots.values()))))
+        embedding_space_id = require_embedding_coverage_tx(tx, principal, sources)
+        source_hash = source_manifest_hash(sources, embedding_space_id)
         manifest = {
             "tenant_id": principal.tenant_id,
             "ontology_version_id": ontology_version_id,
@@ -2459,6 +2292,8 @@ class Neo4jKnowledgePublicationService:
             "removed_record_ids": removed_record_ids,
             "replaced_record_ids": replaced_record_ids,
             "snapshot_ids": sorted(set(published_snapshots.values())),
+            "source_manifest_hash": source_hash,
+            "embedding_space_id": embedding_space_id,
         }
         manifest_hash = _manifest_hash(manifest)
         generation = int(state["publication_generation"]) + 1
@@ -2478,7 +2313,13 @@ class Neo4jKnowledgePublicationService:
                 replaced_record_ids: $replaced_record_ids,
                 ontology_version_id: $ontology_version_id,
                 base_publication_id: $base_publication_id,
-                manifest_version: 3,
+                manifest_version: 4,
+                source_snapshot_ids: $source_snapshot_ids,
+                source_manifest_json: $source_manifest_json,
+                source_manifest_hash: $source_manifest_hash,
+                source_document_count: $source_document_count,
+                source_chunk_count: $source_chunk_count,
+                embedding_space_id: $embedding_space_id,
                 status: 'BUILDING',
                 created_by: $created_by,
                 created_at: $now
@@ -2490,6 +2331,12 @@ class Neo4jKnowledgePublicationService:
             tenant_id=principal.tenant_id,
             generation=generation,
             manifest_hash=manifest_hash,
+            source_snapshot_ids=[item["snapshot_id"] for item in sources],
+            source_manifest_json=canonical_json(sources),
+            source_manifest_hash=source_hash,
+            source_document_count=len(sources),
+            source_chunk_count=sum(len(item["chunks"]) for item in sources),
+            embedding_space_id=embedding_space_id,
             source_revision_ids=list(source_ids),
             published_revision_ids=list(published_ids),
             removed_record_ids=list(removed_record_ids),
@@ -2540,6 +2387,10 @@ class Neo4jKnowledgePublicationService:
             before=tuple(record for record, _ in carried_entries), after=tuple(published_records),
             source_revision_ids=source_ids, removed_record_ids=removed_record_ids,
             replaced_record_ids=replaced_record_ids,
+            source_scope=compare_source_summaries(
+                source_summaries_tx(tx, principal, load_publication_sources_tx(tx, principal, current)) if current_id else [],
+                source_summaries_tx(tx, principal, sources),
+            ),
         )
         if expected_preview_hash is not None and preview["preview_hash"] != expected_preview_hash:
             raise KnowledgePublicationConflict("publication preview changed; review a fresh preview", issue=PublicationIssue("PREVIEW_CHANGED"))
@@ -2553,6 +2404,7 @@ class Neo4jKnowledgePublicationService:
         ).consume()
 
     @classmethod
+    @unit_of_work(timeout=30.0)
     def _rollback_tx(
         cls,
         tx: Any,
@@ -2590,6 +2442,7 @@ class Neo4jKnowledgePublicationService:
                 principal,
                 tuple(properties.get("published_revision_ids", ())),
                 ontology_version_id=ontology_version_id,
+                publication_id=target_id,
             )
             cls._validate_property_cardinality_tx(
                 tx,
@@ -2599,6 +2452,7 @@ class Neo4jKnowledgePublicationService:
                 require_active_tbox=False,
             )
             cls._validate_hierarchies_tx(tx, principal.tenant_id, ontology_version_id, records)
+            prepare_publication_index_tx(tx, principal, properties, bind_legacy=True)
             return
         if current_id != expected_active_id:
             raise KnowledgePublicationConflict(
@@ -2615,6 +2469,7 @@ class Neo4jKnowledgePublicationService:
             principal,
             tuple(properties.get("published_revision_ids", ())),
             ontology_version_id=ontology_version_id,
+            publication_id=target_id,
         )
         cls._validate_property_cardinality_tx(
             tx,
@@ -2709,6 +2564,8 @@ class Neo4jKnowledgePublicationService:
         """
 
         ontology_ids = {record.trust.ontology_version_id for record in records}
+        if not records and ontology_version_id is not None:
+            ontology_ids.add(ontology_version_id)
         if len(ontology_ids) != 1:
             raise KnowledgePublicationConflict(
                 "one publication must use exactly one T-Box version"
@@ -3126,6 +2983,7 @@ class Neo4jKnowledgePublicationService:
         required_statuses: tuple[GovernanceStatus, ...],
         ontology_version_id: str | None,
         require_active_tbox: bool,
+        publication_id: str | None = None,
     ) -> tuple[EntityMentionRecord | AssertionRecord, str]:
         row = tx.run(
             """
@@ -3139,17 +2997,23 @@ class Neo4jKnowledgePublicationService:
             OPTIONAL MATCH (head)-[:CURRENT_REVISION]->(current)
             MATCH (revision)-[:IN_CHUNK|EVIDENCED_BY]->
                   (chunk:Chunk {tenant_id: $tenant_id})
-            MATCH (document:Document {tenant_id: $tenant_id})
-                  -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-                      tenant_id: $tenant_id,
-                      build_state: 'PUBLISHED'
-                  })-[:INCLUDES_CHUNK]->(chunk)
-            MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
-                tenant_id: $tenant_id
-            })
-            MATCH (snapshot)-[:OF_VERSION]->(version)
+            MATCH (snapshot:KnowledgeSnapshot {tenant_id: $tenant_id})-[:INCLUDES_CHUNK]->(chunk)
+            MATCH (snapshot)-[:OF_VERSION]->(version:DocumentVersion {tenant_id:$tenant_id})
+            MATCH (document:Document {tenant_id:$tenant_id})-[:HAS_VERSION]->(version)
             MATCH (tbox:TBoxVersion {tenant_id: $tenant_id})
             WHERE revision.governance_status IN $required_statuses
+              AND snapshot.build_state IN ['PUBLISHED','RETIRED']
+              AND coalesce(document.lifecycle_status,'ACTIVE')='ACTIVE'
+              AND coalesce(version.lifecycle_status,'ACTIVE')='ACTIVE'
+              AND document.retirement_id IS NULL AND snapshot.retirement_id IS NULL AND version.retirement_id IS NULL
+              AND (( $publication_id IS NULL AND EXISTS {
+                    MATCH (document)-[:ACTIVE_SNAPSHOT]->(snapshot)
+                    MATCH (document)-[:ACTIVE_VERSION]->(version)
+                  }) OR ( $publication_id IS NOT NULL AND EXISTS {
+                    MATCH (publication:KnowledgePublication {tenant_id:$tenant_id,publication_id:$publication_id})
+                          -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
+                    MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->(revision)
+                  }))
               AND revision.ontology_version_id = tbox.tbox_id
               AND tbox.status IN ['PUBLISHED', 'RETIRED']
               AND (
@@ -3202,6 +3066,7 @@ class Neo4jKnowledgePublicationService:
             tenant_id=principal.tenant_id,
             revision_id=revision_id,
             groups=sorted(principal.groups),
+            publication_id=publication_id,
             require_current=require_current,
             required_statuses=[status.value for status in required_statuses],
             ontology_version_id=ontology_version_id,
@@ -3231,6 +3096,7 @@ class Neo4jKnowledgePublicationService:
         revision_ids: tuple[str, ...],
         *,
         ontology_version_id: str,
+        publication_id: str,
     ) -> tuple[EntityMentionRecord | AssertionRecord, ...]:
         return tuple(
             record
@@ -3239,6 +3105,7 @@ class Neo4jKnowledgePublicationService:
                 principal,
                 revision_ids,
                 ontology_version_id=ontology_version_id,
+                publication_id=publication_id,
             )
         )
 
@@ -3250,13 +3117,18 @@ class Neo4jKnowledgePublicationService:
         revision_ids: tuple[str, ...],
         *,
         ontology_version_id: str,
+        publication_id: str,
     ) -> tuple[
         tuple[EntityMentionRecord | AssertionRecord, str], ...
     ]:
-        if not revision_ids or len(revision_ids) > MAX_PUBLICATION_RECORDS:
+        if len(revision_ids) > MAX_PUBLICATION_RECORDS:
             raise KnowledgePublicationConflict(
                 "publication manifest size is invalid"
             )
+        properties = cls._load_completed_publication_tx(tx, principal.tenant_id, publication_id)
+        load_publication_sources_tx(tx, principal, properties)
+        if tuple(properties.get("published_revision_ids", ())) != revision_ids:
+            raise KnowledgePublicationConflict("publication revision manifest changed")
         entries = tuple(
             cls._load_revision_tx(
                 tx,
@@ -3265,6 +3137,7 @@ class Neo4jKnowledgePublicationService:
                 require_current=False,
                 required_statuses=(GovernanceStatus.PUBLISHED,),
                 ontology_version_id=ontology_version_id,
+                publication_id=publication_id,
                 require_active_tbox=False,
             )
             for revision_id in revision_ids
@@ -3296,6 +3169,14 @@ class Neo4jKnowledgePublicationService:
             }
             for record in records
         ]
+        tx.run("""
+            MATCH (p:KnowledgePublication {tenant_id:$tenant_id,publication_id:$publication_id})
+            MATCH (t:TBoxVersion {tenant_id:$tenant_id,tbox_id:$ontology_version_id,status:'PUBLISHED'})
+            MATCH (:TBoxCatalog {tenant_id:$tenant_id})-[:ACTIVE_TBOX_VERSION]->(t)
+            MERGE (p)-[:USES_TBOX_VERSION]->(t)
+        """, tenant_id=tenant_id,publication_id=publication_id,ontology_version_id=ontology_version_id).consume()
+        if not records:
+            return
         result = tx.run(
             """
             MATCH (publication:KnowledgePublication {
@@ -3321,8 +3202,7 @@ class Neo4jKnowledgePublicationService:
                OR revision:GovernedAssertionRevision
             MATCH (snapshot:KnowledgeSnapshot {
                 tenant_id: $tenant_id,
-                snapshot_id: row.snapshot_id,
-                build_state: 'PUBLISHED'
+                snapshot_id: row.snapshot_id
             })
             CREATE (publication)-[:PUBLISHES_KNOWLEDGE_REVISION {
                 record_kind: row.record_kind
@@ -3445,6 +3325,10 @@ class Neo4jKnowledgePublicationService:
             mention.surface,
             extractor,
         )
+        if mention.assignment_source_revision_id is not None:
+            # A per-property identity decision is a distinct governed mention,
+            # even when its exact source range matches an extracted mention.
+            mention_id = _stable_id("property-assignment-mention:v1", mention_id, mention.record_id)
         properties = {
             "mention_id": mention_id,
             "tenant_id": mention.tenant_id,
@@ -3478,11 +3362,11 @@ class Neo4jKnowledgePublicationService:
             MATCH (document:Document {
                 tenant_id: $tenant_id,
                 document_id: revision.document_id
-            })-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-                tenant_id: $tenant_id,
-                build_state: 'PUBLISHED'
-            })-[:INCLUDES_CHUNK]->(chunk)
-            MATCH (document)-[:ACTIVE_VERSION]->(:DocumentVersion {
+            })
+            MATCH (:KnowledgePublication {tenant_id:$tenant_id,publication_id:$publication_id})
+                  -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {tenant_id:$tenant_id})
+                  -[:INCLUDES_CHUNK]->(chunk)
+            MATCH (document)-[:HAS_VERSION]->(:DocumentVersion {
                 tenant_id: $tenant_id,
                 version_id: revision.version_id
             })
@@ -3635,11 +3519,11 @@ class Neo4jKnowledgePublicationService:
             MATCH (document:Document {
                 tenant_id: $tenant_id,
                 document_id: revision.document_id
-            })-[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-                tenant_id: $tenant_id,
-                build_state: 'PUBLISHED'
-            })-[:INCLUDES_CHUNK]->(chunk)
-            MATCH (document)-[:ACTIVE_VERSION]->(:DocumentVersion {
+            })
+            MATCH (:KnowledgePublication {tenant_id:$tenant_id,publication_id:$publication_id})
+                  -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {tenant_id:$tenant_id})
+                  -[:INCLUDES_CHUNK]->(chunk)
+            MATCH (document)-[:HAS_VERSION]->(:DocumentVersion {
                 tenant_id: $tenant_id,
                 version_id: revision.version_id
             })
@@ -3809,6 +3693,13 @@ class Neo4jKnowledgePublicationService:
         *,
         action: str,
     ) -> None:
+        source_row = tx.run("""
+            MATCH (p:KnowledgePublication {tenant_id:$tenant_id,publication_id:$publication_id})
+            RETURN p{.*} AS publication
+        """, tenant_id=principal.tenant_id, publication_id=publication_id).single()
+        if source_row is None:
+            raise KnowledgePublicationConflict("publication activation target is unavailable")
+        prepare_publication_index_tx(tx, principal, dict(source_row["publication"]), bind_legacy=True)
         activation_id = _stable_id(
             "knowledge-publication-activation:v1",
             principal.tenant_id,

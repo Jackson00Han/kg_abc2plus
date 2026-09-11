@@ -522,6 +522,7 @@ class ManualFactInput(StrictAPIModel):
 
 
 class KnowledgeConstructionRequest(StrictAPIModel):
+    preflight_token: Annotated[str, StringConstraints(strict=True, pattern=r"^[a-f0-9]{64}$")] | None = None
     knowledge_scope: Literal["BUSINESS", "AUTHORITATIVE"] = "BUSINESS"
     manual_fact: ManualFactInput | None = None
     industrial_context: IndustrialConstructionContextRequest | None = None
@@ -679,6 +680,35 @@ class ConstructionChunkResponse(StrictAPIModel):
         ):
             raise ValueError("validation attempts must be consecutive from one")
         return self
+
+
+class UploadDifferenceResponse(StrictAPIModel):
+    before: Annotated[str, Field(max_length=160)]
+    after: Annotated[str, Field(max_length=160)]
+
+
+class UploadMatchResponse(StrictAPIModel):
+    document_id: Identifier
+    version_id: Identifier
+    title: str
+    canonical_uri: str
+    match_kind: Literal["EXACT", "SIMILAR"]
+    similarity: Annotated[float, Field(ge=0, le=1)]
+    difference: UploadDifferenceResponse | None = None
+
+
+class KnowledgeUploadPreflightResponse(StrictAPIModel):
+    checksum: str
+    original_checksum: str
+    exact_matches: Annotated[list[UploadMatchResponse], Field(max_length=20)]
+    similar_matches: Annotated[list[UploadMatchResponse], Field(max_length=50)]
+    similarity_checked: bool
+    truncated: bool
+    truncation_reasons: list[str]
+    compared_versions: Annotated[int, Field(ge=0, le=50)]
+    method: Literal["character-5-shingle-jaccard-v1"]
+    threshold: Annotated[float, Field(ge=0, le=1)]
+    review_token: str
 
 
 class KnowledgeConstructionResponse(StrictAPIModel):
@@ -1011,6 +1041,27 @@ class ConfirmedResolutionTarget(StrictAPIModel):
     reason: str
 
 
+class PropertyAssignmentRequest(EntityResolutionRequest):
+    pass
+
+
+class PropertyAssignmentApplyRequest(StrictAPIModel):
+    record_id: Identifier
+    expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    target_entity_id: Identifier
+    target_record_id: Identifier
+    target_expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    notes: Annotated[str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class PropertyAssignmentResponse(StrictAPIModel):
+    record_id: Identifier
+    revision: int
+    current: ConfirmedResolutionTarget | None
+    items: list[ConfirmedResolutionTarget] = Field(max_length=20)
+    truncated: bool
+
+
 class IdentityPropertyResponse(StrictAPIModel):
     name: TypeName
     datatype: TypeName
@@ -1322,7 +1373,20 @@ class PublicationRequest(StrictAPIModel):
         return self
 
 
+class PublicationSourceSummary(StrictAPIModel):
+    document_id: Identifier
+    version_id: Identifier
+    title: ShortText
+
+
+class PublicationSourceScope(StrictAPIModel):
+    added: list[PublicationSourceSummary] = Field(default_factory=list, max_length=500)
+    removed: list[PublicationSourceSummary] = Field(default_factory=list, max_length=500)
+    unchanged_count: Annotated[int, Field(strict=True, ge=0, le=500)] = 0
+
+
 class PublicationPreviewResponse(StrictAPIModel):
+    source_scope: PublicationSourceScope = Field(default_factory=PublicationSourceScope)
     schema_name: Literal["graphrag-publication-preview-v1"] = Field(alias="schema")
     publication_id: Identifier
     ontology_version_id: Identifier
@@ -1351,6 +1415,11 @@ class PublicationHistoryRequest(StrictAPIModel):
 
 
 class PublicationResponse(StrictAPIModel):
+    source_document_count: Annotated[int, Field(strict=True, ge=0, le=500)] = 0
+    source_chunk_count: Annotated[int, Field(strict=True, ge=0, le=20000)] = 0
+    source_snapshot_ids: tuple[Identifier, ...] = Field(default=(), max_length=500)
+    embedding_space_id: Identifier | None = None
+    manifest_version: Annotated[int, Field(strict=True, ge=1)] = 3
     publication_id: Identifier
     ontology_version_id: Identifier
     generation: Annotated[int, Field(strict=True, ge=1)]
@@ -1375,6 +1444,7 @@ class PublicationResponse(StrictAPIModel):
     rolled_back_at: AwareDatetime | None = None
 
     @field_validator(
+        "source_snapshot_ids",
         "source_revision_ids",
         "published_revision_ids",
         "removed_record_ids",

@@ -2,7 +2,7 @@
 from typing import Annotated, Literal
 from pydantic import Field, StringConstraints
 from .contracts import StrictAPIModel, Identifier, Checksum
-from .knowledge_contracts import ShortText
+from .knowledge_contracts import ShortText, PublicationSourceScope
 
 class PublicationComparisonRequest(StrictAPIModel):
     target_publication_id: Identifier
@@ -28,6 +28,7 @@ class PublicationFactChange(StrictAPIModel):
     after: PublicationFactSummary
 
 class PublicationComparisonResponse(StrictAPIModel):
+    source_scope: PublicationSourceScope = Field(default_factory=PublicationSourceScope)
     expected_active_publication_id: Identifier
     target_publication_id: Identifier
     target_generation: Annotated[int,Field(strict=True,ge=1)]

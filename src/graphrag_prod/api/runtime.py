@@ -77,12 +77,15 @@ class OperationKind(str, Enum):
     ONTOLOGY_IMPORT = "ontology_import"
     ONTOLOGY_PUBLISH = "ontology_publish"
     KNOWLEDGE_IMPORT = "knowledge_import"
+    KNOWLEDGE_PREFLIGHT = "knowledge_preflight"
     KNOWLEDGE_CONSTRUCT = "knowledge_construct"
     KNOWLEDGE_CONSTRUCTION_JOB = "knowledge_construction_job"
     KNOWLEDGE_CONSTRUCTION_JOBS = "knowledge_construction_jobs"
     KNOWLEDGE_REVIEW_QUEUE = "knowledge_review_queue"
     KNOWLEDGE_REVISION_HISTORY = "knowledge_revision_history"
     KNOWLEDGE_REVIEW_BATCH = "knowledge_review_batch"
+    PROPERTY_ASSIGNMENT = "property_assignment"
+    PROPERTY_ASSIGNMENT_APPLY = "property_assignment_apply"
     KNOWLEDGE_REVIEW_ASSESSMENT = "knowledge_review_assessment"
     KNOWLEDGE_REVIEW_EVIDENCE = "knowledge_review_evidence"
     ENTITY_RESOLUTION_SUGGEST = "entity_resolution_suggest"
@@ -120,6 +123,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_IMPORT,
             self.KNOWLEDGE_CONSTRUCT,
             self.KNOWLEDGE_REVIEW_BATCH,
+            self.PROPERTY_ASSIGNMENT_APPLY,
             self.ENTITY_RESOLUTION_APPLY,
             self.KNOWLEDGE_PUBLISH,
             self.KNOWLEDGE_ROLLBACK,
@@ -135,11 +139,13 @@ class OperationKind(str, Enum):
             self.HEALTH,
             self.READINESS,
             self.ONTOLOGY_LIST,
+            self.KNOWLEDGE_PREFLIGHT,
             self.KNOWLEDGE_CONSTRUCTION_JOB,
             self.KNOWLEDGE_CONSTRUCTION_JOBS,
             self.KNOWLEDGE_REVIEW_QUEUE,
             self.KNOWLEDGE_REVISION_HISTORY,
             self.ENTITY_RESOLUTION_SUGGEST,
+            self.PROPERTY_ASSIGNMENT,
             self.KNOWLEDGE_REVIEW_ASSESSMENT,
             self.KNOWLEDGE_REVIEW_EVIDENCE,
             self.KNOWLEDGE_HISTORY,
@@ -174,6 +180,7 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.ONTOLOGY_IMPORT: "ontology:write",
         OperationKind.ONTOLOGY_PUBLISH: "ontology:publish",
         OperationKind.KNOWLEDGE_IMPORT: "knowledge:import",
+        OperationKind.KNOWLEDGE_PREFLIGHT: "knowledge:construct",
         OperationKind.KNOWLEDGE_CONSTRUCT: "knowledge:construct",
         OperationKind.KNOWLEDGE_CONSTRUCTION_JOB: "knowledge:construct",
         OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS: "knowledge:construct",
@@ -181,6 +188,8 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_REVISION_HISTORY: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_BATCH: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_EVIDENCE: "knowledge:review",
+        OperationKind.PROPERTY_ASSIGNMENT: "knowledge:review",
+        OperationKind.PROPERTY_ASSIGNMENT_APPLY: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_ASSESSMENT: "knowledge:review",
         OperationKind.ENTITY_RESOLUTION_SUGGEST: "knowledge:review",
         OperationKind.ENTITY_RESOLUTION_APPLY: "knowledge:review",
@@ -320,6 +329,8 @@ class ErrorCode(str, Enum):
     FORBIDDEN = "forbidden"
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
+    UPLOAD_REVIEW_REQUIRED = "upload_review_required"
+    UPLOAD_IN_PROGRESS = "upload_in_progress"
     GRAPH_VIEW_CHANGED = "graph_view_changed"
     RATE_LIMITED = "rate_limited"
     DEPENDENCY_TIMEOUT = "dependency_timeout"
@@ -434,6 +445,16 @@ class ConflictError(ApiRuntimeError):
     default_message = "the operation conflicts with current state"
 
 
+class UploadReviewRequiredError(ConflictError):
+    code = ErrorCode.UPLOAD_REVIEW_REQUIRED
+    default_message = "请先核对重复或相似资料，再决定是否继续构建。"
+
+
+class UploadInProgressError(ConflictError):
+    code = ErrorCode.UPLOAD_IN_PROGRESS
+    default_message = "相同内容正在构建，请稍后查看构建任务，无需重复提交。"
+
+
 class PublicationValidationError(ConflictError):
     """A fixed reason and locations from an authorized publication check."""
 
@@ -510,6 +531,8 @@ _PUBLIC_ERROR_MESSAGES = MappingProxyType(
         ErrorCode.FORBIDDEN: AuthorizationError.default_message,
         ErrorCode.NOT_FOUND: ResourceNotFoundError.default_message,
         ErrorCode.CONFLICT: ConflictError.default_message,
+        ErrorCode.UPLOAD_REVIEW_REQUIRED: UploadReviewRequiredError.default_message,
+        ErrorCode.UPLOAD_IN_PROGRESS: UploadInProgressError.default_message,
         ErrorCode.GRAPH_VIEW_CHANGED: GraphViewChangedError.default_message,
         ErrorCode.RATE_LIMITED: RateLimitExceeded.default_message,
         ErrorCode.DEPENDENCY_TIMEOUT: DependencyTimeoutError.default_message,

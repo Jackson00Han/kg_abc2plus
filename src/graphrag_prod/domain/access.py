@@ -58,8 +58,8 @@ def can_access(
 def retrieval_scope_token(kind: str, value: str) -> str:
     """Return a Lucene-safe, non-reversible token for an authorization scope."""
 
-    if kind not in {"tenant", "group"}:
-        raise ValueError("retrieval scope kind must be tenant or group")
+    if kind not in {"tenant", "group", "version"}:
+        raise ValueError("retrieval scope kind must be tenant, group or version")
     normalized = value.strip()
     if not normalized:
         raise ValueError("retrieval scope value must not be empty")
@@ -76,3 +76,20 @@ def active_retrieval_scope(tenant_id: str, groups: frozenset[str]) -> str:
         retrieval_scope_token("group", group) for group in sorted(normalized_groups)
     )
     return " ".join(tokens)
+
+
+def publication_retrieval_scope(
+    tenant_id: str, version_id: str, groups: frozenset[str],
+) -> str:
+    """Stable fulltext partition shared by every publication of this version.
+
+    Membership is selected by the publication manifest at query time. Keeping
+    this separate from ingestion's active scope allows an older document
+    version to be searched without reactivating it in the upload workspace.
+    """
+    normalized_groups = _normalized_set(groups, "groups")
+    return " ".join([
+        retrieval_scope_token("tenant", tenant_id),
+        retrieval_scope_token("version", version_id),
+        *(retrieval_scope_token("group", group) for group in sorted(normalized_groups)),
+    ])

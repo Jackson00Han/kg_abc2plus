@@ -377,7 +377,11 @@ def _report_from_document(value: object) -> PublishedGraphQualityReport:
     ruleset_version = _required_text(
         document["ruleset_version"], "ruleset_version"
     )
-    if ruleset_version != PUBLISHED_QUALITY_RULESET_VERSION:
+    if ruleset_version not in {
+        "published-governed-graph-quality-v1",
+        "published-governed-graph-quality-v2",
+        PUBLISHED_QUALITY_RULESET_VERSION,
+    }:
         raise PublishedGraphQualityHistoryConflict()
     return PublishedGraphQualityReport(
         run_id=run_id,
@@ -517,6 +521,22 @@ def _acl_payloads(
     return tuple(values)
 
 
+def _publication_acl_requirements(
+    boundary: Mapping[str, Any],
+    report: PublishedGraphQualityReport,
+    principal: Principal,
+) -> tuple[tuple[str, ...], ...]:
+    raw_requirements = boundary.get("acl_requirements") or ()
+    # A validated empty release contains no source ACLs. Keep its audit
+    # private to the recorder's groups instead of weakening history access.
+    if (not raw_requirements
+            and dict(report.counts).get("revisions") == 0
+            and boundary.get("publication_revision_count") == 0
+            and boundary.get("publication_source_count") == 0):
+        raw_requirements = (tuple(sorted(principal.groups)),)
+    return _normalize_acl_requirements(raw_requirements)
+
+
 def _manifest(items: Sequence[Mapping[str, Any]], id_key: str) -> str:
     return _canonical_json(
         [
@@ -588,7 +608,8 @@ CALL (publication) {
 CALL (publication) {
     OPTIONAL MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->
           (snapshot:KnowledgeSnapshot)
-    OPTIONAL MATCH (document:Document)-[:ACTIVE_SNAPSHOT]->(snapshot)
+    OPTIONAL MATCH (snapshot)-[:OF_VERSION]->(version:DocumentVersion)
+    OPTIONAL MATCH (document:Document)-[:HAS_VERSION]->(version)
     RETURN [value IN collect(document.access_groups) WHERE value IS NOT NULL]
            AS snapshot_document_groups
 }
@@ -625,7 +646,8 @@ WITH publication, tbox,
      AND NOT EXISTS {
          MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->
                (snapshot:KnowledgeSnapshot)
-         MATCH (document:Document)-[:ACTIVE_SNAPSHOT]->(snapshot)
+         MATCH (snapshot)-[:OF_VERSION]->(version:DocumentVersion)
+         MATCH (document:Document)-[:HAS_VERSION]->(version)
          WHERE document.tenant_id <> $tenant_id
             OR snapshot.tenant_id <> $tenant_id
             OR none(group IN $groups
@@ -637,6 +659,9 @@ RETURN publication.publication_id AS publication_id,
        publication.ontology_version_id AS ontology_version_id,
        tbox.tbox_id AS tbox_id,
        tbox.checksum AS tbox_checksum,
+       size(publication.published_revision_ids) AS publication_revision_count,
+       COUNT { MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->() }
+           AS publication_source_count,
        acl_requirements,
        acl_complete
 """
@@ -1361,9 +1386,7 @@ class Neo4jPublishedGraphQualityHistoryService:
         boundary_value = dict(boundary)
         if boundary_value.get("acl_complete") is not True:
             raise PublishedGraphQualityAuthorizationError()
-        requirements = _normalize_acl_requirements(
-            boundary_value.get("acl_requirements") or ()
-        )
+        requirements = _publication_acl_requirements(boundary_value, report, principal)
         if any(not (set(groups) & principal.groups) for groups in requirements):
             raise PublishedGraphQualityAuthorizationError()
         issue_values = _issue_payloads(report)

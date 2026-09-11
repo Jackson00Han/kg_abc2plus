@@ -566,18 +566,34 @@ MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
       })-[:IN_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
 MATCH (mention)-[:REFERS_TO]->(entity:Entity {tenant_id: $tenant_id})
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id,
-          build_state: 'PUBLISHED'
+MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk)
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
 MATCH (snapshot)-[:OF_VERSION]->(version)
-MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
 MATCH (publication)-[:USES_TBOX_VERSION]->
       (tbox:TBoxVersion {tenant_id: $tenant_id})
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(entity_type:TBoxEntityType)
 WHERE chunk.chunk_id IN $chunk_ids
+  AND ($publication_id IS NULL OR publication.publication_id = $publication_id)
   AND size(chunk.text) <= $max_chunk_chars
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
@@ -659,17 +675,33 @@ MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
 MATCH (seed_mention)-[:REFERS_TO]->(
       seed_entity:Entity {tenant_id: $tenant_id})
 MATCH (seed_document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(seed_snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id,
-          build_state: 'PUBLISHED'
+MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(seed_snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(seed_chunk)
-MATCH (seed_document)-[:ACTIVE_VERSION]->(
+MATCH (seed_document)-[:HAS_VERSION]->(
       seed_version:DocumentVersion {tenant_id: $tenant_id})
 MATCH (seed_snapshot)-[:OF_VERSION]->(seed_version)
-MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(seed_snapshot)
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(seed_type:TBoxEntityType)
 WHERE seed_chunk.chunk_id IN $chunk_ids
+  AND ($publication_id IS NULL OR publication.publication_id = $publication_id)
   AND size(seed_chunk.text) <= $max_chunk_chars
+  AND seed_snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND seed_snapshot.retirement_id IS NULL
+  AND seed_snapshot.retired_by_principal_id IS NULL
+  AND coalesce(seed_version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND seed_version.retirement_id IS NULL
+  AND seed_version.retired_at IS NULL
+  AND seed_version.retired_by_principal_id IS NULL
+  AND seed_snapshot.document_id = seed_document.document_id
+  AND seed_snapshot.version_id = seed_version.version_id
+  AND seed_version.document_id = seed_document.document_id
+  AND coalesce(seed_document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND seed_document.retirement_id IS NULL
+  AND seed_document.retirement_request_fingerprint IS NULL
+  AND seed_document.retired_at IS NULL
+  AND seed_document.retired_by_principal_id IS NULL
+  AND seed_document.retired_active_snapshot_id IS NULL
+  AND seed_document.retired_active_version_id IS NULL
   AND seed_chunk.document_id = seed_document.document_id
   AND seed_chunk.version_id = seed_version.version_id
   AND seed_chunk.access_policy_id = seed_document.access_policy_id
@@ -736,15 +768,13 @@ OPTIONAL MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
 WHERE object_mention.revision_id = assertion.object_mention_revision_id
 OPTIONAL MATCH (object_mention)-[:REFERS_TO]->(object)
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id,
-          build_state: 'PUBLISHED'
+MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk)
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
-MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(subject_type:TBoxEntityType)
 OPTIONAL MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(object_type:TBoxEntityType)
 WHERE object_type.name = object.entity_type
@@ -753,6 +783,23 @@ WITH publication, tbox, seed_entity, seed_chunk_id, assertion, chunk,
      version, subject_type, object_type
 WHERE (seed_entity = subject OR seed_entity = object)
   AND size(chunk.text) <= $max_chunk_chars
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
   AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
@@ -919,16 +966,37 @@ RETURN publication.publication_id AS publication_id,
 
 _SELECTED_SOURCE_QUERY = """
 // governed-subgraph:selected-sources
+MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+      -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication:KnowledgePublication {
+          tenant_id: $tenant_id, status: 'ACTIVE', publication_id: $publication_id
+      })
 UNWIND $chunk_ids AS requested_id
 MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id, build_state: 'PUBLISHED'
+MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk:Chunk {
           tenant_id: $tenant_id, chunk_id: requested_id
       })
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
+MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {tenant_id: $tenant_id})
 MATCH (snapshot)-[:OF_VERSION]->(version)
-WHERE chunk.document_id = document.document_id
+WHERE snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.retirement_id IS NULL
+  AND snapshot.retired_by_principal_id IS NULL
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND version.retirement_id IS NULL
+  AND version.retired_at IS NULL
+  AND version.retired_by_principal_id IS NULL
+  AND snapshot.document_id = document.document_id
+  AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND document.retirement_id IS NULL
+  AND document.retirement_request_fingerprint IS NULL
+  AND document.retired_at IS NULL
+  AND document.retired_by_principal_id IS NULL
+  AND document.retired_active_snapshot_id IS NULL
+  AND document.retired_active_version_id IS NULL
+  AND chunk.document_id = document.document_id
   AND chunk.version_id = version.version_id
   AND chunk.access_policy_id = document.access_policy_id
   AND chunk.access_policy_version = document.access_policy_version
@@ -990,6 +1058,7 @@ class Neo4jEvidenceSubgraphProjector:
         parameters: dict[str, object] = {
             "tenant_id": principal.tenant_id,
             "groups": sorted(principal.groups),
+            "publication_id": expected_pin.publication_id if expected_pin is not None else None,
             "chunk_ids": list(chunk_ids),
             "authority_levels": [
                 item.value for item in trust_policy.authority_levels

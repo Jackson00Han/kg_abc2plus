@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import Mock
 import unittest
 
 from graphrag_prod.api.knowledge import Neo4jKnowledgeOperations
@@ -280,6 +281,45 @@ class EntityResolutionAdapterTests(unittest.TestCase):
         reviews.selectable = False
         with self.assertRaises(ConflictError):
             adapter.apply_resolution(_principal(), request)
+
+    def test_manual_apply_reads_only_pinned_target_and_keeps_transaction_validation(self):
+        from graphrag_prod.api.knowledge import _entity_payload, _evidence_payload
+        from graphrag_prod.knowledge.store import KnowledgeConflict
+
+        reviews = _Reviews()
+        target = dict(record_id='confirmed-target', revision=2,
+            entity=_entity_payload(TARGET), status='APPROVED', authority='AUTHORITATIVE',
+            evidence=_evidence_payload(CANDIDATE.evidence), identity_properties=[],
+            selectable=True, reason='Check both source contexts.')
+        reviews.resolution_target = Mock(return_value=target)
+        reviews.resolution_targets = Mock(side_effect=AssertionError('must not enumerate targets'))
+        adapter = self._adapter(reviews=reviews)
+        adapter.resolution_source = SimpleNamespace(
+            find_exact_canonical_key=Mock(side_effect=AssertionError('manual choice must not run automatic matching')))
+        request = EntityResolutionApplyRequest(record_id=CANDIDATE.record_id, expected_revision=1,
+            target_entity_id=TARGET.entity_id, target_record_id='confirmed-target',
+            target_expected_revision=2, notes='双方原文确认同一设备。')
+        result = adapter.apply_resolution(_principal(), request).payload
+        self.assertEqual(result.applied_target.entity.entity_id, TARGET.entity_id)
+        self.assertIsNone(adapter.knowledge.identity_call)
+        reviews.resolution_target.assert_called_once_with(_principal(), CANDIDATE, 'confirmed-target', 2)
+        self.assertEqual(reviews.call[1]['target_expected_revision'], 2)
+        reviews.apply_entity_resolution = Mock(side_effect=KnowledgeConflict('identity changed after selection'))
+        with self.assertRaises(ConflictError):
+            adapter.apply_resolution(_principal(), request)
+        reviews.resolution_target.return_value = None
+        with self.assertRaises(ResourceNotFoundError):
+            adapter.apply_resolution(_principal(), request)
+        self.assertEqual(reviews.apply_entity_resolution.call_count, 1)
+
+    def test_suggestions_read_active_ontology_once_per_request(self):
+        adapter = self._adapter()
+        adapter.tboxes.get = Mock(wraps=adapter.tboxes.get)
+        adapter.tboxes.active = Mock(wraps=adapter.tboxes.active)
+        adapter.resolution_suggestions(_principal(), EntityResolutionRequest(
+            record_id=CANDIDATE.record_id, expected_revision=1))
+        adapter.tboxes.get.assert_called_once_with(TENANT, TBOX.tbox_id)
+        adapter.tboxes.active.assert_called_once_with(TENANT, TBOX.key)
 
     def test_independent_decision_contract_reaches_transaction_with_preview_and_group(self):
         from graphrag_prod.api.knowledge_contracts import ReviewBatchRequest

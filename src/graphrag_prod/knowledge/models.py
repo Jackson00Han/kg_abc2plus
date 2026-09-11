@@ -256,8 +256,12 @@ class EntityMentionRecord:
     confidence: float
     trust: TrustMetadata
     created_at: datetime
+    assignment_source_revision_id: str | None = None
 
     def __post_init__(self) -> None:
+        if self.assignment_source_revision_id is not None:
+            object.__setattr__(self, "assignment_source_revision_id",
+                _required_text(self.assignment_source_revision_id, "assignment_source_revision_id"))
         tenant_id = _required_text(self.tenant_id, "tenant_id")
         object.__setattr__(self, "tenant_id", tenant_id)
         if self.entity.tenant_id != tenant_id or self.evidence.tenant_id != tenant_id:

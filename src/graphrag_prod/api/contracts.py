@@ -667,7 +667,7 @@ class RetrievalTraceResponse(StrictAPIModel):
     method: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)]
     tenant_id: Identifier
     corpus_revision: Annotated[int, Field(strict=True, ge=0)]
-    embedding_generation_id: Identifier
+    embedding_generation_id: Identifier | None
     embedding_space_id: Identifier
     vector_recall: Annotated[tuple[TraceHitResponse, ...], Field(max_length=100)]
     bm25_recall: Annotated[tuple[TraceHitResponse, ...], Field(max_length=100)]
@@ -1088,6 +1088,9 @@ class AnswerResponse(StrictAPIModel):
     prompt_version: Identifier
     output_schema_version: Identifier
     failure_code: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=64)] | None = None
+    knowledge_publication_id: Identifier | None = None
+    knowledge_publication_generation: Annotated[int, Field(strict=True, ge=0)] = 0
+    knowledge_activation_generation: Annotated[int, Field(strict=True, ge=0)] = 0
 
     @model_validator(mode="after")
     def validate_grounded_answer_shape(self) -> Self:

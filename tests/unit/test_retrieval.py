@@ -181,8 +181,11 @@ class RetrievalContractTests(unittest.TestCase):
             "revenue +(margin)",
             "tenant-one",
             frozenset({"readers", "finance"}),
+            ("published-version",),
         )
-        self.assertIn("retrieval_scope:grscopeactive", lucene)
+        self.assertIn("publication_scope:grscopeversion", lucene)
+        self.assertNotIn("grscopeactive", lucene)
+        self.assertNotIn("published-version", lucene)
         self.assertIn("AND text:(revenue margin)", lucene)
         self.assertEqual(lucene.count("^0"), 4)
         self.assertNotIn("tenant-one", lucene)
@@ -213,7 +216,7 @@ class RetrievalContractTests(unittest.TestCase):
                     query.index("any(group IN chunk.access_groups"),
                     score_position,
                 )
-                self.assertLess(query.index("ACTIVE_VERSION"), score_position)
+                self.assertLess(query.index("HAS_VERSION"), score_position)
                 self.assertLess(query.index("$version_ids"), score_position)
                 self.assertLess(score_position, query.rindex("LIMIT $limit"))
 
@@ -223,13 +226,13 @@ class RetrievalContractTests(unittest.TestCase):
         unique_seek = CANDIDATE_VECTOR_QUERY.index(
             "MATCH (chunk:Chunk {chunk_id: candidate_id})"
         )
-        active_check = CANDIDATE_VECTOR_QUERY.index("ACTIVE_SNAPSHOT")
+        active_check = CANDIDATE_VECTOR_QUERY.index("USES_KNOWLEDGE_SNAPSHOT")
         self.assertLess(candidate_start, unique_seek)
         self.assertLess(unique_seek, active_check)
         self.assertIn("USING INDEX chunk:Chunk(chunk_id)", CANDIDATE_VECTOR_QUERY)
         self.assertNotIn("chunk.chunk_id IN $candidate_ids", CANDIDATE_VECTOR_QUERY)
 
-    def test_every_data_path_has_tenant_acl_active_version_and_stable_ids(self) -> None:
+    def test_every_data_path_has_tenant_acl_publication_version_and_stable_ids(self) -> None:
         for query in (
             VECTOR_RECALL_QUERY,
             BM25_RECALL_QUERY,
@@ -243,8 +246,13 @@ class RetrievalContractTests(unittest.TestCase):
             self.assertIn("generation_id: $generation_id", query)
             self.assertIn("state.corpus_revision = $corpus_revision", query)
             self.assertIn("access_groups", query)
-            self.assertIn("ACTIVE_SNAPSHOT", query)
-            self.assertIn("ACTIVE_VERSION", query)
+            self.assertIn("USES_KNOWLEDGE_SNAPSHOT", query)
+            self.assertIn("HAS_VERSION", query)
+            self.assertIn("$knowledge_publication_id", query)
+            self.assertIn("$knowledge_activation_generation", query)
+            self.assertIn("retirement_id IS NULL", query)
+            self.assertNotIn("ACTIVE_SNAPSHOT", query)
+            self.assertNotIn("ACTIVE_VERSION", query)
             self.assertIn("version_ids", query)
             self.assertIn("chunk_id", query)
             self.assertNotIn("elementId", query)

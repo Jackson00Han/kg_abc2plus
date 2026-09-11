@@ -811,7 +811,17 @@ const toggles = records.map(() => ({setAttribute(key, value) {this[key] = value;
 const actions = records.map(() => ['APPROVED', 'REJECTED', 'QUARANTINED'].map(
   reviewAction => ({dataset: {reviewAction}, hidden: false})));
 const toasts = [];
+const rows = records.map(record => ({
+  dataset: {reviewRecord: record.record_id}, status: null, saving: false,
+  classList: {toggle() {}},
+  querySelector(selector) {
+    if (selector === '.review-actions') return {insertAdjacentHTML: (_, html) => {this.status = html;}};
+    if (selector === '[data-review-operation]' && this.status) return {remove: () => {this.status = null;}};
+    return null;
+  },
+}));
 const context = {
+  $: () => null,
   state: {reviews: records, approvedRevisions: new Set(), selectedCandidateRevisions: new Set(), publicationCandidates: [], identityEpoch: 0, reviewEpoch: 0, resolutions: new Map(), reviewAssessments: new Map()},
   elements: {
     publicationRevisions: {value: ''}, publicationRemovals: {value: ''},
@@ -821,6 +831,7 @@ const context = {
       if (selector.includes('edit-toggle')) return toggles[index];
       return editors[index];
     }, querySelectorAll(selector) {
+      if (selector === '[data-review-record]') return rows;
       const match = selector.match(/="(\d+)"/);
       return match ? actions[Number(match[1])] : actions.flat();
     }},
@@ -844,6 +855,7 @@ for (const [start, end] of [
   ['function reviewModel(', 'function reviewTechnical('],
   ['function reviewConfirmLabel(', 'function reviewActions('],
   ['function setReviewBusy(', 'async function keepExistingFact('],
+  ['function reviewRefreshImpact(', 'async function loadReviews('],
   ['function publicationSelectedIds(', 'function publicationCandidateGroups('],
   ['function updatePublicationBusy(', 'function renderPublicationCandidates('],
   ['function independentReviewPreview(', 'function activePublication('],
@@ -893,12 +905,15 @@ for (const [start, end] of [
   await vm.runInContext("submitReviews('APPROVED', [0, 1, 2])", context);
   assert.equal(requests.length, 4);
   assert.equal(JSON.stringify(records), original, 'edit generation mutated the queue');
+  assert.ok(rows.every(row => row.status === null), 'operation feedback must clear after contract generation');
+  assert.equal(context.state.reviewBusy, false);
   process.stdout.write(JSON.stringify(requests));
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """],
             input=json.dumps({"page": page, "records": records}),
-            text=True, capture_output=True, timeout=15, check=True,
+            text=True, capture_output=True, timeout=15, check=False,
         )
+        self.assertEqual(generated.returncode, 0, generated.stderr)
         payloads = json.loads(generated.stdout)
         edited = {"decisions": [payload["decisions"][0] for payload in payloads[:3]]}
         with TestClient(build_app()) as client:

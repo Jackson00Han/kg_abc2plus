@@ -205,3 +205,27 @@
 .industrial-governance .build-empty-state .workbench-actions { justify-content: flex-start; margin-top: 18px; }
 .industrial-governance .build-empty-state > .button { margin-top: 18px; }
 .industrial-governance #publication-preview:empty { display: none; }
+
+/* Property ownership stays beside the fact being reviewed. */
+.industrial-governance .property-assignment { margin: 12px 0; }
+.industrial-governance .property-assignment-current { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.industrial-governance .property-assignment-current > span { min-width: 0; overflow-wrap: anywhere; }
+.industrial-governance .property-assignment-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 14px; margin-top: 10px; background: var(--surface-muted, #f5f7f5); border: 1px solid var(--border, #dfe5e1); border-radius: 10px; }
+.industrial-governance .property-assignment-editor > button { align-self: end; }
+.industrial-governance .property-assignment-editor label { display: grid; gap: 6px; min-width: 0; }
+.industrial-governance .property-assignment-wide { grid-column: 1 / -1; min-width: 0; }
+.industrial-governance .property-assignment-editor select, .industrial-governance .property-assignment-editor input, .industrial-governance .property-assignment-editor textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* Keep real pending work visible without blocking the reading surface. */
+.industrial-governance .review-saving { background:var(--surface-2); }
+
+/* Duplicate advice belongs to the result area below the upload action. */
+.industrial-governance #construction-output.upload-check { white-space: normal; max-height: none; }
+.industrial-governance .upload-check > p { margin: 8px 0 14px; }
+.industrial-governance .upload-check .workbench-actions { justify-content: flex-start; }
+.industrial-governance .upload-match { padding: 14px 0; border-top: 1px solid var(--line); }
+.industrial-governance .upload-match > div:first-child { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.industrial-governance .upload-match p { color: var(--muted); overflow-wrap: anywhere; }
+.industrial-governance .upload-difference { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+.industrial-governance .upload-difference > div { min-width: 0; }
+.industrial-governance .upload-difference pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; padding: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }

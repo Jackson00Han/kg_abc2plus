@@ -54,6 +54,8 @@ class SchemaMigrationTests(unittest.TestCase):
                 "011_relationship_property_value_schema.cypher",
                 "012_published_quality_history_schema.cypher",
                 "013_quality_review_decisions.cypher",
+                "014_publication_source_scope.cypher",
+                "015_upload_reservation.cypher",
             ],
         )
         statements = migration_statements()

@@ -10,6 +10,52 @@ from .store import _stored_assertion, _stored_mention
 from .trust import GovernanceStatus
 
 
+def _resolution_revision_query(kind, *, one_record, extra_where="", projection="revision {.*} AS revision"):
+    """Read review drafts or evidence pinned by the active publication.
+
+    A newer upload advances document pointers without replacing the publication.
+    Only published revisions and their release snapshots can use older sources;
+    unconfirmed drafts must still belong to the current ingestion snapshot.
+    """
+    query = _active_revision_query(kind, one_record=one_record,
+                                   extra_where=extra_where, projection=projection)
+    query = query.replace("""MATCH (document:Document {tenant_id: $tenant_id})
+              -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+                  tenant_id: $tenant_id,
+                  build_state: 'PUBLISHED'
+              })-[:INCLUDES_CHUNK]->(chunk)
+        MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {""", """MATCH (snapshot:KnowledgeSnapshot {tenant_id: $tenant_id})
+              -[:INCLUDES_CHUNK]->(chunk)
+        MATCH (document:Document {tenant_id: $tenant_id})
+              -[:HAS_VERSION]->(version:DocumentVersion {""")
+    query = query.replace("MATCH (:TBoxCatalog {tenant_id: $tenant_id})", """WITH DISTINCT head, revision, chunk, document, snapshot, version
+        MATCH (:TBoxCatalog {tenant_id: $tenant_id})""")
+    return query.replace("WHERE revision.ontology_version_id = tbox.tbox_id", """WHERE revision.ontology_version_id = tbox.tbox_id
+          AND snapshot.document_id = document.document_id
+          AND snapshot.version_id = version.version_id
+          AND chunk.char_start <= revision.evidence_char_start
+          AND revision.evidence_char_start < revision.evidence_char_end
+          AND revision.evidence_char_end <= chunk.char_end
+          AND version.document_id = document.document_id
+          AND chunk.document_id = document.document_id AND chunk.version_id = version.version_id
+          AND EXISTS { MATCH (version)-[:HAS_CHUNK]->(chunk) }
+          AND EXISTS { MATCH (document)-[:ACTIVE_VERSION]->(:DocumentVersion {tenant_id:$tenant_id}) }
+          AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+          AND snapshot.retirement_id IS NULL AND version.retirement_id IS NULL
+          AND document.retirement_id IS NULL AND document.retirement_request_fingerprint IS NULL
+          AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+          AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+          AND ((snapshot.build_state = 'PUBLISHED'
+              AND EXISTS { MATCH (document)-[:ACTIVE_VERSION]->(version) }
+              AND EXISTS { MATCH (document)-[:ACTIVE_SNAPSHOT]->(snapshot) })
+            OR (revision.governance_status = 'PUBLISHED' AND EXISTS {
+              MATCH (:KnowledgePublicationState {tenant_id:$tenant_id})
+                -[:ACTIVE_KNOWLEDGE_PUBLICATION]->(publication:KnowledgePublication {tenant_id:$tenant_id,status:'ACTIVE'})
+                -[:PUBLISHES_KNOWLEDGE_REVISION]->(revision)
+              MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
+            }))""")
+
+
 _TARGET_FILTER = """
 AND revision.entity_type = $entity_type
 AND revision.ontology_version_id = $ontology_version_id
@@ -23,14 +69,14 @@ AND ($search_text = '' OR any(value IN [revision.canonical_name, revision.canoni
     revision.entity_id] + coalesce(revision.aliases, [])
     WHERE toLower(value) CONTAINS toLower($search_text)))
 """
-_TARGET_QUERY = _active_revision_query(
+_TARGET_QUERY = _resolution_revision_query(
     ReviewRecordKind.ENTITY_MENTION, one_record=False, extra_where=_TARGET_FILTER + """
     WITH revision ORDER BY CASE WHEN revision.governance_status = 'PUBLISHED' THEN 0 ELSE 1 END,
                            revision.record_id
     WITH revision.entity_id AS selected_entity_id, collect(revision)[0] AS revision
     """,
 )
-_TARGET_ONE_QUERY = _active_revision_query(
+_TARGET_ONE_QUERY = _resolution_revision_query(
     ReviewRecordKind.ENTITY_MENTION, one_record=True, extra_where=_TARGET_FILTER +
     "AND revision.governance_status IN ['APPROVED', 'PUBLISHED']",
 )
@@ -50,7 +96,7 @@ def identity_values_tx(tx, principal, mention, *, confirmed_entity=False):
     if confirmed_entity:
         # The displayed representative can change after another source is linked.
         # Its entity's identity evidence must not disappear with that change.
-        mentions_query = _active_revision_query(
+        mentions_query = _resolution_revision_query(
             ReviewRecordKind.ENTITY_MENTION, one_record=False,
             extra_where=_TARGET_FILTER + "AND revision.entity_id = $entity_id",
         )
@@ -60,7 +106,7 @@ def identity_values_tx(tx, principal, mention, *, confirmed_entity=False):
         if len(rows) > 100:
             raise KnowledgeConflict("identity sources exceed review limit")
         mention_ids.extend(row['revision']['record_id'] for row in rows)
-    query = _active_revision_query(
+    query = _resolution_revision_query(
         ReviewRecordKind.ASSERTION, one_record=False, extra_where="""
         AND revision.ontology_version_id = $ontology_version_id
         AND revision.subject_entity_id = $entity_id
@@ -99,6 +145,21 @@ def _conflict(candidate_values, target_values):
         for name in candidate_values.keys() & target_values.keys())
 
 
+def _target_payload(mention, target_values, *, conflict=False):
+    return dict(
+        record_id=mention.record_id, revision=mention.revision.revision,
+        entity={key: value for key, value in asdict(mention.entity).items() if key != 'tenant_id'},
+        status=mention.trust.status.value, authority=mention.trust.authority.value,
+        evidence={key: getattr(mention.evidence, key) for key in
+            ('document_id', 'version_id', 'chunk_id', 'char_start', 'char_end', 'quoted_text')},
+        identity_properties=[dict(name=name, value=value[1], unit=value[2])
+            for name, values in sorted(target_values.items()) for value in sorted(values, key=str)],
+        selectable=not conflict,
+        reason='身份属性存在不同值，请先核查并修正。' if conflict else
+               '请核对双方上下文，明确确认是否为同一实体。',
+    )
+
+
 def resolution_targets_tx(tx, principal, candidate, query):
     rows = list(tx.run(_TARGET_QUERY, **_target_parameters(principal, candidate, query)))
     candidate_values = identity_values_tx(tx, principal, candidate)
@@ -107,17 +168,7 @@ def resolution_targets_tx(tx, principal, candidate, query):
         mention = _stored_mention(dict(row['revision']))
         target_values = identity_values_tx(tx, principal, mention, confirmed_entity=True)
         conflict = _conflict(candidate_values, target_values)
-        targets.append(dict(
-            record_id=mention.record_id, revision=mention.revision.revision,
-            entity={key: value for key, value in asdict(mention.entity).items() if key != 'tenant_id'}, status=mention.trust.status.value,
-            authority=mention.trust.authority.value, evidence={key: getattr(mention.evidence, key) for key in
-                ('document_id', 'version_id', 'chunk_id', 'char_start', 'char_end', 'quoted_text')},
-            identity_properties=[dict(name=name, value=value[1], unit=value[2])
-                for name, values in sorted(target_values.items()) for value in sorted(values, key=str)],
-            selectable=not conflict,
-            reason='身份属性存在不同值，请先核查并修正。' if conflict else
-                   '请核对双方上下文，明确确认是否为同一实体。',
-        ))
+        targets.append(_target_payload(mention, target_values, conflict=conflict))
     from .review import _DEPENDENT_ASSERTION_QUERY, MAX_REVIEW_BATCH
     from .identity_review import impact_digest
     facts = list(tx.run(_DEPENDENT_ASSERTION_QUERY, tenant_id=principal.tenant_id,
@@ -127,6 +178,23 @@ def resolution_targets_tx(tx, principal, candidate, query):
         predicate=row['revision']['predicate']) for row in facts]
     return {'items': targets, 'truncated': len(rows) > 20,
             'dependent_facts': impact, 'impact_token': impact_digest(impact)}
+
+
+def resolution_target_tx(tx, principal, candidate, record_id, expected_revision):
+    """Fetch only the revision explicitly selected by the reviewer.
+
+    Identity conflict and freshness are checked again while holding the review
+    locks in confirmed_target_tx. This read neither enumerates other entities
+    nor recomputes dependent-fact previews that the apply response does not use.
+    """
+    parameters = _target_parameters(principal, candidate)
+    parameters.update(record_id=record_id, expected_revision=expected_revision, limit=1)
+    row = tx.run(_TARGET_ONE_QUERY, **parameters).single()
+    if row is None:
+        return None
+    mention = _stored_mention(dict(row['revision']))
+    values = identity_values_tx(tx, principal, mention, confirmed_entity=True)
+    return _target_payload(mention, values)
 
 
 def validate_existing_identity_tx(tx, principal, candidate, target):
@@ -195,7 +263,7 @@ def evidence_context_tx(tx, principal, request):
     # select protected text or change the stored evidence range.
     row = None
     for kind in ReviewRecordKind:
-        query = _active_revision_query(kind, one_record=True)
+        query = _resolution_revision_query(kind, one_record=True)
         row = tx.run(query, tenant_id=principal.tenant_id, groups=sorted(principal.groups),
             record_id=request.record_id, expected_revision=request.expected_revision, limit=1).single()
         if row is not None:
@@ -206,7 +274,7 @@ def evidence_context_tx(tx, principal, request):
     start, end = record['evidence_char_start'], record['evidence_char_end']
     window_start = request.offset if request.view == 'document' else max(0, start - 2000)
     window_length = 8000 if request.view == 'document' else end - window_start + 2000
-    query = _active_revision_query(kind, one_record=True, projection=projection)
+    query = _resolution_revision_query(kind, one_record=True, projection=projection)
     row = tx.run(query, tenant_id=principal.tenant_id, groups=sorted(principal.groups),
         record_id=request.record_id, expected_revision=request.expected_revision, limit=1,
         window_start=window_start, window_length=window_length).single()

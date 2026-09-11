@@ -84,7 +84,7 @@ const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 const fields = new Map();
 function makeNode(attrs = {}) {
   const element = {attrs,id:attrs.id,dataset: {}, value: '', textContent: attrs.text_content || '', innerHTML: '',
-    children:[],classList:{toggle(){}},disabled: false, hidden: Object.hasOwn(attrs, 'hidden'), parent: null,
+    children:[],classList:{toggle(){},remove(){}},disabled: false, hidden: Object.hasOwn(attrs, 'hidden'), parent: null,
     setAttribute(name, value) { this.attrs[name] = value; },
     appendChild(child) { child.parent = this; },
     scrollIntoView() { this.scrolled = true; },
@@ -122,7 +122,9 @@ const requests = [];
 const context = vm.createContext({$, fields, document,host:document,lastBuildFlow:'business',buildStep:'upload',onNavigate(){},requestAnimationFrame:fn=>fn(),state, elements, assert, requests,
   parseJsonEditor: element => JSON.parse(element.value),
   renderOntologies() {}, showToast() {}, invalidateInventory() {}, refreshReviewResolutions() {},
+  foregroundAction: (_label,action)=>action, beginButtonFeedback:()=>()=>{}, clearButtonFeedback(){},
   bindResolutionActions() {}, makeNode,
+  defaultDocumentUri: name => 'urn:local:controlled-upload:' + name,
   output: (element, value) => {element.textContent = typeof value === 'string' ? value : JSON.stringify(value);},
   loadPublicationCandidates: async () => {}, loadHistory: async () => {},
   loadInventory: async () => {}, loadQuality: async () => {},
@@ -262,8 +264,8 @@ assert.equal($('instance-workspace').hidden,false);
 assert.equal($('build-tab-instances').attrs['aria-selected'],'true');
 assert.equal($('build-tab-instances').tabIndex,0);
 const ontologyDraft=elements.ontologyEditor.value='unsaved definition';
-$('document-title').value='循环水泵维护资料';
 setUploadKnowledgeScope('AUTHORITATIVE');
+$('document-title').value='循环水泵维护资料';
 showConstructionFlow('business','step-review');
 selectBuildView('ontology');
 assert.equal($('expert-foundation').hidden,false);
@@ -294,7 +296,7 @@ assert.equal($('inspect-build-ontology').textContent,'配置');
 assert.equal(requests.length,0);
 """)
 
-    def test_source_selection_preserves_drafts_reviews_and_publication_selection(self) -> None:
+    def test_source_selection_clears_upload_but_preserves_reviews_and_publication_selection(self) -> None:
         self.run_js(r"""
 $('document-file').value = 'pump-notes.txt';
 $('document-title').value = '循环水泵资料';
@@ -312,9 +314,12 @@ for (const scope of ['AUTHORITATIVE', 'BUSINESS']) {
   showConstructionFlow('business', 'business-upload-slot');
   assert.equal($('document-knowledge-scope').value, scope);
   assert.equal(state.uploadKnowledgeScope, scope);
-  assert.equal($('document-file').value, 'pump-notes.txt');
-  assert.equal($('document-title').value, '循环水泵资料');
-  assert.equal($('document-uri').value, 'urn:pump:notes');
+  assert.equal($('document-file').value, '');
+  assert.equal($('document-title').value, '');
+  assert.equal($('document-uri').value, '');
+  assert.equal(elements.constructionOutput.hidden, true);
+  assert.equal(elements.constructionOutput.textContent, '');
+  assert.equal($('construction-next').hidden, true);
   assert.equal($('document-extraction-mode').value, 'SOURCE_ONLY');
   assert.equal(elements.aboxEditor.value, draft);
   assert.equal(state.reviews, reviews);
@@ -330,6 +335,28 @@ setUploadKnowledgeScope('AUTHORITATIVE');
 assert.equal($('document-knowledge-scope').value, 'BUSINESS');
 assert.equal(state.uploadKnowledgeScope, 'BUSINESS');
 assert.equal(requests.length, 0);
+""")
+
+    def test_new_file_updates_generated_source_but_preserves_explicit_unsubmitted_metadata(self):
+        self.run_js(r"""
+selectUploadFile({name:'authoritative_source.txt'});
+assert.equal($('document-uri').value,'urn:local:controlled-upload:authoritative_source.txt');
+selectUploadFile({name:'maintenance_report.txt'});
+assert.equal($('document-title').value,'maintenance_report');
+assert.equal($('document-uri').value,'urn:local:controlled-upload:maintenance_report.txt');
+$('document-title').value='手工标题';$('document-uri').value='urn:pump:explicit-source';
+selectUploadFile({name:'renamed_report.txt'});
+assert.equal($('document-title').value,'手工标题');
+assert.equal($('document-uri').value,'urn:pump:explicit-source');
+state.uploadDraftCompleted=true;
+elements.constructionOutput.hidden=false;elements.constructionOutput.textContent='old receipt';
+selectUploadFile({name:'homonym_report.txt'});
+assert.equal($('document-uri').value,'urn:local:controlled-upload:homonym_report.txt');
+assert.equal($('document-title').value,'homonym_report');
+assert.equal(elements.constructionOutput.hidden,true);
+setUploadKnowledgeScope('BUSINESS');
+assert.equal($('document-title').value,'homonym_report');
+assert.equal(requests.length,0);
 """)
 
     def test_unpublished_ontology_preflight_explains_required_action_without_upload(self) -> None:

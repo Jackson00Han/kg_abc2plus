@@ -15,7 +15,7 @@ export function qualityMarkup(report,{labels={},records=[],historical=false}={})
   }).join('');
   return `<article class="kb-source"><h3>${historical?'历史检查报告':'当前图谱质量检查'} · 第 ${report.publication_generation} 版</h3><p><strong>${report.passed?'自动检查通过':'自动检查发现阻断性错误'}${report.total_issue_count?`，有 ${report.total_issue_count} 项发现需关注`:''}</strong></p><p>${counts.canonical_entities??0} 个实体 · ${counts.literal_assertions??0} 条属性 · ${counts.relationship_assertions??0} 条关系 · 阻断性错误 ${report.total_error_count}</p><p class="kb-muted">${historical?'此报告对应历史版本，不代表当前状态。':'检查结果仅对应本次读取的版本。'}自动规则通过不表示事实完整或已完成人工核查。</p><details><summary>版本与审计详情</summary><pre>${e(JSON.stringify({publication_id:report.publication_id,ruleset:report.ruleset_version,run_id:report.run_id,graph_digest:report.graph_digest,ontology_version_id:report.ontology_version_id},null,2))}</pre></details></article>${issues||'<p>本次检查未发现结构或一致性问题。</p>'}<details><summary>建议人工核查 · ${(report.review_sample||[]).length} 个对象</summary><p>从本次发现的问题中选取核查对象。同一份报告的选择保持一致，便于复查；这些对象不代表整个知识库的准确率。</p>${sample||'<p>本次没有需要抽查的问题对象。</p>'}</details>${report.issues_truncated?'<p>问题列表达到显示上限，请使用完整审计报告核查剩余问题。</p>':''}<p class="kb-muted">人工结论独立保存；修正发布后请重新检查。旧结论不会自动应用到新版本。</p>`;
 }
-export function mountMaintenance({api,epoch,browser,navigate,correct}){
+export function mountMaintenance({api,epoch,browser,feedback=()=>()=>{},navigate,correct}){
   const renders=new WeakMap();let dialogSerial=0;
   const dialog=document.createElement('dialog');dialog.className='kb-evidence';dialog.setAttribute('aria-label','记录人工核查结论');document.body.append(dialog);dialog.addEventListener('cancel',reset);
   function reset(){dialogSerial++;dialog.close();dialog.replaceChildren();}
@@ -47,11 +47,11 @@ export function mountMaintenance({api,epoch,browser,navigate,correct}){
       const notes=dialog.querySelector('[data-notes]').value.trim(),decision=dialog.querySelector('[data-decision]').value,status=dialog.querySelector('[data-status]'),button=dialog.querySelector('[data-save]');
       if(!notes){status.textContent='请填写核查说明。';return;}
       const body={run_id:report.run_id,issue_id:issue.issue_id,notes,decision};const signature=JSON.stringify(body);if(lastBody!==signature){operation=crypto.randomUUID();lastBody=signature;}
-      button.disabled=true;status.textContent='正在验证版本并保存…';
+      const finish=feedback(button);button.disabled=true;status.textContent='';
       try{const saved=await api('/v1/knowledge/quality/runs',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(identity!==epoch() || serial!==dialogSerial)return;
         if(saved.report.run_id!==report.run_id)throw new Error('知识版本或检查结果已变化，请重新检查后核查。');
         await api('/v1/knowledge/quality/reviews',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,operation_key:operation})});if(identity!==epoch() || serial!==dialogSerial)return;reset();refresh();
-      }catch(error){if(identity===epoch() && serial===dialogSerial){status.textContent=error.status===409?'当前版本已变化或请求冲突，请重新检查。':error.status===403?'当前身份需要质量检查与知识复核权限。':error.message;button.disabled=false;}}
+      }catch(error){if(identity===epoch() && serial===dialogSerial){status.textContent=error.status===409?'当前版本已变化或请求冲突，请重新检查。':error.status===403?'当前身份需要质量检查与知识复核权限。':error.message;button.disabled=false;}}finally{finish();}
     };
   }
   return {render,reset,markup:qualityMarkup,invalidate(container){renders.set(container,{});}};

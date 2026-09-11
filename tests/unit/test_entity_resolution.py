@@ -741,7 +741,7 @@ class Neo4jAuthoritativeEntitySourceTests(unittest.TestCase):
         for required in (
             "ACTIVE_KNOWLEDGE_PUBLICATION",
             "PUBLISHES_KNOWLEDGE_REVISION",
-            "ACTIVE_SNAPSHOT",
+            "HAS_VERSION",
             "ACTIVE_VERSION",
             "USES_KNOWLEDGE_SNAPSHOT",
             "tbox:TBoxVersion",
@@ -812,7 +812,7 @@ class Neo4jAuthoritativeEntitySourceTests(unittest.TestCase):
         self.assertIn("count(DISTINCT entity) AS match_count", query)
         self.assertIn("entity.canonical_key = $canonical_key", query)
         self.assertIn("ACTIVE_KNOWLEDGE_PUBLICATION", query)
-        self.assertIn("ACTIVE_SNAPSHOT", query)
+        self.assertIn("HAS_VERSION", query)
         self.assertIn(") = mention.evidence_text", query)
         self.assertEqual(parameters["canonical_key"], identity.canonical_key)
         target_query, target_parameters = session.calls[1]

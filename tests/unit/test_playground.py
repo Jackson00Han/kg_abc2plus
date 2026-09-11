@@ -866,6 +866,36 @@ await history;
 assert.equal(state.inventoryRevisionHistories.size, 0);
 """)
 
+    def test_version_switch_serializes_mutations_and_invalidates_preview(self) -> None:
+        self._run_inventory_behavior(r"""
+state.publications = [{publication_id:'active'}, {publication_id:'history'}];
+state.publicationPreview = {selectionKey:'old-selection'};
+state.reviewBusy = true;
+await assert.rejects(rollbackPublication(1,'active'), /正在审核或发布/);
+assert.equal(requests.length,0);
+state.reviewBusy = false;
+const pending = rollbackPublication(1,'active');
+assert.equal(state.publicationBusy,true);
+assert.equal(state.publicationPreview,null);
+await assert.rejects(rollbackPublication(1,'active'), /正在审核或发布/);
+assert.equal(requests.length,1);
+requests[0].reject({status:409,message:'publication changed'});
+await assert.rejects(pending,error=>error.status===409);
+assert.equal(state.publicationBusy,false);
+""")
+
+    def test_publication_preview_includes_bound_document_versions(self) -> None:
+        self._run_inventory_behavior(r"""
+const html = publicationPreviewMarkup({entity_changes:[],property_changes:[],relationship_changes:[],
+  source_scope:{added:[{title:'homonym_report <script>',document_id:'pump-document',version_id:'pump-version-2'}],
+    removed:[{title:'循环水泵旧版',document_id:'pump-document',version_id:'pump-version-1'}],unchanged_count:1},
+  instances_after:{summary:{entity_count:0,property_count:0,relationship_count:0}}});
+assert.match(html,/发布后加入 1 个文档版本、退出 1 个文档版本；保持 1 个/);
+assert.match(html,/pump-version-2/);
+assert.match(html,/pump-version-1/);
+assert.match(html,/以下内容尚未发布/);
+""")
+
     def test_quality_history_reads_preserve_live_report_and_latest_selection(self) -> None:
         self._run_inventory_behavior(r"""
 state.quality = {run_id: 'live'};

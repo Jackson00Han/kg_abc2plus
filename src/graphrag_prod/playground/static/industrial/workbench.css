@@ -1270,3 +1270,7 @@ input[type="checkbox"] {
 .source-card .source-card-actions { margin-top: auto; padding-top: 4px; gap: 12px; }
 .source-card-actions .text-button { padding-left: 0; padding-right: 0; }
 #copy-contexts:disabled, #search-summary:empty { display: none; }
+
+/* One operation indicator, on its action button. */
+button.button-pending::before { content:''; display:inline-block; width:14px; height:14px; margin-right:8px; box-sizing:border-box; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; vertical-align:-2px; animation:spin .8s linear infinite; }
+@media(prefers-reduced-motion:reduce) { button.button-pending::before { animation:none; } }

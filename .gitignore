@@ -77,3 +77,6 @@ htmlcov/
 
 # Local workbench runtime (PID, restart lock and logs)
 .local/workbench/
+
+# Local browser QA screenshots and reports
+.local/browser-qa/

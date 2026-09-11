@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Callable
@@ -13,6 +17,9 @@ from graphrag_prod.construction import (
     LiteralNormalizationError,
     TBoxLiteralNormalizer,
 )
+from graphrag_prod.construction.parser import BoundedDocumentParser
+from graphrag_prod.construction.preflight import Neo4jUploadPreflight
+from graphrag_prod.construction.upload_guard import Neo4jUploadGuard, UploadAlreadyRunning
 from graphrag_prod.construction.provider_errors import MODEL_CALL_TIMEOUT
 from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
@@ -93,6 +100,7 @@ from graphrag_prod.knowledge.review import (
 from graphrag_prod.knowledge.store import KnowledgeConflict, KnowledgeStoreError
 from graphrag_prod.knowledge.trust import GovernanceStatus
 from graphrag_prod.ontology import (
+    EntityTypeDefinition,
     Neo4jTBoxStore,
     PropertyDefinition,
     TBoxStatus,
@@ -112,6 +120,9 @@ from .knowledge_contracts import (
     DocumentLifecycleListResponse,
     DocumentRetirementRequest,
     DocumentRetirementResponse,
+    PropertyAssignmentRequest,
+    PropertyAssignmentApplyRequest,
+    PropertyAssignmentResponse,
     EntityResolutionApplyRequest,
     EntityResolutionApplyResponse,
     EntityResolutionRequest,
@@ -121,6 +132,7 @@ from .knowledge_contracts import (
     EvidenceInput,
     KnowledgeConstructionRequest,
     KnowledgeConstructionResponse,
+    KnowledgeUploadPreflightResponse,
     KnowledgeEntityInput,
     OntologyImportRequest,
     OntologyListRequest,
@@ -152,6 +164,8 @@ from .runtime import (
     AuthorizationError,
     BackendResult,
     ConflictError,
+    UploadReviewRequiredError,
+    UploadInProgressError,
     PublicationValidationError,
     ConstructionIngestionFailedError,
     IndustrialConstructionInputLimitError,
@@ -392,6 +406,11 @@ def _publication_payload(value: Any) -> dict[str, object]:
         "ontology_version_id": value.ontology_version_id,
         "generation": value.generation,
         "manifest_hash": value.manifest_hash,
+        "source_document_count": value.source_document_count,
+        "source_chunk_count": value.source_chunk_count,
+        "source_snapshot_ids": value.source_snapshot_ids,
+        "embedding_space_id": value.embedding_space_id,
+        "manifest_version": value.manifest_version,
         "source_revision_ids": value.source_revision_ids,
         "published_revision_ids": value.published_revision_ids,
         "removed_record_ids": value.removed_record_ids,
@@ -617,6 +636,8 @@ class Neo4jKnowledgeOperations:
         reviews: Any | None = None,
         publications: Any | None = None,
         construction_audit: Any | None = None,
+        upload_preflight: Any | None = None,
+        upload_guard: Any | None = None,
         resolution_source: Any | None = None,
         assessment_service: Any | None = None,
         quality_service: Any | None = None,
@@ -652,6 +673,11 @@ class Neo4jKnowledgeOperations:
         self.driver = driver
         self.database = database
         self.construction = construction
+        self.upload_guard = upload_guard or Neo4jUploadGuard(driver, database)
+        self.upload_parser = getattr(construction, "parser", None) or BoundedDocumentParser()
+        self.preflight = upload_preflight or Neo4jUploadPreflight(
+            driver, database, parser=self.upload_parser
+        )
         workflow_audit = getattr(construction, "audit_store", None)
         self.construction_audit = (
             construction_audit
@@ -1154,6 +1180,37 @@ class Neo4jKnowledgeOperations:
             _outbound(AuthoritativeImportResponse, payload)
         )
 
+    def upload_preflight(
+        self, principal: Principal, request: KnowledgeConstructionRequest
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:construct")
+        if request.knowledge_scope == "AUTHORITATIVE":
+            _require_capability(principal, "knowledge:import")
+        if not frozenset(request.access_groups) <= principal.groups:
+            raise AuthorizationError()
+        if request.extraction_mode == "MANUAL":
+            raise RequestValidationError()
+        try:
+            report = self.preflight.check(
+                principal, request.decoded_content(),
+                canonical_uri=request.canonical_uri, mime_type=request.mime_type,
+            )
+            # This is an explicit decision receipt, not an authorization token.
+            # Bind it to both the selected source view and all upload settings.
+            settings = request.model_dump(mode="json", exclude={"preflight_token", "content_base64"})
+            receipt = {"principal": principal.principal_id, "tenant": principal.tenant_id,
+                       "groups": sorted(principal.groups), "settings": settings, "report": report}
+            token = hashlib.sha256(json.dumps(receipt, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            return BackendResult(_outbound(KnowledgeUploadPreflightResponse, {**report, "review_token": token}))
+        except ApiRuntimeError:
+            raise
+        except (DocumentParseError, ValueError, TypeError) as error:
+            raise RequestValidationError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+
     def construct(
         self, principal: Principal, request: KnowledgeConstructionRequest
     ) -> BackendResult:
@@ -1183,11 +1240,18 @@ class Neo4jKnowledgeOperations:
         except (TypeError, ValueError) as error:
             raise RequestValidationError() from error
         try:
-            result = self.construction.run(
-                principal,
-                content,
-                metadata,
+            guard = nullcontext() if request.extraction_mode == "MANUAL" else self.upload_guard.hold(
+                principal, self.upload_parser.parse(content, mime_type=request.mime_type).normalized_checksum,
+                request.access_groups,
             )
+            with guard:
+                if request.extraction_mode != "MANUAL":
+                    checked = self.upload_preflight(principal, request).payload
+                    if (checked.exact_matches or checked.similar_matches or checked.truncated) and request.preflight_token != checked.review_token:
+                        raise UploadReviewRequiredError()
+                result = self.construction.run(principal, content, metadata)
+        except UploadAlreadyRunning as error:
+            raise UploadInProgressError() from error
         except ApiRuntimeError:
             raise
         except ConstructionAuthorizationError as error:
@@ -1369,11 +1433,11 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(PublicationCandidatesResponse, payload))
 
-    def _resolution_context(
+    def _resolution_candidate(
         self,
         principal: Principal,
         request: EntityResolutionRequest | EntityResolutionApplyRequest,
-    ) -> tuple[EntityMentionRecord, tuple[IdentityPropertyValue, ...], tuple[ResolutionSuggestion, ...]]:
+    ) -> EntityMentionRecord:
         _require_capability(principal, "knowledge:review")
         try:
             candidate = self.knowledge.get_entity_mention(
@@ -1395,6 +1459,15 @@ class Neo4jKnowledgeOperations:
         if candidate.revision.revision != request.expected_revision:
             raise ConflictError()
 
+        return candidate
+
+    def _resolution_context(
+        self,
+        principal: Principal,
+        request: EntityResolutionRequest | EntityResolutionApplyRequest,
+    ) -> tuple[EntityMentionRecord, tuple[IdentityPropertyValue, ...],
+               tuple[ResolutionSuggestion, ...], EntityTypeDefinition]:
+        candidate = self._resolution_candidate(principal, request)
         tbox = self._active_tbox(principal, candidate.trust.ontology_version_id)
         definition = next(
             (
@@ -1452,7 +1525,7 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         except Exception as error:
             raise DependencyUnavailableError() from error
-        return candidate, properties, suggestions
+        return candidate, properties, suggestions, definition
 
     def review_evidence(self, principal: Principal, request: ReviewEvidenceRequest) -> BackendResult:
         _require_capability(principal, "knowledge:review")
@@ -1470,11 +1543,15 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(ReviewEvidenceResponse, payload))
 
-    def _review_targets(self, principal, candidate, query=""):
+    def _review_targets(self, principal, candidate, query="", *, record_id=None, expected_revision=None):
         # Custom API adapters may retain the legacy automatic-only interface.
         if not hasattr(self.reviews, "resolution_targets"):
             return {"items": [], "truncated": False}
         try:
+            if record_id is not None and hasattr(self.reviews, "resolution_target"):
+                target = self.reviews.resolution_target(
+                    principal, candidate, record_id, expected_revision)
+                return {"items": [target] if target is not None else [], "truncated": False}
             return self.reviews.resolution_targets(principal, candidate, query)
         except KnowledgeReviewUnavailable as error:
             raise ResourceNotFoundError() from error
@@ -1492,14 +1569,11 @@ class Neo4jKnowledgeOperations:
         principal: Principal,
         request: EntityResolutionRequest,
     ) -> BackendResult:
-        candidate, properties, suggestions = self._resolution_context(
+        candidate, properties, suggestions, definition = self._resolution_context(
             principal, request
         )
         targets = self._review_targets(principal, candidate, request.query)
         from graphrag_prod.knowledge.identity_review import identity_actions
-        definition = next(item for item in self._active_tbox(
-            principal, candidate.trust.ontology_version_id).entity_types
-            if item.name == candidate.entity.entity_type)
         payload = {
             "identity_actions": identity_actions(candidate, definition, suggestions),
             "dependent_facts": targets.get("dependent_facts", []),
@@ -1530,9 +1604,17 @@ class Neo4jKnowledgeOperations:
         principal: Principal,
         request: EntityResolutionApplyRequest,
     ) -> BackendResult:
-        candidate, _properties, suggestions = self._resolution_context(
-            principal, request
-        )
+        if request.target_record_id is not None:
+            # An explicit reviewer selection is pinned by its record revision.
+            # The write transaction rechecks its source, ACLs and identity facts;
+            # rebuilding automatic suggestions and a full target list here adds
+            # latency without strengthening that atomic validation.
+            candidate = self._resolution_candidate(principal, request)
+            suggestions = ()
+        else:
+            candidate, _properties, suggestions, _definition = self._resolution_context(
+                principal, request
+            )
         selected = next(
             (
                 item
@@ -1547,7 +1629,11 @@ class Neo4jKnowledgeOperations:
         manual = None
         options = {}
         if request.target_record_id is not None:
-            targets = self._review_targets(principal, candidate, request.target_entity_id)
+            targets = self._review_targets(
+                principal, candidate, request.target_entity_id,
+                record_id=request.target_record_id,
+                expected_revision=request.target_expected_revision,
+            )
             manual = next((item for item in targets['items']
                 if item['record_id'] == request.target_record_id
                 and item['revision'] == request.target_expected_revision
@@ -1605,6 +1691,27 @@ class Neo4jKnowledgeOperations:
             "applied_target": manual,
         }
         return BackendResult(_outbound(EntityResolutionApplyResponse, payload))
+
+    def property_assignment(
+        self, principal: Principal,
+        request: PropertyAssignmentRequest | PropertyAssignmentApplyRequest,
+        *, apply: bool = False,
+    ) -> BackendResult:
+        _require_capability(principal, "knowledge:review")
+        try:
+            payload = self.reviews.property_assignment(principal, request,
+                reviewed_at=self._now() if apply else None)
+            return BackendResult(_outbound(ReviewBatchResponse if apply else PropertyAssignmentResponse, payload))
+        except KnowledgeAuthorizationError as error:
+            raise AuthorizationError() from error
+        except KnowledgeReviewUnavailable as error:
+            raise ResourceNotFoundError() from error
+        except KnowledgeConflict as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
 
     def review_assessment(
         self, principal: Principal, request: ReviewAssessmentRequest,
@@ -1852,6 +1959,8 @@ class Neo4jKnowledgeOperations:
         except KnowledgeAuthorizationError as error:
             raise AuthorizationError() from error
         except (KnowledgePublicationConflict, KnowledgeConflict) as error:
+            if isinstance(error, KnowledgePublicationConflict) and error.issue is not None:
+                raise PublicationValidationError(error.issue) from error
             raise ConflictError() from error
         except TimeoutError as error:
             raise DependencyTimeoutError() from error

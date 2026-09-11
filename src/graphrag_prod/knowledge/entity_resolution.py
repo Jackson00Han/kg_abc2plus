@@ -379,16 +379,13 @@ MATCH (head:KnowledgeRecordHead {
       })-[:CURRENT_REVISION]->(mention)
 MATCH (mention)-[:IN_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
 WITH DISTINCT state, publication, mention, entity, head, chunk
-MATCH (document:Document {tenant_id: $tenant_id})
-      -[:ACTIVE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
-          tenant_id: $tenant_id,
-          build_state: 'PUBLISHED'
+MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
+          tenant_id: $tenant_id
       })-[:INCLUDES_CHUNK]->(chunk)
-MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
+MATCH (document:Document {tenant_id: $tenant_id})-[:HAS_VERSION]->(version:DocumentVersion {
     tenant_id: $tenant_id
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
-MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
 WITH DISTINCT state, publication, mention, entity, head, chunk,
      document, snapshot, version
 MATCH (:TBoxCatalog {tenant_id: $tenant_id})-[:ACTIVE_TBOX_VERSION]->
@@ -404,6 +401,16 @@ WHERE head.record_id = mention.record_id
   AND mention.entity_type = declared.name
   AND mention.entity_id = entity.entity_id
   AND mention.ontology_version_id = tbox.tbox_id
+  AND snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+  AND snapshot.document_id = document.document_id AND snapshot.version_id = version.version_id
+  AND version.document_id = document.document_id
+  AND chunk.document_id = document.document_id AND chunk.version_id = version.version_id
+  AND EXISTS { MATCH (version)-[:HAS_CHUNK]->(chunk) }
+  AND EXISTS { MATCH (document)-[:ACTIVE_VERSION]->(:DocumentVersion {tenant_id:$tenant_id}) }
+  AND snapshot.retirement_id IS NULL AND version.retirement_id IS NULL
+  AND document.retirement_id IS NULL AND document.retirement_request_fingerprint IS NULL
+  AND coalesce(document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+  AND coalesce(version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
   AND mention.document_id = document.document_id
   AND mention.version_id = version.version_id
   AND mention.chunk_id = chunk.chunk_id
@@ -521,10 +528,25 @@ _IDENTITY_PROPERTY_PREDICATE = """all(
                   record_kind: 'ASSERTION'
               })-[:CURRENT_REVISION]->(fact)
         MATCH (fact_document:Document {tenant_id: $tenant_id})
-              -[:ACTIVE_VERSION]->(fact_version:DocumentVersion {
+              -[:HAS_VERSION]->(fact_version:DocumentVersion {
                   tenant_id: $tenant_id
               })-[:HAS_CHUNK]->(fact_chunk)
+        WITH DISTINCT publication, entity, identity, fact, fact_chunk, fact_subject,
+             fact_head, fact_document, fact_version
+        MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(fact_snapshot:KnowledgeSnapshot {tenant_id:$tenant_id})
+              -[:OF_VERSION]->(fact_version)
+        MATCH (fact_snapshot)-[:INCLUDES_CHUNK]->(fact_chunk)
         WHERE fact_head.record_id = fact.record_id
+          AND fact_snapshot.build_state IN ['PUBLISHED', 'RETIRED']
+          AND fact_snapshot.document_id = fact_document.document_id
+          AND fact_snapshot.version_id = fact_version.version_id
+          AND fact_version.document_id = fact_document.document_id
+          AND fact_chunk.document_id = fact_document.document_id AND fact_chunk.version_id = fact_version.version_id
+          AND EXISTS { MATCH (fact_document)-[:ACTIVE_VERSION]->(:DocumentVersion {tenant_id:$tenant_id}) }
+          AND fact_snapshot.retirement_id IS NULL AND fact_version.retirement_id IS NULL
+          AND fact_document.retirement_id IS NULL AND fact_document.retirement_request_fingerprint IS NULL
+          AND coalesce(fact_document.lifecycle_status, 'ACTIVE') = 'ACTIVE'
+          AND coalesce(fact_version.lifecycle_status, 'ACTIVE') = 'ACTIVE'
           AND fact.ontology_version_id = $ontology_version_id
           AND fact.subject_entity_id = entity.entity_id
           AND fact.subject_mention_revision_id = fact_subject.revision_id
