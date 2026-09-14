@@ -146,6 +146,9 @@ class RuntimeContractTests(unittest.TestCase):
             {"max_workers": 0},
             {"max_queue_size": -1},
             {"timeout_seconds": 0},
+            {"construction_timeout_seconds": 0},
+            {"construction_timeout_seconds": float("inf")},
+            {"construction_timeout_seconds": True},
             {"max_attempts": 0},
             {"initial_backoff_seconds": -1},
             {"max_backoff_seconds": -1},
@@ -206,6 +209,22 @@ class BoundedOperationRunnerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.runners.append(runner)
         return runner
+
+    async def test_construction_has_its_own_timeout_without_extending_reads(self) -> None:
+        def work() -> BackendResult:
+            time.sleep(0.05)
+            return BackendResult({"ok": True})
+
+        runner = self._runner(
+            _ScriptedBackend([work, work]),
+            policy=RuntimePolicy(
+                timeout_seconds=0.01, construction_timeout_seconds=0.5, max_attempts=1,
+            ),
+        )
+        result = await runner.run(_envelope(OperationKind.KNOWLEDGE_CONSTRUCT))
+        self.assertEqual(result.payload, {"ok": True})
+        with self.assertRaises(DependencyTimeoutError):
+            await runner.run(_envelope(OperationKind.RETRIEVAL))
 
     async def test_worker_and_submission_queue_are_both_hard_bounded(self) -> None:
         release = threading.Event()

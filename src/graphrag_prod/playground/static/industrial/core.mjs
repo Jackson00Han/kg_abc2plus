@@ -381,6 +381,8 @@ export class WorkbenchClient {
                     dependency_timeout: "处理超时，请稍后重试或查看任务记录。",
                     construction_ingestion_failed:
                       "来源入库或向量化失败，请查看任务记录。",
+                    construction_mapping_invalid:
+                      "字段映射未通过校验，请查看任务记录中的原因；未发布任何知识。",
                     construction_input_limit:
                       "资料超出本地构建的处理范围，请缩短正文、标题或分批上传。",
                   }[code] ||

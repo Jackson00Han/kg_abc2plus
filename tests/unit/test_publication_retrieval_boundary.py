@@ -120,7 +120,8 @@ class PublicationRetrievalBoundaryTests(unittest.TestCase):
             self.assertNotIn('ACTIVE_SNAPSHOT', query)
 
     def test_graph_expansion_degree_uses_only_published_authorized_mentions(self):
-        self.assertEqual(GRAPH_EXPANSION_QUERY.count('GovernedEntityMentionRevision'), 3)
+        # Three graph hops plus the shared publication member integrity guard.
+        self.assertEqual(GRAPH_EXPANSION_QUERY.count('GovernedEntityMentionRevision'), 4)
         self.assertNotIn(':EntityMention ', GRAPH_EXPANSION_QUERY)
         for name in ('seed', 'degree', 'candidate'):
             self.assertIn(f'{name}_mention.access_groups', GRAPH_EXPANSION_QUERY)

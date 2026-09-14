@@ -8,6 +8,7 @@ from neo4j import unit_of_work
 
 from graphrag_prod.domain import Principal
 from graphrag_prod.graph.browse_models import GraphViewChanged, GraphBrowseUnavailable, read_graph_state
+from .publication_guard import publication_members_guard
 # Formal source browsing uses the same immutable publication as the graph.
 # Review evidence has a separate API and deliberately retains draft access.
 _BOUNDARY = """
@@ -16,7 +17,8 @@ MATCH (publication_state:KnowledgePublicationState {tenant_id:$tenant_id})
  -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {tenant_id:$tenant_id})
  -[:OF_VERSION]->(version:DocumentVersion {tenant_id:$tenant_id})
 MATCH (document:Document {tenant_id:$tenant_id})-[:HAS_VERSION]->(version)
-WHERE coalesce(document.lifecycle_status,'ACTIVE')='ACTIVE'
+WHERE (""" + publication_members_guard("publication") + """)
+  AND coalesce(document.lifecycle_status,'ACTIVE')='ACTIVE'
   AND document.retirement_id IS NULL AND document.retired_at IS NULL
   AND document.retirement_request_fingerprint IS NULL
   AND document.retired_by_principal_id IS NULL

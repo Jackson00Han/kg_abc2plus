@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StringConstraints
 from .contracts import StrictAPIModel, Identifier, Checksum
 from .knowledge_contracts import ShortText, PublicationSourceScope
+from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
 
 class PublicationComparisonRequest(StrictAPIModel):
     target_publication_id: Identifier
@@ -32,7 +33,7 @@ class PublicationComparisonResponse(StrictAPIModel):
     expected_active_publication_id: Identifier
     target_publication_id: Identifier
     target_generation: Annotated[int,Field(strict=True,ge=1)]
-    added: Annotated[list[PublicationFactSummary],Field(max_length=500)]
-    removed: Annotated[list[PublicationFactSummary],Field(max_length=500)]
-    changed: Annotated[list[PublicationFactChange],Field(max_length=500)]
-    unchanged_count: Annotated[int,Field(strict=True,ge=0,le=500)]
+    added: Annotated[list[PublicationFactSummary],Field(max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    removed: Annotated[list[PublicationFactSummary],Field(max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    changed: Annotated[list[PublicationFactChange],Field(max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    unchanged_count: Annotated[int,Field(strict=True,ge=0,le=MAX_PUBLICATION_MANIFEST_RECORDS)]

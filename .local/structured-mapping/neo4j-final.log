@@ -1,0 +1,12 @@
+Starting disposable Stage 8 Neo4j container: sample-graphrag-stage8-neo4j-86079
+Waiting for Neo4j on 127.0.0.1:52747
+Running Stage 8 Neo4j integration tests
+test_complete_authorized_topology_with_recorded_mapping (test_structured_mapping_neo4j.StructuredMappingNeo4jTests.test_complete_authorized_topology_with_recorded_mapping) ... {"database_seconds": 153.975, "chunks": 20, "entities": 139, "mentions": 310, "assertions": 915, "mapping_provider": "recorded real mapping, deterministic replay", "live_embeddings": true, "rejected_chunks": 0}
+ok
+test_durable_mapping_replay_and_scoped_candidates (test_structured_mapping_neo4j.StructuredMappingNeo4jTests.test_durable_mapping_replay_and_scoped_candidates) ... {"structured_fixture_seconds": 23.8, "chunks": 4, "model_calls": 1}
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 208.613s
+
+OK

@@ -1,0 +1,1026 @@
+{
+  "dataset_id": "busway-retrieval-cases-v1",
+  "version": "1.0.0",
+  "created_at": "2026-09-13",
+  "purpose": "仅人工证据检索验收；禁止作为知识来源入库",
+  "ui_mode": "evidence_retrieval",
+  "execution_status": "not_run",
+  "knowledge_document": {
+    "path": "busway_files/busway.knowledge.md",
+    "version": "1.0.0",
+    "sha256": "f4560bcef4ef65f46c7f2209867418441e3281ad206571c26179e7eadf590148"
+  },
+  "topology_document": {
+    "path": "busway_files/topology.source.json",
+    "sha256": "0fa309f6fce7baa52629b01b2c29d0962b6f96f10ce2c7ff73c09edc3309ea5f"
+  },
+  "original_sources": [
+    {
+      "id": "T",
+      "path": "new_files/topology.xml",
+      "sha256": "26ab661ceafa7ed4745cdb6241a69ae407acf23d9a4c6246db32c840e3610a9a"
+    },
+    {
+      "id": "M",
+      "path": "new_files/mapping.topology_xml.yaml",
+      "sha256": "7117c27a1031ad54e33ac6de1fcd5485d7c4e4e8247b509475b1629d78cf5b21"
+    },
+    {
+      "id": "I",
+      "path": "new_files/instances.diagnostic.yaml",
+      "sha256": "5d8f4ea81f15bf783ceb987bb822b13f18537d80856ffafb7798f936a7628520"
+    },
+    {
+      "id": "R",
+      "path": "new_files/rule_v2.md",
+      "sha256": "0ceb3c80312c6fa3b01be81ef421d90fdd45be760a693bb853fd5f61b6d4755a"
+    }
+  ],
+  "case_count": 24,
+  "cases": [
+    {
+      "id": "BW-01",
+      "question": "工程 PBMBaseProj_2512 有哪些母线槽和分区？工程对象、构件和逻辑测点分别有多少？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "BUS1 → BUS1.S1；BUS2 → BUS2.S1。",
+        "24 个工程对象包含 19 个构件；构件为 9 个接头、7 个直身段、1 个法兰、1 个插接箱、1 个始端单元。",
+        "64 个逻辑测点；数量仅针对当前来源清单。"
+      ],
+      "forbidden_conclusions": [
+        "把 24 当作构件数，或把 64 说成实际采样数。",
+        "把本体允许的三通等类型当作当前工程已存在的构件。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K02",
+          "heading": "工程、母线槽与分区",
+          "line_start": 17,
+          "line_end": 26,
+          "sha256": "58156fcbb1d73bfca58a073b0518550b0bec31d6a53b98dd4e899d06ee852a16"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K07",
+          "heading": "逻辑测点实际覆盖",
+          "line_start": 69,
+          "line_end": 87,
+          "sha256": "3356cd1495ea1660d42446533819467e13b02c6c37dd1ee04357cbc392c50123"
+        }
+      ],
+      "original_source_locators": [
+        "T:/Project/NodeTree/Root/Children；全部 Child 及 Variables/Variable。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-02",
+      "question": "BUS1.S1.JPK1 和 BUS2.S1.JPK1 是不是同一个接头？应该怎样引用它们？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "不是同一接头；同名 Code=JPK1 不构成同一身份。",
+        "分别使用 PBMBaseProj_2512/BUS1.S1.JPK1 和 PBMBaseProj_2512/BUS2.S1.JPK1。"
+      ],
+      "forbidden_conclusions": [
+        "仅按 JPK1 合并，或使用 Neo4j 内部 ID 作为持久业务引用。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K03",
+          "heading": "对象身份与连接语义",
+          "line_start": 27,
+          "line_end": 36,
+          "sha256": "ad8c1a12bdaa6d726fe5f547eddda040052997616c7102eb7d027ae98553556d"
+        }
+      ],
+      "original_source_locators": [
+        "M:materialization.topology_xml.identity_schemes.asset_ref；T:两个 FullCode 对应 Child。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-03",
+      "question": "BUS1.S1.PIU4 属于哪里，又通过哪个端口连接到母线槽？能据此证明现在有分流吗？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "PIU4 是 BUS1.S1 分区内的插接箱。",
+        "BUS1.S1.ST2 的附件端口 3（Attach1）以 Load 指向 BUS1.S1.PIU4。",
+        "静态插接结构不能证明当前实际分流，需要外部运行证据。"
+      ],
+      "forbidden_conclusions": [
+        "说 PIU4 属于 JPK3，或主链路串行经过 PIU4。",
+        "臆造 PIU4 的对端端口号、支路电流或当前工作状态。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K04",
+          "heading": "BUS1 端口链路与插接关系",
+          "line_start": 37,
+          "line_end": 46,
+          "sha256": "c1af7818a07b1b9fefc609a17fa4f051edc64593a20b12a20bfbfd28390a85e6"
+        }
+      ],
+      "original_source_locators": [
+        "T:Child[@FullCode='BUS1.S1.ST2']/Ports/Port[@Ordinal='3']/@Load；BUS1.S1/Children。",
+        "M:materialization.topology_xml.runtime_branch_state。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-04",
+      "question": "BUS2.S1.JPK4 的前后连接对象是什么？它的算法路由已经通过生产验证了吗？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "JPK4 输入端口 1 的 Load 为 BUS2.S1.ST3，输出端口 2 的 Load 为 BUS2.S1.ST4。",
+        "AlgorithmType=StaticTable；AlgorithmRouteStatus=staging_assumption_unverified；依据 cloned_from_BUS2.S1.JPK3，未证明生产验证通过。"
+      ],
+      "forbidden_conclusions": [
+        "把前后物理连接对象直接写成 JPK3、JPK5 而遗漏中间直身段。",
+        "将未验证路由称为已验证或已运行诊断结果。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K05",
+          "heading": "BUS2 连续链路与相邻接头",
+          "line_start": 47,
+          "line_end": 58,
+          "sha256": "2651e1377e13082f423cf9de267cc5b36315812423537352e2bb357b732624d9"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K06",
+          "heading": "工程属性与未验证组态",
+          "line_start": 59,
+          "line_end": 68,
+          "sha256": "5d9fdd3c19305ffa42d636b7cb8843043f137b7d8e3187505886addcf11ecf63"
+        }
+      ],
+      "original_source_locators": [
+        "T:Child[@FullCode='BUS2.S1.JPK4']/Ports/Port 与 Extension/Data。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-05",
+      "question": "按当前资料，BUS2.S1.JPK1 与 JPK2、JPK1 与 JPK3，哪一对满足 D3 的相邻结构条件？是否已经能判断温差异常？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "JPK1/JPK2 经单个 ST1 连接，相关端口启用且无分支连接，满足 D3 的结构条件。",
+        "JPK1/JPK3 经 ST1、JPK2、ST2，不能作为 D3 直接相邻接头对。",
+        "满足结构条件不等于异常；还缺同步有效 TempDiff、持续时间等实际诊断证据。"
+      ],
+      "forbidden_conclusions": [
+        "按编码或图中可达性把 JPK1/JPK3 当直接相邻。",
+        "将结构关系自动变成 JOINT_TEMP_DIFF 已发生。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K05",
+          "heading": "BUS2 连续链路与相邻接头",
+          "line_start": 47,
+          "line_end": 58,
+          "sha256": "2651e1377e13082f423cf9de267cc5b36315812423537352e2bb357b732624d9"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K17",
+          "heading": "诊断范围与证据要求",
+          "line_start": 215,
+          "line_end": 230,
+          "sha256": "47c7ee7134a9f402d69fe5621d6a0dfb7de17d7b9daa0eabff3e2704058cfcb3"
+        }
+      ],
+      "original_source_locators": [
+        "T:BUS2.S1.JPK1/ST1/JPK2/ST2/JPK3 的 Ports/Port；R:§3.1 相邻接头、§5.4.1 D3。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-06",
+      "question": "BUS1.S1.JPK1 配置了哪些测点？能用它的 Temp 配合环境温度代替 TempDiff 做接头温升诊断吗？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "只有 Battery、Humidity、Temp，测量系统引用为 Etemp_1。",
+        "没有 TempDiff；映射将这个 Temp 解释为母线槽直身绝对温度。",
+        "规则 v2 不允许用 Temp-AmbientTemp 重算或替代 TempDiff，依赖温升的诊断需要报告数据不足。"
+      ],
+      "forbidden_conclusions": [
+        "从“接头类型应有测点”生成实际不存在的 TempDiff、WaterAlarm。",
+        "把 Etemp Temp 当作接头温升，或许可相减回填。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K07",
+          "heading": "逻辑测点实际覆盖",
+          "line_start": 69,
+          "line_end": 87,
+          "sha256": "3356cd1495ea1660d42446533819467e13b02c6c37dd1ee04357cbc392c50123"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K08",
+          "heading": "温度、温升与测量系统的区别",
+          "line_start": 88,
+          "line_end": 99,
+          "sha256": "82115f7b04f37d4e33db0349f138cfe5d56056b18445a28688fc44710ad69a9e"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K09",
+          "heading": "温升源值与数据不足",
+          "line_start": 100,
+          "line_end": 109,
+          "sha256": "e77decc5081a917abfaa3c773d0fd3ba13bc75d3e124fd4faff45e1d19d11c37"
+        }
+      ],
+      "original_source_locators": [
+        "T:Child[@FullCode='BUS1.S1.JPK1']/Variables；M:observable_resolution.mappings.busway_body_absolute_temperature；R:§3.1、§7 M7。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-07",
+      "question": "BUS2.S1.ETB1 的三相电流、环境温度和两类报警分别是什么 Item、什么测量系统？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "Ia、Ib、Ic 对应 PM5350；AmbientTemp 对应 Etemp_2。",
+        "PhaseImbalanceAlarm、TempRiseAlarm 对应 Alarm_1。",
+        "ETB1 共 25 个逻辑测点，这些仅是组态清单。"
+      ],
+      "forbidden_conclusions": [
+        "把 WaterAlarm 放在 ETB1，或声称某个报警已触发。",
+        "把测量系统名当计量单位。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K07",
+          "heading": "逻辑测点实际覆盖",
+          "line_start": 69,
+          "line_end": 87,
+          "sha256": "3356cd1495ea1660d42446533819467e13b02c6c37dd1ee04357cbc392c50123"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K10",
+          "heading": "电气量、环境量与报警量字典",
+          "line_start": 110,
+          "line_end": 132,
+          "sha256": "b2c658aedb7b9df0294fea52476d590eef9e30f182b17862a00bab13c077078b"
+        }
+      ],
+      "original_source_locators": [
+        "T:Child[@FullCode='BUS2.S1.ETB1']/Variables/Variable。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-08",
+      "question": "测点中的 Unit=EDock_1 是计量单位吗？Temp、TempDiff、TempDiffRate 分别表示什么，规范单位是什么？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "Unit=EDock_1 是测量系统引用，不是计量单位。",
+        "EDock Temp 为接头绝对温度，单位 °C；TempDiff 为温升，单位 K；TempDiffRate 为温升变化率，单位 K/min。",
+        "Temp 还需结合系统/测温方案，Etemp Temp 的语义不同。"
+      ],
+      "forbidden_conclusions": [
+        "将温升写成当前绝对温度，或单位写为 EDock_1。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K08",
+          "heading": "温度、温升与测量系统的区别",
+          "line_start": 88,
+          "line_end": 99,
+          "sha256": "82115f7b04f37d4e33db0349f138cfe5d56056b18445a28688fc44710ad69a9e"
+        }
+      ],
+      "original_source_locators": [
+        "M:materialization.topology_xml.observable_resolution.mappings；I:entities.joint_absolute_temperature、busway_body_absolute_temperature、temperature_rise、temperature_rise_rate。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-09",
+      "question": "温升是 DerivedObservable，是否说明拓扑里没有直接温升测点？哪些派生量需要按需计算？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "不是；temperature_rise、temperature_rise_rate 是派生物理量，但 availability=source_point，实际有 TempDiff、TempDiffRate。",
+        "按需计算六类：电流负载率、相邻接头温升差、接头温升相对均值偏差、温升与电流相关性、稳态温升波动范围、降温响应滞后。",
+        "定义计算概念不表示当前已有计算结果。"
+      ],
+      "forbidden_conclusions": [
+        "把全部派生量视为直接源测点或视为测点全部缺失。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K11",
+          "heading": "按需派生量",
+          "line_start": 133,
+          "line_end": 149,
+          "sha256": "b53cd2aaeda8e0d0716dc76e58f24bc5dee39f631a29a41162ab26c093d44931"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.temperature_rise、temperature_rise_rate、current_load_ratio、adjacent_joint_temperature_difference、joint_temperature_deviation_from_average、temperature_current_correlation、temperature_stability_range、cooling_response_lag。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-10",
+      "question": "温升阈值超限有哪些候选根因？仅有这个现象能不能直接确认螺栓未拧紧？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "候选集合完整且仅为：进水、负载过高、螺栓未拧紧、接触面氧化或污染、散热问题。",
+        "不能直接确认；需要对应 C 类完整规则及实际证据。候选关系没有概率或优先级。"
+      ],
+      "forbidden_conclusions": [
+        "把候选根因作为具体接头已确诊事实。",
+        "无来源增加候选原因、概率或排名。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K15",
+          "heading": "候选根因类别及机理",
+          "line_start": 183,
+          "line_end": 196,
+          "sha256": "483bacfa2de9ed12253760d59d2d1e9d24accb51f3d4615a937665026f9f0843"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K16",
+          "heading": "现象与候选原因的对应关系",
+          "line_start": 197,
+          "line_end": 214,
+          "sha256": "ed64ea2a89087e7ac85978afaf9f67708e2f947c0132960449380fb7e1af260d"
+        }
+      ],
+      "original_source_locators": [
+        "I:relations.PCL_001～PCL_005；R:§5.1.2、§1.2。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-11",
+      "question": "相邻接头温差异常的候选根因有哪些？比较用两个接头，结果应定位在哪里？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "候选根因为螺栓未拧紧、接触面氧化或污染。",
+        "相邻对是比较基准；D3 比较后接头减前接头，现象定位在后接头。",
+        "D3 命中不能替代 C3/C4 的完整根因判定。"
+      ],
+      "forbidden_conclusions": [
+        "把温升阈值超限的五个候选原样套给相邻接头温差异常。",
+        "定位到两个接头均已故障或整个工程。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K11",
+          "heading": "按需派生量",
+          "line_start": 133,
+          "line_end": 149,
+          "sha256": "b53cd2aaeda8e0d0716dc76e58f24bc5dee39f631a29a41162ab26c093d44931"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K12",
+          "heading": "六类可由规则输出的现象",
+          "line_start": 150,
+          "line_end": 164,
+          "sha256": "0ded6c435d96e2b44587713da6cba2ea1e50d97bd67dd02eccd037f4225f85cc"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K16",
+          "heading": "现象与候选原因的对应关系",
+          "line_start": 197,
+          "line_end": 214,
+          "sha256": "ed64ea2a89087e7ac85978afaf9f67708e2f947c0132960449380fb7e1af260d"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K17",
+          "heading": "诊断范围与证据要求",
+          "line_start": 215,
+          "line_end": 230,
+          "sha256": "47c7ee7134a9f402d69fe5621d6a0dfb7de17d7b9daa0eabff3e2704058cfcb3"
+        }
+      ],
+      "original_source_locators": [
+        "I:relations.PCL_011、PCL_012、SCP_004、SCP_017；R:§5.4.1、§5.4.2。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-12",
+      "question": "“温升阈值超限”是“温升异常”的一种，能因此认定 D1 命中就等于 D5 命中吗？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "不能；分类特化关系不表示规则连锁命中。",
+        "D1 读取目标接头有效 TempDiff 的阈值和持续条件；D5 有独立的温升与适用电流平方回归口径及前置条件。"
+      ],
+      "forbidden_conclusions": [
+        "以概念包含关系声称 D5 已执行或命中。",
+        "把温升变化率当 D5 直接判据。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K12",
+          "heading": "六类可由规则输出的现象",
+          "line_start": 150,
+          "line_end": 164,
+          "sha256": "0ded6c435d96e2b44587713da6cba2ea1e50d97bd67dd02eccd037f4225f85cc"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K13",
+          "heading": "概念分类不等于规则连锁命中",
+          "line_start": 165,
+          "line_end": 172,
+          "sha256": "d7f922e91cdb817e7952fe5fc7d9730a0dee40d9c9b3aea9eabcb760d657bb99"
+        }
+      ],
+      "original_source_locators": [
+        "I:relations.TAX_001、CHR_001、CHR_003～CHR_006；R:§5.1.1、§5.2.1。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-13",
+      "question": "当前六类诊断现象分别由哪条规则判断，引用的规则版本是什么？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "D1 温升阈值超限；D2 电流负载异常；D3 相邻接头温差异常；D4 进水报警；D5 温升异常；D6 三相不平衡。",
+        "规则引用 DIAGNOSTIC_RULES_V2，文件 rule_v2.md，document_version=2.0.0，profile_id=diagnostic64_v2。",
+        "这些是规则知识引用，不能证明页面或生产诊断执行已经接通。"
+      ],
+      "forbidden_conclusions": [
+        "遗漏 D6，或把 C1～C5 说成现象规则。",
+        "将 lifecycle_status=active 等价为当前服务已部署并执行。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K12",
+          "heading": "六类可由规则输出的现象",
+          "line_start": 150,
+          "line_end": 164,
+          "sha256": "0ded6c435d96e2b44587713da6cba2ea1e50d97bd67dd02eccd037f4225f85cc"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K18",
+          "heading": "外部规则版本与解释边界",
+          "line_start": 231,
+          "line_end": 240,
+          "sha256": "79d8dc328a1e4fa54614acdde90f4c5040af470b02fb509b523e4c2298a7f19f"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.DIAGNOSTIC_RULES_V2、relations.EVL_001～EVL_006；R:§0、§5。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-14",
+      "question": "仅解释规则 v2：在 Phase 2 已启动、报警绑定及质量有效且 D4 命中的前提下，C1 是否还必须先做现场检查才能输出进水根因？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "按 2.0.0/diagnostic64_v2 的明确口径，C1 根据 D4 的有效进水报警证据确认 WATER_INGRESS，沿用接头定位。",
+        "该版本中现场检查是处置和复核，不是 C1 输出前置条件。",
+        "这是给定前提下的规则解释，不说明真实接头已经进水。"
+      ],
+      "forbidden_conclusions": [
+        "添加该版本不存在的“必须先现场确认”门槛。",
+        "遗漏有效证据/阶段前提，或由此声称 BUS2 接头已进水。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K19",
+          "heading": "进水报警与进水根因的版本化解释",
+          "line_start": 241,
+          "line_end": 248,
+          "sha256": "5df511bb8a9e4dd047147245bd24db9413cca336d3e1aa8789f8e60b17d285d4"
+        }
+      ],
+      "original_source_locators": [
+        "R:§0、§5.5.1、§5.5.2、§6.1。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-15",
+      "question": "当前三相不平衡究竟是不支持判断现象，还是只没有根因能力？可不可以由大模型补出缺相等根因？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "D6 可以按有效不平衡报警信号判断 THREE_PHASE_IMBALANCE 现象。",
+        "M3 表示没有进一步根因分类与规则，不能补猜缺相、负载分配或接线等根因。",
+        "实例文件 outside_current_product_scope 标记与 D6 存在范围差异，新知识说明已在 SRC-01 显式保留。"
+      ],
+      "forbidden_conclusions": [
+        "说整个现象完全不支持，或假装已有对应根因规则。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K12",
+          "heading": "六类可由规则输出的现象",
+          "line_start": 150,
+          "line_end": 164,
+          "sha256": "0ded6c435d96e2b44587713da6cba2ea1e50d97bd67dd02eccd037f4225f85cc"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K16",
+          "heading": "现象与候选原因的对应关系",
+          "line_start": 197,
+          "line_end": 214,
+          "sha256": "ed64ea2a89087e7ac85978afaf9f67708e2f947c0132960449380fb7e1af260d"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K23",
+          "heading": "已发现的来源差异及本说明采用的口径",
+          "line_start": 275,
+          "line_end": 287,
+          "sha256": "eaada2d322e56abc36cff815b39a846736830433767de6f932b0cba570e9d974"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.THREE_PHASE_IMBALANCE、relations.EVL_006；R:§5.6.1 D6、§5.6.2 M3。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-16",
+      "question": "局部热点是一个可以独立确诊的故障现象吗？它在 C3、C4、C5 中分别起什么作用？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "局部热点是中间判据，没有 D 类条款单独输出它。",
+        "C3、C4 要求目标接头为局部热点；C5 要求固定集合不存在局部热点。",
+        "局部热点口径是目标 TempDiff 相对同范围均值，不能与 D3 前后相邻温升差混用。",
+        "实例把它写为仅 C5 条件1 的注记与规则不一致，应保留差异。"
+      ],
+      "forbidden_conclusions": [
+        "称 C5 用“有局部热点”确认散热问题，或单凭热点就确诊松动。",
+        "沿用错误条款编号而不说明差异。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K14",
+          "heading": "局部热点和分布式温升异常的能力边界",
+          "line_start": 173,
+          "line_end": 182,
+          "sha256": "0d3af271dd5fc6e71b91ea1623f6f9f9e6197ebd855a94b7dc47cff41ef9b5cd"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K23",
+          "heading": "已发现的来源差异及本说明采用的口径",
+          "line_start": 275,
+          "line_end": 287,
+          "sha256": "eaada2d322e56abc36cff815b39a846736830433767de6f932b0cba570e9d974"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.LOCAL_HOTSPOT、relations.EVL_007；R:§3.1、§6.3 条件1、§6.4 条件1、§6.5 条件4。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-17",
+      "question": "知识里有“分布式温升异常”，是否说明规则 v2 能独立判定它？它有哪些候选原因？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "它是知识概念；规则 2.0.0 没有判定该现象的条款。",
+        "候选原因是散热问题、负载过高；候选关系不补足缺失的现象规则。",
+        "C5 输出散热问题根因，不能冒充分布式温升异常的独立判定条款。"
+      ],
+      "forbidden_conclusions": [
+        "仅凭 SCP_010 的 C5 注记声称 C5 输出该现象。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K14",
+          "heading": "局部热点和分布式温升异常的能力边界",
+          "line_start": 173,
+          "line_end": 182,
+          "sha256": "0d3af271dd5fc6e71b91ea1623f6f9f9e6197ebd855a94b7dc47cff41ef9b5cd"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K16",
+          "heading": "现象与候选原因的对应关系",
+          "line_start": 197,
+          "line_end": 214,
+          "sha256": "ed64ea2a89087e7ac85978afaf9f67708e2f947c0132960449380fb7e1af260d"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K23",
+          "heading": "已发现的来源差异及本说明采用的口径",
+          "line_start": 275,
+          "line_end": 287,
+          "sha256": "eaada2d322e56abc36cff815b39a846736830433767de6f932b0cba570e9d974"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.DISTRIBUTED_TEMP_RISE、relations.PCL_018、PCL_019、SCP_010、CHR_018～CHR_020；R:§6.5。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-18",
+      "question": "拓扑中 BUS1 接头是 1600 A，BUS1.S1.PIU4 是多少？能把 BUS2 构件的 1000 A 直接作为全工程诊断额定总管电流吗？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "BUS1.S1.PIU4 的 CurrentRating 为 1250 A；BUS2 接头/直身段记录 1000 A。",
+        "不能；这些是对应构件的源工程属性，诊断额定参数需要外部适用绑定。",
+        "RATED_CURRENT_PARAMETER 仍为 unresolved。"
+      ],
+      "forbidden_conclusions": [
+        "把各构件额定值混成全工程统一值，或宣称运行参数绑定已完成。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K06",
+          "heading": "工程属性与未验证组态",
+          "line_start": 59,
+          "line_end": 68,
+          "sha256": "5d9fdd3c19305ffa42d636b7cb8843043f137b7d8e3187505886addcf11ecf63"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K20",
+          "heading": "临时参数与固定集合的适用范围",
+          "line_start": 249,
+          "line_end": 258,
+          "sha256": "4d5e8b0cbe16441baef37b681f0ff053a65d243b2bdbebdd9d2e0f9b04cbe4ce"
+        }
+      ],
+      "original_source_locators": [
+        "T:BUS1.S1.PIU4、BUS2 接头/直身段的 Extension/Data[@Data1='CurrentRating']；I:entities.RATED_CURRENT_PARAMETER。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-19",
+      "question": "当前 C5 散热问题 mock 使用哪些接头，适用于什么工程和范围？这能作为所有母线槽的固定要求吗？",
+      "kind": "answerable",
+      "expected_evidence_points": [
+        "工程 PBMBaseProj_2512，范围 BUS2.S1，profile diagnostic64_v2。",
+        "固定集合为 BUS2.S1.JPK1～JPK6，共 6 个接头，降流前后保持同一集合。",
+        "这是当前 mock 数据和参数适用范围，不是通用本体要求，也不表示这六个接头发生散热故障。"
+      ],
+      "forbidden_conclusions": [
+        "把六个接头扩张为所有项目必须固定六点，或套用到 BUS1。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K20",
+          "heading": "临时参数与固定集合的适用范围",
+          "line_start": 249,
+          "line_end": 258,
+          "sha256": "4d5e8b0cbe16441baef37b681f0ff053a65d243b2bdbebdd9d2e0f9b04cbe4ce"
+        }
+      ],
+      "original_source_locators": [
+        "R:§3.2、§6.5 C5；T:BUS2.S1 下接头清单。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-20",
+      "question": "仅凭目前入库的拓扑和知识说明，BUS2.S1.JPK4 现在是否已经进水，当前温升是多少？",
+      "kind": "insufficient_evidence",
+      "expected_evidence_points": [
+        "证据不足，无法判断当前进水与温升数值。",
+        "来源只有 Temp、TempDiff、TempDiffRate、WaterAlarm 的配置，无当前采样时间、有效质量、值或诊断执行记录。",
+        "可以说明存在这些测点以及进一步需要什么证据。"
+      ],
+      "forbidden_conclusions": [
+        "捏造任何当前温升/报警值、正常状态、时间或已确诊根因。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K01",
+          "heading": "来源与证据边界",
+          "line_start": 7,
+          "line_end": 16,
+          "sha256": "2d6cade15fa5775b295e920c0877762c0d99d19f7e1734767ace561a67fc9700"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K07",
+          "heading": "逻辑测点实际覆盖",
+          "line_start": 69,
+          "line_end": 87,
+          "sha256": "3356cd1495ea1660d42446533819467e13b02c6c37dd1ee04357cbc392c50123"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K19",
+          "heading": "进水报警与进水根因的版本化解释",
+          "line_start": 241,
+          "line_end": 248,
+          "sha256": "5df511bb8a9e4dd047147245bd24db9413cca336d3e1aa8789f8e60b17d285d4"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K22",
+          "heading": "当前不能由这些资料回答的问题",
+          "line_start": 267,
+          "line_end": 274,
+          "sha256": "2b6625e6a1d9956d9a7923c2c79b456ed1a67d75d5c106d1aef2bdafecec6610"
+        }
+      ],
+      "original_source_locators": [
+        "T:Child[@FullCode='BUS2.S1.JPK4']/Variables；R:§8。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-21",
+      "question": "请给出可直接部署到生产的 D5、C3、C4、C5 阈值配置。",
+      "kind": "insufficient_evidence",
+      "expected_evidence_points": [
+        "当前资料不足以提供可直接部署生产的配置。",
+        "D5 为临时试用口径，须项目数据校准；C3～C5 仅当前 mock profile，不能推广。",
+        "生产值需要外部参数注册、适用范围及版本验证；本知识说明未登记运行阈值。"
+      ],
+      "forbidden_conclusions": [
+        "把 mock 数字、窗口或固定集合包装成生产推荐配置。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K18",
+          "heading": "外部规则版本与解释边界",
+          "line_start": 231,
+          "line_end": 240,
+          "sha256": "79d8dc328a1e4fa54614acdde90f4c5040af470b02fb509b523e4c2298a7f19f"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K20",
+          "heading": "临时参数与固定集合的适用范围",
+          "line_start": 249,
+          "line_end": 258,
+          "sha256": "4d5e8b0cbe16441baef37b681f0ff053a65d243b2bdbebdd9d2e0f9b04cbe4ce"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K21",
+          "heading": "参数知识与历史统计的边界",
+          "line_start": 259,
+          "line_end": 266,
+          "sha256": "5277bff15fc0ca34305199e577f7d08cb2bc56045b1be4286f488f65fa22b363"
+        }
+      ],
+      "original_source_locators": [
+        "R:§3.2、§5.2.1 说明、§6.3～§6.5；I:DiagnosticParameter 条目。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-22",
+      "question": "螺栓未拧紧在母线槽故障中的历史占比是多少？能据此给 BUS2.S1.JPK4 的候选原因排概率吗？",
+      "kind": "insufficient_evidence",
+      "expected_evidence_points": [
+        "没有提供比例、样本量、统计时段或原始统计文件，无法给出历史占比。",
+        "BUSWAY_INCIDENT_CAUSE_DISTRIBUTION 未绑定，not_for_diagnostic_scoring=true，不能用它给当前设备打分或排概率。"
+      ],
+      "forbidden_conclusions": [
+        "编造百分比、厂商统计来源、概率或候选排名。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K21",
+          "heading": "参数知识与历史统计的边界",
+          "line_start": 259,
+          "line_end": 266,
+          "sha256": "5277bff15fc0ca34305199e577f7d08cb2bc56045b1be4286f488f65fa22b363"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K22",
+          "heading": "当前不能由这些资料回答的问题",
+          "line_start": 267,
+          "line_end": 274,
+          "sha256": "2b6625e6a1d9956d9a7923c2c79b456ed1a67d75d5c106d1aef2bdafecec6610"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.BUSWAY_INCIDENT_CAUSE_DISTRIBUTION。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-23",
+      "question": "可以把 BUS2.S1 的温升规则直接用于另一个项目的真空断路器或水泵吗？",
+      "kind": "outside_scope",
+      "expected_evidence_points": [
+        "不能根据现有资料证明适用；当前包限定母线槽工程 PBMBaseProj_2512 与相应规则/profile。",
+        "没有其他项目、真空断路器或水泵的适用模型、生产参数与证据，需要相应领域资料和版本化适用依据。"
+      ],
+      "forbidden_conclusions": [
+        "把母线槽阈值、构件身份、固定集合直接迁移到其他设备或项目。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K20",
+          "heading": "临时参数与固定集合的适用范围",
+          "line_start": 249,
+          "line_end": 258,
+          "sha256": "4d5e8b0cbe16441baef37b681f0ff053a65d243b2bdbebdd9d2e0f9b04cbe4ce"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K22",
+          "heading": "当前不能由这些资料回答的问题",
+          "line_start": 267,
+          "line_end": 274,
+          "sha256": "2b6625e6a1d9956d9a7923c2c79b456ed1a67d75d5c106d1aef2bdafecec6610"
+        }
+      ],
+      "original_source_locators": [
+        "R:§0、§3.2 适用边界；I:规则/参数引用；本包无该跨设备领域资料。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    },
+    {
+      "id": "BW-24",
+      "question": "这份知识说明的诊断机理是否已经核验了厂商业务原文？拓扑 JSON 和 XML 能否算两个独立权威来源？",
+      "kind": "source_quality",
+      "expected_evidence_points": [
+        "不能声称已核验；被引用的《母线槽知识点记录 - 2026.7.10 - v1.3.md》没有随本次资料提供。",
+        "当前使用的是用户提供的诊断整理材料，权威性未评估；人工确认抽取不会自动提升来源等级。",
+        "topology.source.json 是 topology.xml 的业务投影，二者属于同一来源链，不能当独立佐证。"
+      ],
+      "forbidden_conclusions": [
+        "声称已读未提供原文、厂商标准背书或生产验证通过。"
+      ],
+      "required_documents": [
+        "busway_files/topology.source.json",
+        "busway_files/busway.knowledge.md"
+      ],
+      "expected_evidence": [
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K01",
+          "heading": "来源与证据边界",
+          "line_start": 7,
+          "line_end": 16,
+          "sha256": "2d6cade15fa5775b295e920c0877762c0d99d19f7e1734767ace561a67fc9700"
+        },
+        {
+          "document": "busway_files/busway.knowledge.md",
+          "section_id": "K24",
+          "heading": "固定来源版本",
+          "line_start": 288,
+          "line_end": 299,
+          "sha256": "a8ff903b490a0dc990b9957caa8e25b61d6167d82f6f29993dc49dc36c6cab69"
+        }
+      ],
+      "original_source_locators": [
+        "I:entities.*.provenance.source_refs；R:§0 规则来源说明；topology.source.json:metadata.source、conversion。"
+      ],
+      "actual_result": null,
+      "status": "not_run"
+    }
+  ]
+}

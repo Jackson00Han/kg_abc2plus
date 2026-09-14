@@ -3,6 +3,7 @@ from hashlib import sha256
 from neo4j import Query
 from graphrag_prod.knowledge.review import KnowledgePublicationConflict
 from .publication_sources import compare_source_summaries
+from .publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
 
 _QUERY = """
 MATCH (p:KnowledgePublication {tenant_id:$tenant_id})-[:PUBLISHES_KNOWLEDGE_REVISION]->(r)
@@ -27,7 +28,7 @@ RETURN p.publication_id AS publication_id,r.revision_id AS revision_id,r.record_
  r.predicate AS predicate,r.object_canonical_name AS object_name,r.literal_value AS literal_value,
  r.literal_raw_unit AS unit,r.literal_raw_valid_from AS valid_from,r.literal_raw_valid_to AS valid_to,r.literal_raw_observed_at AS observed_at,
  d.title AS document_title,r.relationship_properties_json AS qualifiers
-ORDER BY p.publication_id,r.record_id LIMIT 1001
+ORDER BY p.publication_id,r.record_id LIMIT $record_limit
 """
 
 
@@ -55,13 +56,14 @@ def publication_comparison(service,principal,target_id,expected_id):
     if target_id not in by_id or expected_id not in by_id or by_id[expected_id].status!='ACTIVE':
         raise KnowledgePublicationConflict('publication comparison scope changed')
     selected={key:by_id[key] for key in {target_id,expected_id}}
-    if any(len(p.published_revision_ids)>500 for p in selected.values()):
+    if any(len(p.published_revision_ids)>MAX_PUBLICATION_MANIFEST_RECORDS for p in selected.values()):
         raise KnowledgePublicationConflict('publication comparison exceeds its safety bound')
-    params=dict(tenant_id=principal.tenant_id,groups=sorted(principal.groups),ids=sorted(selected))
+    params=dict(tenant_id=principal.tenant_id,groups=sorted(principal.groups),ids=sorted(selected),
+                record_limit=2 * MAX_PUBLICATION_MANIFEST_RECORDS + 1)
     with service.driver.session(database=service.database) as session:
         rows=[dict(r) for r in session.run(Query(_QUERY,timeout=15.0),**params)]
         source_rows=[dict(r) for r in session.run(Query(_SOURCE_QUERY,timeout=15.0),**params)]
-    if len(rows)>1000:raise KnowledgePublicationConflict('publication comparison exceeds its safety bound')
+    if len(rows)>2 * MAX_PUBLICATION_MANIFEST_RECORDS:raise KnowledgePublicationConflict('publication comparison exceeds its safety bound')
     for key,p in selected.items():
         actual=[r['revision_id'] for r in rows if r['publication_id']==key]
         if set(actual)!=set(p.published_revision_ids) or len(actual)!=len(p.published_revision_ids):

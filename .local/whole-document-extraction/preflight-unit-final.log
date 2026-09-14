@@ -1,0 +1,10 @@
+/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+{"duration_ms":0.454366,"error_code":"unauthenticated","event":"request_completed","level":"WARNING","method":"POST","request_id":"062305dcabd0408cae655c6c3c8219d2","route":"<unknown>","service":"graphrag-prod","status":401,"timestamp":"2026-09-13T10:07:59.375320Z","trace_id":"9ab9393d5aa841af81ae4c83cf60ec95"}
+{"duration_ms":4.507238,"event":"request_completed","level":"INFO","method":"POST","request_id":"3742c57c8a324446bea8977a83c844a9","route":"/v1/knowledge:preflight","service":"graphrag-prod","status":200,"timestamp":"2026-09-13T10:07:59.383155Z","trace_id":"a2b77af4602e4235973bcf17bf1e78a6"}
+{"duration_ms":2.185648,"error_code":"upload_review_required","event":"request_completed","level":"WARNING","method":"POST","request_id":"a5c48534d9e346c39e4bc736161a1b4b","route":"/v1/knowledge:construct","service":"graphrag-prod","status":409,"timestamp":"2026-09-13T10:07:59.386808Z","trace_id":"f4b962db7b9d45e994b87e5ea3e159fb"}
+{"duration_ms":2.686498,"event":"request_completed","level":"INFO","method":"POST","request_id":"72f0a05506224026a699ac6acee6ceb7","route":"/v1/knowledge:construct","service":"graphrag-prod","status":200,"timestamp":"2026-09-13T10:07:59.391046Z","trace_id":"ac5cb0ff69a24258978ff639a2eb726b"}
+----------------------------------------------------------------------
+Ran 29 tests in 0.244s
+
+OK

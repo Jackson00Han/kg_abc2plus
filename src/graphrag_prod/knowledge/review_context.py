@@ -28,8 +28,6 @@ def _resolution_revision_query(kind, *, one_record, extra_where="", projection="
               -[:INCLUDES_CHUNK]->(chunk)
         MATCH (document:Document {tenant_id: $tenant_id})
               -[:HAS_VERSION]->(version:DocumentVersion {""")
-    query = query.replace("MATCH (:TBoxCatalog {tenant_id: $tenant_id})", """WITH DISTINCT head, revision, chunk, document, snapshot, version
-        MATCH (:TBoxCatalog {tenant_id: $tenant_id})""")
     return query.replace("WHERE revision.ontology_version_id = tbox.tbox_id", """WHERE revision.ontology_version_id = tbox.tbox_id
           AND snapshot.document_id = document.document_id
           AND snapshot.version_id = version.version_id
@@ -271,14 +269,33 @@ def evidence_context_tx(tx, principal, request):
     if row is None:
         raise KnowledgeReviewUnavailable('source revision is unavailable')
     record = dict(row['revision'])
+    stored_record = record
+    role = getattr(request, 'evidence_role', 'PRIMARY')
+    if role not in {'PRIMARY', 'CONTEXT_VALUE'}:
+        raise KnowledgeReviewUnavailable('evidence role is unavailable')
+    extra = ''
+    if role == 'CONTEXT_VALUE':
+        if kind is not ReviewRecordKind.ASSERTION:
+            raise KnowledgeReviewUnavailable('context value evidence is unavailable')
+        context = _stored_assertion(record).context_property_evidence
+        if context is None:
+            raise KnowledgeReviewUnavailable('context value evidence is unavailable')
+        value = context.value_evidence
+        record = {**record, 'chunk_id': value.chunk_id, 'evidence_char_start': value.char_start,
+                  'evidence_char_end': value.char_end, 'evidence_text': value.quoted_text}
+        extra = 'MATCH (revision)-[:CONTEXT_EVIDENCED_BY]->(context_chunk:Chunk)'
+        projection = (projection.replace('chunk.text AS chunk_text', 'context_chunk.text AS chunk_text')
+                      .replace('chunk.char_start AS chunk_start', 'context_chunk.char_start AS chunk_start')
+                      .replace('revision.evidence_char_start', 'revision.context_char_start')
+                      .replace('revision.evidence_char_end', 'revision.context_char_end'))
     start, end = record['evidence_char_start'], record['evidence_char_end']
     window_start = request.offset if request.view == 'document' else max(0, start - 2000)
     window_length = 8000 if request.view == 'document' else end - window_start + 2000
-    query = _resolution_revision_query(kind, one_record=True, projection=projection)
+    query = _resolution_revision_query(kind, one_record=True, projection=projection, extra_where=extra)
     row = tx.run(query, tenant_id=principal.tenant_id, groups=sorted(principal.groups),
         record_id=request.record_id, expected_revision=request.expected_revision, limit=1,
         window_start=window_start, window_length=window_length).single()
-    if row is None or dict(row['revision']) != record or row['document_quote'] != record['evidence_text']:
+    if row is None or dict(row['revision']) != stored_record or row['document_quote'] != record['evidence_text']:
         raise KnowledgeReviewUnavailable('source text is unavailable or changed')
     if request.view == 'document' and window_start >= row['total']:
         raise KnowledgeReviewUnavailable('document page is outside the source version')

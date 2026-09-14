@@ -12,6 +12,10 @@ export async function mountGovernance(host, {client, bootstrap, onNavigate = () 
         bootstrap: null,
 
         ontologies: [],
+        ontologyRuleRegistry: null,
+        ontologyInputError: '',
+        ontologyFileSelection: 0,
+        ontologyFileLoading: false,
         reviews: [],
         reviewEpoch: 0,
         resolutions: new Map(),
@@ -21,6 +25,11 @@ export async function mountGovernance(host, {client, bootstrap, onNavigate = () 
         constructionJobs: [],
         constructionOperation: null,
         constructionBusy: false,
+        latestAutoReview: null,
+        autoReviewBusy: false,
+        autoReviewEpoch: 0,
+        constructionDetailRequests: new Map(),
+        constructionReceipt: null,
         demoSourceBinding: null,
         constructionFlow: 'business',
         uploadKnowledgeScope: 'BUSINESS',
@@ -94,6 +103,7 @@ const elements = {
       try {return await action(event);} finally {
         finish();
         if(button?.isConnected) button.disabled=Boolean(disabled);
+        if(button?.id==='ontology-import-button') button.disabled ||= Boolean(state.ontologyInputError || state.ontologyFileLoading || state.ontologySaving);
         setReviewBusy(Boolean(state.reviewBusy));
       }
     };
@@ -229,7 +239,7 @@ const elements = {
 
       function renderOntologies() {
         const available=$('available-ontologies');
-        if(available) available.innerHTML=state.ontologies.filter(item=>item.status==='PUBLISHED').map(item=>`<option value="${escapeHtml(item.key)}">${escapeHtml(item.key)} · v${escapeHtml(item.version)}</option>`).join('');
+        if(available) available.innerHTML=state.ontologies.filter(item=>item.status==='PUBLISHED').map(item=>`<option value="${escapeHtml(item.key)}">${escapeHtml(item.key)} · v${escapeHtml(item.import_capabilities?.source_version || item.source_contract?.metadata?.ontology_version || item.version)}</option>`).join('');
         renderConstructionOntology();
         if (!state.ontologies.length) {
           elements.ontologyList.innerHTML = '<div class="output-box">尚未配置本体。输入定义后点击“保存并启用本体”。</div>';
@@ -242,7 +252,13 @@ const elements = {
             const properties = (value.properties || []).map(property => `${escapeHtml(property.name)}:${escapeHtml(property.datatype)} ${escapeHtml(property.cardinality)}${property.unit ? ` [${escapeHtml(property.unit)}]` : ''}`).join(', ');
             return `${escapeHtml(value.name)} · source ${escapeHtml(value.source_cardinality || 'ZERO_OR_MORE')} · target ${escapeHtml(value.target_cardinality || 'ZERO_OR_MORE')}${properties ? ` · properties ${properties}` : ''}`;
           }).join('<br>');
-          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.version)}</strong><p>${escapeHtml(item.tbox_id)}<br>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}<br>${relationshipContracts || 'Relationship contracts: —'}</p></div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml({DRAFT:'未启用',PUBLISHED:'已启用',RETIRED:'已停用'}[item.status] || item.status)}</span></div><div class="workbench-actions"><button class="button" type="button" data-load-tbox="${index}">载入并校验</button><button class="button" type="button" data-copy-tbox="${index}">复制为下一版本</button><button class="button" type="button" data-download-tbox="${index}">导出 JSON</button>${item.status === 'DRAFT' ? `<button class="button primary" type="button" data-publish-tbox="${index}">启用此版本</button>` : ''}</div></article>`;
+          const capabilities = item.import_capabilities;
+          const capabilityMarkup = capabilities ? `<details class="ontology-capabilities"><summary>当前启用范围与约束</summary><p>${escapeHtml(capabilities.scope)}</p><p>不允许创建实例的类型：${escapeHtml((capabilities.blocked_entity_types || []).join('、') || '无')}<br>不允许直接抽取为实例事实的关系：${escapeHtml((capabilities.blocked_relationship_types || []).join('、') || '无')}</p><p>完整来源定义与版本已保留，可通过“导出 JSON”复核。</p></details>` : '';
+          const definitions = `<p>Entities: ${escapeHtml(entityNames || '—')}<br>Relations: ${escapeHtml(relationNames || '—')}<br>${relationshipContracts || 'Relationship contracts: —'}</p>`;
+          const definitionMarkup = capabilities
+            ? `<p>完整保留 ${item.entity_types.length} 类实体、${item.relationship_types.length} 类关系定义；可用于普通抽取的实体类型 ${item.entity_types.length - capabilities.blocked_entity_types.length} 类、关系 ${item.relationship_types.length - capabilities.blocked_relationship_types.length} 类。</p>${capabilityMarkup}<details class="ontology-definitions"><summary>查看类型与关系定义</summary>${definitions}</details>`
+            : definitions;
+          return `<article class="governance-item"><div class="governance-item-head"><div><strong>${escapeHtml(item.key)} · v${escapeHtml(item.import_capabilities?.source_version || item.source_contract?.metadata?.ontology_version || item.version)}</strong><p>${escapeHtml(item.tbox_id)}</p>${definitionMarkup}</div><span class="trust-badge ${item.status === 'PUBLISHED' ? 'authoritative' : ''}">${escapeHtml({DRAFT:'未启用',PUBLISHED:'已启用',RETIRED:'已停用'}[item.status] || item.status)}</span></div><div class="workbench-actions"><button class="button" type="button" data-load-tbox="${index}">载入并校验</button><button class="button" type="button" data-copy-tbox="${index}">复制为下一版本</button><button class="button" type="button" data-download-tbox="${index}">导出 JSON</button>${item.status === 'DRAFT' ? `<button class="button primary" type="button" data-publish-tbox="${index}">启用此版本</button>` : ''}</div></article>`;
         }).join('');
         elements.ontologyList.querySelectorAll('[data-load-tbox]').forEach(button => {
           button.addEventListener('click', foregroundAction('', () => loadOntologyIntoEditor(Number(button.dataset.loadTbox), false)));
@@ -263,6 +279,17 @@ const elements = {
           .filter(candidate => candidate.key === item.key)
           .map(candidate => Number(candidate.version))
           .filter(Number.isSafeInteger);
+        const sourceContract = item.source_contract_json ? JSON.parse(item.source_contract_json) : item.source_contract;
+        if (sourceContract?.metadata) {
+          const source = JSON.parse(JSON.stringify(sourceContract));
+          if (nextVersion) {
+            const next = Math.max(0, ...versions) + 1;
+            source.metadata.ontology_version = `${Math.floor(next / 1000000)}.${Math.floor(next / 1000) % 1000}.${next % 1000}`;
+            source.metadata.status = 'DRAFT';
+          } else source.expected_checksum = item.checksum;
+          if (item.rule_reference_registry) source.rule_reference_registry = JSON.parse(JSON.stringify(item.rule_reference_registry));
+          return source;
+        }
         const definition = {
           key: item.key,
           version: nextVersion ? Math.max(0, ...versions) + 1 : item.version,
@@ -280,10 +307,13 @@ const elements = {
         const item = state.ontologies[index];
         if (!item) return;
         elements.ontologyEditor.value = JSON.stringify(editableOntology(item, nextVersion), null, 2);
+        validateOntologyEditor();
         elements.ontologyEditor.focus();
+        elements.ontologyEditor.setSelectionRange?.(0, 0);
+        elements.ontologyEditor.scrollTop = 0;
         showToast(nextVersion
           ? `已复制 ${item.key} 为下一版本；修改后点击保存并启用本体`
-          : `已载入 ${item.key} v${item.version}；checksum 将校验精确重放`);
+          : `已载入 ${item.key} v${item.import_capabilities?.source_version || item.version}；checksum 将校验精确重放`);
       }
 
       function downloadOntology(index) {
@@ -300,13 +330,13 @@ const elements = {
         const link = document.createElement('a');
         const safeKey = String(item.key).replace(/[^A-Za-z0-9._-]+/g, '-');
         link.href = URL.createObjectURL(blob);
-        link.download = `${safeKey}-v${item.version}-tbox.json`;
+        link.download = `${safeKey}-v${item.import_capabilities?.source_version || item.version}-tbox.json`;
         document.body.appendChild(link);
         link.click();
         const objectUrl = link.href;
         link.remove();
         URL.revokeObjectURL(objectUrl);
-        showToast(`已导出 ${item.key} v${item.version}`);
+        showToast(`已导出 ${item.key} v${item.import_capabilities?.source_version || item.version}`);
       }
 
       async function loadOntologies() {
@@ -326,29 +356,124 @@ const elements = {
       }
 
       async function importOntology() {
-        if (state.ontologySaving) return;
+        if (state.ontologySaving || state.ontologyFileLoading) return;
         const identityEpoch = state.identityEpoch;
         state.ontologySaving = true;
         try {
-          const input = parseJsonEditor(elements.ontologyEditor, 'T-Box');
-          if (input.schema && input.schema !== 'graphrag-property-tbox-export-v1') throw new Error('不支持的本体导出格式');
-          const body = input.schema === 'graphrag-property-tbox-export-v1' ? input.definition : input;
-          if (!body || typeof body !== 'object') throw new Error('请输入本体定义');
-          if (input.schema && input.checksum !== body.expected_checksum) throw new Error('导出文件校验码不一致');
-          const current = activeOntology(body.key);
+          const body = validateOntologyEditor();
+          if (!body) return;
+          const key = body.key || body.metadata?.ontology_id;
+          const current = activeOntology(key);
           const activation = {...body, activate: true, expected_active_tbox_id: current?.tbox_id || null};
+          if (state.ontologyRuleRegistry) activation.rule_reference_registry = state.ontologyRuleRegistry;
           const payload = await apiRequest('/v1/ontologies:import', {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(activation),
           });
           if (identityEpoch !== state.identityEpoch) return;
           refreshReviewResolutions(identityEpoch);
-          $('document-tbox').value = body.key;
-          showToast(`本体已保存并启用：${body.key} v${body.version}`);
+          $('document-tbox').value = payload.key || key;
+          showToast(`本体已保存并启用：${payload.key || key} v${payload.import_capabilities?.source_version || payload.source_contract?.metadata?.ontology_version || payload.version || body.version}`);
           await loadOntologies();
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
         } finally {
           if (identityEpoch === state.identityEpoch) state.ontologySaving = false;
+        }
+      }
+
+      function ontologyImportDefinition(input) {
+        const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+        if (!object(input)) throw new Error('本体必须是 JSON 对象。');
+        if (input.schema && input.schema !== 'graphrag-property-tbox-export-v1') throw new Error('不支持的本体导出格式。');
+        const body = input.schema ? input.definition : input;
+        if (!object(body)) throw new Error('本体导出文件缺少有效的定义。');
+        if (input.schema && input.checksum !== body.expected_checksum) throw new Error('导出文件校验码不一致。');
+        if (body.metadata?.contract_id === 'ai_power.knowledge_ontology') {
+          if (body.metadata.contract_version !== '1.0.0') throw new Error('当前不支持这个本体源格式版本。');
+          if (!body.metadata.ontology_id || !body.metadata.ontology_version || !object(body.entity_types) || !object(body.relation_types)) {
+            throw new Error('本体源文件不完整：需要本体标识、版本、实体类型和关系类型定义。');
+          }
+        } else if (Object.hasOwn(body, 'key') && Object.hasOwn(body, 'version')) {
+          if (typeof body.key !== 'string' || !body.key.trim() || !Number.isSafeInteger(body.version) || body.version < 1
+            || !Array.isArray(body.entity_types) || (body.relationship_types !== undefined && !Array.isArray(body.relationship_types))) {
+            throw new Error('本体定义格式不完整：需要有效标识、版本及实体类型数组。');
+          }
+        } else {
+          throw new Error('该 JSON 不包含本体定义。请选择本体 JSON；设备拓扑、台账等资料请到「实例构建 → 上传资料」中上传。');
+        }
+        return body;
+      }
+
+      function setOntologyInputError(message = '') {
+        state.ontologyInputError = message;
+        $('ontology-input-error').textContent = message;
+        $('ontology-input-error').hidden = !message;
+        elements.ontologyEditor.setAttribute('aria-invalid', String(Boolean(message)));
+        $('ontology-import-button').disabled = Boolean(message || state.ontologySaving || state.ontologyFileLoading);
+      }
+
+      function validateOntologyEditor() {
+        state.ontologyFileSelection = (state.ontologyFileSelection || 0) + 1;
+        state.ontologyFileLoading = false;
+        try {
+          const body = ontologyImportDefinition(JSON.parse(elements.ontologyEditor.value));
+          setOntologyInputError();
+          return body;
+        } catch (error) {
+          setOntologyInputError(error instanceof SyntaxError ? '本体内容不是有效的 JSON，请检查后再保存。' : error.message);
+          return null;
+        }
+      }
+
+      async function loadOntologyFile() {
+        const file = $('ontology-file').files?.[0];
+        if (!file) return;
+        const identityEpoch = state.identityEpoch;
+        const selection = state.ontologyFileSelection = (state.ontologyFileSelection || 0) + 1;
+        const current = () => identityEpoch === state.identityEpoch && selection === state.ontologyFileSelection;
+        state.ontologyFileLoading = true;
+        elements.ontologyEditor.value = '';
+        state.ontologyRuleRegistry = null;
+        $('ontology-rule-file').value = '';
+        $('ontology-rule-file-name').textContent = '';
+        $('ontology-file-name').textContent = file.name;
+        setOntologyInputError();
+        try {
+          if (!file.size || file.size > MAX_UPLOAD_BYTES) throw new Error('本体文件必须在 1 byte 到 5 MiB 之间。');
+          const text = await file.text();
+          if (!current()) return;
+          elements.ontologyEditor.value = text;
+          elements.ontologyEditor.setSelectionRange?.(0, 0);
+          elements.ontologyEditor.scrollTop = 0;
+          ontologyImportDefinition(JSON.parse(text));
+          showToast('本体文件已载入，点击“保存并启用本体”完成校验与启用');
+        } catch (error) {
+          if (current()) {
+            setOntologyInputError(error instanceof SyntaxError ? '本体文件不是有效的 JSON。' : error.message);
+            showToast(state.ontologyInputError);
+          }
+        } finally {
+          if (current()) {
+            state.ontologyFileLoading = false;
+            setOntologyInputError(state.ontologyInputError);
+          }
+        }
+      }
+
+      async function loadOntologyRuleReferences() {
+        const file = $('ontology-rule-file').files?.[0];
+        if (!file) return;
+        const identityEpoch = state.identityEpoch;
+        try {
+          if (!file.size || file.size > MAX_UPLOAD_BYTES) throw new Error('规则引用目录超过允许的文件大小。');
+          const value = JSON.parse(await file.text());
+          if (identityEpoch !== state.identityEpoch) return;
+          if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error('规则引用目录必须是 JSON 对象。');
+          state.ontologyRuleRegistry = value;
+          $('ontology-rule-file-name').textContent = file.name;
+          showToast('规则引用目录已载入，将与本体一起校验并保存');
+        } catch (error) {
+          if (identityEpoch === state.identityEpoch) showToast(error instanceof SyntaxError ? '规则引用目录不是有效的 JSON。' : error.message);
         }
       }
 
@@ -464,6 +589,7 @@ const elements = {
       // Source type belongs to the upload draft, independently of page navigation.
       function clearConstructionResult() {
         state.uploadDraftEpoch = (state.uploadDraftEpoch || 0) + 1;
+        state.constructionReceipt=null;
         elements.constructionOutput.textContent = '';
         elements.constructionOutput.hidden = true;
         elements.constructionOutput.classList.remove('upload-check');
@@ -522,7 +648,7 @@ const elements = {
       function renderConstructionOntology() {
         const key = $('document-tbox').value.trim();
         const current = activeOntology(key);
-        $('foundation-status').textContent = current ? `${current.key} · v${current.version}` : key ? `${key} · 未启用` : '尚未启用本体';
+        $('foundation-status').textContent = current ? `${current.key} · v${current.import_capabilities?.source_version || current.version}` : key ? `${key} · 未启用` : '尚未启用本体';
         $('foundation-status').title = $('foundation-status').textContent;
         $('inspect-build-ontology').textContent = current ? '查看' : '配置';
       }
@@ -656,6 +782,7 @@ const elements = {
         const kit = demoKit();
         if (!kit) return;
         elements.ontologyEditor.value = JSON.stringify(kit.ontology, null, 2);
+        validateOntologyEditor();
         $('document-tbox').value = kit.ontology.key;
         renderConstructionOntology();
         showConstructionFlow('baseline', 'step-ontology');
@@ -729,10 +856,268 @@ const elements = {
         $('construct-button').textContent = sourceOnly
           ? '上传并保存来源' : '上传并构建';
         if (!state.constructionBusy) $('construction-submit-note').textContent = sourceOnly
-          ? '仅保存来源，不生成候选知识。' : '构建后先复核，再发布。';
+          ? '仅保存来源，不生成候选知识。' : '构建后自动预审；疑难项先复核，再发布。';
         $('construction-mode-note').textContent = sourceOnly
           ? `${boundedChunks}仅切块与向量化，不执行 LLM 抽取或自动纠正。`
-          : `${boundedChunks}${feedbackEnabled ? '每个 Chunk 的结构、本体或证据校验失败后，最多自动纠正一次（合计最多两次抽取）；模型服务错误或超时不自动重试。' : '当前配置不自动纠正校验失败。'}校验通过的候选仍需人工审核和明确发布。`;
+          : `${boundedChunks}结构化 JSON 自动生成字段映射，由程序构建记录；其他资料按片段抽取。${feedbackEnabled ? '映射或抽取校验失败后，最多自动纠正一次；模型服务错误或超时不自动重试。' : '当前配置不自动纠正校验失败。'}构建后自动预审，明确项自动确认，疑难项交给人工；确认后仍需发布。`;
+      }
+
+      function autoReviewSummary(value) {
+        if (!value || !['RUNNING','COMPLETED','PARTIAL','FAILED','SKIPPED'].includes(value.status)) return null;
+        const text = (value, limit=2000) => typeof value === 'string' ? value.slice(0,limit) : '';
+        const count = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+        const counts = Object.fromEntries(['entity_groups','approved_groups','approved_mentions','approved_assertions',
+          'manual_groups','manual_assertions','blocked_assertions','incomplete'].map(key=>[key,count(value.counts?.[key])]));
+        const sourceItems = Array.isArray(value.items) ? value.items.slice().sort((a,b)=>Number(a.decision==='AUTO_APPROVED')-Number(b.decision==='AUTO_APPROVED')) : [];
+        const sourceIssues=Array.isArray(value.issues)?value.issues:[];
+        const ids=values=>(Array.isArray(values)?values:[]).slice(0,200).map(id=>text(id,256));
+        const issues=values=>(Array.isArray(values)?values:[]).slice(0,100).filter(issue=>issue?.code==='PROPERTY_REQUIRED' || /^CONTEXT_[A-Z0-9_]+$/.test(issue?.code || '')).map(issue=>({
+          code:text(issue.code,128),property_name:text(issue.property_name,128),entity_count:count(issue.entity_count),
+          entity_ids:ids(issue.entity_ids),record_ids:ids(issue.record_ids),reason:text(issue.reason),
+          source_paths:(Array.isArray(issue.source_paths)?issue.source_paths:[]).slice(0,32).map(path=>text(path,1000))}));
+        const context=value.context_mapping;
+        const contextMapping=context && ['RUNNING','COMPLETED','PARTIAL','UNAVAILABLE','SKIPPED'].includes(context.status)?{
+          status:context.status,added_assertions:count(context.added_assertions),applied:count(context.applied),
+          uncertain:count(context.uncertain),overridden:count(context.overridden),issues:issues(context.issues),
+          rules:(Array.isArray(context.rules)?context.rules:[]).slice(0,64).map(rule=>({
+            source_path:text(rule.source_path,1000),target_collection:text(rule.target_collection,1000),property_name:text(rule.property_name,128),
+            scope_path:typeof rule.scope_path==='string'?text(rule.scope_path,1000):null,binding_mode:text(rule.binding_mode,128),status:text(rule.status,128),
+            applied:count(rule.applied),uncertain:count(rule.uncertain),overridden:count(rule.overridden),reason:text(rule.reason)}))}:null;
+        return {job_id:text(value.job_id,256),run_id:text(value.run_id,256),status:value.status,
+          stage:['CONTEXT','IDENTITY','FACTS','DONE'].includes(value.stage)?value.stage:'IDENTITY',
+          policy_version:text(value.policy_version,256),initiated_by:text(value.initiated_by,256),reviewed_by:text(value.reviewed_by,256),
+          counts,model_calls:count(value.model_calls),updated_at:text(value.updated_at,64),
+          truncated:Boolean(value.truncated || sourceItems.length>100 || sourceIssues.length>100),
+          issues:issues(sourceIssues),context_mapping:contextMapping,
+          items:sourceItems.slice(0,100).map(item=>({record_id:text(item.record_id,256),
+            input_revision:count(item.input_revision) || null,
+            record_kind:item.record_kind==='ENTITY_MENTION'?'ENTITY_MENTION':'ASSERTION',
+            decision:['AUTO_APPROVED','NEEDS_HUMAN','BLOCKED','INCOMPLETE'].includes(item.decision)?item.decision:'INCOMPLETE',
+            reason_code:text(item.reason_code,128),reason:text(item.reason),target_entity_id:text(item.target_entity_id,256),
+            evidence_ids:(Array.isArray(item.evidence_ids)?item.evidence_ids:[]).slice(0,32).map(id=>text(id,256))}))};
+      }
+
+      function autoReviewIssues(value) {
+        const entries=[...(value?.issues || []),...(value?.context_mapping?.issues || [])];
+        return [...new Map(entries.map(issue=>[JSON.stringify([issue.code,issue.property_name,issue.entity_ids,issue.source_paths]),issue])).values()];
+      }
+
+      function autoReviewStageLabel(value) {
+        if(value.status==='RUNNING' && value.stage==='CONTEXT')return '正在核对文档上下文与适用范围';
+        if (value.status==='RUNNING') return value.stage==='FACTS'?'正在审核属性与关系':'正在核对实体身份';
+        if(value.status==='COMPLETED' && autoReviewIssues(value).length)return '自动审核完成，发布前仍需处理映射缺口';
+        return ({COMPLETED:'自动预审完成',PARTIAL:'自动预审部分完成',FAILED:'自动预审未完成',SKIPPED:'本次未执行自动预审'})[value.status] || '等待自动预审';
+      }
+
+      function autoReviewGapMarkup(value) {
+        const issues=autoReviewIssues(value);
+        if(!issues.length)return '';
+        const affected=new Set(issues.flatMap(issue=>issue.entity_ids)).size;
+        const incomplete=issues.some(issue=>issue.entity_count>issue.entity_ids.length);
+        const instruction=value.status==='RUNNING'
+          ? '自动预审仍在进行，缺口会随处理进度更新，请以最终结果为准。'
+          : '可先补全有明确适用范围的上下文字段并重新审核；仍有冲突时，请修正来源映射或资料后重新构建。此处的缺口不能通过确认已有记录来补齐。';
+        return `<div class="auto-review-gaps" data-auto-review-gaps><strong>待补字段 / 映射缺口 ${issues.length} 项（影响${incomplete?'至少 ':''}${affected} 个实体）</strong><p>${instruction}</p><p>未入图字段不能默认对所有实体生效；下列同名上下文路径仅供核对，不代表已经建立属性。</p>${issues.map((issue,index)=>`<details class="auto-review-gap-details"><summary>${escapeHtml(issue.property_name)} · 影响 ${issue.entity_count} 个实体</summary><p>${escapeHtml(issue.reason || '实体缺少本体要求的必填属性，需要核对原文及适用范围。')}</p>${issue.source_paths.length?`<p>待核对的上下文路径：${issue.source_paths.map(path=>`<code>${escapeHtml(path)}</code>`).join('、')}</p>`:'<p>没有提供可用的同名上下文路径，请核对来源资料。</p>'}<div class="auto-review-items">${issue.record_ids.slice(0,100).map((recordId,position)=>`<article class="auto-review-item" data-auto-review-item="gap-${index}-${position}"><small>相关实体 ${escapeHtml(shortId(issue.entity_ids[position] || ''))}</small><div class="workbench-actions"><button class="button" type="button" data-auto-review-evidence="${escapeHtml(recordId)}">查看相关实体与原文</button></div><div data-auto-review-evidence-panel hidden></div></article>`).join('')}</div>${issue.entity_count>Math.min(100,issue.record_ids.length)?'<p class="field-note">此处仅展开部分代表记录，影响实体总数以上方统计为准。</p>':''}</details>`).join('')}<div class="workbench-actions"><button class="button" type="button" data-auto-review-upload>返回上传资料</button></div></div>`;
+      }
+
+      function contextMappingMarkup(value) {
+        const mapping=value.context_mapping;
+        if(!mapping)return '';
+        const labels={RUNNING:'处理中',COMPLETED:'已完成',PARTIAL:'部分完成',UNAVAILABLE:'暂不可用',SKIPPED:'未执行',APPLIED:'已应用',UNCERTAIN:'待核对',OVERRIDDEN:'保留局部值'};
+        const bindingLabels={IDENTITY_TEMPLATE:'来源身份模板',ANCESTOR_DEFAULT:'上级作用域默认值'};
+        return `<section class="context-mapping-summary" data-context-mapping-status="${mapping.status}"><strong>文档上下文补全 · ${labels[mapping.status]}</strong><p>新增 ${mapping.added_assertions} 条属性 · 已应用 ${mapping.applied} 项 · 待核对 ${mapping.uncertain} 项 · 保留局部值 ${mapping.overridden} 项</p><details><summary>查看上下文映射与适用范围（${mapping.rules.length}）</summary><p class="field-note">补全结果单独保留审计，原构建映射保持不变。局部字段与上下文字段分别核对。</p>${mapping.rules.map(rule=>`<article class="exact-evidence"><strong>${escapeHtml(rule.source_path)} → ${escapeHtml(rule.target_collection)} · ${escapeHtml(rule.property_name)}</strong><p>作用域：${escapeHtml(rule.scope_path===''?'文档根节点':rule.scope_path || '未确认')} · 绑定方式：${escapeHtml(bindingLabels[rule.binding_mode] || rule.binding_mode || '未确认')}</p><p>${escapeHtml(labels[rule.status] || rule.status)} · 已应用 ${rule.applied} · 待核对 ${rule.uncertain} · 保留局部值 ${rule.overridden}</p><p>${escapeHtml(rule.reason)}</p></article>`).join('') || '<p>当前没有可展示的上下文映射。</p>'}</details></section>`;
+      }
+
+      function hasContextRepairGap(value) {
+        return [...(value?.issues || []),...(value?.context_mapping?.issues || [])].some(issue=>issue.code==='PROPERTY_REQUIRED' || /^CONTEXT_/.test(issue.code));
+      }
+
+      function autoReviewMarkup(value, {compact=false}={}) {
+        if (!value) return '';
+        const c=value.counts;
+        const labels={AUTO_APPROVED:'自动通过',NEEDS_HUMAN:'需要人工判断',BLOCKED:'等待身份确认',INCOMPLETE:'尚未完成'};
+        const status=value.status==='RUNNING'?'预审完成后会更新人工待办。':value.status==='SKIPPED'
+          ? '本次记录保留现有审核状态，请查看任务明细。'
+          : c.approved_mentions+c.approved_assertions>0?'明确项已自动确认；以下人工队列只保留未决记录。自动确认不等于发布。'
+          : '预审尚无自动确认记录；未决记录仍可人工处理。确认后仍需发布。';
+        const details=compact?'':`<details class="auto-review-details"><summary>查看自动预审依据与记录（${value.items.length}${value.truncated?'＋':''}）</summary><p class="field-note">以下是本次预审记录；后续人工修订以当前记录为准。模型审核调用 ${value.model_calls} 次。</p><div class="auto-review-items">${value.items.map((item,index)=>`<article class="auto-review-item" data-auto-review-item="${index}"><div><strong>${escapeHtml(labels[item.decision])}</strong> · ${item.record_kind==='ENTITY_MENTION'?'实体提及':'属性或关系'}</div><p>${escapeHtml(item.reason || '请查看当前记录和原文依据。')}</p><small>记录 ${escapeHtml(shortId(item.record_id))}${item.target_entity_id?` · 实体 ${escapeHtml(shortId(item.target_entity_id))}`:''}</small><div class="workbench-actions"><button class="button" type="button" data-auto-review-evidence="${escapeHtml(item.record_id)}">查看原文与当前记录</button>${item.decision==='AUTO_APPROVED'?`<button class="button" type="button" data-auto-review-correct="${escapeHtml(item.record_id)}">转人工核查</button>`:''}</div><div data-auto-review-evidence-panel hidden></div></article>`).join('') || '<p>当前尚无已保存的逐条审核结果。</p>'}</div>${value.truncated?'<p class="field-note">此处仅展示部分审核依据；全部未决记录仍保留在人工队列中。</p>':''}<p class="field-note">审核策略 ${escapeHtml(value.policy_version)} · 审核服务 ${escapeHtml(value.reviewed_by)} · 更新 ${escapeHtml(value.updated_at)}</p></details>`;
+        return `<section class="auto-review-summary" data-auto-review-status="${value.status}" data-auto-review-job="${escapeHtml(value.job_id)}"><strong>${escapeHtml(autoReviewStageLabel(value))}</strong><div class="auto-review-counts"><p>自动通过 <b>${c.approved_groups}</b> 个实体组 · <b>${c.approved_mentions}</b> 条提及 · <b>${c.approved_assertions}</b> 条事实</p><p>人工判断 <b>${c.manual_groups}</b> 个实体组 · <b>${c.manual_assertions}</b> 条事实</p><p>等待身份确认 <b>${c.blocked_assertions}</b> 条事实 · 尚未完成 <b>${c.incomplete}</b> 项</p></div><p class="field-note">${status}</p>${contextMappingMarkup(value)}${autoReviewGapMarkup(value)}${details}<div class="workbench-actions">${hasContextRepairGap(value) && value.status!=='RUNNING'?`<button class="button primary" type="button" data-auto-review-retry="${escapeHtml(value.job_id)}" ${state.autoReviewBusy?'disabled':''}>补全上下文并审核</button>`:(['FAILED','PARTIAL'].includes(value.status) || value.status!=='RUNNING' && (c.blocked_assertions+c.manual_groups+c.manual_assertions>0))?`<button class="button" type="button" data-auto-review-retry="${escapeHtml(value.job_id)}" ${state.autoReviewBusy?'disabled':''}>${c.incomplete>0 || ['FAILED','PARTIAL'].includes(value.status)?'重试未完成的预审':'续审未决记录'}</button>`:''}${compact?'<button class="button" type="button" data-auto-review-open>查看预审依据</button>':''}${c.approved_mentions+c.approved_assertions>0?'<button class="button" type="button" data-auto-review-publication>查看已确认内容</button>':''}</div></section>`;
+      }
+
+      function rememberAutoReview(value) {
+        const summary=autoReviewSummary(value);
+        if (!summary) return null;
+        state.latestAutoReview=summary;
+        const panel=$('review-auto-summary');
+        if (panel) {panel.hidden=false;panel.innerHTML=autoReviewMarkup(summary,{compact:true});bindAutoReviewActions(panel);}
+        elements.reviewList?.querySelectorAll?.('[data-auto-review-reason]').forEach(note=>{
+          const item=state.reviews?.find(item=>item.record_id===note.dataset.autoReviewReason);
+          note.innerHTML=item?autoReviewReasonMarkup(item):'';
+        });
+        if(elements.reviewList && Array.isArray(state.reviews) && !state.reviews.length && !state.reviewLoading)renderReviews();
+        return summary;
+      }
+
+      function constructionJobDetail(jobId) {
+        // Share only simultaneous reads within one identity and review generation.
+        // Terminal repair increments its generation before requiring a fresh detail.
+        const requests=state.constructionDetailRequests ||= new Map();
+        const key=JSON.stringify([state.identityEpoch,state.autoReviewEpoch || 0,jobId]);
+        if(requests.has(key))return requests.get(key);
+        const request=Promise.resolve(apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(jobId)}`,{feedback:false}))
+          .finally(()=>{if(requests.get(key)===request)requests.delete(key);});
+        requests.set(key,request);
+        return request;
+      }
+
+      async function refreshConstructionReceipt(jobId,{renderReceipt=false}={}) {
+        if(!jobId)return null;
+        const identity=state.identityEpoch,epoch=state.autoReviewEpoch || 0;
+        const payload=await constructionJobDetail(jobId);
+        if(identity!==state.identityEpoch || epoch!==(state.autoReviewEpoch || 0))return null;
+        if(payload.job_id!==jobId)throw new Error('构建任务已变化，请刷新任务列表。');
+        if(renderReceipt && JSON.stringify(state.constructionReceipt)!==JSON.stringify(payload))showConstructionResult(payload);
+        else {
+          rememberAutoReview(payload.auto_review);
+          if(renderReceipt)renderConstructionNext(payload);
+        }
+        return payload;
+      }
+
+      function bindAutoReviewActions(container) {
+        if (!container?.querySelectorAll) return;
+        container.querySelectorAll('[data-auto-review-upload]').forEach(button=>button.addEventListener('click',()=>showConstructionFlow('business','source-upload-slot')));
+        container.querySelectorAll('[data-auto-review-publication]').forEach(button=>button.addEventListener('click',foregroundAction('',async()=>{
+          showConstructionFlow('business','step-publication');await loadPublicationCandidates();
+        })));
+        container.querySelectorAll('[data-auto-review-open]').forEach(button=>button.addEventListener('click',foregroundAction('',async()=>{
+          const jobId=state.latestAutoReview?.job_id;if(!jobId)return;
+          const identity=state.identityEpoch,epoch=state.autoReviewEpoch || 0;
+          const payload=await constructionJobDetail(jobId);
+          if(identity!==state.identityEpoch || epoch!==(state.autoReviewEpoch || 0))return;
+          showConstructionFlow('business','source-upload-slot');showConstructionResult(payload);
+          const details=elements.constructionOutput.querySelector('.auto-review-details');
+          if(details){details.open=true;details.scrollIntoView({block:'start',behavior:'smooth'});}
+        })));
+        container.querySelectorAll('[data-auto-review-retry]').forEach(button=>button.addEventListener('click',foregroundAction('',()=>retryAutoReview(button.dataset.autoReviewRetry))));
+        container.querySelectorAll('[data-auto-review-evidence]').forEach(button=>button.addEventListener('click',foregroundAction('',()=>loadAutoReviewEvidence(button))));
+        container.querySelectorAll('[data-auto-review-correct]').forEach(button=>button.addEventListener('click',foregroundAction('',()=>correctPublishedRecord(button.dataset.autoReviewCorrect))));
+      }
+
+      async function loadAutoReviewEvidence(button) {
+        const panel=button.closest('[data-auto-review-item]').querySelector('[data-auto-review-evidence-panel]');
+        const identity=state.identityEpoch;
+        panel.hidden=false;panel.textContent='正在读取当前记录…';
+        try {
+          const payload=await apiRequest(`/v1/knowledge/records/${encodeURIComponent(button.dataset.autoReviewEvidence)}/revisions?limit=1`);
+          if(identity!==state.identityEpoch || panel.isConnected===false)return;
+          const record=payload.items?.[0];if(!record)throw new Error('当前没有可访问的记录。');
+          const status=({APPROVED:'已确认',PUBLISHED:'已发布',CANDIDATE:'待审核',QUARANTINED:'已暂缓',REJECTED:'未采纳'})[record.trust?.status] || record.trust?.status || '';
+          panel.innerHTML=`<p>当前记录：${escapeHtml(reviewEntity(record).canonical_name || '未命名实体')} · ${escapeHtml(status)} · 修订 ${escapeHtml(record.revision)}</p>${reviewEvidence(record.evidence,'查看文档原文',record)}`;
+          bindEvidenceActions(panel);
+        } catch(error) {if(identity===state.identityEpoch && panel.isConnected!==false)panel.textContent=error.message;}
+      }
+
+      async function retryAutoReview(jobId, resumeIdentityIds=[]) {
+        if(state.autoReviewBusy || state.constructionBusy || state.reviewBusy || state.publicationBusy)return;
+        const identity=state.identityEpoch;
+        const previous=state.latestAutoReview;
+        state.autoReviewBusy=true;
+        state.autoReviewEpoch=(state.autoReviewEpoch || 0)+1;
+        const stop=watchAutoReviewProgress(jobId,identity);
+        try {
+          const result=await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(jobId)}/auto-review:run`,{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retry:true,
+              ...(resumeIdentityIds.length?{resume_identity_record_ids:resumeIdentityIds}:{})})});
+          if(identity!==state.identityEpoch)return;
+          // The operation response is final. Older progress reads must not replace it
+          // while the independent human/publication queues are still refreshing.
+          stop();
+          state.autoReviewEpoch=(state.autoReviewEpoch || 0)+1;
+          rememberAutoReview(result);
+          if(state.constructionReceipt?.job_id===jobId)showConstructionResult({...state.constructionReceipt,auto_review:result});
+          await refreshConstructionReceipt(jobId,{renderReceipt:state.constructionReceipt?.job_id===jobId});
+          if(identity!==state.identityEpoch)return;
+          await Promise.allSettled([loadReviews({refreshResolutions:true,refreshAutoReview:false}),loadPublicationCandidates()]);
+          if(identity===state.identityEpoch)showToast(autoReviewStageLabel(result));
+        } catch(error) {
+          if(identity===state.identityEpoch){
+            if(state.latestAutoReview?.status==='RUNNING')rememberAutoReview(previous);
+            showToast(error.message);
+          }
+        } finally {
+          stop();
+          if(identity===state.identityEpoch){
+            state.autoReviewBusy=false;rememberAutoReview(state.latestAutoReview);
+            if(state.constructionReceipt?.job_id===jobId)showConstructionResult({...state.constructionReceipt,auto_review:state.latestAutoReview});
+          }
+        }
+      }
+
+      function watchAutoReviewProgress(jobId,identityEpoch) {
+        let stopped=false,timer=null,currentRunObserved=false;
+        const previous=state.latestAutoReview?.job_id===jobId?state.latestAutoReview:null;
+        const preparing=hasContextRepairGap(previous)?'正在准备上下文补全…':'正在准备自动预审…';
+        const display=$('construction-progress');display.hidden=false;display.textContent=preparing;
+        const poll=async()=>{
+          try {
+            const value=await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(jobId)}/auto-review`,{feedback:false});
+            if(stopped || identityEpoch!==state.identityEpoch)return;
+            const candidate=autoReviewSummary(value);
+            if(!candidate || candidate.job_id!==jobId)return;
+            const sameSavedVersion=previous && candidate.run_id===previous.run_id && candidate.updated_at===previous.updated_at;
+            const before=Date.parse(previous?.updated_at || ''),after=Date.parse(candidate.updated_at);
+            const newer=previous && (Number.isFinite(before) && Number.isFinite(after)
+              ? after>before : candidate.updated_at && candidate.updated_at!==previous.updated_at);
+            // The POST can spend time loading its source before creating RUNNING.
+            // Compare saved server versions, never the client's wall clock.
+            if(!currentRunObserved)currentRunObserved=Boolean(newer || candidate.status==='RUNNING' && (!previous || previous.status!=='RUNNING' || !sameSavedVersion));
+            if(!currentRunObserved || sameSavedVersion && candidate.status!=='RUNNING'){
+              if(!currentRunObserved)display.textContent=preparing;
+              return;
+            }
+            const summary=rememberAutoReview(value);
+            if(summary)display.textContent=autoReviewStageLabel(summary);
+          } catch(_) {if(!stopped && identityEpoch===state.identityEpoch)display.textContent='预审进度暂时无法刷新，正在等待处理结果。';}
+          finally {if(!stopped && identityEpoch===state.identityEpoch)timer=setTimeout(poll,3000);}
+        };
+        timer=setTimeout(poll,1000);
+        return ()=>{stopped=true;clearTimeout(timer);if(identityEpoch===state.identityEpoch){display.hidden=true;display.textContent='';}};
+      }
+
+      function renderConstructionNext(payload) {
+        const hasCandidates = (payload.chunks || []).some(chunk => chunk.mention_record_ids?.length || chunk.assertion_record_ids?.length);
+        const rejectedChunks = (payload.chunks || []).filter(chunk => chunk.status === 'REJECTED').length;
+        const automatic=autoReviewSummary(payload.auto_review);
+        const automaticDone=automatic && automatic.status==='COMPLETED';
+        const mappingGaps=(automatic?.issues?.length || 0)+(automatic?.context_mapping?.issues?.length || 0);
+        const needsManual=automatic && (automatic.counts.manual_groups+automatic.counts.manual_assertions+automatic.counts.blocked_assertions+automatic.counts.incomplete+mappingGaps)>0;
+        $('construction-next').hidden = false;
+        $('construction-next-note').textContent = automatic && hasCandidates
+            ? `${autoReviewStageLabel(automatic)}。${mappingGaps?'请查看剩余映射缺口；可补全有明确依据的上下文字段，其他疑问交给人工。':automaticDone && !needsManual?'本次没有待人工判断的记录，可以查看已确认内容并检查发布预览。':'请处理剩余疑难项；未完成的预审可单独重试。'}${rejectedChunks?`另有 ${rejectedChunks} 个片段抽取未通过校验。`:''}`
+            : hasCandidates
+            ? `已生成可审核记录。下一步先确认实体身份，再审核属性与关系。${rejectedChunks ? `另有 ${rejectedChunks} 个片段抽取未通过校验，请查看下方构建明细。` : ''}`
+            : rejectedChunks
+              ? '原文已入库，但抽取未通过本体或证据校验，未生成可审核记录。请查看下方构建明细；本次没有新增图谱知识。'
+              : '原文已入库，未抽取到可审核实体或事实。本次没有新增图谱知识，请查看下方构建明细。';
+        $('construction-next-button').hidden = !hasCandidates;
+        $('construction-next-button').textContent = mappingGaps?'下一步：查看待补字段与人工待办 →':automaticDone && !needsManual?'下一步：查看已确认内容 →':automatic?'下一步：处理人工待办 →':'下一步：确认实体与审核事实 →';
+        $('construction-next-button').onclick = () => {
+          if(automaticDone && !needsManual){showConstructionFlow('business','step-publication');loadPublicationCandidates();}
+          else {showConstructionFlow('business','step-review');loadReviews({refreshResolutions:true});}
+        };
+        return {hasCandidates,automatic};
+      }
+
+      function constructionMappingSummary(value) {
+        if (!value || !Array.isArray(value.collections)) return null;
+        const properties = values => (Array.isArray(values) ? values : []).map(p => ({field:p.field,property:p.property}));
+        return {mapping_checksum:value.mapping_checksum,record_count:value.record_count,
+          collections:value.collections.map(rule=>({collection:rule.collection,id_field:rule.id_field,
+            entity_types:rule.entity_types,record_count:rule.record_count,properties:properties(rule.properties),
+            relations:(rule.relations || []).map(r=>({field:r.field,target_collection:r.target_collection,
+              target_field:r.target_field,type:r.type,direction:r.direction,properties:properties(r.properties)})),
+            retained_fields:rule.retained_fields || []}))};
       }
 
       function constructionChunkSummary(item) {
@@ -743,6 +1128,7 @@ const elements = {
           assertions: (item.assertion_record_ids || []).length,
           mention_record_ids: item.mention_record_ids || [],
           assertion_record_ids: item.assertion_record_ids || [], replayed: item.replayed,
+          ...(item.mapping_summary ? {mapping_summary:constructionMappingSummary(item.mapping_summary)} : {}),
           validation_attempts: (Array.isArray(item.validation_attempts) ? item.validation_attempts : []).map(attempt => ({
             attempt: attempt.attempt, status: attempt.status,
             finding_codes: Array.isArray(attempt.finding_codes) ? attempt.finding_codes : [],
@@ -753,6 +1139,7 @@ const elements = {
 
       function constructionValidationMarkup(item) {
         const attempts = item.validation_attempts;
+        if (item.findings.includes('STRUCTURED_MAPPING_APPLIED')) return `<article class="governance-item"><strong>Chunk ${escapeHtml(shortId(item.chunk_id))} · 程序映射校验通过</strong><p>已核对本体约束与精确原文位置，候选仍需复核发布。</p></article>`;
         if (!attempts.length) return `<article class="governance-item"><strong>Chunk ${escapeHtml(shortId(item.chunk_id))}</strong><p>${item.status === 'SOURCE_ONLY' ? '仅来源入库，未执行 LLM 抽取或抽取校验。' : '该结果未提供逐次校验摘要；请结合任务状态和 findings 查看结果。'}</p></article>`;
         const passed = ['CANDIDATE', 'EMPTY'].includes(item.status);
         const conclusion = passed
@@ -765,13 +1152,32 @@ const elements = {
       }
 
       function showConstructionResult(payload) {
+        state.constructionReceipt=payload;
+        const autoReview=rememberAutoReview(payload.auto_review);
         const keys = ['job_id', 'extraction_mode', 'document_id', 'version_id', 'snapshot_id', 'tbox_id',
           'status', 'expected_chunks', 'completed_chunks', 'created_at', 'updated_at', 'completed_at',
           'failed_chunk_id', 'last_finding_codes'];
         const summary = Object.fromEntries(keys.filter(key => payload[key] !== undefined).map(key => [key, payload[key]]));
         summary.chunks = (Array.isArray(payload.chunks) ? payload.chunks : []).map(constructionChunkSummary);
-        output(elements.constructionOutput, summary);
-        $('construction-validation-summary').innerHTML = summary.chunks.map(constructionValidationMarkup).join('');
+        if(autoReview)summary.auto_review=autoReview;
+        const statusLabel = ({RUNNING:'处理中', RETRY_WAIT:'已中断，等待重试', FAILED:'已失败', COMPLETED:'已完成'})[payload.status]
+          || payload.status || '结果已返回';
+        const expected = Number.isInteger(payload.expected_chunks) ? payload.expected_chunks : summary.chunks.length;
+        const completed = Number.isInteger(payload.completed_chunks) ? payload.completed_chunks : summary.chunks.length;
+        const counts = new Map();
+        for(const chunk of summary.chunks) counts.set(chunk.status,(counts.get(chunk.status) || 0)+1);
+        const categories = [['CANDIDATE',autoReview?'抽取通过':'待复核'],['REJECTED','校验未通过'],['EMPTY','无抽取结果'],['SOURCE_ONLY','仅保存来源'],['QUARANTINED','隔离待核对']];
+        const countMarkup = categories.map(([status,label]) => `<span data-construction-count="${status}">${label} <strong>${counts.get(status) || 0}</strong></span>`).join('');
+        const known = new Set(categories.map(([status])=>status));
+        const other = summary.chunks.filter(chunk=>!known.has(chunk.status)).length;
+        const mapping = summary.chunks.find(chunk=>chunk.mapping_summary)?.mapping_summary;
+        const mappingMarkup = mapping ? `<details class="construction-result-details"><summary>查看字段映射与未入图字段</summary><p class="field-note">映射由模型提出，请复核字段含义。未入图字段保留在原文，不代表已转为图谱事实。跨来源设备仍需确认身份。</p>${mapping.collections.map(rule=>`<article class="exact-evidence"><strong>${escapeHtml(rule.collection || '/')} · ${escapeHtml(rule.record_count)} 条记录 → ${escapeHtml(rule.entity_types.join('、'))}</strong><p>来源标识：${escapeHtml(rule.id_field)}</p><p>属性：${rule.properties.map(p=>`${escapeHtml(p.field)} → ${escapeHtml(p.property)}`).join('； ') || '无'}</p><p>关系：${rule.relations.map(r=>`${escapeHtml(r.field)} → ${escapeHtml(r.type)}（${r.direction==='in'?'引用对象 → 本记录':'本记录 → 引用对象'}；${escapeHtml(r.target_collection || '/')} ${escapeHtml(r.target_field)}）`).join('； ') || '无'}</p><p>仅保留原文：${escapeHtml(rule.retained_fields.join('； ') || '无')}</p></article>`).join('')}</details>` : '';
+        output(elements.constructionOutput, '');
+        elements.constructionOutput.innerHTML = `<div class="construction-result-overview"><strong>构建任务：${escapeHtml(statusLabel)}</strong><p>已处理 ${completed} / ${expected} 个片段</p><div class="construction-result-counts">${countMarkup}${other ? `<span>其他结果 <strong>${other}</strong></span>` : ''}</div><p class="field-note">${autoReview?'抽取结果已进入自动预审；审核结果见下方。':'候选需经人工复核，再明确发布为正式知识。'}</p></div>${autoReviewMarkup(autoReview)}<details class="construction-result-details"><summary>查看结构化摘要与任务标识</summary><pre class="construction-structured-summary" data-construction-summary tabindex="0" aria-label="构建任务结构化摘要">${escapeHtml(JSON.stringify(summary,null,2))}</pre></details>`;
+        if (mapping) elements.constructionOutput.innerHTML = elements.constructionOutput.innerHTML.replace('<p>已处理', `<p>结构化映射构建 · ${escapeHtml(mapping.record_count)} 条来源记录</p><p>已处理`) + mappingMarkup;
+        $('construction-validation-summary').innerHTML = `<details class="construction-validation-details"><summary>逐片段校验记录（${summary.chunks.length}）</summary><div class="construction-validation-list">${summary.chunks.map(constructionValidationMarkup).join('') || '<p>当前尚无已保存的片段结果。</p>'}</div></details>`;
+        bindAutoReviewActions(elements.constructionOutput);
+        if(autoReview)renderConstructionNext(payload);
       }
 
       function bindDemoAuthority(payload, metadata, contentHash) {
@@ -866,6 +1272,7 @@ const elements = {
         const reason = codes.includes('EMBEDDING_CONNECTION_ERROR') ? '向量化服务连接失败，尚未进入本次 LLM 抽取。'
           : codes.includes('EMBEDDING_TIMEOUT') ? '向量化服务连接或响应超时，尚未进入本次 LLM 抽取。'
           : codes.includes('SOURCE_INGESTION_FAILED') ? '来源入库阶段失败，尚未进入本次 LLM 抽取。'
+          : codes.some(code=>code.startsWith('MAPPING_')) ? '字段映射未通过校验，尚未生成本次候选。请核对字段、设备标识和引用关系。'
           : '构建已中断，请查看任务明细中的原因。';
         return `<div class="exact-evidence">${escapeHtml(reason)} ${item.status === 'FAILED' ? '本次任务已结束，旧记录保留。依赖恢复后，请重新提交同一文件以创建新任务；刷新列表不会自动重试。' : '等待依赖恢复后再重试，刷新列表不会执行任务。'}<br>${escapeHtml(codes.join(' · '))}</div>`;
       }
@@ -874,11 +1281,18 @@ const elements = {
         const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('construction-jobs-refresh-button'));
         try {
         const identityEpoch = state.identityEpoch;
+        const autoReviewEpoch=state.autoReviewEpoch || 0;
         try {
           const payload = await apiRequest('/v1/knowledge/construction-jobs?limit=25');
-          if (identityEpoch !== state.identityEpoch) return;
+          if (identityEpoch !== state.identityEpoch || autoReviewEpoch!==(state.autoReviewEpoch || 0)) return;
           state.constructionJobs = Array.isArray(payload.items) ? payload.items : [];
           renderConstructionJobs();
+          const latest=state.constructionJobs.find(item=>item.status==='COMPLETED');
+          if(latest && !state.constructionBusy && !state.autoReviewBusy) {
+            try {
+              await refreshConstructionReceipt(latest.job_id,{renderReceipt:state.constructionReceipt?.job_id===latest.job_id});
+            } catch(_) { /* Job history remains available if its optional pre-review summary cannot be read. */ }
+          }
         } catch (error) {
           if (identityEpoch !== state.identityEpoch) return;
           elements.constructionJobList.innerHTML = `<div class="output-box">${escapeHtml(error.message)}</div>`;
@@ -890,11 +1304,12 @@ const elements = {
         const item = state.constructionJobs[index];
         if (!item) { showToast('构建任务列表已变化，请刷新'); return; }
         const identityEpoch = state.identityEpoch;
+        const autoReviewEpoch=state.autoReviewEpoch || 0;
         const draftEpoch = state.uploadDraftEpoch;
         button.disabled = true;
         try {
-          const payload = await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(item.job_id)}`);
-          if (identityEpoch !== state.identityEpoch || draftEpoch !== state.uploadDraftEpoch) return;
+          const payload = await constructionJobDetail(item.job_id);
+          if (identityEpoch !== state.identityEpoch || draftEpoch !== state.uploadDraftEpoch || autoReviewEpoch!==(state.autoReviewEpoch || 0)) return;
           showConstructionResult(payload);
           if (payload.status === 'FAILED' || payload.status === 'RETRY_WAIT') {
             $('construction-validation-summary').innerHTML = constructionFailureMarkup(payload) + $('construction-validation-summary').innerHTML;
@@ -954,7 +1369,7 @@ const elements = {
         $('construct-button').disabled = true;
         let finishFeedback = beginOperationFeedback('正在检查上传资料…', {button:$('construct-button')});
 
-        let uploadRequest = null, uploadFingerprint = null;
+        let uploadRequest = null, uploadFingerprint = null, stopProgress = () => {};
         try {
           const mime = detectedMime(file);
           const title = $('document-title').value.trim();
@@ -1009,33 +1424,28 @@ const elements = {
           }
           if (needsReview) uploadRequest.preflight_token = preflight.review_token;
           finishFeedback();
-          const progress = extractionMode === 'SOURCE_ONLY' ? '正在入库与向量化…' : '正在构建，解析与抽取可能需要一些时间…';
+          const progress = extractionMode === 'SOURCE_ONLY' ? '正在入库与向量化…'
+            : mime === 'application/json' ? '正在入库与识别 JSON 结构；记录型资料将生成字段映射后由程序构建…'
+            : '正在构建，解析与抽取可能需要一些时间…';
           finishFeedback = beginOperationFeedback(progress, {button:$('construct-button')});
+          stopProgress = watchConstructionProgress(operationKey, identityEpoch, progress);
 
           const payload = await apiRequest('/v1/knowledge:construct', {
             method:'POST', feedback:false, headers:{'Content-Type':'application/json'},
             body:JSON.stringify(uploadRequest),
           });
           if (identityEpoch !== state.identityEpoch) return;
+          stopProgress();
           completeConstructionOperation();
           state.uploadDraftCompleted = true;
           state.knowledgeBrowser?.reset();
           showConstructionResult(payload);
           state.lastConstructionScope = metadata.knowledge_scope;
           state.lastConstructionMode = extractionMode;
-          const hasCandidates = payload.chunks.some(chunk => chunk.mention_record_ids?.length || chunk.assertion_record_ids?.length);
-          const rejectedChunks = payload.chunks.filter(chunk => chunk.status === 'REJECTED').length;
-          $('construction-next').hidden = false;
-          $('construction-next-note').textContent = hasCandidates
-              ? `已生成可审核记录。下一步先确认实体身份，再审核属性与关系。${rejectedChunks ? `另有 ${rejectedChunks} 个片段抽取未通过校验，请查看下方构建明细。` : ''}`
-              : rejectedChunks
-                ? '原文已入库，但抽取未通过本体或证据校验，未生成可审核记录。请查看下方构建明细；本次没有新增图谱知识。'
-                : '原文已入库，未抽取到可审核实体或事实。本次没有新增图谱知识，请查看下方构建明细。';
-          $('construction-next-button').hidden = !hasCandidates;
-          $('construction-next-button').textContent = '下一步：确认实体与审核事实 →';
-          $('construction-next-button').onclick = () => { showConstructionFlow('business', 'step-review'); loadReviews({refreshResolutions:true}); };
-          showToast(extractionMode === 'SOURCE_ONLY' ? `来源入库完成：${payload.chunks.length} Chunks，未调用抽取模型` : hasCandidates ? '已生成可审核记录，请核对抽取结果' : '原文已入库，本次未生成可审核记录');
+          const {hasCandidates,automatic}=renderConstructionNext(payload);
+          showToast(extractionMode === 'SOURCE_ONLY' ? `来源入库完成：${payload.chunks.length} Chunks，未调用抽取模型` : automatic?autoReviewStageLabel(automatic):hasCandidates ? '已生成可审核记录，请核对抽取结果' : '原文已入库，本次未生成可审核记录');
           await Promise.allSettled([loadConstructionJobs(), loadReviews(), loadActiveDocuments()]);
+          if(automatic && identityEpoch===state.identityEpoch)await loadPublicationCandidates();
         } catch (error) {
           if (identityEpoch === state.identityEpoch) {
             if (error.code === 'upload_review_required' && uploadRequest) {
@@ -1045,13 +1455,17 @@ const elements = {
               } catch (checkError) { if (identityEpoch === state.identityEpoch) output(elements.constructionOutput, checkError.message); }
               return;
             }
-            if (error.code === 'construction_ingestion_failed') {
+            if (error.code === 'construction_mapping_invalid') {
+              completeConstructionOperation();
+              output(elements.constructionOutput, error.message);
+            } else if (error.code === 'construction_ingestion_failed') {
               completeConstructionOperation();
               output(elements.constructionOutput, '来源入库或向量化失败，本次任务已结束。请查看下方任务原因；依赖恢复后，再点击上传会创建新任务，保留旧任务记录。');
             } else output(elements.constructionOutput, error.message);
             await loadConstructionJobs();
           }
         } finally {
+          stopProgress();
           finishFeedback();
           if (identityEpoch === state.identityEpoch) {
             state.constructionBusy = false;
@@ -1060,6 +1474,41 @@ const elements = {
             updateConstructionMode();
           }
         }
+      }
+
+      function watchConstructionProgress(operationKey, identityEpoch, initialMessage) {
+        let stopped = false, timer = null;
+        const display = $('construction-progress');
+        display.hidden = false;
+        display.textContent = initialMessage;
+        const poll = async () => {
+          if (stopped || identityEpoch !== state.identityEpoch) return;
+          try {
+            const payload = await apiRequest('/v1/knowledge/construction-jobs?limit=25', {feedback:false});
+            if (stopped || identityEpoch !== state.identityEpoch) return;
+            const job = payload.items?.find(item => item.operation_key === operationKey);
+            if (job) {
+              const label = {RUNNING:'正在处理', COMPLETED:'片段处理完成，正在汇总', RETRY_WAIT:'任务已中断，等待重试', FAILED:'任务处理失败'}[job.status] || job.status;
+              display.textContent = `${label}：${job.completed_chunks} / ${job.expected_chunks} 个片段。每个片段均需通过本体与证据校验。`;
+              if(job.status==='COMPLETED') {
+                const detail=await apiRequest(`/v1/knowledge/construction-jobs/${encodeURIComponent(job.job_id)}`,{feedback:false});
+                if(stopped || identityEpoch!==state.identityEpoch)return;
+                const automatic=rememberAutoReview(detail.auto_review);
+                if(automatic)display.textContent=`片段处理 ${job.completed_chunks} / ${job.expected_chunks}；${autoReviewStageLabel(automatic)}。`;
+              }
+            }
+          } catch (_) {
+            if (!stopped && identityEpoch === state.identityEpoch) display.textContent = '进度暂时无法刷新，正在等待本次构建结果。';
+          } finally {
+            if (!stopped && identityEpoch === state.identityEpoch) timer = setTimeout(poll, 3000);
+          }
+        };
+        timer = setTimeout(poll, 1000);
+        return () => {
+          stopped = true;
+          clearTimeout(timer);
+          if (identityEpoch === state.identityEpoch) { display.hidden = true; display.textContent = ''; }
+        };
       }
 
       function reviewEdit(item) {
@@ -1086,7 +1535,7 @@ const elements = {
           edit.relationship_properties = (item.relationship_properties || []).map(value => {
             const semantics = literalSemantics(value);
             const literal = {raw_literal: semantics.raw_value};
-            for (const field of ['raw_unit', 'raw_valid_from', 'raw_valid_to', 'raw_observed_at']) {
+            for (const field of ['raw_unit', 'raw_valid_from', 'raw_valid_to', 'raw_observed_at', 'source_encoding']) {
               if (semantics[field] != null) literal[field] = semantics[field];
             }
             return {name: value.name, literal, evidence: value.evidence, confidence: value.confidence};
@@ -1095,7 +1544,7 @@ const elements = {
         }
         const semantics = literalSemantics(item);
         edit.literal = {raw_literal: semantics.raw_value ?? item.literal_value};
-        for (const field of ['raw_unit', 'raw_valid_from', 'raw_valid_to', 'raw_observed_at']) {
+        for (const field of ['raw_unit', 'raw_valid_from', 'raw_valid_to', 'raw_observed_at', 'source_encoding']) {
           if (semantics[field] != null) edit.literal[field] = semantics[field];
         }
         return edit;
@@ -1224,8 +1673,9 @@ const elements = {
         };
         bindEndpoint(value.entity_id ?? value.source_entity_id,'subject');
         if(item.object_entity) bindEndpoint(value.target_entity_id,'object');
-        const literal=value=>{
+        const literal=(value,original)=>{
           const result={raw_literal:String(value.value)};
+          if(original?.source_encoding) result.source_encoding=original.source_encoding;
           for(const field of ['unit','valid_from','valid_to','observed_at'])
             if(value[field]!=null && value[field]!=='') result[`raw_${field}`]=String(value[field]);
           return result;
@@ -1235,8 +1685,8 @@ const elements = {
           if(!Array.isArray(value.properties) || value.properties.length!==edit.relationship_properties.length)
             throw new Error('增补关系属性请使用人工补充，已有属性在这里逐项校正');
           edit.relationship_properties=edit.relationship_properties.map((old,index)=>({...old,
-            name:value.properties[index].property_name,literal:literal(value.properties[index])}));
-        } else {edit.predicate=value.property_name;edit.literal=literal(value);}
+            name:value.properties[index].property_name,literal:literal(value.properties[index],old.literal)}));
+        } else {edit.predicate=value.property_name;edit.literal=literal(value,edit.literal);}
         return edit;
       }
 
@@ -1278,7 +1728,7 @@ const elements = {
       function resolutionContent(item, index) {
         if (item.record_kind !== 'ENTITY_MENTION') return '';
         const resolution = state.resolutions.get(item.record_id);
-        if (!resolution || resolution.revision !== item.revision) return `<button class="button button-pending" disabled aria-busy="true" data-resolution-load="${index}">匹配实体</button>`;
+        if (!resolution || resolution.revision !== item.revision) return `<button class="button" type="button" data-resolution-load="${index}">匹配实体</button>`;
         if (['queued', 'loading'].includes(resolution.status)) return `<button class="button button-pending" disabled aria-busy="true" data-resolution-load="${index}">匹配实体</button>`;
         if (resolution.error) return `<div class="output-box">自动匹配失败：${escapeHtml(resolution.error)}。请先保留此记录，恢复后重新匹配。</div><div class="workbench-actions"><button class="button" type="button" data-resolution-load="${index}">重新匹配</button></div>`;
         const outcomeLabels = {AUTO_LINK: '唯一匹配建议 · 待人工确认', REVIEW: '存在相似或多个目标 · 需人工判断', NO_MATCH: '没有匹配目标 · 保留为新实体候选', CONFLICT: '需要人工判断 · 不自动关联'};
@@ -1334,10 +1784,13 @@ const elements = {
         if(!item.literal_semantics && item.object_entity) return '';
         return `适用起点：${value.valid_from || '未声明'}；终点：${value.valid_to || '未声明'}；观测时间：${value.observed_at || '未声明'}`;
       }
-      function reviewEvidence(evidence, label = '查看原文证据', record = null) {
+      function reviewEvidence(evidence, label = '查看原文证据', record = null, evidenceRole = 'PRIMARY') {
         if (!evidence) return '<span class="review-muted">来源证据暂不可用</span>';
-        const source=record ? ` data-evidence-record="${escapeHtml(record.record_id)}" data-evidence-revision="${escapeHtml(record.revision)}"` : '';
-        return `<details class="review-evidence"${source}><summary>${escapeHtml(label)}</summary><div data-evidence-context><blockquote>${escapeHtml(evidence.quoted_text || '此视图仅提供来源定位')}</blockquote><small>Chunk ${escapeHtml(shortId(evidence.chunk_id))} · 字符 ${escapeHtml(evidence.char_start)}–${escapeHtml(evidence.char_end)}</small></div></details>`;
+        const context=evidenceRole==='PRIMARY'?record?.context_property_evidence:null;
+        const source=record ? ` data-evidence-record="${escapeHtml(record.record_id)}" data-evidence-revision="${escapeHtml(record.revision)}"${evidenceRole==='CONTEXT_VALUE'?' data-evidence-role="CONTEXT_VALUE"':''}` : '';
+        const markup=`<details class="review-evidence"${source}><summary>${escapeHtml(context?.value_evidence?'实体原文':label)}</summary><div data-evidence-context><blockquote>${escapeHtml(evidence.quoted_text || '此视图仅提供来源定位')}</blockquote><small>Chunk ${escapeHtml(shortId(evidence.chunk_id))} · 字符 ${escapeHtml(evidence.char_start)}–${escapeHtml(evidence.char_end)}</small></div></details>`;
+        if(!context?.value_evidence)return markup;
+        return `<div class="context-property-evidence">${markup}${reviewEvidence(context.value_evidence,'上下文字段原文',record,'CONTEXT_VALUE')}<details class="review-technical"><summary>查看上下文绑定位置</summary><p>字段：${escapeHtml(context.value_pointer || '')}<br>作用域：${escapeHtml(context.scope_pointer || '')}<br>对象记录：${escapeHtml(context.record_pointer || '')}<br>对象标识：${escapeHtml(context.identity_pointer || '')}</p></details></div>`;
       }
       function evidenceContextMarkup(value) {
         const characters=Array.from(value.text);
@@ -1352,7 +1805,7 @@ const elements = {
         details.contextRequest=request;
         panel.innerHTML='<button class="button button-pending" disabled aria-busy="true">读取原文</button>';
         try {
-          const value=await apiRequest('/v1/knowledge/review-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({record_id:details.dataset.evidenceRecord,expected_revision:Number(details.dataset.evidenceRevision),view,offset})});
+          const value=await apiRequest('/v1/knowledge/review-evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({record_id:details.dataset.evidenceRecord,expected_revision:Number(details.dataset.evidenceRevision),view,offset,...(details.dataset.evidenceRole==='CONTEXT_VALUE'?{evidence_role:'CONTEXT_VALUE'}:{})})});
           if(identityEpoch!==state.identityEpoch || details.contextRequest!==request || details.isConnected===false) return;
           panel.innerHTML=evidenceContextMarkup(value);
           panel.querySelectorAll('[data-evidence-view]').forEach(button=>button.addEventListener('click',foregroundAction('', ()=>loadEvidenceContext(details,button.dataset.evidenceView,Number(button.dataset.evidenceOffset || 0)))));
@@ -1405,7 +1858,8 @@ const elements = {
       }
       function assessmentMarkup(item, index) {
         const result = reviewAssessment(item);
-        if (!result || ['queued','loading'].includes(result.status)) return `<button class="button button-pending" disabled aria-busy="true" data-review-assess="${index}">检查事实</button>`;
+        if (!result) return `<button class="button" type="button" data-review-assess="${index}">检查事实</button>`;
+        if (['queued','loading'].includes(result.status)) return `<button class="button button-pending" disabled aria-busy="true" data-review-assess="${index}">检查事实</button>`;
         if (result.error) return `<div class="review-check blocked">检查未完成：${escapeHtml(result.error)}。请先保留此记录。</div><button class="button" data-review-assess="${index}">重新检查</button>`;
         const labels = {READY:'可以审核', BLOCKED:'先处理关联实体', DUPLICATE:'已有相同的已发布事实', CONFLICT:'存在差异，需要核对', UNAVAILABLE:'检查信息不完整'};
         const dependencies = (result.dependencies || []).filter(value => !value.ready).map(value => `<li>${escapeHtml(value.role === 'subject' || value.role === 'SUBJECT' ? '所属实体' : '关联实体')}“${escapeHtml(value.name)}”：尚未确认${value.mention_record_id ? ` <button class="button link" type="button" data-review-dependency="${escapeHtml(value.mention_record_id)}">去处理这个实体</button>` : ''}</li>`).join('');
@@ -1465,12 +1919,57 @@ const elements = {
         });
         return saved;
       }
+      function disconnectReviewDetails() {
+        state.reviewDetailsObserver?.disconnect();
+        state.reviewDetailsObserver=null;
+      }
+      function reviewRowVisible(row) {
+        if(!row || row.isConnected===false || row.closest?.('[hidden]')) return false;
+        const rect=row.getBoundingClientRect?.();
+        return Boolean(rect && rect.width>0 && rect.height>0 && rect.bottom>0 && rect.right>0
+          && rect.top<(globalThis.innerHeight || 900) && rect.left<(globalThis.innerWidth || 1440));
+      }
+      function observeReviewDetails() {
+        disconnectReviewDetails();
+        // Hidden construction steps never intersect. Browsers without this API
+        // keep the explicit check buttons, rather than prefetching every record.
+        if(typeof globalThis.IntersectionObserver !== 'function') return;
+        const identityEpoch=state.identityEpoch, reviewEpoch=state.reviewEpoch;
+        const observer=new globalThis.IntersectionObserver(entries=>{
+          if(state.reviewDetailsObserver!==observer || identityEpoch!==state.identityEpoch
+            || reviewEpoch!==state.reviewEpoch || state.reviewLoading) return;
+          for(const entry of entries) {
+            if(!entry.isIntersecting || !reviewRowVisible(entry.target)) continue;
+            const item=state.reviews.find(item=>item.record_id===entry.target.dataset.reviewRecord
+              && item.revision===Number(entry.target.dataset.reviewRevision));
+            if(!item) continue;
+            if(item.record_kind==='ENTITY_MENTION') void queueResolution(item,{automatic:true,row:entry.target});
+            else void queueAssessment(item,false,{automatic:true,row:entry.target});
+          }
+        },{root:null,rootMargin:'0px',threshold:0});
+        state.reviewDetailsObserver=observer;
+        elements.reviewList.querySelectorAll('[data-review-record]').forEach(row=>observer.observe(row));
+      }
+      function autoReviewReasonMarkup(item) {
+        const decision=state.latestAutoReview?.items.find(value=>value.record_id===item.record_id && value.decision!=='AUTO_APPROVED');
+        // A receipt is historical evidence, not a current finding after edits or rebinding.
+        if(!decision?.reason || !decision.input_revision || decision.input_revision!==item.revision
+          || item.trust?.status!=='CANDIDATE')return '';
+        const label={NEEDS_HUMAN:'模型存疑，待人工复核',BLOCKED:'等待实体身份确认',INCOMPLETE:'自动审核未完成'}[decision.decision];
+        return `<p class="provider-note"><strong>${escapeHtml(label)}：</strong>${escapeHtml(decision.reason)}</p>`;
+      }
+
       function renderReviews({anchor=null}={}) {
+        disconnectReviewDetails();
         reviewModel();
         const saved = captureReviewUi();
         const progress = reviewProgress();
+        const approvedAvailable=state.approvedRevisions.size || state.publicationCandidates?.some(item=>item.record?.trust?.status==='APPROVED');
+        const mappingGaps=(state.latestAutoReview?.issues?.length || 0)+(state.latestAutoReview?.context_mapping?.issues?.length || 0);
         if (!state.reviews.length) {
-          elements.reviewList.innerHTML = state.approvedRevisions.size
+          elements.reviewList.innerHTML = mappingGaps
+            ? '<div class="build-empty-state review-mapping-gap"><h3>当前没有待审核记录，仍有必填字段缺口。</h3><p>上方列出了待补字段及影响实体。请修正来源映射或资料后重新构建，再检查发布预览。</p><button class="button" type="button" data-review-upload>返回上传资料</button></div>'
+            : approvedAvailable
             ? '<div class="build-empty-state review-complete"><h3>当前批次已完成复核。</h3><p>已确认内容可进入发布预览，核对后再发布。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>'
             : '<div class="build-empty-state"><h3>当前没有待确认记录。</h3><p>请先上传文档并抽取，或填写人工补充，再回来核对来源与事实。</p><div class="workbench-actions"><button class="button primary" type="button" data-review-upload>去上传资料</button><button class="button" type="button" data-review-manual>人工补充</button></div></div>';
           bindReviewActions(elements.reviewList);
@@ -1482,9 +1981,10 @@ const elements = {
         const visible = state.reviews.map((item,index) => ({item,index})).filter(({item}) => phase === 'paused' ? item.trust?.status === 'QUARANTINED' : item.trust?.status !== 'QUARANTINED' && (phase === 'identities' ? item.record_kind === 'ENTITY_MENTION' : item.record_kind !== 'ENTITY_MENTION' && (state.reviewFactTab === 'relationships' ? Boolean(item.object_entity) : !item.object_entity)));
         const groups = new Map();
         for (const row of visible) { const key=reviewGroupKey(row.item); if (!groups.has(key)) groups.set(key,[]); groups.get(key).push(row); }
-        const guidance = progress.identities ? '下一步：先确认实体身份，再审核属性与关系。'
-          : progress.facts ? '实体处理后，逐项核对下面的事实。'
-          : state.approvedRevisions.size ? '当前批次可处理记录已审核；暂缓记录不参与发布。'
+        const guidance = progress.identities ? '下一步：处理尚未确定的实体身份，再核查剩余事实。'
+          : progress.facts ? '实体身份已处理，请核查下面尚未通过的事实。'
+          : mappingGaps ? '已生成的可处理记录已审核；请先处理上方必填字段缺口。'
+          : approvedAvailable ? '当前批次可处理记录已审核；暂缓记录不参与发布。'
           : progress.paused ? '当前只有暂缓记录，请补充核查；本次没有已批准的待发布内容。'
           : '当前没有待确认记录。请先上传文档并抽取，或填写人工补充。';
         const navigation = `<div class="review-guide"><strong>${guidance}</strong><p>待确认提及 ${progress.identities} · 待处理事实 ${progress.facts} · 已暂缓 ${progress.paused} · 本次已确认记录 ${state.approvedRevisions.size}</p><div class="review-phases" role="group" aria-label="审核顺序">${[['identities','1 确认实体身份',progress.identities],['facts','2 审核属性与关系',progress.facts],['paused','暂缓处理',progress.paused]].map(([key,label,count]) => `<button class="button ${phase === key ? 'primary' : ''}" type="button" data-review-phase="${key}" aria-pressed="${phase === key}">${label}（${count}）</button>`).join('')}</div><p class="review-muted">这里列出当前账号可处理的记录，权威等级和来源逐条标明。相同名称不会自动合并；实体确认不会自动批准它的属性或关系。确认或修改不会提升等级。超出原文的事实请使用“人工补充”，不要改写文档证据。</p></div>`;
@@ -1493,12 +1993,12 @@ const elements = {
           const entity = reviewEntity(rows[0].item);
           const mentions = rows.filter(row=>row.item.record_kind === 'ENTITY_MENTION');
           const facts = rows.filter(row=>row.item.record_kind !== 'ENTITY_MENTION');
-          const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
-          const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p><div class="property-assignment" data-property-assignment="${index}">${propertyAssignmentMarkup(item,index)}</div>${provenanceBadges(item.trust)}${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
-          return `<article class="review-entity-card" data-review-group-key="${escapeHtml(reviewGroupKey(rows[0].item))}"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span>${mentions.length ? '<span class="trust-badge">待确认分组</span>' : ''}<span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${mentions.length ? '<p class="provider-note">同组是抽取时的候选归属，请逐条核对。已确认的实体可以接收其他提及；同名不代表同一实体。</p>' : ''}${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
+          const identityRows = mentions.map(({item,index},position) => `<div class="review-mention" id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><div class="review-row-head">${reviewSelection(item,index)}<strong>来源提及 ${position+1}</strong><span class="trust-badge">${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待确认'}</span></div>${provenanceBadges(item.trust)}<div data-auto-review-reason="${escapeHtml(item.record_id)}">${autoReviewReasonMarkup(item)}</div>${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<div data-resolution-panel="${index}">${resolutionMarkup(item,index)}</div>${reviewTechnical(item,index)}${reviewActions(item,index)}</div>`).join('');
+          const factRows = facts.map(({item,index}) => `<tr id="review-record-${escapeHtml(item.record_id)}" data-review-record="${escapeHtml(item.record_id)}" data-review-revision="${item.revision}"><td>${reviewSelection(item,index)}</td><td><strong>${escapeHtml(reviewFactText(item))}</strong><p class="review-muted">${reviewKindLabel(item)} · ${item.trust?.status === 'QUARANTINED' ? '已暂缓' : '待审核'}</p><div class="property-assignment" data-property-assignment="${index}">${propertyAssignmentMarkup(item,index)}</div>${provenanceBadges(item.trust)}<div data-auto-review-reason="${escapeHtml(item.record_id)}">${autoReviewReasonMarkup(item)}</div>${reviewEvidence(item.evidence, item.trust?.origin === 'HUMAN_SUPPLEMENT' ? '查看人工补充记录' : '查看文档原文', item)}<small>${escapeHtml(reviewTimeText(item))}</small>${reviewTechnical(item,index)}</td><td><div data-assessment-panel="${index}">${assessmentMarkup(item,index)}</div>${reviewActions(item,index)}</td></tr>`).join('');
+          return `<article class="review-entity-card" data-review-group-key="${escapeHtml(reviewGroupKey(rows[0].item))}"><header><h3>${escapeHtml(entity.canonical_name || '未命名实体')}</h3><small>实体 ID：${escapeHtml(entity.entity_id || '尚未确定')}</small><span class="trust-badge">${escapeHtml(entity.entity_type || '实体')}</span>${mentions.length ? '<span class="trust-badge">待确认分组</span>' : ''}<span>${mentions.length ? `${mentions.length} 条来源提及` : `${facts.length} 条属性或关系`}</span></header>${mentions.length ? '<p class="provider-note">同组仍是候选归属，请根据原文决定共同绑定或拆分；相同名称不代表同一实体。</p>' : ''}${identityRows}${factRows ? `<div class="review-table-wrap"><table class="review-facts"><thead><tr><th>选择</th><th>本次抽取内容与来源</th><th>检查结果与下一步</th></tr></thead><tbody>${factRows}</tbody></table></div>` : ''}</article>`;
         }).join('');
         const identityBatch=state.reviewPhase==='identities' && progress.identities ? '<div class="provider-note">确认所选提及时，默认分别建立独立实体。若所选提及描述同一对象，可使用下面的合并建档操作。<div class="workbench-actions"><button class="button" type="button" data-review-group>所选提及归为同一独立实体</button></div></div>' : '';
-        elements.reviewList.innerHTML = navigation + identityBatch + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && state.approvedRevisions.size ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
+        elements.reviewList.innerHTML = navigation + identityBatch + factTabs + (state.reviews.length >= 100 ? '<div class="provider-note">本批最多显示 100 条；暂缓记录可能占用名额。<button class="button" data-review-pending-only>只加载待审核记录</button></div>' : '') + (cards || '<div class="output-box">此阶段没有待处理记录。</div>') + (!progress.identities && !progress.facts && approvedAvailable && !mappingGaps ? '<div class="review-complete"><p>当前批次可处理记录已审核。点击下一步检查待发布内容并明确发布；暂缓记录仍需核查。</p><button class="button primary" type="button" data-review-next>下一步：发布知识</button></div>' : '');
         bindReviewActions(elements.reviewList);
         state.reviews.forEach((item,index) => {
           const value = saved.get(`${item.record_id}:${item.revision}`);
@@ -1516,6 +2016,7 @@ const elements = {
         });
         setReviewBusy(Boolean(state.reviewBusy));
         restoreReviewViewport(anchor);
+        observeReviewDetails();
       }
       function openResolutionChoices(index) {
         if(state.reviewBusy || state.publicationBusy || reviewIsEditing(index)) {showToast('请先完成当前保存或编辑');return;}
@@ -1617,6 +2118,9 @@ const elements = {
         while(state.assessmentActive<2 && state.assessmentQueue.length) {
           const job=state.assessmentQueue.shift();
           if(!currentAssessmentJob(job)) {job.finish();continue;}
+          if(job.entry.automatic && !reviewRowVisible(job.entry.row)) {
+            state.reviewAssessments.delete(job.item.record_id);renderAssessment(job.item);job.finish();continue;
+          }
           state.assessmentActive+=1; job.entry.status='loading'; renderAssessment(job.item);
           void (async()=> {
             try {
@@ -1624,18 +2128,24 @@ const elements = {
               if(!currentAssessmentJob(job)) return;
               if(result.record_id!==job.item.record_id || result.revision!==job.item.revision) throw new Error('记录版本已变化，请刷新审核队列');
               Object.assign(job.entry,result);
-              if(!job.item.object_entity && !propertyAssignment(job.item))
+              if(!job.item.object_entity && !propertyAssignment(job.item)
+                && (!job.entry.automatic || reviewRowVisible(job.entry.row)))
                 await loadPropertyAssignment(job.item);
             } catch(error) {if(currentAssessmentJob(job)) Object.assign(job.entry,{status:'error',error:error.message});}
             finally {if(currentAssessmentJob(job)) renderAssessment(job.item);state.assessmentActive-=1;job.finish();pumpAssessments();}
           })();
         }
       }
-      function queueAssessment(item, refresh=false) {
+      function queueAssessment(item, refresh=false, {automatic=false,row=null}={}) {
         reviewModel(); if(!item || item.record_kind==='ENTITY_MENTION') return Promise.resolve();
-        const cached=reviewAssessment(item); if(cached && !refresh) return cached.done;
+        const cached=reviewAssessment(item);
+        if(cached && !refresh) {
+          if(!automatic) cached.automatic=false;
+          else if(cached.automatic) cached.row=row;
+          return cached.done;
+        }
         let finish;const done=new Promise(resolve=>{finish=resolve;});
-        const entry={revision:item.revision,identityEpoch:state.identityEpoch,reviewEpoch:state.reviewEpoch,status:'queued',done};
+        const entry={revision:item.revision,identityEpoch:state.identityEpoch,reviewEpoch:state.reviewEpoch,status:'queued',done,automatic,row};
         state.reviewAssessments.set(item.record_id,entry);
         state.assessmentQueue.push({item,entry,identityEpoch:state.identityEpoch,reviewEpoch:state.reviewEpoch,finish});
         renderAssessment(item);pumpAssessments();return done;
@@ -1745,6 +2255,7 @@ const elements = {
       }
 
       function invalidateReviewResolutions() {
+        disconnectReviewDetails();
         invalidateAssessments();
         state.reviewPhase='identities';
         state.reviewEpoch += 1;
@@ -1757,12 +2268,13 @@ const elements = {
       function refreshReviewResolutions(identityEpoch = state.identityEpoch) {
         if (identityEpoch !== state.identityEpoch) return;
         invalidateAssessments();
-        for (const item of state.reviews) if(item.record_kind !== 'ENTITY_MENTION') void queueAssessment(item);
         state.resolutions.clear();
         for (const job of state.resolutionQueue.splice(0)) job.finish();
-        for (const item of state.reviews) {
-          if (item.record_kind === 'ENTITY_MENTION') void queueResolution(item);
+        for(const item of state.reviews) {
+          if(item.record_kind==='ENTITY_MENTION') renderResolution(item);
+          else renderAssessment(item);
         }
+        observeReviewDetails();
       }
 
       function currentResolutionJob(job) {
@@ -1775,6 +2287,9 @@ const elements = {
         while (state.resolutionActive < 2 && state.resolutionQueue.length) {
           const job = state.resolutionQueue.shift();
           if (!currentResolutionJob(job)) { job.finish(); continue; }
+          if(job.entry.automatic && !reviewRowVisible(job.entry.row)) {
+            state.resolutions.delete(job.item.record_id);renderResolution(job.item);job.finish();continue;
+          }
           state.resolutionActive += 1;
           job.entry.status = 'loading';
           renderResolution(job.item);
@@ -1801,14 +2316,18 @@ const elements = {
         }
       }
 
-      function queueResolution(item, {refresh = false, query = ""} = {}) {
+      function queueResolution(item, {refresh = false, query = "", automatic=false, row=null} = {}) {
         const cached = state.resolutions.get(item.record_id);
         if (!refresh && cached?.revision === item.revision && cached.identityEpoch === state.identityEpoch
-          && cached.reviewEpoch === state.reviewEpoch) return cached.done || Promise.resolve();
+          && cached.reviewEpoch === state.reviewEpoch) {
+          if(!automatic) cached.automatic=false;
+          else if(cached.automatic) cached.row=row;
+          return cached.done || Promise.resolve();
+        }
         let finish;
         const done = new Promise(resolve => { finish = resolve; });
         const entry = {revision: item.revision, identityEpoch: state.identityEpoch,
-          reviewEpoch: state.reviewEpoch, status: 'queued', done, query};
+          reviewEpoch: state.reviewEpoch, status: 'queued', done, query, automatic, row};
         state.resolutions.set(item.record_id, entry);
         state.resolutionQueue.push({item, entry, identityEpoch: state.identityEpoch,
           reviewEpoch: state.reviewEpoch, finish});
@@ -1822,6 +2341,17 @@ const elements = {
         if (!item || item.record_kind !== 'ENTITY_MENTION') { showToast('审核队列已变化，请刷新'); return; }
         if (button) button.disabled = true;
         await queueResolution(item, {refresh: true});
+      }
+
+      function identityResumeRequest(items) {
+        const summary=state.latestAutoReview;
+        if(!summary?.job_id || summary.status==='RUNNING')return null;
+        const ids=items.filter(item=>item.record_kind==='ENTITY_MENTION'
+          && (summary.items?.some(value=>value.record_id===item.record_id)
+            || state.constructionReceipt?.job_id===summary.job_id
+              && item.evidence?.version_id && item.evidence.version_id===state.constructionReceipt.version_id))
+          .map(item=>item.record_id);
+        return ids.length?{jobId:summary.job_id,ids:[...new Set(ids)]}:null;
       }
 
       async function applyResolution(index, suggestionIndex, button, manualIndex=null) {
@@ -1842,6 +2372,7 @@ const elements = {
         if (!reviewNotes.trim()) { showToast('审核依据不能为空'); return; }
         if (!globalThis.confirm(`确认将“${item.entity?.canonical_name || item.record_id}”链接到已有实体“${suggestion.target.canonical_name}”？依赖事实只重绑，不会自动批准。`)) return;
         const identityEpoch = state.identityEpoch;
+        let resume=null;
         button.disabled = true;
         setReviewBusy(true,[item.record_id]);
         try {
@@ -1857,6 +2388,7 @@ const elements = {
           });
           if (identityEpoch !== state.identityEpoch) return;
           const outcomes = payload.outcomes || [];
+          resume=identityResumeRequest([item]);
           trackReviewedOutcomes(outcomes);
           invalidatePublicationPreview();
           state.resolutions.delete(item.record_id);
@@ -1866,7 +2398,12 @@ const elements = {
         } catch (error) {
           if (identityEpoch === state.identityEpoch) showToast(error.message);
           button.disabled = false;
-        } finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
+        } finally {
+          if(identityEpoch===state.identityEpoch) {
+            setReviewBusy(false);
+            if(resume && state.latestAutoReview?.job_id===resume.jobId)await retryAutoReview(resume.jobId,resume.ids);
+          }
+        }
       }
 
       function reviewRefreshImpact(outcomes, targetEntity=null) {
@@ -1886,12 +2423,13 @@ const elements = {
         // A new confirmed identity changes the available matching/assignment targets of its type.
         return !(item.record_kind==='ENTITY_MENTION' || assignment) || !entities.some(entity=>impact.entityTypes.has(entity.entity_type));
       }
-      async function loadReviews({refreshResolutions = false, candidatesOnly = false, anchorRecordId = null, impact = null} = {}) {
+      async function loadReviews({refreshResolutions = false, candidatesOnly = false, anchorRecordId = null, impact = null,refreshAutoReview=true} = {}) {
         const finish=state.reviewBusy || state.publicationBusy ? () => {} : beginButtonFeedback($('review-refresh-button'));
         try {
         reviewModel();
         const previousAssessments=new Map(state.reviewAssessments), previousAssignments=new Map(state.propertyAssignments);
         const previousRecords = new Set(state.reviews.map(item=>item.record_id));
+        disconnectReviewDetails();
         invalidateAssessments();
         const identityEpoch = state.identityEpoch;
         const reviewEpoch = ++state.reviewEpoch;
@@ -1926,9 +2464,9 @@ const elements = {
             else entry.reviewEpoch = reviewEpoch;
           }
           state.reviewLoading=false;renderReviews({anchor});
-          for (const item of state.reviews) {
-            if (item.record_kind === 'ENTITY_MENTION') void queueResolution(item);
-            else void queueAssessment(item);
+          if(refreshAutoReview && state.latestAutoReview?.job_id && !state.autoReviewBusy && !state.constructionBusy) {
+            try {await refreshConstructionReceipt(state.latestAutoReview.job_id,{renderReceipt:state.constructionReceipt?.job_id===state.latestAutoReview.job_id});}
+            catch(error){if(identityEpoch===state.identityEpoch)showToast(`审核队列已刷新；构建摘要暂未更新：${error.message}`);}
           }
         } catch (error) {
           if (identityEpoch !== state.identityEpoch || reviewEpoch !== state.reviewEpoch) return;
@@ -1964,6 +2502,7 @@ const elements = {
       async function submitReviews(decision, indexes, saveEdits = false, groupIdentity = false, independentFact = false) {
         if(state.reviewBusy || state.publicationBusy) {showToast('审核或发布正在保存，请稍候');return;}
         const identityEpoch=state.identityEpoch, reviewEpoch=state.reviewEpoch;
+        let resume=null;
         if (!indexes.length) { showToast('请先勾选审核记录'); return; }
         setReviewBusy(true, indexes.map(index=>state.reviews[index]?.record_id).filter(Boolean));
         try {
@@ -2023,6 +2562,8 @@ const elements = {
             method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({decisions}),
           });
           if(identityEpoch!==state.identityEpoch) return;
+          if(identityRequests.length)resume=identityResumeRequest(identityRequests.map(request=>
+            state.reviews.find(item=>item.record_id===request.record_id)).filter(Boolean));
           trackReviewedOutcomes(payload.outcomes || []);
           invalidatePublicationPreview();
           if(saveEdits) state.reviewPhase='paused';
@@ -2031,7 +2572,12 @@ const elements = {
           if(identityEpoch===state.identityEpoch) void Promise.allSettled([loadActiveDocuments(), loadPublicationCandidates()]);
         } catch (error) {
           if(identityEpoch===state.identityEpoch)showToast(error.message);
-        } finally {if(identityEpoch===state.identityEpoch) setReviewBusy(false);}
+        } finally {
+          if(identityEpoch===state.identityEpoch) {
+            setReviewBusy(false);
+            if(resume && state.latestAutoReview?.job_id===resume.jobId)await retryAutoReview(resume.jobId,resume.ids);
+          }
+        }
       }
 
       function activePublication() {
@@ -2162,6 +2708,7 @@ const elements = {
             if(stale.size) invalidatePublicationPreview();
           }
           renderPublicationCandidates();
+          if(state.reviews.length===0 && !state.reviewLoading)renderReviews();
         } catch (error) {
           if (identityEpoch !== state.identityEpoch || epoch!==state.publicationCandidatesEpoch) return;
           invalidatePublicationPreview();
@@ -2842,6 +3389,9 @@ const elements = {
         state.reviewLoading=false;updateReviewBulkActions();
         state.revisionHistories.clear();
         state.constructionJobs = [];
+        state.constructionDetailRequests?.clear();
+        state.latestAutoReview=null;state.autoReviewBusy=false;state.constructionReceipt=null;state.autoReviewEpoch=(state.autoReviewEpoch || 0)+1;
+        $('review-auto-summary').innerHTML='';$('review-auto-summary').hidden=true;
         $('construction-validation-summary').innerHTML = '';
         state.constructionOperation = null;
         resetUploadDraft();
@@ -2886,6 +3436,9 @@ const elements = {
         elements.documentLifecycleList.innerHTML = '<div class="output-box">活动文档尚未加载。</div>';
         state.constructionBusy=false;state.expertImportBusy=false;state.expertPublishing=false;
         state.manualOperation=null;state.manualBusy=false;state.ontologySaving=false;
+        state.ontologyFileSelection=(state.ontologyFileSelection||0)+1;state.ontologyFileLoading=false;state.ontologyInputError='';
+        $('ontology-input-error').textContent='';$('ontology-input-error').hidden=true;
+        elements.ontologyEditor.setAttribute('aria-invalid','false');
         $('manual-output').textContent='人工补充保存后进入待确认列表。';
         $('manual-save-button').disabled=false;$('ontology-import-button').disabled=false;
         $('abox-publish-button').disabled=false;
@@ -2899,6 +3452,7 @@ const elements = {
         lastBuildFlow='business';buildStep='upload';state.buildView=null;
         $('document-file-name').textContent='尚未选择文件';
         $('ontology-selection').open=false;
+        state.ontologyRuleRegistry=null;$('ontology-rule-file-name').textContent='';$('ontology-file-name').textContent='';$('construction-progress').hidden=true;$('construction-progress').textContent='';
         $('expert-abox').open=false;
         $('document-access-groups').replaceChildren();
         $('manual-subject-type').replaceChildren();$('manual-object-type').replaceChildren();$('manual-predicate').replaceChildren();
@@ -2912,7 +3466,18 @@ const elements = {
 
       $('ontology-reset').addEventListener('click', () => {
         elements.ontologyEditor.value = JSON.stringify(state.bootstrap.defaults.industrial_tbox_template, null, 2);
+        $('ontology-file').value = '';
+        $('ontology-file-name').textContent = '';
+        state.ontologyRuleRegistry = null;
+        $('ontology-rule-file').value = '';
+        $('ontology-rule-file-name').textContent = '';
+        validateOntologyEditor();
       });
+      elements.ontologyEditor.addEventListener('input', validateOntologyEditor);
+      $('ontology-file-button').addEventListener('click', () => $('ontology-file').click());
+      $('ontology-file').addEventListener('change', loadOntologyFile);
+      $('ontology-rule-file-button').addEventListener('click', () => $('ontology-rule-file').click());
+      $('ontology-rule-file').addEventListener('change', loadOntologyRuleReferences);
       $('ontology-list-button').addEventListener('click', foregroundAction('正在读取本体…', loadOntologies));
       $('ontology-import-button').addEventListener('click', foregroundAction('', importOntology));
       $('abox-import-button').addEventListener('click', foregroundAction('', importABox));
@@ -2992,6 +3557,7 @@ const elements = {
     const identity=client.epoch;
     if(loadedIdentity===identity) return;
     if(loadingIdentity?.identity===identity) return loadingIdentity.promise;
+    const ontologySelection=state.ontologyFileSelection||0;
     const promise=(async()=>{
       renderDocumentAccessGroups();
       host.querySelectorAll('[data-industrial-upload]').forEach(node=>node.hidden=currentPersona()?.tenant_id!=='industrial-schneider-demo');
@@ -3003,7 +3569,10 @@ const elements = {
       if(identity!==client.epoch) return;
       const active=state.ontologies.find(item=>item.status==='PUBLISHED');
       $('document-tbox').value=active?.key||'';
-      elements.ontologyEditor.value=JSON.stringify(active?editableOntology(active):bootstrap.defaults?.industrial_tbox_template||{},null,2);
+      if(ontologySelection===(state.ontologyFileSelection||0)) {
+        elements.ontologyEditor.value=JSON.stringify(active?editableOntology(active):bootstrap.defaults?.industrial_tbox_template||{},null,2);
+        validateOntologyEditor();
+      }
       renderConstructionOntology();
       renderBuildView();
       refreshABoxPreparation();updateConstructionMode();

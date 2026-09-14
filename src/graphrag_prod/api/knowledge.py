@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import asyncio
+import time
 
 from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Callable
+from .auto_review_contracts import AutoReviewResponse, AutoReviewRunRequest
 
 from graphrag_prod.construction import (
     ConstructionMetadata,
@@ -168,6 +171,7 @@ from .runtime import (
     UploadInProgressError,
     PublicationValidationError,
     ConstructionIngestionFailedError,
+    ConstructionMappingInvalidError,
     IndustrialConstructionInputLimitError,
     DependencyTimeoutError,
     DependencyUnavailableError,
@@ -253,6 +257,12 @@ def _tbox_payload(value: TBoxVersion) -> dict[str, object]:
     payload = value.to_mapping()
     payload.pop("tenant_id", None)
     payload.update(tbox_id=value.tbox_id, checksum=value.checksum)
+    registry_json = payload.pop("rule_reference_registry_json", None)
+    if registry_json:
+        payload["rule_reference_registry"] = json.loads(registry_json)
+    if value.source_contract_json:
+        from graphrag_prod.ontology.source import source_import_report  # noqa: PLC0415
+        payload["import_capabilities"] = source_import_report(value.source_contract_json)
     return payload
 
 
@@ -306,6 +316,7 @@ def _literal_semantics_payload(value: TypedLiteralValue) -> dict[str, object]:
         "raw_valid_from": value.raw_valid_from,
         "raw_valid_to": value.raw_valid_to,
         "raw_observed_at": value.raw_observed_at,
+        **({"source_encoding": value.source_encoding} if value.source_encoding != "TEXT" else {}),
     }
 
 
@@ -373,7 +384,14 @@ def _review_record_payload(item: Any) -> dict[str, object]:
     if isinstance(record, EntityMentionRecord):
         common["entity"] = _entity_payload(record.entity)
     elif isinstance(record, AssertionRecord):
+        context = record.context_property_evidence
         common.update(
+            context_property_evidence=(None if context is None else {
+                **{name: getattr(context, name) for name in (
+                    "version", "source_checksum", "mapping_checksum", "scope_pointer", "collection_pointer",
+                    "record_pointer", "identity_pointer", "value_pointer", "source_identity", "property_name")},
+                "value_evidence": _evidence_payload(context.value_evidence),
+            }),
             fact_distinction=record.fact_distinction.to_mapping() if record.fact_distinction else None,
             subject=_entity_payload(record.subject),
             predicate=record.predicate,
@@ -433,6 +451,7 @@ def _construction_chunk_payload(value: Any) -> dict[str, object]:
         "mention_record_ids": value.mention_record_ids,
         "assertion_record_ids": value.assertion_record_ids,
         "replayed": value.replayed,
+        "mapping_summary": getattr(value, "mapping_summary", None),
         "validation_attempts": tuple(
             asdict(item) for item in getattr(value, "validation_attempts", ())
         ),
@@ -441,6 +460,7 @@ def _construction_chunk_payload(value: Any) -> dict[str, object]:
 
 def _construction_job_payload(value: Any) -> dict[str, object]:
     return {
+        "operation_key": getattr(value, "operation_key", None),
         "extraction_mode": value.extraction_mode,
         "job_id": value.job_id,
         "document_id": value.document_id,
@@ -640,6 +660,7 @@ class Neo4jKnowledgeOperations:
         upload_guard: Any | None = None,
         resolution_source: Any | None = None,
         assessment_service: Any | None = None,
+        auto_review_service: Any | None = None,
         quality_service: Any | None = None,
         quality_history_service: Any | None = None,
         inventory_service: Any | None = None,
@@ -688,6 +709,7 @@ class Neo4jKnowledgeOperations:
         self.knowledge = knowledge or Neo4jKnowledgeStore(driver, database)
         self.reviews = reviews or Neo4jKnowledgeReviewService(driver, database)
         self.assessments = assessment_service or Neo4jReviewAssessmentService(driver, database)
+        self.auto_reviews = auto_review_service
         self.publications = publications or Neo4jKnowledgePublicationService(
             driver, database
         )
@@ -779,6 +801,7 @@ class Neo4jKnowledgeOperations:
                 valid_from=source.raw_valid_from,
                 valid_to=source.raw_valid_to,
                 observed_at=source.raw_observed_at,
+                source_encoding=source.source_encoding,
             )
         except LiteralNormalizationError as error:
             raise RequestValidationError() from error
@@ -809,6 +832,7 @@ class Neo4jKnowledgeOperations:
                     valid_from=value.literal.raw_valid_from,
                     valid_to=value.literal.raw_valid_to,
                     observed_at=value.literal.raw_observed_at,
+                    source_encoding=value.literal.source_encoding,
                 )
             except LiteralNormalizationError as error:
                 raise RequestValidationError() from error
@@ -1214,6 +1238,7 @@ class Neo4jKnowledgeOperations:
     def construct(
         self, principal: Principal, request: KnowledgeConstructionRequest
     ) -> BackendResult:
+        started = time.monotonic()
         _require_capability(principal, "knowledge:construct")
         if request.knowledge_scope == "AUTHORITATIVE":
             _require_capability(principal, "knowledge:import")
@@ -1267,6 +1292,8 @@ class Neo4jKnowledgeOperations:
         except TimeoutError as error:
             raise DependencyTimeoutError() from error
         except ExtractionRejected as error:
+            if any(item.code.startswith("MAPPING_") for item in error.findings):
+                raise ConstructionMappingInvalidError() from error
             if any(item.code == MODEL_CALL_TIMEOUT for item in error.findings):
                 raise DependencyTimeoutError() from error
             raise DependencyUnavailableError() from error
@@ -1282,11 +1309,53 @@ class Neo4jKnowledgeOperations:
                 "tbox_id": result.tbox_id,
                 "chunks": tuple(_construction_chunk_payload(item) for item in result.chunks),
             }
+            if self.auto_reviews is not None and result.extraction_mode == "LLM":
+                # Source construction and review share the construction request's
+                # bounded wall-clock budget. Review can be resumed separately.
+                total_budget = getattr(getattr(self.construction, "config", None), "deadline_seconds", 4200)
+                remaining = min(1200, max(1, total_budget - (time.monotonic() - started)))
+                try:
+                    payload["auto_review"] = asyncio.run(self.auto_reviews.run(
+                        principal, job_id=result.job_id, deadline_seconds=remaining))
+                except Exception:
+                    # Construction is already durable. A review dependency failure
+                    # must not disguise it as a failed upload or invite duplication.
+                    payload["auto_review"] = self._auto_review_unavailable(principal, result.job_id)
         except (AttributeError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
         return BackendResult(
             _outbound(KnowledgeConstructionResponse, payload)
         )
+
+    def auto_review(self, principal: Principal, job_id: str, request: AutoReviewRunRequest | None = None) -> BackendResult:
+        _require_capability(principal, "knowledge:review")
+        _require_capability(principal, "knowledge:construct")
+        if self.auto_reviews is None:
+            raise ResourceNotFoundError()
+        try:
+            options = ({"resume_identity_record_ids": tuple(request.resume_identity_record_ids)}
+                       if request is not None and request.resume_identity_record_ids else {})
+            value = (self.auto_reviews.get(principal, job_id) if request is None else
+                     asyncio.run(self.auto_reviews.run(principal, job_id=job_id, retry=request.retry, **options)))
+        except (ConstructionAuthorizationError, KnowledgeAuthorizationError, KnowledgeReviewUnavailable) as error:
+            raise ResourceNotFoundError() from error
+        except (ConstructionConflict, KnowledgeConflict) as error:
+            raise ConflictError() from error
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        if value is None:
+            raise ResourceNotFoundError()
+        return BackendResult(_outbound(AutoReviewResponse, value))
+
+    def _auto_review_unavailable(self, principal, job_id):
+        """A transport receipt only; no claim that an audit or approval was saved."""
+        from graphrag_prod.knowledge.auto_review import POLICY_VERSION
+        return dict(job_id=job_id, run_id="unavailable:"+job_id, status="FAILED", stage="DONE",
+            policy_version=POLICY_VERSION, initiated_by=principal.principal_id,
+            reviewed_by="service:auto-review", counts={}, items=[], truncated=False,
+            model_calls=0, updated_at=self._now())
 
     def review_queue(
         self, principal: Principal, request: ReviewQueueRequest
@@ -1344,9 +1413,13 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         if value is None:
             raise ResourceNotFoundError()
-        return BackendResult(
-            _outbound(ConstructionJobResponse, _construction_job_payload(value))
-        )
+        payload = _construction_job_payload(value)
+        if self.auto_reviews is not None and "knowledge:review" in principal.capabilities:
+            try:
+                payload["auto_review"] = self.auto_reviews.get(principal, job_id)
+            except Exception:
+                payload["auto_review"] = self._auto_review_unavailable(principal, job_id)
+        return BackendResult(_outbound(ConstructionJobResponse, payload))
 
     def construction_jobs(
         self,

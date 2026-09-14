@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
+import threading
+import time
 from types import SimpleNamespace
 import unittest
 
@@ -750,6 +752,7 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         )
         properties = {
             "job_id": "job-1",
+            "operation_key": "whole-document-upload-1",
             "tenant_id": self.principal.tenant_id,
             "document_id": "document-1",
             "version_id": "version-1",
@@ -799,6 +802,7 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
             limit=10,
         )
         assert detail is not None
+        self.assertEqual(detail.operation_key, "whole-document-upload-1")
         self.assertEqual(detail.chunks[0].chunk_id, "chunk-1")
         self.assertTrue(detail.chunks[0].replayed)
         self.assertEqual(len(listed), 1)
@@ -934,6 +938,13 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         for field, invalid in (
             ("max_chunks", 0),
             ("max_chunks", True),
+            ("max_concurrency", 0),
+            ("max_concurrency", True),
+            ("max_concurrency", 9),
+            ("embedding_call_timeout_seconds", -1),
+            ("embedding_call_timeout_seconds", True),
+            ("embedding_call_timeout_seconds", float("inf")),
+            ("embedding_call_timeout_seconds", 150.0),
             ("max_model_calls", -1),
             ("max_total_extraction_chars", 1.5),
             ("deadline_seconds", 0.0),
@@ -1004,6 +1015,68 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         self.assertEqual(len(audit.outcomes), 1)
         self.assertEqual(audit.completed_jobs, [])
 
+    def test_parallel_whole_document_is_bounded_ordered_and_replayable(self) -> None:
+        state = {"active": 0, "peak": 0}
+        lock = threading.Lock()
+
+        def observe_call(_number):
+            with lock:
+                state["active"] += 1
+                state["peak"] = max(state["peak"], state["active"])
+            time.sleep(0.02)
+            with lock:
+                state["active"] -= 1
+
+        extractor = _Extractor(_tbox(), on_call=observe_call)
+        parser = BoundedDocumentParser(chunking=ChunkingConfig(
+            max_chars=len(SOURCE), minimum_boundary_ratio=1.0,
+        ))
+        workflow, audit, knowledge, _ = _workflow(
+            extractor=extractor, parser=parser,
+            config=ConstructionConfig("qwen-ontology:v1", "industrial-prompt:v1",
+                max_concurrency=4, max_chunks=12, max_model_calls=12),
+        )
+        result = workflow.run(self.principal, SOURCE * 12, _metadata())
+        self.assertEqual(len(result.chunks), 12)
+        self.assertEqual(extractor.calls, 12)
+        self.assertGreater(state["peak"], 1)
+        self.assertLessEqual(state["peak"], 4)
+        self.assertEqual(len(audit.outcomes), 12)
+        writes = knowledge.candidate_writes
+        replay = workflow.run(self.principal, SOURCE * 12, _metadata())
+        self.assertEqual(replay.chunks, tuple(replace(item, replayed=True) for item in result.chunks))
+        self.assertEqual(extractor.calls, 12)
+        self.assertEqual(knowledge.candidate_writes, writes)
+
+    def test_parallel_provider_failure_stops_queued_calls_and_reuses_completed_chunks(self) -> None:
+        def fail_second_wave(number):
+            if number == 5:
+                raise ExtractionRejected((ExtractionFinding(
+                    "MODEL_CALL_TIMEOUT", "REJECT", "$", "model call timed out",
+                ),))
+            time.sleep(0.01)
+
+        extractor = _Extractor(_tbox(), on_call=fail_second_wave)
+        parser = BoundedDocumentParser(chunking=ChunkingConfig(
+            max_chars=len(SOURCE), minimum_boundary_ratio=1.0,
+        ))
+        workflow, audit, _, _ = _workflow(
+            extractor=extractor, parser=parser,
+            config=ConstructionConfig("qwen-ontology:v1", "industrial-prompt:v1",
+                max_concurrency=4, max_chunks=12, max_model_calls=12),
+        )
+        with self.assertRaises(ExtractionRejected):
+            workflow.run(self.principal, SOURCE * 12, _metadata())
+        completed = len(audit.outcomes)
+        calls = extractor.calls
+        self.assertGreater(completed, 0)
+        self.assertLess(calls, 12)
+        self.assertEqual(audit.completed_jobs, [])
+        extractor.on_call = None
+        result = workflow.run(self.principal, SOURCE * 12, _metadata())
+        self.assertEqual(len(result.chunks), 12)
+        self.assertEqual(extractor.calls, calls + 12 - completed)
+
     def test_deadline_after_parse_stops_before_ingestion_and_providers(self) -> None:
         times = iter((0.0, 0.0, 10.0))
         extractor = _Extractor(_tbox())
@@ -1040,6 +1113,40 @@ class KnowledgeConstructionWorkflowTests(unittest.TestCase):
         with self.assertRaises(ConstructionDeadlineExceeded):
             workflow.run(self.principal, SOURCE, _metadata())
         self.assertEqual(extractor.calls, 0)
+        self.assertEqual(knowledge.candidate_writes, 0)
+
+    def test_preparation_checks_deadline_before_each_embedding(self) -> None:
+        timer = SimpleNamespace(value=0.0)
+        embeddings = []
+
+        class EmbeddingPipeline(_Pipeline):
+            def run(self, request, extraction_provider, embedding_provider):
+                _, _, chunks = request.domain_inputs()
+                for chunk in chunks:
+                    embedding_provider(chunk=chunk)
+                return super().run(request, extraction_provider, embedding_provider)
+
+        extractor = _Extractor(_tbox())
+        workflow, audit, knowledge, _ = _workflow(
+            extractor=extractor, pipeline=EmbeddingPipeline(),
+            parser=BoundedDocumentParser(chunking=ChunkingConfig(
+                max_chars=len(SOURCE), minimum_boundary_ratio=1.0,
+            )), monotonic=lambda: timer.value,
+            config=ConstructionConfig("qwen-ontology:v1", "industrial-prompt:v1",
+                deadline_seconds=10, embedding_call_timeout_seconds=2),
+        )
+
+        def embedding(**kwargs):
+            embeddings.append(kwargs["chunk"].chunk_id)
+            timer.value = 9.0
+            return (0.1, 0.2)
+
+        workflow.embedding_provider = embedding
+        with self.assertRaises(ConstructionDeadlineExceeded):
+            workflow.run(self.principal, SOURCE * 2, _metadata())
+        self.assertEqual(len(embeddings), 1)
+        self.assertEqual(extractor.calls, 0)
+        self.assertEqual(audit.completed_jobs, [])
         self.assertEqual(knowledge.candidate_writes, 0)
 
     def test_provider_timeout_must_fit_inside_workflow_deadline(self) -> None:

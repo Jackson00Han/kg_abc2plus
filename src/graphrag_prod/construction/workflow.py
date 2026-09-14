@@ -9,10 +9,12 @@ stop at audited source evidence, ready for a separate expert-instance import.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 import json
 import math
+import threading
 import time
 from uuid import uuid4
 from typing import Any, Callable, Protocol
@@ -95,7 +97,8 @@ AUTHORITATIVE_PROFILE_SUFFIX = ":authoritative-document:v1"
 MAX_CONSTRUCTION_CHUNKS = 512
 MAX_CONSTRUCTION_MODEL_CALLS = 512
 MAX_CONSTRUCTION_EXTRACTION_CHARS = 5 * 1024 * 1024
-MAX_CONSTRUCTION_DEADLINE_SECONDS = 900.0
+MAX_CONSTRUCTION_DEADLINE_SECONDS = 7_200.0
+MAX_CONSTRUCTION_CONCURRENCY = 8
 
 
 def _required(value: object, name: str) -> str:
@@ -214,6 +217,8 @@ class ConstructionConfig:
     max_model_calls: int = 100
     max_total_extraction_chars: int = 120_000
     deadline_seconds: float = 150.0
+    max_concurrency: int = 1
+    embedding_call_timeout_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         for name in (
@@ -227,6 +232,7 @@ class ConstructionConfig:
             "max_chunks": MAX_CONSTRUCTION_CHUNKS,
             "max_model_calls": MAX_CONSTRUCTION_MODEL_CALLS,
             "max_total_extraction_chars": MAX_CONSTRUCTION_EXTRACTION_CHARS,
+            "max_concurrency": MAX_CONSTRUCTION_CONCURRENCY,
         }
         for name, ceiling in ceilings.items():
             value = getattr(self, name)
@@ -251,6 +257,13 @@ class ConstructionConfig:
                 f"{MAX_CONSTRUCTION_DEADLINE_SECONDS}"
             )
         object.__setattr__(self, "deadline_seconds", float(self.deadline_seconds))
+        if (
+            isinstance(self.embedding_call_timeout_seconds, bool)
+            or not isinstance(self.embedding_call_timeout_seconds, (int, float))
+            or not math.isfinite(float(self.embedding_call_timeout_seconds))
+            or not 0.0 <= self.embedding_call_timeout_seconds < self.deadline_seconds
+        ):
+            raise ValueError("embedding_call_timeout_seconds must be finite, nonnegative and shorter than the deadline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +353,7 @@ class ConstructionChunkResult:
     assertion_record_ids: tuple[str, ...]
     replayed: bool = False
     validation_attempts: tuple[ConstructionValidationAttempt, ...] = ()
+    mapping_summary: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +389,7 @@ class ConstructionJobView:
     last_finding_codes: tuple[str, ...] = ()
     chunks: tuple[ConstructionChunkResult, ...] = ()
     extraction_mode: str = "LLM"
+    operation_key: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -405,6 +420,8 @@ class ConstructionJobView:
         _aware(self.updated_at, "updated_at")
         _aware(self.completed_at, "completed_at")
         _extraction_mode(self.extraction_mode)
+        if self.operation_key is not None:
+            object.__setattr__(self, "operation_key", _required(self.operation_key, "operation_key"))
 
 
 class ConstructionIngestionFailed(RuntimeError):
@@ -931,6 +948,15 @@ class Neo4jConstructionAuditStore:
                           job.completed_chunks = 0,
                           job.created_at = $created_at,
                           job.updated_at = $created_at
+            WITH job, all(
+                key IN keys($identity)
+                WHERE CASE WHEN key = 'extraction_mode'
+                    THEN coalesce(job[key], 'LLM') ELSE job[key]
+                    END = $identity[key]
+            ) AS compatible
+            SET job.status = CASE
+                WHEN compatible AND job.status = 'RETRY_WAIT' THEN 'RUNNING'
+                ELSE job.status END
             RETURN all(
                        key IN keys($identity)
                        WHERE CASE WHEN key = 'extraction_mode'
@@ -1269,6 +1295,10 @@ class Neo4jConstructionAuditStore:
                 tenant_id: $tenant_id,
                 job_id: $job_id
             })
+            SET job.__outcome_write_lock = randomUUID()
+            WITH job
+            REMOVE job.__outcome_write_lock
+            WITH job
             MATCH (document:Document {tenant_id: $tenant_id})-[:HAS_VERSION]->
                   (version:DocumentVersion {tenant_id: $tenant_id})-[:HAS_CHUNK]->
                   (chunk:Chunk {tenant_id: $tenant_id, chunk_id: $chunk_id})
@@ -1299,7 +1329,7 @@ class Neo4jConstructionAuditStore:
                     (job)-[:HAS_CHUNK_OUTCOME]->(item) | item
                 ]),
                 job.status = CASE
-                    WHEN job.status = 'COMPLETED' THEN 'COMPLETED'
+                    WHEN job.status IN ['COMPLETED', 'RETRY_WAIT', 'FAILED'] THEN job.status
                     ELSE 'RUNNING'
                 END,
                 job.updated_at = $completed_at
@@ -1497,6 +1527,7 @@ def _construction_job_view(row: Any) -> ConstructionJobView:
             last_finding_codes=tuple(properties.get("last_finding_codes") or ()),
             chunks=tuple(sorted(chunks, key=lambda item: item.chunk_id)),
             extraction_mode=properties.get("extraction_mode", "LLM"),
+            operation_key=properties.get("operation_key"),
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ConstructionConflict("stored construction job is invalid") from exc
@@ -1512,6 +1543,7 @@ def _chunk_result_payload(result: ConstructionChunkResult) -> dict[str, object]:
         "mention_record_ids": list(result.mention_record_ids),
         "assertion_record_ids": list(result.assertion_record_ids),
         "validation_attempts": [asdict(item) for item in result.validation_attempts],
+        **({"mapping_summary": result.mapping_summary} if result.mapping_summary is not None else {}),
     }
 
 
@@ -1535,6 +1567,7 @@ def _chunk_result_from_payload(
         ),
         replayed=replayed,
         validation_attempts=_validation_attempt_summaries(payload),
+        mapping_summary=payload.get("mapping_summary"),
     )
 
 
@@ -2005,6 +2038,7 @@ class Neo4jKnowledgeConstructionWorkflow:
         monotonic: Callable[[], float] | None = None,
         industrial_upload_policy: Any | None = None,
         industrial_parser: BoundedDocumentParser | None = None,
+        document_extractor_selector: Callable[..., OntologyExtractor] | None = None,
     ) -> None:
         self.industrial_upload_policy = industrial_upload_policy
         self.industrial_parser = industrial_parser
@@ -2012,6 +2046,7 @@ class Neo4jKnowledgeConstructionWorkflow:
         self.embedding_provider = embedding_provider
         self.embedding_profile = embedding_profile
         self.extractor_factory = extractor_factory
+        self.document_extractor_selector = document_extractor_selector
         self.config = config
         self.parser = parser or BoundedDocumentParser()
         self.tbox_store = tbox_store or Neo4jTBoxStore(driver, database)
@@ -2019,6 +2054,9 @@ class Neo4jKnowledgeConstructionWorkflow:
         self.audit_store = audit_store or Neo4jConstructionAuditStore(driver, database)
         self.clock = clock or (lambda: datetime.now(UTC))
         self.monotonic = monotonic or time.monotonic
+        # Shared by every upload using this workflow, so concurrent HTTP
+        # requests cannot multiply the model-provider concurrency allowance.
+        self._chunk_slots = threading.BoundedSemaphore(config.max_concurrency)
 
     def _monotonic_now(self) -> float:
         value = self.monotonic()
@@ -2046,10 +2084,8 @@ class Neo4jKnowledgeConstructionWorkflow:
         total_chars = sum(len(chunk.text) for chunk in parsed.chunks)
         if chunk_count > self.config.max_chunks:
             raise ConstructionBudgetExceeded("source exceeds the configured Chunk budget")
-        if extraction_mode == "LLM" and chunk_count > self.config.max_model_calls:
-            raise ConstructionBudgetExceeded(
-                "source exceeds the configured model-call budget"
-            )
+        # The selected extractor checks actual call demand below. Evidence
+        # batches are not model calls for a document-level field mapping.
         if total_chars > self.config.max_total_extraction_chars:
             raise ConstructionBudgetExceeded(
                 "source exceeds the configured extraction-character budget"
@@ -2159,6 +2195,8 @@ class Neo4jKnowledgeConstructionWorkflow:
             prompt_signature = MANUAL_PROMPT_VERSION
         if metadata.extraction_mode == "LLM":
             extractor = self.extractor_factory(tbox)
+            if self.document_extractor_selector is not None:
+                extractor = self.document_extractor_selector(extractor, parsed)
             if (
                 extractor.active_tbox.tenant_id != principal.tenant_id
                 or extractor.active_tbox.tbox_id != tbox.tbox_id
@@ -2175,7 +2213,9 @@ class Neo4jKnowledgeConstructionWorkflow:
                 or validation_attempts not in (1, 2)
             ):
                 raise ConstructionConflict("extractor validation-attempt bound is invalid")
-            if len(parsed.chunks) * validation_attempts > self.config.max_model_calls:
+            required_calls = (2 if getattr(extractor, "deterministic_batches", False)
+                              else len(parsed.chunks) * validation_attempts)
+            if required_calls > self.config.max_model_calls:
                 raise ConstructionBudgetExceeded(
                     "source exceeds the model-call budget including validation correction"
                 )
@@ -2302,11 +2342,18 @@ class Neo4jKnowledgeConstructionWorkflow:
             ingestion_profile,
             job,
         )
+
+        def bounded_embedding(**kwargs: Any):
+            self._require_deadline(
+                deadline, minimum_remaining=self.config.embedding_call_timeout_seconds,
+            )
+            return self.embedding_provider(**kwargs)
+
         try:
             ingestion = self.pipeline.run(
                 ingestion_request,
                 _empty_canonical_extraction,
-                self.embedding_provider,
+                bounded_embedding,
             )
         except Exception as error:
             # The preparation job owns its retry budget and fencing. Never
@@ -2331,43 +2378,135 @@ class Neo4jKnowledgeConstructionWorkflow:
                 raise ConstructionConflict(str(error)) from error
         results: list[ConstructionChunkResult] = []
         model_calls_started = [0]
+        call_lock = threading.Lock()
+        stopped = threading.Event()
 
         def reserve_model_call() -> None:
-            if model_calls_started[0] >= self.config.max_model_calls:
-                raise ConstructionBudgetExceeded(
-                    "construction reached the configured model-call budget"
-                )
-            model_calls_started[0] += 1
+            with call_lock:
+                if stopped.is_set():
+                    raise ConstructionConflict("construction stopped after a Chunk failure")
+                if model_calls_started[0] >= self.config.max_model_calls:
+                    raise ConstructionBudgetExceeded(
+                        "construction reached the configured model-call budget"
+                    )
+                model_calls_started[0] += 1
 
-        for chunk in chunks:
+        prepare_document = getattr(extractor, "prepare_document", None)
+        if callable(prepare_document):
+            def mapping_identity(signature):
+                scoped = _fingerprint({
+                    "signature": signature, "document_id": job.document_id,
+                    "operation_key": job.operation_key,
+                    "version_id": job.version_id, "tbox_id": tbox.tbox_id,
+                    "access_policy_id": job.access_policy_id,
+                    "access_policy_version": job.access_policy_version,
+                    "access_groups": sorted(job.access_groups),
+                })
+                return scoped, derivation_artifact_id(
+                    principal.tenant_id, AUDIT_ARTIFACT_KIND, scoped, extraction_profile.profile_id,
+                )
+
+            def read_mapping(signature):
+                input_hash, artifact_id = mapping_identity(signature)
+                return self.audit_store.read_artifact(
+                    tenant_id=principal.tenant_id, artifact_id=artifact_id,
+                    input_hash=input_hash, profile_id=extraction_profile.profile_id,
+                )
+
+            def persist_mapping(signature, payload):
+                input_hash, artifact_id = mapping_identity(signature)
+                self.audit_store.persist_artifact(
+                    tenant_id=principal.tenant_id, artifact_id=artifact_id,
+                    input_hash=input_hash, profile_id=extraction_profile.profile_id,
+                    payload=payload, created_at=self.clock(),
+                )
+
+            def before_mapping_call():
+                self._require_deadline(deadline, minimum_remaining=provider_timeout)
+                reserve_model_call()
+
+            acquired = self._chunk_slots.acquire(timeout=max(0.0, deadline - self._monotonic_now()))
+            if not acquired:
+                raise ConstructionDeadlineExceeded("mapping concurrency wait reached its deadline")
+            try:
+                prepare_document(read=read_mapping, persist=persist_mapping,
+                                 before_model_call=before_mapping_call)
+            except ExtractionRejected as error:
+                self.audit_store.record_retryable_failure(
+                    tenant_id=principal.tenant_id, job_id=job.job_id,
+                    chunk_id=chunks[0].chunk_id, findings=error.findings,
+                    failed_at=self.clock(),
+                )
+                raise
+            finally:
+                self._chunk_slots.release()
+
+        def process(chunk: Chunk) -> ConstructionChunkResult:
             self._require_deadline(deadline)
             if metadata.extraction_mode == "SOURCE_ONLY":
-                results.append(
-                    self._process_source_chunk(
-                        principal=principal,
-                        job=job,
-                        tbox=tbox,
-                        profile=extraction_profile,
-                        chunk=chunk,
-                    )
-                )
-                continue
-            assert extractor is not None
-            results.append(
-                self._process_chunk(
+                return self._process_source_chunk(
                     principal=principal,
                     job=job,
                     tbox=tbox,
-                    extractor=extractor,
                     profile=extraction_profile,
-                    document=document,
-                    version=version,
                     chunk=chunk,
-                    deadline=deadline,
-                    provider_timeout=provider_timeout,
-                    reserve_model_call=reserve_model_call,
                 )
+            assert extractor is not None
+            return self._process_chunk(
+                principal=principal,
+                job=job,
+                tbox=tbox,
+                extractor=extractor,
+                profile=extraction_profile,
+                document=document,
+                version=version,
+                chunk=chunk,
+                deadline=deadline,
+                provider_timeout=provider_timeout,
+                reserve_model_call=reserve_model_call,
             )
+
+        if metadata.extraction_mode == "LLM" and self.config.max_concurrency > 1:
+            first_error: list[BaseException] = []
+
+            def process_bounded(chunk: Chunk) -> ConstructionChunkResult:
+                remaining = max(0.0, deadline - self._monotonic_now())
+                acquired = self._chunk_slots.acquire(timeout=remaining)
+                try:
+                    if not acquired:
+                        raise ConstructionDeadlineExceeded("construction concurrency wait reached its deadline")
+                    if stopped.is_set():
+                        raise ConstructionConflict("construction stopped after a Chunk failure")
+                    return process(chunk)
+                except BaseException as error:
+                    with call_lock:
+                        if not first_error:
+                            first_error.append(error)
+                        stopped.set()
+                    raise
+                finally:
+                    if acquired:
+                        self._chunk_slots.release()
+
+            # Queue size is bounded by the preflight Chunk limit. On failure,
+            # stop new calls, cancel pending work, and wait for in-flight calls
+            # to retain their immutable audits before returning the first error.
+            with ThreadPoolExecutor(
+                max_workers=self.config.max_concurrency,
+                thread_name_prefix="graphrag-construction",
+            ) as executor:
+                futures = [executor.submit(process_bounded, chunk) for chunk in chunks]
+                try:
+                    results = [future.result() for future in futures]
+                except BaseException:
+                    stopped.set()
+                    for future in futures:
+                        future.cancel()
+                    if first_error:
+                        raise first_error[0]
+                    raise
+        else:
+            results = [process(chunk) for chunk in chunks]
         self._require_deadline(deadline)
         self.audit_store.complete_job(
             tenant_id=principal.tenant_id,
@@ -2759,7 +2898,8 @@ class Neo4jKnowledgeConstructionWorkflow:
                         on_validation_attempt=retain_attempt,
                     )
                 else:
-                    if not getattr(extractor, "is_manual", False):
+                    if not (getattr(extractor, "is_manual", False)
+                            or getattr(extractor, "deterministic_batches", False)):
                         before_model_call()
                     audited = extractor.extract_audited(
                         artifact_id=artifact_id, input_hash=input_hash,
@@ -2871,6 +3011,8 @@ class Neo4jKnowledgeConstructionWorkflow:
                 () if batch is None else tuple(item.record_id for item in batch.assertions)
             ),
             validation_attempts=validation_attempts,
+            mapping_summary=(extractor.summary() if chunk.ordinal == 0
+                             and callable(getattr(extractor, "summary", None)) else None),
         )
         self.audit_store.persist_outcome(
             principal,

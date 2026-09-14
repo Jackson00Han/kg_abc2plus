@@ -14,6 +14,7 @@ from graphrag_prod.domain.facts import FactDistinction
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import re
 from uuid import uuid5
 
 from graphrag_prod.domain.ids import ID_NAMESPACE, entity_id as make_entity_id
@@ -211,6 +212,77 @@ class EvidenceReference:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextPropertyEvidence:
+    """Immutable structured scope and a second exact source range for a literal."""
+
+    source_checksum: str
+    mapping_checksum: str
+    scope_pointer: str
+    collection_pointer: str
+    record_pointer: str
+    identity_pointer: str
+    value_pointer: str
+    source_identity: str
+    property_name: str
+    binding_json: str
+    value_evidence: EvidenceReference
+    version: str = "json-context-property:v1"
+
+    def __post_init__(self) -> None:
+        if self.version != "json-context-property:v1":
+            raise ValueError("unsupported context property evidence version")
+        if not isinstance(self.binding_json, str) or len(self.binding_json) > 8192:
+            raise ValueError("context binding must be bounded canonical JSON")
+        binding = json.loads(self.binding_json)
+        if not isinstance(binding, dict) or json.dumps(binding, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) != self.binding_json:
+            raise ValueError("context binding must be a canonical JSON object")
+        for name in ("source_checksum", "mapping_checksum"):
+            if not isinstance(getattr(self, name), str) or not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)):
+                raise ValueError(f"{name} must be a SHA-256 checksum")
+        for name in ("scope_pointer", "collection_pointer", "record_pointer", "identity_pointer", "value_pointer"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or len(value) > 4096 or (value and not value.startswith("/")) or re.search(r"~(?![01])", value):
+                raise ValueError(f"{name} must be a bounded JSON Pointer")
+            if name != "scope_pointer" and not value:
+                raise ValueError(f"{name} must not be empty")
+        if (not self.collection_pointer.startswith(self.scope_pointer + "/")
+                or not self.value_pointer.startswith(self.scope_pointer + "/")
+                or not self.record_pointer.startswith(self.collection_pointer + "/")
+                or "/" in self.record_pointer[len(self.collection_pointer) + 1:]
+                or not self.record_pointer[len(self.collection_pointer) + 1:].isdigit()
+                or self.value_pointer == self.collection_pointer
+                or self.value_pointer.startswith(self.collection_pointer + "/")):
+            raise ValueError("context scope must contain its collection and external value")
+        for name in ("source_identity", "property_name"):
+            value = _required_text(getattr(self, name), name)
+            if len(value) > 512:
+                raise ValueError(f"{name} exceeds its limit")
+            object.__setattr__(self, name, value)
+        if not isinstance(self.value_evidence, EvidenceReference):
+            raise TypeError("context value_evidence must be EvidenceReference")
+
+    def to_mapping(self) -> dict[str, object]:
+        result = {name: getattr(self, name) for name in self.__dataclass_fields__ if name != "value_evidence"}
+        result["value_evidence"] = {
+            name: (sorted(value) if name == "access_groups" else value)
+            for name in self.value_evidence.__dataclass_fields__
+            for value in (getattr(self.value_evidence, name),)
+        }
+        return result
+
+    @classmethod
+    def from_mapping(cls, value: object) -> ContextPropertyEvidence:
+        if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
+            raise ValueError("invalid context property evidence fields")
+        evidence = value["value_evidence"]
+        if not isinstance(evidence, dict) or set(evidence) != set(EvidenceReference.__dataclass_fields__):
+            raise ValueError("invalid context value evidence fields")
+        return cls(**{**value, "value_evidence": EvidenceReference(**{
+            **evidence, "access_groups": frozenset(evidence["access_groups"]),
+        })})
+
+
+@dataclass(frozen=True, slots=True)
 class EntityIdentity:
     """A tenant-scoped canonical identity, without dynamic fact properties."""
 
@@ -306,6 +378,7 @@ class AssertionRecord:
     )
 
     fact_distinction: FactDistinction | None = None
+    context_property_evidence: ContextPropertyEvidence | None = None
 
     def __post_init__(self) -> None:
         if self.fact_distinction is not None and (
@@ -331,6 +404,17 @@ class AssertionRecord:
         has_literal = self.literal_value is not None
         if has_entity == has_literal:
             raise ValueError("assertion requires exactly one entity or literal object")
+        context = self.context_property_evidence
+        literal_evidence = self.evidence
+        if context is not None:
+            if not isinstance(context, ContextPropertyEvidence) or has_entity:
+                raise ValueError("only literal assertions can carry context evidence")
+            if context.property_name != self.predicate:
+                raise ValueError("context property must match assertion predicate")
+            literal_evidence = context.value_evidence
+            for name in ("tenant_id", "document_id", "version_id", "access_policy_id", "access_policy_version", "access_groups"):
+                if getattr(self.evidence, name) != getattr(literal_evidence, name):
+                    raise ValueError("context evidence must share source version and access policy")
         properties = tuple(self.relationship_properties)
         if any(not isinstance(item, RelationshipPropertyValue) for item in properties):
             raise TypeError(
@@ -409,7 +493,7 @@ class AssertionRecord:
             ):
                 raise TypeError("literal_semantics must be TypedLiteralValue")
             if not _contains_exact_token(
-                self.evidence.quoted_text, literal,
+                literal_evidence.quoted_text, literal,
                 allow_cjk_adjacency=(
                     self.literal_semantics is not None
                     and self.literal_semantics.datatype == "STRING"
@@ -428,7 +512,7 @@ class AssertionRecord:
                 )
                 if any(
                     token is not None
-                    and not _contains_exact_token(self.evidence.quoted_text, token)
+                    and not _contains_exact_token(literal_evidence.quoted_text, token)
                     for token in tokens
                 ):
                     raise ValueError(

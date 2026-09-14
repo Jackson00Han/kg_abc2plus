@@ -144,6 +144,7 @@ class TypedLiteralSemanticsResponse(StrictAPIModel):
     raw_valid_from: LiteralTemporalText | None = None
     raw_valid_to: LiteralTemporalText | None = None
     raw_observed_at: LiteralTemporalText | None = None
+    source_encoding: Literal["TEXT", "JSON_STRING"] = "TEXT"
 
     @model_validator(mode="after")
     def validate_domain_semantics(self) -> Self:
@@ -161,6 +162,7 @@ class TypedLiteralSemanticsResponse(StrictAPIModel):
                 raw_valid_from=self.raw_valid_from,
                 raw_valid_to=self.raw_valid_to,
                 raw_observed_at=self.raw_observed_at,
+                source_encoding=self.source_encoding,
             )
         except (TypeError, ValueError) as error:
             raise ValueError("typed literal semantics are inconsistent") from error
@@ -832,6 +834,7 @@ class GraphAssertionResponse(StrictAPIModel):
         Field(max_length=MAX_GRAPH_ASSERTIONS),
     ] = ()
     evidence: GraphEvidenceResponse
+    context_value_evidence: GraphEvidenceResponse | None = None
 
     @field_validator("relationship_properties", mode="before")
     @classmethod
@@ -840,6 +843,13 @@ class GraphAssertionResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_object_and_identity(self) -> Self:
+        if self.context_value_evidence is not None:
+            secondary = self.context_value_evidence
+            if (self.object_kind != "literal" or secondary.provenance != self.evidence.provenance
+                    or secondary.citation.document_id != self.evidence.citation.document_id
+                    or secondary.citation.version_id != self.evidence.citation.version_id
+                    or secondary.citation.version_checksum != self.evidence.citation.version_checksum):
+                raise ValueError("context evidence must belong to this literal source and revision")
         if (
             self.record_id != self.evidence.provenance.record_id
             or self.revision_id != self.evidence.provenance.revision_id
@@ -881,6 +891,7 @@ class GraphPathResponse(StrictAPIModel):
         Field(max_length=MAX_GRAPH_ASSERTIONS),
     ] = ()
     evidence: GraphEvidenceResponse
+    context_value_evidence: GraphEvidenceResponse | None = None
 
     @field_validator("relationship_properties", mode="before")
     @classmethod
@@ -889,6 +900,13 @@ class GraphPathResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_one_hop_object(self) -> Self:
+        if self.context_value_evidence is not None:
+            secondary = self.context_value_evidence
+            if (self.object_entity_id is not None or secondary.provenance != self.evidence.provenance
+                    or secondary.citation.document_id != self.evidence.citation.document_id
+                    or secondary.citation.version_id != self.evidence.citation.version_id
+                    or secondary.citation.version_checksum != self.evidence.citation.version_checksum):
+                raise ValueError("context path evidence must belong to its literal source and revision")
         if (self.object_entity_id is None) == (self.literal_value is None):
             raise ValueError("graph path requires exactly one object")
         if self.object_entity_id is not None and self.literal_semantics is not None:
@@ -923,7 +941,7 @@ class EvidenceSubgraphResponse(StrictAPIModel):
         tuple[GraphPathResponse, ...], Field(max_length=MAX_GRAPH_PATHS)
     ]
     matched_chunk_ids: Annotated[
-        tuple[Identifier, ...], Field(max_length=MAX_GRAPH_ASSERTIONS * 2)
+        tuple[Identifier, ...], Field(max_length=MAX_GRAPH_ASSERTIONS * 2 + 20)
     ]
     publication_ids: Annotated[tuple[Identifier, ...], Field(max_length=1)]
 
@@ -970,6 +988,7 @@ class EvidenceSubgraphResponse(StrictAPIModel):
                 or path.literal_value != assertion.literal_value
                 or path.literal_semantics != assertion.literal_semantics
                 or path.evidence != assertion.evidence
+                or path.context_value_evidence != assertion.context_value_evidence
             ):
                 raise ValueError("graph path must match one returned assertion")
         if relationship_ids.intersection(literal_ids):
@@ -978,16 +997,17 @@ class EvidenceSubgraphResponse(StrictAPIModel):
             evidence
             for entity in self.entities
             for evidence in entity.evidence
-        ] + [item.evidence for item in assertion_items]
+        ] + [item.evidence for item in assertion_items] + [item.context_value_evidence for item in assertion_items
+                if item.context_value_evidence is not None]
         citations: dict[str, GraphCitationResponse] = {}
-        unique_evidence: dict[tuple[str, str], GraphEvidenceResponse] = {}
+        unique_evidence: dict[tuple[object, ...], GraphEvidenceResponse] = {}
         for evidence in evidences:
             chunk_id = evidence.citation.chunk_id
             previous = citations.setdefault(chunk_id, evidence.citation)
             if previous != evidence.citation:
                 raise ValueError("graph citations conflict for one Chunk")
             unique_evidence.setdefault(
-                (evidence.provenance.revision_id, chunk_id), evidence
+                (evidence.provenance.revision_id, chunk_id, evidence.char_start, evidence.char_end), evidence
             )
         if set(self.matched_chunk_ids) != set(citations):
             raise ValueError("matched_chunk_ids must identify graph evidence Chunks")

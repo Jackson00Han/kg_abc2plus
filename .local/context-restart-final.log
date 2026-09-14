@@ -1,0 +1,6 @@
+检查原数据库连接…
+正在停止本项目的 8002 服务（PID 17478）…
+服务已启动：http://127.0.0.1:8002/industrial
+PID：28350
+日志：/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.local/workbench/8002.log
+现有数据已保留；仅水泵测试包模式开启。关闭本终端后服务继续运行。

@@ -92,7 +92,7 @@ const root={querySelectorAll(selector){
 }};
 section.parentElement=root;
 const locate={dataset:{publicationLocate:'0'}};
-const panel={innerHTML:'',querySelectorAll:()=>[locate]};
+const panel={innerHTML:'',querySelectorAll:()=>[locate],querySelector:()=>null};
 const document={getElementById:()=>panel};
 const $=id=>document.getElementById(id);
 const elements={publicationCandidateList:root};

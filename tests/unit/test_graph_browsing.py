@@ -11,6 +11,7 @@ from graphrag_prod.api.graph_contracts import GraphBrowseRequest, GraphBrowseRes
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.graph.browse_models import GraphBrowseQuery, GraphReadPin, GraphViewChanged, GraphBrowseLimitExceeded, GraphBrowseUnavailable, read_graph_state
 from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser, _View
+from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
 from graphrag_prod.graph.view_tokens import GraphViewTokenCodec
 from graphrag_prod.retrieval.models import VersionFilter
 from graphrag_prod.retrieval.subgraph import Neo4jEvidenceSubgraphProjector
@@ -165,7 +166,7 @@ class GraphBrowsingTests(unittest.TestCase):
         self.driver.mentions[0]["mention"]["evidence_text"] = "fake"
         with self.assertRaises(GraphBrowseUnavailable):
             self.browser.query(PRINCIPAL, GraphBrowseQuery())
-        self.driver.mentions = tuple(deepcopy(fixture._mention_rows()[0]) for _ in range(501))
+        self.driver.mentions = tuple(deepcopy(fixture._mention_rows()[0]) for _ in range(MAX_PUBLICATION_MANIFEST_RECORDS + 1))
         with self.assertRaises(GraphBrowseLimitExceeded):
             self.browser.query(PRINCIPAL, GraphBrowseQuery())
 
@@ -250,7 +251,7 @@ class GraphBrowsingTests(unittest.TestCase):
         record = {"tbox_id": tbox.tbox_id, "tenant_id": tbox.tenant_id, "key": tbox.key,
                   "version": tbox.version, "status": "PUBLISHED", "checksum": tbox.checksum, "definition_json": json.dumps(tbox.to_mapping())}
         row = {"corpus_revision": 12, "activation_generation": 3, "publication": {"publication_id": "pub", "generation": 1,
-                "tenant_id": fixture.TENANT, "status": "ACTIVE", "ontology_version_id": tbox.tbox_id}, "active_links": 1, "tbox_links": 1, "tboxes": [record]}
+                "tenant_id": fixture.TENANT, "status": "ACTIVE", "ontology_version_id": tbox.tbox_id}, "active_links": 1, "tbox_links": 1, "tboxes": [record], "publication_members_complete": True}
         tx = SimpleNamespace(run=lambda *args, **kwargs: [row])
         pin, loaded = read_graph_state(tx, fixture.TENANT)
         self.assertEqual(pin.tbox_checksum, tbox.checksum)

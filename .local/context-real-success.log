@@ -1,0 +1,7 @@
+Chromium ready: 153.0.8010.12
+{"at":"2026-09-14T00:45:23.988Z","progress":{"hidden":false,"text":"正在准备上下文补全…"}}
+{"at":"2026-09-14T00:45:38.832Z","progress":{"hidden":false,"text":"正在核对文档上下文与适用范围"}}
+{"at":"2026-09-14T00:45:53.860Z","progress":{"hidden":false,"text":"正在审核属性与关系"}}
+{"at":"2026-09-14T00:46:08.829Z","progress":{"hidden":false,"text":"正在审核属性与关系"}}
+{"at":"2026-09-14T00:46:23.844Z","progress":{"hidden":false,"text":"正在审核属性与关系"}}
+{"status":"passed","mode":"repair","job_id":"a85f4970-47a0-5105-95e7-b2425b5a5fc8","started_at":"2026-09-14T00:44:59.919Z","repair_posts":1,"screenshots":["receipt-1280.png","manual-queue-1280.png","receipt-1440.png","manual-queue-1440.png","receipt-1920.png","manual-queue-1920.png"],"errors":[],"blocked":[],"evidence_api_verified":false,"evidence_ui_verified":false,"result":{"status":"COMPLETED","counts":{"entity_groups":139,"approved_groups":139,"approved_mentions":310,"approved_assertions":922,"manual_groups":0,"manual_assertions":0,"blocked_assertions":0,"incomplete":0},"context_mapping":{"status":"COMPLETED","added_assertions":24,"applied":24,"uncertain":0,"overridden":0,"rules":[{"source_path":"/metadata/project_id","target_collection":"/assets","property_name":"project_id","scope_path":"","binding_mode":"IDENTITY_TEMPLATE","status":"COMPLETED","applied":24,"uncertain":0,"overridden":0,"reason":"上下文声明身份模板{project_id}/{FullCode}，结合记录full_code可精确匹配每条记录的asset_ref"}],"issues":[]},"issues":[]},"finished_at":"2026-09-14T00:46:42.992Z"}

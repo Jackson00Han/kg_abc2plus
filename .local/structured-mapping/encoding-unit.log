@@ -1,0 +1,15 @@
+======================================================================
+ERROR: test_construction_literals (unittest.loader._FailedTest.test_construction_literals)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_construction_literals
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/.local/share/uv/python/cpython-3.12.12-macos-x86_64-none/lib/python3.12/unittest/loader.py", line 137, in loadTestsFromName
+    module = __import__(module_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'tests.unit.test_construction_literals'
+
+
+----------------------------------------------------------------------
+Ran 70 tests in 0.336s
+
+FAILED (errors=1)

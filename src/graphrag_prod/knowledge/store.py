@@ -7,6 +7,7 @@ from graphrag_prod.domain.facts import decode_fact_distinction
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import hashlib
 from typing import Any, Iterable, Protocol
 
 from graphrag_prod.domain.facts import literal_signature
@@ -21,6 +22,7 @@ from graphrag_prod.ontology.models import (
 from .models import (
     ABoxRecordBatch,
     AssertionRecord,
+    ContextPropertyEvidence,
     EntityIdentity,
     EntityMentionRecord,
     EvidenceReference,
@@ -37,6 +39,138 @@ from .trust import (
 
 MAX_RECORDS_PER_WRITE = 1_000
 MAX_RECORDS_PER_READ = 500
+CONTEXT_PROPERTY_KEYS = (
+    "context_property_evidence_version", "context_property_evidence_json",
+    "context_source_checksum", "context_mapping_checksum", "context_chunk_id",
+    "context_char_start", "context_char_end", "context_evidence_text",
+)
+
+
+def context_evidence_guard(revision: str = "revision", *, version: str | None = None,
+                           snapshot: str | None = None, document: str | None = None,
+                           primary: str | None = None) -> str:
+    """Cypher predicate: secondary source remains exact and equally authorized.
+
+    The outer query remains responsible for the primary source lifecycle and
+    principal ACL. Both evidences must use that same document/version/policy.
+    """
+    r = revision
+    if version is not None:
+        # Reuse the outer query's already authorized source boundary. Introducing
+        # another free document/version/snapshot graph makes cold planning costly.
+        membership = (f"""({snapshot}.tenant_id={r}.tenant_id
+                AND {snapshot}.document_id={r}.document_id AND {snapshot}.version_id={r}.version_id
+                AND {snapshot}.build_state IN ['PUBLISHED','RETIRED'] AND {snapshot}.retirement_id IS NULL
+                AND EXISTS {{ MATCH ({snapshot})-[:INCLUDES_CHUNK]->(context_chunk) }})"""
+            if snapshot is not None else f"""EXISTS {{
+                MATCH (context_snapshot:KnowledgeSnapshot)-[:OF_VERSION]->({version})
+                WHERE context_snapshot.tenant_id={r}.tenant_id
+                  AND context_snapshot.document_id={r}.document_id
+                  AND context_snapshot.version_id={r}.version_id
+                  AND context_snapshot.build_state IN ['PUBLISHED','RETIRED']
+                  AND context_snapshot.retirement_id IS NULL
+                  AND EXISTS {{ MATCH (context_snapshot)-[:INCLUDES_CHUNK]->(context_chunk) }}
+                  {f'AND EXISTS {{ MATCH (context_snapshot)-[:INCLUDES_CHUNK]->({primary}) }}' if primary else ''}
+            }}""")
+        document_guard = (f"""AND {document}.retirement_id IS NULL
+                AND {document}.tenant_id={r}.tenant_id AND {document}.document_id={r}.document_id
+                AND {document}.retirement_request_fingerprint IS NULL
+                AND coalesce({document}.lifecycle_status,'ACTIVE')='ACTIVE'""" if document else "")
+        return f"""({r}.context_property_evidence_json IS NULL OR (
+          {r}.context_property_evidence_version='json-context-property:v1'
+          AND COUNT {{ MATCH ({r})-[:CONTEXT_EVIDENCED_BY]->(:Chunk) }}=1
+          AND {version}.checksum={r}.context_source_checksum
+          AND {version}.tenant_id={r}.tenant_id AND {version}.document_id={r}.document_id
+          AND {version}.version_id={r}.version_id
+          AND {version}.retirement_id IS NULL
+          AND coalesce({version}.lifecycle_status,'ACTIVE')='ACTIVE'
+          {document_guard}
+          AND EXISTS {{
+            MATCH ({r})-[:CONTEXT_EVIDENCED_BY]->(context_chunk:Chunk)
+            WHERE context_chunk.tenant_id={r}.tenant_id
+              AND context_chunk.document_id={r}.document_id
+              AND context_chunk.version_id={r}.version_id
+              AND context_chunk.chunk_id={r}.context_chunk_id
+              AND context_chunk.access_policy_id={r}.access_policy_id
+              AND context_chunk.access_policy_version={r}.access_policy_version
+              AND context_chunk.access_groups={r}.access_groups
+              AND context_chunk.char_start<={r}.context_char_start
+              AND {r}.context_char_start<{r}.context_char_end
+              AND {r}.context_char_end<=context_chunk.char_end
+              AND substring(context_chunk.text,{r}.context_char_start-context_chunk.char_start,
+                            {r}.context_char_end-{r}.context_char_start)={r}.context_evidence_text
+              AND EXISTS {{ MATCH ({version})-[:HAS_CHUNK]->(context_chunk) }}
+              AND {membership}
+          }}))"""
+    return f"""({r}.context_property_evidence_json IS NULL OR (
+      {r}.context_property_evidence_version = 'json-context-property:v1'
+      AND COUNT {{ MATCH ({r})-[:CONTEXT_EVIDENCED_BY]->(:Chunk) }} = 1
+      AND EXISTS {{
+        MATCH ({r})-[:CONTEXT_EVIDENCED_BY]->(context_chunk:Chunk)
+        WHERE context_chunk.tenant_id = {r}.tenant_id
+          AND context_chunk.document_id = {r}.document_id
+          AND context_chunk.version_id = {r}.version_id
+          AND context_chunk.chunk_id = {r}.context_chunk_id
+          AND context_chunk.access_policy_id = {r}.access_policy_id
+          AND context_chunk.access_policy_version = {r}.access_policy_version
+          AND context_chunk.access_groups = {r}.access_groups
+          AND context_chunk.char_start <= {r}.context_char_start
+          AND {r}.context_char_start < {r}.context_char_end
+          AND {r}.context_char_end <= context_chunk.char_end
+          AND substring(context_chunk.text, {r}.context_char_start - context_chunk.char_start,
+                        {r}.context_char_end - {r}.context_char_start) = {r}.context_evidence_text
+        WITH {r}, context_chunk LIMIT 1
+        MATCH (context_version:DocumentVersion {{tenant_id:{r}.tenant_id,version_id:{r}.version_id}})
+        WHERE context_version.document_id = {r}.document_id
+          AND context_version.checksum = {r}.context_source_checksum
+          AND context_version.retirement_id IS NULL
+          AND coalesce(context_version.lifecycle_status,'ACTIVE') = 'ACTIVE'
+          AND EXISTS {{ MATCH (context_version)-[:HAS_CHUNK]->(context_chunk) }}
+        WITH {r}, context_chunk, context_version LIMIT 1
+        MATCH (context_document:Document {{tenant_id:{r}.tenant_id,document_id:{r}.document_id}})
+        WHERE context_document.retirement_id IS NULL
+          AND context_document.retirement_request_fingerprint IS NULL
+          AND coalesce(context_document.lifecycle_status,'ACTIVE') = 'ACTIVE'
+          AND EXISTS {{ MATCH (context_document)-[:HAS_VERSION]->(context_version) }}
+        WITH {r}, context_chunk, context_version LIMIT 1
+        MATCH (context_snapshot:KnowledgeSnapshot)-[:INCLUDES_CHUNK]->(context_chunk)
+        WHERE context_snapshot.tenant_id = {r}.tenant_id
+          AND context_snapshot.document_id = {r}.document_id
+          AND context_snapshot.version_id = {r}.version_id
+          AND context_snapshot.build_state IN ['PUBLISHED','RETIRED']
+          AND context_snapshot.retirement_id IS NULL
+          AND EXISTS {{ MATCH (context_snapshot)-[:OF_VERSION]->(context_version) }}
+          AND EXISTS {{ MATCH (context_snapshot)-[:INCLUDES_CHUNK]->(context_primary:Chunk)
+              WHERE context_primary.chunk_id = coalesce({r}.chunk_id,{r}.evidence_chunk_id)
+                AND context_primary.tenant_id = {r}.tenant_id }}
+      }}))"""
+
+
+def context_navigation_guard(navigation: str = "navigation", revision: str = "revision") -> str:
+    """Match materialized context to the separately validated governed source."""
+    return f"""(({revision}.context_property_evidence_json IS NULL
+        AND COUNT {{ MATCH ({navigation})-[:CONTEXT_EVIDENCED_BY]->(:Chunk) }}=0)
+        OR ({revision}.context_property_evidence_json IS NOT NULL
+          AND COUNT {{ MATCH ({navigation})-[:CONTEXT_EVIDENCED_BY]->(:Chunk) }}=1
+          AND EXISTS {{ MATCH ({navigation})-[:CONTEXT_EVIDENCED_BY]->(context_target:Chunk)
+              WHERE context_target.tenant_id={revision}.tenant_id
+                AND context_target.chunk_id={revision}.context_chunk_id }}))"""
+
+
+def context_evidence_properties(assertion: AssertionRecord) -> dict[str, object]:
+    context = assertion.context_property_evidence
+    if context is None:
+        return {}
+    return {
+        "context_property_evidence_version": context.version,
+        "context_property_evidence_json": json.dumps(context.to_mapping(), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        "context_source_checksum": context.source_checksum,
+        "context_mapping_checksum": context.mapping_checksum,
+        "context_chunk_id": context.value_evidence.chunk_id,
+        "context_char_start": context.value_evidence.char_start,
+        "context_char_end": context.value_evidence.char_end,
+        "context_evidence_text": context.value_evidence.quoted_text,
+    }
 
 
 class SessionDriver(Protocol):
@@ -116,6 +250,7 @@ def _revision_properties(record: EntityMentionRecord | AssertionRecord) -> dict[
     if isinstance(record, EntityMentionRecord) and record.assignment_source_revision_id is not None:
         properties["assignment_source_revision_id"] = record.assignment_source_revision_id
     if isinstance(record, AssertionRecord):
+        properties.update(context_evidence_properties(record))
         if record.fact_distinction is not None:
             properties["fact_distinction_json"] = json.dumps(record.fact_distinction.to_mapping(), ensure_ascii=False)
         if record.fact_key is not None:
@@ -230,6 +365,14 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
     object_kind = properties["object_kind"]
     if object_kind not in {"entity", "literal"}:
         raise KnowledgeStoreError("stored assertion object_kind is invalid")
+    context = None
+    if properties.get("context_property_evidence_json") is not None:
+        try:
+            context = ContextPropertyEvidence.from_mapping(json.loads(properties["context_property_evidence_json"]))
+            if properties.get("context_property_evidence_version") != context.version:
+                raise ValueError("context codec version mismatch")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise KnowledgeStoreError("stored context property evidence is invalid") from exc
     try:
         literal_semantics = TypedLiteralValue.from_flat_properties(properties)
     except (TypeError, ValueError) as exc:
@@ -253,7 +396,7 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
             raise KnowledgeStoreError(
                 "stored relationship-property payload is invalid"
             ) from exc
-    return AssertionRecord(
+    record = AssertionRecord(
         revision=_stored_revision(properties),
         tenant_id=tenant_id,
         subject=_stored_entity(properties, tenant_id=tenant_id, prefix="subject_"),
@@ -279,7 +422,13 @@ def _stored_assertion(properties: dict[str, Any]) -> AssertionRecord:
         ),
         relationship_properties=relationship_properties,
         fact_distinction=decode_fact_distinction(properties.get("fact_distinction_json")),
+        context_property_evidence=context,
     )
+    if context is not None and any(properties.get(key) != value for key, value in context_evidence_properties(record).items()):
+        raise KnowledgeStoreError("stored context evidence projection is inconsistent")
+    if context is None and any(properties.get(key) is not None for key in CONTEXT_PROPERTY_KEYS):
+        raise KnowledgeStoreError("stored context evidence codec is incomplete")
+    return record
 
 
 def _property_definition(properties: dict[str, Any]) -> PropertyDefinition:
@@ -292,6 +441,7 @@ def _property_definition(properties: dict[str, Any]) -> PropertyDefinition:
             required=properties["required"],
             cardinality=Cardinality(properties["cardinality"]),
             unit=properties.get("unit"),
+            constraints_json=properties.get("constraints_json"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise KnowledgeSchemaError(
@@ -335,6 +485,7 @@ def _validate_literal_semantics(
             valid_from=literal.raw_valid_from,
             valid_to=literal.raw_valid_to,
             observed_at=literal.raw_observed_at,
+            source_encoding=literal.source_encoding,
         )
     except LiteralNormalizationError as exc:
         raise KnowledgeSchemaError(
@@ -420,6 +571,9 @@ RETURN revision {.*} AS revision
 ORDER BY revision.created_at DESC, revision.record_id ASC
 LIMIT $limit
 """
+_ASSERTION_READ_QUERY = _ASSERTION_READ_QUERY.replace(
+    "RETURN revision {.*} AS revision", "AND " + context_evidence_guard(version="version", document="document", primary="chunk") + "\nRETURN revision {.*} AS revision"
+)
 
 
 class Neo4jKnowledgeStore:
@@ -428,6 +582,138 @@ class Neo4jKnowledgeStore:
     def __init__(self, driver: SessionDriver, database: str = "neo4j") -> None:
         self.driver = driver
         self.database = database
+
+    def persist_context_candidates(
+        self, principal: Principal, assertions: tuple[AssertionRecord, ...],
+    ) -> KnowledgeWriteResult:
+        """Append context candidates against existing mentions, never re-create them."""
+        if "knowledge:construct" not in principal.capabilities:
+            raise KnowledgeEvidenceError("context construction is not authorized")
+        if not assertions or len(assertions) > MAX_RECORDS_PER_WRITE:
+            raise ValueError("context candidate batch is empty or exceeds its bound")
+        if len({r.record_id for r in assertions}) != len(assertions):
+            raise ValueError("context candidate batch contains duplicate records")
+        for record in assertions:
+            if (record.tenant_id != principal.tenant_id
+                    or not record.evidence.access_groups & principal.groups
+                    or record.context_property_evidence is None
+                    or record.trust.status is not GovernanceStatus.CANDIDATE
+                    or record.revision.revision != 1
+                    or record.trust.origin not in {KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED}):
+                raise KnowledgeEvidenceError("context candidate source or state is invalid")
+            if (record.trust.origin is KnowledgeOrigin.AUTHORITATIVE_EXTRACTED
+                    and "knowledge:import" not in principal.capabilities):
+                raise KnowledgeEvidenceError("authoritative context construction is not authorized")
+        with self.driver.session(database=self.database) as session:
+            return session.execute_write(self._persist_context_candidates_tx, principal, assertions)
+
+    @classmethod
+    def _persist_context_candidates_tx(cls, tx: Any, principal: Principal,
+                                      assertions: tuple[AssertionRecord, ...]) -> KnowledgeWriteResult:
+        from .review import Neo4jKnowledgeReviewService
+        Neo4jKnowledgeReviewService._lock_tenant_corpus_tx(tx, principal.tenant_id, min(r.created_at for r in assertions))
+        mentions, pending, revision_ids = {}, [], []
+        for record in assertions:
+            row = tx.run("""
+                MATCH (head:KnowledgeRecordHead {tenant_id:$tenant_id,record_kind:'ENTITY_MENTION'})
+                  -[:CURRENT_REVISION]->(revision:GovernedEntityMentionRevision {revision_id:$revision_id})
+                WHERE revision.tenant_id=$tenant_id
+                  AND revision.governance_status IN ['CANDIDATE','APPROVED','PUBLISHED']
+                  AND any(g IN $groups WHERE g IN revision.access_groups)
+                RETURN revision{.*} AS revision
+            """, tenant_id=principal.tenant_id, revision_id=record.subject_mention_revision_id,
+                groups=sorted(principal.groups)).single()
+            if row is None:
+                raise KnowledgeConflict("context subject mention changed or is unavailable")
+            mention = _stored_mention(dict(row["revision"]))
+            if (mention.entity != record.subject or mention.trust.origin != record.trust.origin
+                    or mention.trust.authority != record.trust.authority
+                    or mention.trust.ontology_version_id != record.trust.ontology_version_id):
+                raise KnowledgeEvidenceError("context candidate cannot change source identity or authority")
+            cls._validate_evidence_tx(tx, mention.evidence, origin=mention.trust.origin)
+            cls._validate_evidence_tx(tx, record.evidence, origin=record.trust.origin)
+            cls.verify_context_property_tx(tx, record)
+            existing = tx.run("""
+                MATCH (r:GovernedAssertionRevision {tenant_id:$tenant_id,record_id:$record_id,revision:1})
+                RETURN r{.*} AS revision
+            """, tenant_id=principal.tenant_id, record_id=record.record_id).single()
+            if existing is not None:
+                stored = _stored_assertion(dict(existing["revision"]))
+                base = tx.run("""MATCH (m:GovernedEntityMentionRevision {tenant_id:$tenant_id,revision_id:$id})
+                    RETURN m.record_id AS record_id""", tenant_id=principal.tenant_id,
+                    id=stored.subject_mention_revision_id).single()
+                if (base is None or base["record_id"] != mention.record_id
+                        or stored.evidence != record.evidence
+                        or stored.predicate != record.predicate
+                        or stored.literal_semantics != record.literal_semantics
+                        or stored.context_property_evidence != record.context_property_evidence):
+                    raise KnowledgeConflict("context candidate immutable identity conflicts")
+                revision_ids.append(stored.revision_id)
+                continue
+            mentions[mention.revision_id] = mention
+            pending.append(record)
+            revision_ids.append(record.revision_id)
+        if pending:
+            batch = ABoxRecordBatch(principal.tenant_id, tuple(mentions.values()), tuple(pending))
+            cls._validate_tbox_tx(tx, batch)
+            for record in pending:
+                cls._lock_head_tx(tx, record.revision, record.tenant_id, "ASSERTION", record.created_at)
+                cls._create_assertion_revision_tx(tx, record, link_canonical_entities=False)
+        return KnowledgeWriteResult(principal.tenant_id, assertions[0].trust.ontology_version_id,
+                                    0, len(pending), tuple(revision_ids))
+
+    @classmethod
+    def verify_context_property_tx(cls, tx: Any, assertion: AssertionRecord) -> None:
+        """Independently validate both source ranges and the declarative scope."""
+        context = assertion.context_property_evidence
+        if context is None:
+            return
+        cls._validate_evidence_tx(tx, assertion.evidence, origin=assertion.trust.origin)
+        cls._validate_evidence_tx(tx, context.value_evidence, origin=assertion.trust.origin)
+        row = tx.run("""
+            MATCH (d:Document {tenant_id:$tenant_id,document_id:$document_id})
+              -[:ACTIVE_VERSION]->(v:DocumentVersion {tenant_id:$tenant_id,version_id:$version_id})
+            WHERE coalesce(d.lifecycle_status,'ACTIVE')='ACTIVE'
+              AND coalesce(v.lifecycle_status,'ACTIVE')='ACTIVE'
+              AND d.retirement_id IS NULL AND v.retirement_id IS NULL
+            RETURN v.normalized_text AS text,v.checksum AS checksum
+        """, tenant_id=assertion.tenant_id, document_id=assertion.evidence.document_id,
+            version_id=assertion.evidence.version_id).single()
+        if (row is None or row["checksum"] != context.source_checksum
+                or not isinstance(row["text"], str)
+                or hashlib.sha256(row["text"].encode()).hexdigest() != context.source_checksum):
+            raise KnowledgeEvidenceError("context source version checksum changed")
+        try:
+            from graphrag_prod.construction.structured import locate_json
+            from graphrag_prod.construction.context_mapping import validate_context_binding
+            root = locate_json(row["text"])
+            target = root.at(context.record_pointer)
+            value = root.at(context.value_pointer)
+            if (target is None or value is None or not isinstance(target.value, dict)
+                    or (target.start, target.end) != (assertion.evidence.char_start, assertion.evidence.char_end)
+                    or target.at(context.identity_pointer) is None
+                    or target.at(context.identity_pointer).value != context.source_identity
+                    or (value.start, value.end) != (context.value_evidence.char_start, context.value_evidence.char_end)):
+                raise ValueError("context source paths do not match exact evidence")
+            identity = target.at(context.identity_pointer)
+            mention = tx.run("""MATCH (m:GovernedEntityMentionRevision {
+                    tenant_id:$tenant_id,revision_id:$revision_id})
+                RETURN m{.*} AS mention""", tenant_id=assertion.tenant_id,
+                revision_id=assertion.subject_mention_revision_id).single()
+            if mention is None:
+                raise ValueError("context subject mention is unavailable")
+            mention = dict(mention["mention"])
+            expected_span = (identity.start + 1, identity.end - 1) if isinstance(identity.value, str) else (identity.start, identity.end)
+            if (mention.get("entity_id") != assertion.subject.entity_id
+                    or mention.get("chunk_id") != assertion.evidence.chunk_id
+                    or mention.get("version_id") != assertion.evidence.version_id
+                    or (mention.get("evidence_char_start"), mention.get("evidence_char_end")) != expected_span):
+                raise ValueError("context subject does not belong to its declared source record")
+            validate_context_binding(row["text"], context,
+                subject_type=assertion.subject.entity_type, predicate=assertion.predicate,
+                raw_literal=assertion.literal_value)
+        except (TypeError, ValueError) as exc:
+            raise KnowledgeEvidenceError("context source scope or binding is invalid") from exc
 
     def import_authoritative(self, batch: ABoxRecordBatch) -> KnowledgeWriteResult:
         """Import expert A-Box records that already passed authoritative review."""
@@ -575,6 +861,7 @@ class Neo4jKnowledgeStore:
                                (property:TBoxPropertyDefinition)
                 RETURN entity_type.name AS name,
                        entity_type.canonical_key_namespaces AS namespaces,
+                       coalesce(entity_type.instance_allowed, true) AS instance_allowed,
                        collect(
                            CASE WHEN property IS NULL THEN NULL
                            ELSE properties(property)
@@ -588,6 +875,7 @@ class Neo4jKnowledgeStore:
         entity_contracts = {
             row["name"]: {
                 "namespaces": frozenset(row["namespaces"] or ()),
+                "instance_allowed": row.get("instance_allowed", True),
                 "literal_properties": {
                     definition.name: definition
                     for definition in (
@@ -613,6 +901,8 @@ class Neo4jKnowledgeStore:
                 OPTIONAL MATCH (relationship_type)-[:DECLARES_PROPERTY]->
                                (property:TBoxPropertyDefinition)
                 RETURN relationship_type.name AS name,
+                       coalesce(relationship_type.instance_allowed, true) AS instance_allowed,
+                       relationship_type.allowed_type_pairs_json AS allowed_type_pairs_json,
                        relationship_type.source_types AS source_types,
                        relationship_type.target_types AS target_types,
                        collect(
@@ -627,6 +917,8 @@ class Neo4jKnowledgeStore:
         )
         relationship_contracts = {
             row["name"]: {
+                "instance_allowed": row.get("instance_allowed", True),
+                "allowed_type_pairs": json.loads(row.get("allowed_type_pairs_json") or "[]"),
                 "source_types": frozenset(row["source_types"] or ()),
                 "target_types": frozenset(row["target_types"] or ()),
                 "properties": {
@@ -673,6 +965,8 @@ class Neo4jKnowledgeStore:
                 raise KnowledgeSchemaError(
                     f"entity type {entity.entity_type!r} is not declared by the T-Box"
                 )
+            if not contract["instance_allowed"]:
+                raise KnowledgeSchemaError("abstract or external-derived entity type cannot be written as an instance")
             namespace, separator, _ = entity.canonical_key.partition(":")
             normalized_namespace = namespace.casefold()
             namespace_is_declared = normalized_namespace in contract["namespaces"]
@@ -716,7 +1010,9 @@ class Neo4jKnowledgeStore:
                     f"relationship {assertion.predicate!r} is not declared by the T-Box"
                 )
             if (
-                assertion.subject.entity_type not in relationship["source_types"]
+                not relationship["instance_allowed"]
+                or (relationship["allowed_type_pairs"] and [assertion.subject.entity_type, assertion.object_entity.entity_type] not in relationship["allowed_type_pairs"])
+                or assertion.subject.entity_type not in relationship["source_types"]
                 or assertion.object_entity.entity_type
                 not in relationship["target_types"]
             ):
@@ -733,6 +1029,11 @@ class Neo4jKnowledgeStore:
                     )
                 _validate_literal_semantics(value.literal_semantics, definition)
                 property_counts[value.name] = property_counts.get(value.name, 0) + 1
+            from graphrag_prod.ontology.source import validate_conditional_properties  # noqa: PLC0415
+            try:
+                validate_conditional_properties(relationship["properties"].values(), {item.name: item.literal_semantics.typed_value for item in assertion.relationship_properties})
+            except ValueError as exc:
+                raise KnowledgeSchemaError(str(exc)) from exc
             for name, definition in relationship["properties"].items():
                 count = property_counts.get(name, 0)
                 if definition.cardinality.required and count == 0:
@@ -960,6 +1261,7 @@ class Neo4jKnowledgeStore:
         *,
         link_canonical_entities: bool,
     ) -> None:
+        Neo4jKnowledgeStore.verify_context_property_tx(tx, assertion)
         # AssertionRecord deliberately remains able to decode legacy stored
         # revisions.  The write boundary is stricter: every newly-created
         # literal revision must carry the complete server-normalized contract.
@@ -1066,6 +1368,16 @@ class Neo4jKnowledgeStore:
         ).single()
         if row is None or row["revision_id"] != assertion.revision_id:
             raise KnowledgeConflict("assertion revision compare-and-swap failed")
+        if assertion.context_property_evidence is not None:
+            linked = tx.run("""
+                MATCH (r:GovernedAssertionRevision {tenant_id:$tenant_id,revision_id:$id})
+                MATCH (c:Chunk {tenant_id:$tenant_id,chunk_id:$chunk_id})
+                CREATE (r)-[:CONTEXT_EVIDENCED_BY]->(c)
+                RETURN r.revision_id AS id
+            """, tenant_id=assertion.tenant_id, id=assertion.revision_id,
+                chunk_id=assertion.context_property_evidence.value_evidence.chunk_id).single()
+            if linked is None:
+                raise KnowledgeEvidenceError("context evidence link is unavailable")
 
     def list_entity_mentions(
         self,

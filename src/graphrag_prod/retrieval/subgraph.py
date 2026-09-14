@@ -22,6 +22,7 @@ from neo4j import unit_of_work
 from graphrag_prod.domain.models import RelationshipPropertyValue, TypedLiteralValue
 from graphrag_prod.domain.source_tokens import contains_exact_token
 from graphrag_prod.knowledge.models import EntityIdentity
+from graphrag_prod.knowledge.store import KnowledgeStoreError, context_evidence_guard, _stored_assertion
 from graphrag_prod.knowledge.trust import (
     AuthorityLevel,
     GovernanceStatus,
@@ -336,6 +337,16 @@ class SubgraphEntityNode:
         return tuple(sorted({item.provenance.origin for item in self.evidence}))
 
 
+def _context_literal_evidence(primary: SubgraphEvidence, secondary: SubgraphEvidence | None) -> SubgraphEvidence:
+    if secondary is None:
+        return primary
+    if (not isinstance(secondary, SubgraphEvidence) or secondary.provenance != primary.provenance
+            or any(getattr(primary.citation, name) != getattr(secondary.citation, name)
+                   for name in ("tenant_id", "document_id", "version_id", "version_checksum"))):
+        raise ValueError("context literal evidence crossed its source or governance boundary")
+    return secondary
+
+
 @dataclass(frozen=True, slots=True)
 class SubgraphAssertion:
     record_id: str
@@ -350,6 +361,7 @@ class SubgraphAssertion:
     evidence: SubgraphEvidence
     literal_semantics: TypedLiteralValue | None = None
     relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
+    context_value_evidence: SubgraphEvidence | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -367,7 +379,10 @@ class SubgraphAssertion:
             raise ValueError("assertion identity must match its evidence provenance")
         if self.object_kind not in {"entity", "literal"}:
             raise ValueError("assertion object_kind must be entity or literal")
+        literal_evidence = _context_literal_evidence(self.evidence, self.context_value_evidence)
         if self.object_kind == "entity":
+            if self.context_value_evidence is not None:
+                raise ValueError("relationship cannot carry context literal evidence")
             object.__setattr__(
                 self,
                 "object_entity_id",
@@ -423,7 +438,7 @@ class SubgraphAssertion:
                 _required_text(self.literal_value, "literal_value"),
             )
             if not contains_exact_token(
-                self.evidence.quoted_text,
+                literal_evidence.quoted_text,
                 self.literal_value,
                 allow_cjk_adjacency=(
                     isinstance(self.literal_semantics, TypedLiteralValue)
@@ -446,7 +461,7 @@ class SubgraphAssertion:
                 )
                 if any(
                     token is not None
-                    and not contains_exact_token(self.evidence.quoted_text, token)
+                    and not contains_exact_token(literal_evidence.quoted_text, token)
                     for token in source_tokens
                 ):
                     raise ValueError(
@@ -468,6 +483,7 @@ class SubgraphPath:
     evidence: SubgraphEvidence
     literal_semantics: TypedLiteralValue | None = None
     relationship_properties: tuple[RelationshipPropertyValue, ...] = ()
+    context_value_evidence: SubgraphEvidence | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -480,9 +496,12 @@ class SubgraphPath:
             raise ValueError("path must reference its assertion evidence")
         has_entity = self.object_entity_id is not None
         has_literal = self.literal_value is not None
+        literal_evidence = _context_literal_evidence(self.evidence, self.context_value_evidence)
         if has_entity == has_literal:
             raise ValueError("path requires exactly one Entity or literal object")
         if has_entity:
+            if self.context_value_evidence is not None:
+                raise ValueError("relationship path cannot carry context literal evidence")
             object.__setattr__(
                 self,
                 "object_entity_id",
@@ -504,7 +523,7 @@ class SubgraphPath:
                 _required_text(self.literal_value, "literal_value"),
             )
             if not contains_exact_token(
-                self.evidence.quoted_text,
+                literal_evidence.quoted_text,
                 self.literal_value,
                 allow_cjk_adjacency=(
                     isinstance(self.literal_semantics, TypedLiteralValue)
@@ -527,7 +546,7 @@ class SubgraphPath:
                 )
                 if any(
                     token is not None
-                    and not contains_exact_token(self.evidence.quoted_text, token)
+                    and not contains_exact_token(literal_evidence.quoted_text, token)
                     for token in source_tokens
                 ):
                     raise ValueError(
@@ -964,6 +983,28 @@ RETURN publication.publication_id AS publication_id,
 """
 
 
+_CONTEXT_CITATION_PROJECTION = """CASE WHEN context_chunk IS NULL THEN null ELSE {
+           tenant_id: context_chunk.tenant_id, chunk_id: context_chunk.chunk_id,
+           chunk_checksum: context_chunk.checksum, chunk_text: context_chunk.text,
+           document_id: document.document_id, document_title: document.title,
+           canonical_uri: document.canonical_uri, source_name: document.source_name,
+           version_id: version.version_id, version_checksum: version.checksum,
+           version_number: version.version_number, ordinal: context_chunk.ordinal,
+           char_start: context_chunk.char_start, char_end: context_chunk.char_end,
+           page_number: context_chunk.page_number, section: context_chunk.section,
+           published_at: version.published_at
+       } END AS context_citation"""
+_ASSERTION_QUERY = _ASSERTION_QUERY.replace(
+    "AND assertion.ontology_version_id = tbox.tbox_id",
+    "AND assertion.ontology_version_id = tbox.tbox_id AND " + context_evidence_guard("assertion", version="version", snapshot="snapshot", document="document", primary="chunk"),
+).replace(
+    "assertion.evidence_text CONTAINS assertion.literal_value",
+    "(CASE WHEN assertion.context_property_evidence_json IS NULL THEN assertion.evidence_text ELSE assertion.context_evidence_text END) CONTAINS assertion.literal_value",
+).replace(
+    "LIMIT $assertion_limit\nRETURN", "LIMIT $assertion_limit\nOPTIONAL MATCH (assertion)-[:CONTEXT_EVIDENCED_BY]->(context_chunk:Chunk)\nWHERE assertion.context_property_evidence_json IS NOT NULL AND context_chunk.chunk_id=assertion.context_chunk_id\nRETURN",
+).replace("} AS citation\n", "} AS citation,\n       " + _CONTEXT_CITATION_PROJECTION + "\n")
+
+
 _SELECTED_SOURCE_QUERY = """
 // governed-subgraph:selected-sources
 MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
@@ -1172,7 +1213,7 @@ class Neo4jEvidenceSubgraphProjector:
         citations: dict[str, SubgraphCitation] = {}
         publication_ids: set[str] = set()
         active_publication_id: str | None = None
-        reserved_evidence: set[tuple[str, str]] = set()
+        reserved_evidence: set[tuple[object, ...]] = set()
         evidence_chars = 0
 
         def citation(
@@ -1199,12 +1240,9 @@ class Neo4jEvidenceSubgraphProjector:
 
         def reserve(items: tuple[SubgraphEvidence, ...]) -> bool:
             nonlocal evidence_chars
-            new_items = tuple(
-                item
-                for item in items
-                if (item.provenance.revision_id, item.citation.chunk_id)
-                not in reserved_evidence
-            )
+            new_items = tuple({(item.provenance.revision_id, item.citation.chunk_id, item.char_start, item.char_end): item
+                for item in items if (item.provenance.revision_id, item.citation.chunk_id, item.char_start, item.char_end)
+                not in reserved_evidence}.values())
             new_citations = {
                 item.citation.chunk_id: item.citation
                 for item in new_items
@@ -1218,7 +1256,7 @@ class Neo4jEvidenceSubgraphProjector:
             evidence_chars += cost
             for item in new_items:
                 reserved_evidence.add(
-                    (item.provenance.revision_id, item.citation.chunk_id)
+                    (item.provenance.revision_id, item.citation.chunk_id, item.char_start, item.char_end)
                 )
             for chunk_id in new_citations:
                 reserved_evidence.add(("CHUNK", chunk_id))
@@ -1337,6 +1375,22 @@ class Neo4jEvidenceSubgraphProjector:
                 publication_id,
             )
             cls._check_trust(assertion_evidence.provenance, trust_policy)
+            context_evidence = None
+            if assertion_map.get("context_property_evidence_json") is not None:
+                try:
+                    governed = _stored_assertion(dict(assertion_map))
+                    context = governed.context_property_evidence
+                    context_citation = citation({"citation": row.get("context_citation")}, require_selected=False)
+                    if context is None or context_citation.version_checksum != context.source_checksum:
+                        raise ValueError("context citation source version differs")
+                    value = context.value_evidence
+                    context_map = {**assertion_map, "chunk_id": value.chunk_id,
+                        "evidence_char_start": value.char_start, "evidence_char_end": value.char_end,
+                        "evidence_text": value.quoted_text, "access_groups": sorted(value.access_groups)}
+                    cls._check_record_boundary(context_map, context_citation, principal)
+                    context_evidence = cls._evidence(context_map, context_citation, publication_id)
+                except (KeyError, TypeError, ValueError, KnowledgeStoreError) as error:
+                    raise SubgraphProjectionError("stored context literal evidence is invalid") from error
             subject = cls._identity(
                 cls._mapping(row.get("subject"), "subject"), principal.tenant_id
             )
@@ -1410,7 +1464,7 @@ class Neo4jEvidenceSubgraphProjector:
             endpoints = (subject,) + (() if object_entity is None else (object_entity,))
             evidence_items = (assertion_evidence, subject_evidence) + (
                 () if object_evidence is None else (object_evidence,)
-            )
+            ) + (() if context_evidence is None else (context_evidence,))
             endpoint_evidence = ((subject, subject_evidence),) + (
                 ()
                 if object_entity is None or object_evidence is None
@@ -1454,6 +1508,7 @@ class Neo4jEvidenceSubgraphProjector:
                     evidence=assertion_evidence,
                     literal_semantics=literal_semantics,
                     relationship_properties=relationship_properties,
+                    context_value_evidence=context_evidence,
                 )
             except (KeyError, TypeError, ValueError) as error:
                 raise SubgraphProjectionError(
@@ -1508,6 +1563,7 @@ class Neo4jEvidenceSubgraphProjector:
                 evidence=item.evidence,
                 literal_semantics=item.literal_semantics,
                 relationship_properties=item.relationship_properties,
+                context_value_evidence=item.context_value_evidence,
             )
             for item in ordered_assertions[: limits.max_paths]
         )
@@ -1522,6 +1578,8 @@ class Neo4jEvidenceSubgraphProjector:
                     assertion.evidence.citation.chunk_id
                     for assertion in ordered_assertions
                 }
+                | {assertion.context_value_evidence.citation.chunk_id for assertion in ordered_assertions
+                   if assertion.context_value_evidence is not None}
             )
         )
         return EvidenceSubgraph(

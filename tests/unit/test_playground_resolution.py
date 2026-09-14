@@ -1,4 +1,4 @@
-"""Executable checks for read-only automatic review-queue entity matching."""
+"""Executable checks for visible/on-demand read-only review entity matching."""
 
 from __future__ import annotations
 
@@ -44,6 +44,20 @@ const state = {identityEpoch: 0, reviewEpoch: 0, reviews: [], resolutions: new M
   publicationCandidates: [], publications: [{publication_id: 'active'}, {publication_id: 'old'}],
   ontologies: [{tbox_id: 'tbox', key: 'pump'}]};
 const panels = new Map();
+const reviewRows = new Map();
+class ReviewIntersectionObserver {
+  constructor(callback) { this.callback=callback; this.targets=new Set(); }
+  observe(row) { this.targets.add(row); }
+  unobserve(row) { this.targets.delete(row); }
+  disconnect() { this.targets.clear(); }
+}
+function revealReviews(...recordIds) {
+  const observer=state.reviewDetailsObserver;
+  assert.ok(observer, 'rendered reviews should be observed');
+  observer.callback([...observer.targets]
+    .filter(row=>!recordIds.length || recordIds.includes(row.dataset.reviewRecord))
+    .map(target=>({target,isIntersecting:true})));
+}
 const draft = {editor: '', selected: false, editEnabled: false, focused: false};
 const reviewList = {
   html: '', writes: 0,
@@ -51,13 +65,20 @@ const reviewList = {
     this.html = value;
     this.writes += 1;
     panels.clear();
+    for(const row of reviewRows.values()) row.isConnected=false;
+    reviewRows.clear();
+    for(const match of value.matchAll(/data-review-record="([^"]+)" data-review-revision="(\d+)"/g)) {
+      reviewRows.set(match[1],{dataset:{reviewRecord:match[1],reviewRevision:match[2]},
+        isConnected:true,querySelector:()=>null,querySelectorAll:()=>[],
+        getBoundingClientRect:()=>({top:0,left:0,bottom:100,right:100,width:100,height:100})});
+    }
     Object.assign(draft, {editor: '', selected: false, editEnabled: false, focused: false});
     for (const match of value.matchAll(/data-resolution-panel="(\d+)"/g)) {
       panels.set(match[1], {innerHTML: '', querySelectorAll: () => []});
     }
   },
   get innerHTML() { return this.html; },
-  querySelectorAll() { return []; },
+  querySelectorAll(selector) { return selector==='[data-review-record]'?[...reviewRows.values()]:[]; },
   querySelector(selector) {
     const match = selector.match(/data-resolution-panel="(\d+)"/);
     return match ? panels.get(match[1]) : null;
@@ -93,6 +114,7 @@ function resolution(id, revision = 1, outcome = 'AUTO_LINK') {
       entity_id: 'authority-' + id, canonical_name: 'Authority ' + id}, evidence: []}]};
 }
 const context = vm.createContext({$:id=>context.document?.getElementById(id)||null,state, elements, requests, panels, draft, item, resolution,
+  IntersectionObserver:ReviewIntersectionObserver,revealReviews,
   assert, apiRequest, flush: () => new Promise(resolve => setImmediate(resolve)),
   foregroundAction: (_label,action)=>action, beginButtonFeedback:()=>()=>{}, clearButtonFeedback(){},
   showToast() {}, escapeHtml: String, shortId: String, literalSemantics: item => item.literal_semantics || {}, parseJsonEditor: editor => JSON.parse(editor.value),
@@ -122,12 +144,119 @@ vm.runInContext('(async () => {' + input.scenario + '})()', context)
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_loading_queue_matches_entities_with_two_read_only_workers(self) -> None:
+    def test_hidden_hundred_record_queue_does_not_prefetch_review_details(self) -> None:
+        self.run_ui(r"""
+const pending=[];
+apiRequest=(url,options)=>new Promise(resolve=>pending.push({url,options,resolve}));
+const records=Array.from({length:100},(_,index)=> {
+  const record=item('record-'+index,1,index%2?'ASSERTION':'ENTITY_MENTION');
+  if(index%2) record.object_entity=null;
+  return record;
+});
+const loading=loadReviews();
+pending[0].resolve({items:records});await loading;
+assert.equal(pending.length,1,'loading a hidden review step only reads the queue');
+assert.equal(state.resolutionActive,0);assert.equal(state.assessmentActive,0);
+assert.equal(state.resolutions.size,0);assert.equal(state.reviewAssessments.size,0);
+assert.equal(reviewApproval(records[0]).allowed,false);
+assert.equal(reviewApproval(records[1]).allowed,false);
+assert.ok(!resolutionContent(records[0],0).includes('disabled'));
+assert.ok(!assessmentMarkup(records[1],1).includes('disabled'));
+revealReviews('record-0');
+assert.equal(pending.length,2);assert.ok(pending[1].url.includes('/entity-resolution/record-0?'));
+pending[1].resolve(resolution('record-0'));await flush();
+revealReviews('record-0');await flush();
+assert.equal(pending.length,2,'remaining offscreen rows must not enter the worker queue');
+state.reviewPhase='facts';renderReviews();
+assert.equal(pending.length,2,'switching phase does not imply all rows are visible');
+revealReviews('record-1');
+assert.equal(pending.length,3);assert.ok(pending[2].url.includes('/review-assessments/record-1?'));
+pending[2].resolve({record_id:'record-1',revision:1,status:'BLOCKED',summary:'先确认实体',dependencies:[],matches:[]});
+await flush();
+assert.equal(pending.length,4);assert.ok(pending[3].url.includes('/property-assignment/record-1?'));
+pending[3].resolve({record_id:'record-1',revision:1,current:null,items:[],truncated:false});await flush();
+assert.equal(pending.length,4);assert.equal(state.reviewAssessments.size,1);
+assert.equal(state.resolutions.size,1);assert.equal(state.approvedRevisions.size,0);
+""")
+
+    def test_old_viewport_callbacks_cannot_start_requests_for_new_identity_or_revision(self) -> None:
+        self.run_ui(r"""
+let loading=loadReviews();requests[0].resolve({items:[item('a')]});await loading;
+const oldObserver=state.reviewDetailsObserver,oldRow=[...oldObserver.targets][0];
+loading=loadReviews();requests[1].resolve({items:[item('a',2)]});await loading;
+oldObserver.callback([{target:oldRow,isIntersecting:true}]);
+assert.equal(requests.length,2);assert.equal(state.resolutions.size,0);
+const currentObserver=state.reviewDetailsObserver,currentRow=[...currentObserver.targets][0];
+state.identityEpoch+=1;invalidateReviewResolutions();
+currentObserver.callback([{target:currentRow,isIntersecting:true}]);
+assert.equal(requests.length,2);assert.equal(state.resolutions.size,0);
+assert.equal(state.reviewDetailsObserver,null);
+""")
+
+    def test_explicit_checks_work_without_intersection_observer(self) -> None:
+        self.run_ui(r"""
+delete globalThis.IntersectionObserver;
+const loading=loadReviews();requests[0].resolve({items:[item('a')]});await loading;
+assert.equal(requests.length,1);assert.equal(state.reviewDetailsObserver,null);
+assert.ok(!resolutionContent(state.reviews[0],0).includes('disabled'));
+const manual=loadResolution(0,{});
+assert.equal(requests.length,2);requests[1].resolve(resolution('a',1,'NO_MATCH'));await manual;
+assert.equal(reviewApproval(state.reviews[0]).allowed,true);
+assert.equal(state.approvedRevisions.size,0,'a completed check never approves a record');
+""")
+
+    def test_leaving_visible_phase_cancels_waiting_automatic_checks_and_reentry_retries(self) -> None:
+        self.run_ui(r"""
+const loading=loadReviews();
+requests[0].resolve({items:['a','b','c','d','e'].map(id=>item(id))});await loading;
+revealReviews();assert.equal(requests.length,3);assert.equal(state.resolutionQueue.length,3);
+state.reviewPhase='facts';renderReviews();
+requests[1].resolve(resolution('a'));requests[2].resolve(resolution('b'));await flush();
+assert.equal(requests.length,3,'offscreen queued automatic checks must not start');
+assert.equal(state.resolutionQueue.length,0);assert.equal(state.resolutionActive,0);
+assert.ok(!state.resolutions.has('c'));assert.ok(!state.resolutions.has('d'));
+state.reviewPhase='identities';renderReviews();revealReviews('c');
+assert.equal(requests.length,4);requests[3].resolve(resolution('c'));await flush();
+assert.equal(state.resolutions.get('c').status,'ready');
+""")
+
+    def test_hidden_fact_does_not_chain_assignment_read_and_explicit_check_is_preserved(self) -> None:
+        self.run_ui(r"""
+const pending=[];apiRequest=(url)=>new Promise(resolve=>pending.push({url,resolve}));
+const fact=item('fact',1,'ASSERTION');fact.object_entity=null;
+const loading=loadReviews();pending[0].resolve({items:[fact]});await loading;
+revealReviews('fact');assert.equal(pending.length,2);
+const row=[...state.reviewDetailsObserver.targets][0];
+row.getBoundingClientRect=()=>({top:0,left:0,bottom:0,right:0,width:0,height:0});
+pending[1].resolve({record_id:'fact',revision:1,status:'BLOCKED',dependencies:[],matches:[]});await flush();
+assert.equal(pending.length,2,'hidden facts must not trigger follow-on assignment reads');
+const explicit=queueAssessment(fact,true);
+pending[2].resolve({record_id:'fact',revision:1,status:'BLOCKED',dependencies:[],matches:[]});await flush();
+assert.equal(pending.length,4,'an explicit check may finish its requested details');
+pending[3].resolve({record_id:'fact',revision:1,current:null,items:[],truncated:false});await explicit;
+assert.equal(reviewApproval(fact).allowed,false);assert.equal(state.approvedRevisions.size,0);
+""")
+
+    def test_immediate_phase_return_rebinds_waiting_checks_to_visible_rows(self) -> None:
+        self.run_ui(r"""
+const loading=loadReviews();requests[0].resolve({items:['a','b','c'].map(id=>item(id))});await loading;
+revealReviews();const previousRow=state.resolutions.get('c').row;
+state.reviewPhase='facts';renderReviews();
+state.reviewPhase='identities';renderReviews();revealReviews();
+assert.notEqual(state.resolutions.get('c').row,previousRow);
+requests[1].resolve(resolution('a'));await flush();
+assert.equal(requests.length,4);assert.ok(requests[3].url.includes('/entity-resolution/c?'));
+requests[2].resolve(resolution('b'));requests[3].resolve(resolution('c'));await flush();
+assert.equal(state.resolutions.get('c').status,'ready');assert.equal(state.resolutionActive,0);
+""")
+
+    def test_visible_rows_match_entities_with_two_read_only_workers(self) -> None:
         self.run_ui(r"""
 const loading = loadReviews();
 requests[0].resolve({items: [item('a'), item('b'), item('c'), item('d'), item('e'),
   item('fact', 1, 'RELATIONSHIP_ASSERTION')]});
 await loading;
+revealReviews();
 assert.equal(state.resolutionActive, 2);
 assert.equal(requests.length, 3);
 for (let index = 1; index <= 5; index += 1) {
@@ -153,6 +282,7 @@ assert.ok(panels.get('0').innerHTML.includes('唯一匹配建议 · 待人工确
 const loading = loadReviews();
 requests[0].resolve({items: [item('a'), item('b')]});
 await loading;
+revealReviews();
 Object.assign(draft, {editor: '{"confidence": 0.8}', selected: true, editEnabled: true, focused: true});
 const writes = elements.reviewList.writes;
 requests[1].resolve(resolution('a'));
@@ -171,16 +301,19 @@ assert.ok(panels.get('1').innerHTML.includes('重新匹配'));
 let loading = loadReviews();
 requests[0].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 requests[1].resolve(resolution('a'));
 await flush();
 loading = loadReviews();
 requests[2].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 assert.equal(requests.length, 3);
 assert.equal(state.resolutions.get('a').status, 'ready');
 loading = loadReviews({refreshResolutions: true});
 requests[3].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 assert.equal(requests.length, 5);
 requests[4].resolve(resolution('a', 1, 'NO_MATCH'));
 await flush();
@@ -192,6 +325,7 @@ assert.ok(panels.get('0').innerHTML.includes('没有匹配目标 · 保留为新
 const loading = loadReviews();
 requests[0].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 requests[1].reject(new Error('dependency unavailable'));
 await flush();
 assert.equal(state.resolutions.get('a').status, 'error');
@@ -212,6 +346,7 @@ const first = loadReviews();
 const second = loadReviews();
 requests[1].resolve({items: [item('new')]});
 await second;
+revealReviews();
 requests[0].resolve({items: [item('old')]});
 await first;
 assert.equal(state.reviews[0].record_id, 'new');
@@ -238,11 +373,13 @@ assert.ok(!elements.reviewList.innerHTML.includes('stale denied'));
 const loading = loadReviews();
 requests[0].resolve({items: [item('a'), item('b'), item('c')]});
 await loading;
+revealReviews();
 state.identityEpoch += 1;
 invalidateReviewResolutions();
 const newQueue = loadReviews();
 requests[3].resolve({items: [item('new')]});
 await newQueue;
+revealReviews();
 assert.equal(requests.length, 4);
 requests[1].resolve(resolution('a'));
 requests[2].reject(new Error('old identity denied'));
@@ -261,9 +398,11 @@ assert.ok(!requests.some(value => value.url.includes('/c?')));
 let loading = loadReviews();
 requests[0].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 loading = loadReviews();
 requests[2].resolve({items: [item('a', 2)]});
 await loading;
+revealReviews();
 requests[3].resolve(resolution('a', 2, 'NO_MATCH'));
 await flush();
 requests[1].resolve(resolution('a', 1));
@@ -285,6 +424,7 @@ assert.ok(panels.get('0').innerHTML.includes('需要人工判断 · 不自动关
 const loading = loadReviews();
 requests[0].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 requests[1].resolve(resolution('a', 99));
 await flush();
 assert.equal(state.resolutions.get('a').status, 'error');
@@ -302,6 +442,7 @@ assert.equal(requests.length, 3);
 const loading = loadReviews();
 requests[0].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 requests[1].resolve(resolution('a'));
 await flush();
 await applyResolution(0, 0, {});
@@ -315,11 +456,13 @@ assert.equal(state.approvedRevisions.size, 0);
 let loading = loadReviews();
 requests[0].resolve({items: [item('a'), item('b'), item('c'), item('d'), item('e')]});
 await loading;
+revealReviews();
 assert.equal(state.resolutionQueue.length, 3);
 loading = loadReviews({refreshResolutions: true});
 assert.equal(state.resolutionQueue.length, 0);
 requests[3].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 assert.equal(state.resolutionQueue.length, 1);
 requests[1].resolve(resolution('a', 1, 'CONFLICT'));
 requests[2].resolve(resolution('b'));
@@ -336,9 +479,11 @@ assert.ok(!requests.some(value => /\/[cde]\?/.test(value.url)));
 const loading = loadReviews();
 requests[0].resolve({items: [item('a'), item('b'), item('c')]});
 await loading;
+revealReviews();
 Object.assign(draft, {editor: 'typed review', selected: true, editEnabled: true, focused: true});
 const writes = elements.reviewList.writes;
 refreshReviewResolutions();
+revealReviews();
 assert.equal(state.resolutionActive, 2);
 assert.equal(state.resolutionQueue.length, 3);
 assert.equal(requests.length, 3);
@@ -369,6 +514,7 @@ assert.equal(requests.length, before);
 const loading = loadReviews();
 requests[0].resolve({items: [item('a')]});
 await loading;
+revealReviews();
 requests[1].resolve(resolution('a', 1, 'NO_MATCH'));
 await flush();
 Object.assign(draft, {editor: 'retained review', selected: true});
@@ -381,6 +527,7 @@ for (const action of [() => publishOntology(0), () => publishKnowledge(), () => 
   assert.equal(requests[before].options.method, 'POST');
   requests[before].resolve({tbox_id: 'tbox', publication_id: 'publication', generation: 2});
   await mutation;
+  revealReviews();
   assert.equal(requests.length, before + 2);
   assert.ok(requests[before + 1].url.includes('/entity-resolution/a?'));
   requests[before + 1].resolve(resolution('a'));

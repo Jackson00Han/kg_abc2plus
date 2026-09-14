@@ -1,0 +1,68 @@
+{
+  "verified_at": "2026-09-13T16:09:48.647665+00:00",
+  "read_only": true,
+  "job_id": "a85f4970-47a0-5105-95e7-b2425b5a5fc8",
+  "tenant_id": "workspace-9bd58de9-958a-59a2-bd2f-329f9758dda4",
+  "document_id": "e1a5a80e-9d49-5a14-98b0-ebc0beb30233",
+  "version_id": "25663761-4551-57a6-a572-db782e65389e",
+  "run_id": "8adaa5862f7e432d89b09ce501be3876cf9878bbf519f67da2d9dc5fc3f63478",
+  "passed": true,
+  "checks": {
+    "construction_completed": true,
+    "all_constructed_records_preserved": true,
+    "all_source_object_identifiers_preserved": true,
+    "all_source_object_groups_preserved": true,
+    "source_objects_not_split": true,
+    "distinct_source_objects_not_accidentally_merged": true,
+    "source_evidence_exact_and_complete": true,
+    "immutable_evidence_preserved_after_review": true,
+    "source_authority_and_origin_unchanged": true,
+    "review_counts_match_current_records": true,
+    "review_items_match_current_states": true,
+    "upload_receipt_matches_persisted_review": true,
+    "automatic_approvals_have_commit_audits": true,
+    "model_review_audits_present_and_valid": true,
+    "reported_model_calls_match_audits": true,
+    "automatic_review_completed_without_incomplete_items": true,
+    "instances_not_published": true
+  },
+  "expected_source_objects": 139,
+  "preserved_source_objects": 139,
+  "distinct_current_entities": 139,
+  "mention_records": 310,
+  "assertion_records": 898,
+  "current_statuses": {
+    "mentions": {
+      "APPROVED": 310
+    },
+    "assertions": {
+      "APPROVED": 898
+    }
+  },
+  "actual_counts": {
+    "entity_groups": 139,
+    "approved_groups": 139,
+    "approved_mentions": 310,
+    "approved_assertions": 898,
+    "manual_groups": 0,
+    "manual_assertions": 0,
+    "blocked_assertions": 0,
+    "incomplete": 0
+  },
+  "count_mismatches": {},
+  "auto_approval_ratio": {
+    "entities": 1.0,
+    "mentions": 1.0,
+    "assertions": 1.0
+  },
+  "remaining_reason_counts": [],
+  "model_calls": 37,
+  "valid_model_proposals": 30,
+  "audit_kinds": {
+    "MODEL_REVIEW": 36,
+    "FINAL_DECISIONS": 3,
+    "APPLIED": 40
+  },
+  "invalid_audits": 0,
+  "source_instance_publications": 0
+}

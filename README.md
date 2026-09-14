@@ -112,6 +112,7 @@ uv run --locked python scripts/validate_acceptance_contract.py
 
 ## 设计与维护
 
+- [平台目标架构、知识库职责与外部对接边界](docs/platform-architecture.md)
 - [来源与数据模型](docs/provenance_model.md)、[增量摄取](docs/incremental_ingestion.md)
 - [知识治理](docs/industrial_knowledge_governance.md)、[治理 API](docs/industrial_knowledge_api.md)
 - [检索引擎](docs/production_retrieval.md)、[有依据的回答生成](docs/grounded_answer_generation.md)

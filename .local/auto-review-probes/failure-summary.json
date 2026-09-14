@@ -1,0 +1,743 @@
+[
+  {
+    "created": "2026-09-13T15:38:46.119559000+00:00",
+    "kind": "identity",
+    "status": "UNAVAILABLE",
+    "failure": "REVIEW_PROVIDER_UNAVAILABLE",
+    "attempts": [
+      {
+        "status": "PROVIDER_ERROR",
+        "error_type": "TimeoutError",
+        "failure": null,
+        "seconds": 60.00414219498634,
+        "response_chars": null
+      }
+    ],
+    "records": 24,
+    "input_chars": 40721,
+    "groups": [
+      {
+        "type": "Section",
+        "predicate": null,
+        "count": 8
+      },
+      {
+        "type": "Busway",
+        "predicate": null,
+        "count": 2
+      },
+      {
+        "type": "Flange",
+        "predicate": null,
+        "count": 4
+      },
+      {
+        "type": "Project",
+        "predicate": null,
+        "count": 3
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 9
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 9
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      },
+      {
+        "type": "Busway",
+        "predicate": null,
+        "count": 2
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 8
+      },
+      {
+        "type": "Section",
+        "predicate": null,
+        "count": 13
+      },
+      {
+        "type": "EndFeedUnit",
+        "predicate": null,
+        "count": 28
+      },
+      {
+        "type": "PlugInUnit",
+        "predicate": null,
+        "count": 8
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 10
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 10
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 10
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 10
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      },
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 10
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "StraightSection",
+        "predicate": null,
+        "count": 6
+      }
+    ]
+  },
+  {
+    "created": "2026-09-13T15:39:46.524816000+00:00",
+    "kind": "identity",
+    "status": "UNAVAILABLE",
+    "failure": "REVIEW_PROVIDER_UNAVAILABLE",
+    "attempts": [
+      {
+        "status": "PROVIDER_ERROR",
+        "error_type": "TimeoutError",
+        "failure": null,
+        "seconds": 60.002793094026856,
+        "response_chars": null
+      }
+    ],
+    "records": 24,
+    "input_chars": 30170,
+    "groups": [
+      {
+        "type": "Joint",
+        "predicate": null,
+        "count": 9
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "created": "2026-09-13T15:40:46.645893000+00:00",
+    "kind": "identity",
+    "status": "UNAVAILABLE",
+    "failure": "REVIEW_PROVIDER_UNAVAILABLE",
+    "attempts": [
+      {
+        "status": "PROVIDER_ERROR",
+        "error_type": "TimeoutError",
+        "failure": null,
+        "seconds": 60.0021583539783,
+        "response_chars": null
+      }
+    ],
+    "records": 24,
+    "input_chars": 29326,
+    "groups": [
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "created": "2026-09-13T15:41:46.787459000+00:00",
+    "kind": "identity",
+    "status": "UNAVAILABLE",
+    "failure": "REVIEW_PROVIDER_UNAVAILABLE",
+    "attempts": [
+      {
+        "status": "PROVIDER_ERROR",
+        "error_type": "TimeoutError",
+        "failure": null,
+        "seconds": 60.002565676986706,
+        "response_chars": null
+      }
+    ],
+    "records": 24,
+    "input_chars": 28082,
+    "groups": [
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "Port",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "created": "2026-09-13T15:42:46.919547000+00:00",
+    "kind": "identity",
+    "status": "UNAVAILABLE",
+    "failure": "REVIEW_PROVIDER_UNAVAILABLE",
+    "attempts": [
+      {
+        "status": "PROVIDER_ERROR",
+        "error_type": "TimeoutError",
+        "failure": null,
+        "seconds": 60.00142434699228,
+        "response_chars": null
+      }
+    ],
+    "records": 24,
+    "input_chars": 28235,
+    "groups": [
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      },
+      {
+        "type": "MeasurementPoint",
+        "predicate": null,
+        "count": 1
+      }
+    ]
+  },
+  {
+    "created": "2026-09-13T15:51:00.047644000+00:00",
+    "kind": "facts",
+    "status": "UNAVAILABLE",
+    "failure": "REVIEW_SCHEMA_OR_COVERAGE_INVALID",
+    "attempts": [
+      {
+        "status": "REJECTED",
+        "error_type": null,
+        "failure": "REVIEW_SCHEMA_OR_COVERAGE_INVALID",
+        "seconds": 23.959347053954843,
+        "response_chars": 2910
+      },
+      {
+        "status": "REJECTED",
+        "error_type": null,
+        "failure": "REVIEW_SCHEMA_OR_COVERAGE_INVALID",
+        "seconds": 23.724839380010962,
+        "response_chars": 2910
+      }
+    ],
+    "records": 4,
+    "input_chars": 42487,
+    "groups": [
+      {
+        "type": "Section",
+        "predicate": "CONTAINS",
+        "count": 9
+      },
+      {
+        "type": "StraightSection",
+        "predicate": "field_code",
+        "count": 7
+      },
+      {
+        "type": "StraightSection",
+        "predicate": "source_algorithm_route_code",
+        "count": 7
+      },
+      {
+        "type": "StraightSection",
+        "predicate": "temp_type_code",
+        "count": 7
+      }
+    ]
+  }
+]

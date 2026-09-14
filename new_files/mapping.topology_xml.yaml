@@ -1,0 +1,834 @@
+# ETL 映射：把 topology.xml 物化成属性图的口径。
+# 它绑定 topology.xml 这一特定数据源，生命周期与本体不同——换数据源换本文件，本体不动；
+# 将来接入 Neo4j 后，本文件的职责由导入器承接。
+materialization:
+  topology_xml:
+    source_ref: CURRENT_PROJECT_TOPOLOGY
+    path: topology.xml
+    encoding: utf-8
+    selector_dialect:
+      id: ai_power_xml_selector_v1
+      path_syntax: restricted_xpath
+      absolute_path_context: document_root
+      relative_path_context: selected_owner
+      attribute_reference_prefix: '@'
+      descendant_axis_supported: true
+      union_operator_supported: false
+      multiple_selectors_field: selectors
+      multiple_selectors_semantics: any_of
+    authority:
+    - project_instances
+    - port_connectivity
+    - logical_measurement_points
+    fail_closed: true
+    identity_semantics:
+      mapping_identity_field: identity
+      stable_ref_role: cross_source_natural_reference
+      graph_id_role: graph_store_primary_node_key
+      graph_id_is_primary_node_key: true
+      graph_id_derivation: identity_scheme.graph_id_template_with_stable_ref
+    project_id_consistency:
+      declared_source_path: sources.CURRENT_PROJECT_TOPOLOGY.project_id
+      project_settings_path: /Project/ProjectSettings/ProjectName
+      project_root_full_code_path: /Project/NodeTree/Root/@FullCode
+      required_equal: true
+      mismatch_policy: reject
+    identity_schemes:
+      asset_ref:
+        stable_ref_template: '{project_id}/{full_code}'
+        graph_id_template: asset:{stable_ref}
+        project_id_source: /Project/ProjectSettings/ProjectName
+        full_code_source: '@FullCode'
+        uniqueness_scope: project
+      port_ref:
+        stable_ref_template: '{asset_ref}/port/{ordinal}'
+        graph_id_template: port:{stable_ref}
+        ordinal_source: '@Ordinal'
+        uniqueness_scope: owner
+      point_ref:
+        stable_ref_template: '{asset_ref}#{item}'
+        graph_id_template: point:{stable_ref}
+        item_source: '@Item'
+        uniqueness_scope: owner
+    entity_mappings:
+      Project:
+        selector:
+          path: /Project/NodeTree/Root
+          attributes:
+            NodeType: '1'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+      Busway:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '3'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+      Section:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '4'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+      EndFeedUnit:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '2'
+            ElementType: '420'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+          field_code: '@FieldCode'
+          element_type_code: '@ElementType'
+          temp_type_code: '@TempType'
+          source_algorithm_route_code: '@AlgorithmType'
+          source_algorithm_route_status:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteStatus
+            value_attribute: Data2
+          source_algorithm_route_basis:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteBasis
+            value_attribute: Data2
+          source_annotations:
+            path: ./Extension/Data
+            key_attribute: Data1
+            value_attribute: Data2
+            semantic_status: source_annotation_only
+      Flange:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '2'
+            ElementType: '430'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+          field_code: '@FieldCode'
+          element_type_code: '@ElementType'
+          temp_type_code: '@TempType'
+          source_algorithm_route_code: '@AlgorithmType'
+          source_algorithm_route_status:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteStatus
+            value_attribute: Data2
+          source_algorithm_route_basis:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteBasis
+            value_attribute: Data2
+          source_annotations:
+            path: ./Extension/Data
+            key_attribute: Data1
+            value_attribute: Data2
+            semantic_status: source_annotation_only
+      Joint:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '2'
+            ElementType: '435'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+          field_code: '@FieldCode'
+          element_type_code: '@ElementType'
+          temp_type_code: '@TempType'
+          source_algorithm_route_code: '@AlgorithmType'
+          source_algorithm_route_status:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteStatus
+            value_attribute: Data2
+          source_algorithm_route_basis:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteBasis
+            value_attribute: Data2
+          source_annotations:
+            path: ./Extension/Data
+            key_attribute: Data1
+            value_attribute: Data2
+            semantic_status: source_annotation_only
+      PlugInUnit:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '2'
+            ElementType: '440'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+          field_code: '@FieldCode'
+          element_type_code: '@ElementType'
+          temp_type_code: '@TempType'
+          source_algorithm_route_code: '@AlgorithmType'
+          source_algorithm_route_status:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteStatus
+            value_attribute: Data2
+          source_algorithm_route_basis:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteBasis
+            value_attribute: Data2
+          source_annotations:
+            path: ./Extension/Data
+            key_attribute: Data1
+            value_attribute: Data2
+            semantic_status: source_annotation_only
+      StraightSection:
+        selector:
+          path: /Project/NodeTree//Child
+          attributes:
+            NodeType: '2'
+            ElementType: '450'
+        identity: asset_ref
+        property_mappings:
+          project_id:
+            path: /Project/ProjectSettings/ProjectName
+            scope: document
+          full_code: '@FullCode'
+          code: '@Code'
+          display_name: '@Name'
+          full_name: '@FullName'
+          description: '@Description'
+          field_code: '@FieldCode'
+          element_type_code: '@ElementType'
+          temp_type_code: '@TempType'
+          source_algorithm_route_code: '@AlgorithmType'
+          source_algorithm_route_status:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteStatus
+            value_attribute: Data2
+          source_algorithm_route_basis:
+            path: ./Extension/Data
+            attributes:
+              Data1: AlgorithmRouteBasis
+            value_attribute: Data2
+          source_annotations:
+            path: ./Extension/Data
+            key_attribute: Data1
+            value_attribute: Data2
+            semantic_status: source_annotation_only
+      Port:
+        owner_types:
+        - EndFeedUnit
+        - Flange
+        - Joint
+        - PlugInUnit
+        - StraightSection
+        selector:
+          path: ./Ports/Port
+        identity: port_ref
+        property_mappings:
+          ordinal:
+            path: '@Ordinal'
+            cast: integer
+          name: '@Name'
+          display_name: '@DisplayName'
+          port_type_code: '@PortType'
+          role:
+            path: '@PortType'
+            value_map:
+              '501': input
+              '502': output
+              '503': attachment
+            unmapped_value_policy: reject
+          enabled:
+            path: '@Enabled'
+            cast: boolean
+          source_load_full_code: '@Load'
+      MeasurementPoint:
+        owner_types:
+        - EndFeedUnit
+        - Flange
+        - Joint
+        - PlugInUnit
+        - StraightSection
+        selector:
+          path: ./Variables/Variable
+        identity: point_ref
+        property_mappings:
+          item: '@Item'
+          variable_name: '@Name'
+          measurement_system_ref: '@Unit'
+        excluded_source_attributes:
+          Address: external_physical_binding_not_graph_identity
+    relation_mappings:
+      CONTAINS:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: NodeTree 父子层级
+        source: direct_xml_parent_child
+        full_code_path_inference: forbidden
+      HAS_PORT:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: 部件 Ports/Port
+        source: component_owner_to_selected_Port
+        enabled_false_policy: preserve_port_as_source_fact
+      CONNECTS_TO_COMPONENT:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: Port@Load
+        source: Port.Load
+        condition: Load_is_nonempty
+        target_resolution: same_project_component_by_FullCode
+        unresolved_target_policy: reject
+        enabled_false_policy: preserve_structural_source_fact
+        operational_connectivity_inference: forbidden
+      PRECEDES:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: Port@PortType 501/502
+        source: Port.Load
+        port_type_rules:
+          '501': Load_to_owner
+          '502': owner_to_Load
+        reciprocal_evidence_policy: deduplicate_preserving_port_refs
+        conflicting_direction_policy: reject
+        enabled_false_policy: preserve_structural_source_fact
+        operational_connectivity_inference: forbidden
+        edge_property_mappings:
+          evidence_port_refs:
+            source: contributing_port_refs
+            output_reference_kind: stable_ref
+      BRANCHES_INTO:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: Port@PortType 503
+        rule_cross_reference:
+          document: rule_v2.md
+          document_version: 2.0.0
+          clauses:
+          - G3
+          - M6
+          note: 分支点是 G3 分流边界门禁与 M6 的判定依据，图上必须可识别
+        source: Port.Load
+        port_type_rules:
+          '503': owner_to_Load
+        single_sided_evidence: allowed
+        enabled_false_policy: preserve_structural_source_fact
+        operational_connectivity_inference: forbidden
+        edge_property_mappings:
+          evidence_port_refs:
+            source: contributing_port_refs
+            output_reference_kind: stable_ref
+      HAS_POINT:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: 部件 Variables/Variable
+        source: component_owner_to_selected_Variable
+      TOPOLOGICALLY_ADJACENT_TO:
+        source: derived_topology_path
+        definition_authority:
+          kind: diagnostic_rule
+          document: rule_v2.md
+          document_version: 2.0.0
+          clause: D3
+        base_relation: PRECEDES
+        traversal_direction: forward
+        endpoint_type: Joint
+        skip_types:
+        - StraightSection
+        max_intermediate_components: 1
+        forbidden_intermediate_types:
+        - Flange
+        - EndFeedUnit
+        - PlugInUnit
+        forbidden_intermediate_behavior: emit_nothing
+        unknown_intermediate_type_behavior: reject
+        path_termination: first_endpoint_type_match
+        require_all_path_ports_enabled: true
+        branch_point_definition: component_on_path_with_BRANCHES_INTO_or_multiple_PRECEDES_successors
+        branch_point_policy: emit_but_disqualify
+        branch_point_rationale: 结构相邻仍是事实，但 rule_v2.md D3 要求无分支链路，故不得进入诊断范围
+        multiple_downstream_paths_policy: emit_all_distinct_paths
+        cycle_policy: reject
+        measurability_precondition: not_required
+        assertion: derived
+        materialization: required
+        relation_id_template: 'materialized:TOPOLOGICALLY_ADJACENT_TO:{source_graph_id}:{target_graph_id}'
+        deduplication_key:
+        - source_graph_id
+        - target_graph_id
+        edge_property_mappings:
+          evidence_relation_ids:
+            source: contributing_PRECEDES_relation_ids
+            output_reference_kind: relation_id
+          intermediate_component_refs:
+            source: skipped_component_stable_refs_in_path_order
+            output_reference_kind: stable_ref
+          path_length:
+            source: contributing_PRECEDES_edge_count
+          crosses_branch_point:
+            source: any_path_component_is_branch_point
+          all_path_ports_enabled:
+            source: all_contributing_ports_have_Enabled_true
+          adjacency_evidence_grade:
+            source: derived_from_disqualifier_checks
+            rule:
+            - condition: not all_path_ports_enabled
+              value: disqualified_port_not_enabled
+            - condition: crosses_branch_point
+              value: disqualified_branch_present
+            - condition: otherwise
+              value: rule_d3_qualified
+        semantic_boundaries:
+          current_continuity_assertion: false
+          thermal_measurement_assertion: false
+          diagnostic_assertion: false
+          edge_existence_implies_rule_applicability: false
+      OBSERVES:
+        definition_authority:
+          kind: source_schema
+          document: topology.xml
+          clause: Variable@Item/@Unit + owner@TempType
+        source: observable_resolution
+        required_target_count: 1
+      EXPOSES_OBSERVABLE:
+        definition_authority:
+          kind: derived_within_ontology
+          document: ontology.yaml
+          clause: relation_types.EXPOSES_OBSERVABLE
+          note: 纯图内派生（HAS_POINT→OBSERVES），不引入任何外部口径
+        source: derived_relation_path
+        path:
+        - HAS_POINT
+        - OBSERVES
+        path_direction: forward
+        intermediate_type: MeasurementPoint
+        assertion: derived
+        materialization: required
+        relation_id_template: 'materialized:EXPOSES_OBSERVABLE:{source_graph_id}:{target_graph_id}'
+        deduplication_key:
+        - source_graph_id
+        - target_graph_id
+        evidence_aggregation: preserve_all_distinct_paths
+        edge_property_mappings:
+          evidence_point_refs:
+            source: contributing_measurement_point_stable_refs
+            output_reference_kind: stable_ref
+          evidence_relation_ids:
+            source: contributing_HAS_POINT_and_OBSERVES_relation_ids
+            output_reference_kind: relation_id
+          path_count:
+            source: distinct_contributing_path_count
+        semantic_boundaries:
+          source_topology_fact: false
+          telemetry_assertion: false
+          diagnostic_assertion: false
+    scope_derivations:
+      SINGLE_JOINT_SCOPE:
+        definition_authority:
+          kind: diagnostic_rule
+          document: rule_v2.md
+          document_version: 2.0.0
+          clauses:
+          - D1
+          - D2
+          - D3
+          - D5
+          - C5
+          basis: 各 D 类规则均以"一个明确目标接头"为落点
+        member_kind: single_entity
+        member_types:
+        - Joint
+        derivable_from_topology: true
+      ADJACENT_JOINT_PAIR_SCOPE:
+        definition_authority:
+          kind: diagnostic_rule
+          document: rule_v2.md
+          document_version: 2.0.0
+          clause: D3
+          basis: JPK 直连 JPK，或经单个直身段 ST 的无分支连续链路，相关端口须全部启用
+        member_kind: entity_pair
+        member_source_relation: TOPOLOGICALLY_ADJACENT_TO
+        member_filter:
+          adjacency_evidence_grade: rule_d3_qualified
+        excluded_edges_behavior: exclude_and_report_as_coverage_gap
+        branch_point_policy: disqualify_pair
+        rationale: rule_v2.md D3 要求无分支、单中间部件、端口全启用的连续链路；不满足者结构上仍相邻，但不得作为诊断范围
+        derivable_from_topology: true
+      TRUNK_CURRENT_SEGMENT_SCOPE:
+        definition_authority:
+          kind: diagnostic_rule
+          document: rule_v2.md
+          document_version: 2.0.0
+          clauses:
+          - G3
+          - D2
+          - D5
+          - M6
+          basis: G3 规定 Tee 或 PIU 后已形成实际分流时不得用上游总管电流对分流后接头作精确判断；D2/D5 要求目标接头位于总管电流段
+        member_kind: entity_set
+        member_source_relation: PRECEDES
+        segment_termination:
+        - at_branch_point
+        - at_busway_boundary
+        branch_point_policy: terminate_segment
+        branch_point_definition: component_that_is_source_of_BRANCHES_INTO
+        rationale: 分支点之后干路电流可能分流，电流适用性不得跨越
+        derivable_from_topology: true
+      PROVEN_UNSPLIT_EXTENSION_SCOPE:
+        definition_authority:
+          kind: diagnostic_rule
+          document: rule_v2.md
+          document_version: 2.0.0
+          clauses:
+          - D2
+          - D5
+          - M6
+          basis: D2/D5 的"或可证明未分流"分支；M6 规定已分流且缺分支电流时不得作精确判断
+        member_kind: entity_set
+        extends: TRUNK_CURRENT_SEGMENT_SCOPE
+        extension_condition: external_runtime_evidence_proves_branch_inactive
+        derivable_from_topology: false
+        missing_evidence_behavior: fail_closed
+      BUSWAY_SYSTEM_SCOPE:
+        definition_authority:
+          kind: diagnostic_rule
+          document: rule_v2.md
+          document_version: 2.0.0
+          clauses:
+          - C5
+          - D4
+          basis: 局部热点判据需"同一诊断范围内全部可用连接点"的均值，且 C5 条件1 要求范围内热点数量可计数
+        member_kind: entity_set
+        min_comparable_members: 2
+        member_source_relation: CONTAINS
+        root_type: Busway
+        derivable_from_topology: true
+      cross_scope_safety:
+        adjacency_implies_current_continuity: false
+        trunk_segment_implies_thermal_comparability: false
+    observable_resolution:
+      mappings:
+        ambient_temperature:
+          entity_id: ambient_temperature
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: AmbientTemp
+        busway_body_absolute_temperature:
+          entity_id: busway_body_absolute_temperature
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Temp
+            variable_attribute_prefixes:
+              Unit:
+              - Etemp
+            priority: 20
+          - variable_attributes:
+              Item: Temp
+            owner_attributes:
+              TempType: '2'
+            priority: 40
+        joint_absolute_temperature:
+          entity_id: joint_absolute_temperature
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Temp
+            variable_attribute_prefixes:
+              Unit:
+              - EDock
+              - Ftemp
+            priority: 10
+          - variable_attributes:
+              Item: Temp
+            owner_attributes:
+              TempType: '1'
+            priority: 30
+        temperature_rise:
+          entity_id: temperature_rise
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: TempDiff
+        temperature_rise_rate:
+          entity_id: temperature_rise_rate
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: TempDiffRate
+        relative_humidity:
+          entity_id: relative_humidity
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Humidity
+        battery_voltage:
+          entity_id: battery_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Battery
+        phase_a_current:
+          entity_id: phase_a_current
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Ia
+        phase_b_current:
+          entity_id: phase_b_current
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Ib
+        phase_c_current:
+          entity_id: phase_c_current
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Ic
+        phase_a_to_neutral_voltage:
+          entity_id: phase_a_to_neutral_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Van
+        phase_b_to_neutral_voltage:
+          entity_id: phase_b_to_neutral_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Vbn
+        phase_c_to_neutral_voltage:
+          entity_id: phase_c_to_neutral_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Vcn
+        phase_ab_voltage:
+          entity_id: phase_ab_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Vab
+        phase_bc_voltage:
+          entity_id: phase_bc_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Vbc
+        phase_ca_voltage:
+          entity_id: phase_ca_voltage
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Vca
+        frequency:
+          entity_id: frequency
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: Hz
+        phase_a_power_factor:
+          entity_id: phase_a_power_factor
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: PFa
+        phase_b_power_factor:
+          entity_id: phase_b_power_factor
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: PFb
+        phase_c_power_factor:
+          entity_id: phase_c_power_factor
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: PFc
+        total_power_factor:
+          entity_id: total_power_factor
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: PFTot
+        phase_a_active_power:
+          entity_id: phase_a_active_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kWa
+        phase_b_active_power:
+          entity_id: phase_b_active_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kWb
+        phase_c_active_power:
+          entity_id: phase_c_active_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kWc
+        total_active_power:
+          entity_id: total_active_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kWTot
+        phase_a_reactive_power:
+          entity_id: phase_a_reactive_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kVAra
+        phase_b_reactive_power:
+          entity_id: phase_b_reactive_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kVArb
+        phase_c_reactive_power:
+          entity_id: phase_c_reactive_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kVArc
+        total_reactive_power:
+          entity_id: total_reactive_power
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: kVArTot
+        water_ingress_alarm_state:
+          entity_id: water_ingress_alarm_state
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: WaterAlarm
+        phase_imbalance_alarm_state:
+          entity_id: phase_imbalance_alarm_state
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: PhaseImbalanceAlarm
+        busway_temperature_rise_alarm_state:
+          entity_id: busway_temperature_rise_alarm_state
+          availability: source_point
+          matches:
+          - variable_attributes:
+              Item: TempRiseAlarm
+      default_priority: 100
+      conflict_detection: before_priority_selection
+      same_target_multiple_match_policy: select_lowest_priority
+      different_target_multiple_match_policy: reject
+      no_match_policy: reject
+    runtime_branch_state:
+      source: external_runtime_evidence
+      structural_attachment_proves_actual_diversion: false
+    current_source_verification_snapshot:
+      project_id: PBMBaseProj_2512
+      source_status: current_project_baseline
+      reusable_as_cross_project_invariant: false
+      materialized_entity_counts:
+        Project: 1
+        Busway: 2
+        Section: 2
+        engineering_components: 19
+        Port: 51
+        MeasurementPoint: 64
+      engineering_component_type_counts:
+        EndFeedUnit: 1
+        Flange: 1
+        Joint: 9
+        PlugInUnit: 1
+        StraightSection: 7
+      source_port_type_counts:
+        '501': 17
+        '502': 18
+        '503': 16
+      materialized_relation_counts:
+        CONTAINS: 23
+        HAS_PORT: 51
+        CONNECTS_TO_COMPONENT: 33
+        PRECEDES: 16
+        BRANCHES_INTO: 1
+        HAS_POINT: 64
+        OBSERVES: 64
+        EXPOSES_OBSERVABLE: 64
+        TOPOLOGICALLY_ADJACENT_TO: 7
+      derived_adjacency_snapshot:
+        adjacent_joint_pairs: 7
+        rule_d3_qualified_pairs: 6
+        disqualified_branch_present: 1
+        disqualified_port_not_enabled: 0
+        disqualified_pair_refs:
+        - BUS1.S1.JPK2 -> BUS1.S1.JPK3 (中间 BUS1.S1.ST2 挂载 PIU4，链路存在分支)
+        pairs_crossing_branch_point: 1
+        cross_section_pairs: 0
+        joints_with_multiple_downstream_adjacent_joints: 0
+        adjacent_joint_pair_scope_members: 6

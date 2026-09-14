@@ -24,7 +24,7 @@ from .review import (
     _require_capability,
     _required_text,
 )
-from .store import KnowledgeConflict, Neo4jKnowledgeStore, _stored_assertion, _stored_mention
+from .store import KnowledgeConflict, Neo4jKnowledgeStore, _stored_assertion, _stored_mention, context_evidence_guard
 from .trust import GovernanceStatus
 
 MAX_COMPARISON_FACTS = 100
@@ -128,7 +128,7 @@ MATCH (document)-[:ACTIVE_VERSION]->(version:DocumentVersion {
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
-WITH DISTINCT publication, revision, chunk, document, version
+WITH DISTINCT publication, revision, chunk, document, version, snapshot
 MATCH (:TBoxCatalog {tenant_id: $tenant_id})-[:ACTIVE_TBOX_VERSION]->(tbox:TBoxVersion {
     tenant_id: $tenant_id, tbox_id: $ontology_version_id, status: 'PUBLISHED'
 })
@@ -151,6 +151,9 @@ RETURN DISTINCT revision {.*} AS revision, publication.publication_id AS publica
 ORDER BY revision.created_at, revision.record_id
 LIMIT $limit
 """
+_AUTHORITY_QUERY = _AUTHORITY_QUERY.replace(
+    "RETURN DISTINCT revision", "AND " + context_evidence_guard(version="version", snapshot="snapshot", document="document", primary="chunk") + "\nRETURN DISTINCT revision"
+)
 
 
 class Neo4jReviewAssessmentService:
@@ -221,6 +224,7 @@ class Neo4jReviewAssessmentService:
     @staticmethod
     def _validate_evidence(tx: Any, record: AssertionRecord) -> None:
         Neo4jKnowledgeStore._validate_evidence_tx(tx, record.evidence)
+        Neo4jKnowledgeStore.verify_context_property_tx(tx, record)
         for value in record.relationship_properties:
             Neo4jKnowledgeStore._validate_evidence_tx(tx, replace(
                 record.evidence, char_start=value.evidence_char_start,

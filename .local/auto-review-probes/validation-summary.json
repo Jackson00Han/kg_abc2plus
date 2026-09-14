@@ -1,0 +1,18 @@
+[
+  {
+    "probe": 1,
+    "all_source_identifiers_match_original": true,
+    "all_explicit_types_match": true,
+    "no_existing_candidates": true,
+    "all_decisions_reference_own_evidence": true,
+    "max_reason_chars": 70
+  },
+  {
+    "probe": 2,
+    "all_source_identifiers_match_original": true,
+    "all_explicit_types_match": true,
+    "no_existing_candidates": true,
+    "all_decisions_reference_own_evidence": true,
+    "max_reason_chars": 70
+  }
+]

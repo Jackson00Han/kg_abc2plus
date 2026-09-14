@@ -1,0 +1,4048 @@
+{
+  "metadata": {
+    "contract_id": "ai_power.knowledge_ontology",
+    "contract_version": "1.0.0",
+    "ontology_id": "ai_power.busway.ontology",
+    "ontology_version": "5.0.0",
+    "model_kind": "graph_native_property_graph",
+    "namespace": "urn:ai-power:busway:",
+    "default_language": "zh-CN",
+    "status": "DRAFT",
+    "title": "母线槽诊断知识库本体",
+    "domain": "母线槽故障诊断与根因分析",
+    "description": "基于用户提供的 v4 本体整理的十部分知识库本体。保留领域类型、关系和约束，补充抽象类型层级、范围辅助类型、来源等级与逐项证据合同。",
+    "semantic_dependencies": [],
+    "deprecation": {
+      "deprecated": false,
+      "replaced_by": null
+    },
+    "canonical_relation_storage": "forward_only",
+    "compatibility": {
+      "current_8002_ontology_import_supported": false,
+      "implementation_status": "design_contract_requires_importer_and_validator_upgrade",
+      "native_neo4j_schema": false,
+      "standalone_definition_loading": true,
+      "instance_files_required_for_ontology_loading": false
+    },
+    "predecessor": {
+      "ontology_id": "ai_power.busway.ontology",
+      "ontology_version": "4.0.0"
+    }
+  },
+  "entity_types": {
+    "Project": {
+      "display_name": "工程项目",
+      "category": "engineering_container",
+      "layer": "structure",
+      "source_mode": "materialized",
+      "definition": "工程身份与资产归属的项目容器，不表示设备实例。",
+      "aliases": [],
+      "semantic_role": "engineering_container",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Project"
+      }
+    },
+    "Busway": {
+      "display_name": "母线槽",
+      "category": "engineering_container",
+      "layer": "structure",
+      "source_mode": "materialized",
+      "definition": "工程中的母线槽系统实例，包含分区并承载系统级诊断上下文。",
+      "aliases": [],
+      "semantic_role": "engineering_container",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Busway"
+      }
+    },
+    "Section": {
+      "display_name": "母线分区",
+      "category": "engineering_container",
+      "layer": "structure",
+      "source_mode": "materialized",
+      "definition": "母线槽系统中的结构分区实例。",
+      "aliases": [],
+      "semantic_role": "engineering_container",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Section"
+      }
+    },
+    "EndFeedUnit": {
+      "display_name": "馈电箱",
+      "category": "engineering_component",
+      "layer": "component",
+      "source_mode": "materialized",
+      "definition": "工程拓扑中已识别的馈电箱构件实例。",
+      "aliases": [],
+      "semantic_role": "physical_component",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/EndFeedUnit"
+      }
+    },
+    "Flange": {
+      "display_name": "法兰",
+      "category": "engineering_component",
+      "layer": "component",
+      "source_mode": "materialized",
+      "definition": "工程拓扑中已识别的法兰构件实例。",
+      "aliases": [],
+      "semantic_role": "physical_component",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Flange"
+      }
+    },
+    "Joint": {
+      "display_name": "接头",
+      "category": "engineering_component",
+      "layer": "component",
+      "source_mode": "materialized",
+      "definition": "工程拓扑中已识别的接头构件实例，可作为接头诊断的定位对象。",
+      "aliases": [],
+      "semantic_role": "physical_component",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Joint"
+      }
+    },
+    "PlugInUnit": {
+      "display_name": "插接箱",
+      "category": "engineering_component",
+      "layer": "component",
+      "source_mode": "materialized",
+      "definition": "工程拓扑中已识别的插接箱构件实例。",
+      "aliases": [],
+      "semantic_role": "physical_component",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/PlugInUnit"
+      }
+    },
+    "StraightSection": {
+      "display_name": "直身段",
+      "category": "engineering_component",
+      "layer": "component",
+      "source_mode": "materialized",
+      "definition": "工程拓扑中已识别的直身段构件实例。",
+      "aliases": [],
+      "semantic_role": "physical_component",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/StraightSection"
+      }
+    },
+    "Port": {
+      "display_name": "结构端口",
+      "category": "topology_evidence",
+      "layer": "port",
+      "source_mode": "materialized",
+      "definition": "构件的组态端口及其角色、启用状态和对端引用；组态连接不等于运行时连通。",
+      "aliases": [],
+      "semantic_role": "configured_connection_port",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Port"
+      }
+    },
+    "MeasurementPoint": {
+      "display_name": "逻辑测点",
+      "category": "measurement",
+      "layer": "point",
+      "source_mode": "materialized",
+      "definition": "归属于具体构件的逻辑测点；组态存在不保证运行时数据有效。",
+      "aliases": [],
+      "semantic_role": "configured_measurement_point",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/MeasurementPoint"
+      }
+    },
+    "Observable": {
+      "display_name": "可观测量",
+      "category": "diagnostic_semantic",
+      "layer": "observable",
+      "source_mode": "declared",
+      "definition": "由来源测点提供的可观测量语义定义，不存储高频测量值。",
+      "aliases": [
+        "ObservableProperty",
+        "MeasurementQuantity"
+      ],
+      "semantic_role": "domain_knowledge_concept",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Observable"
+      }
+    },
+    "DerivedObservable": {
+      "display_name": "派生可观测量",
+      "category": "diagnostic_semantic",
+      "layer": "observable",
+      "source_mode": "declared",
+      "definition": "通过已有来源计算或按需计算得到的可观测量语义定义，不在本体中执行计算。",
+      "aliases": [
+        "DerivedObservableProperty"
+      ],
+      "semantic_role": "domain_knowledge_concept",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/DerivedObservable"
+      }
+    },
+    "Phenomenon": {
+      "display_name": "异常现象",
+      "category": "diagnostic_semantic",
+      "layer": "diagnostic",
+      "source_mode": "declared",
+      "definition": "异常现象的知识概念，不表示某设备已经发生该现象。",
+      "aliases": [
+        "PhenomenonType"
+      ],
+      "semantic_role": "domain_knowledge_concept",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/Phenomenon"
+      }
+    },
+    "RootCause": {
+      "display_name": "候选根因",
+      "category": "diagnostic_semantic",
+      "layer": "diagnostic",
+      "source_mode": "declared",
+      "definition": "用于候选解释的根因知识概念，不表示已经完成根因确认。",
+      "aliases": [
+        "RootCauseType",
+        "Fault"
+      ],
+      "semantic_role": "domain_knowledge_concept",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/RootCause"
+      }
+    },
+    "DiagnosticScope": {
+      "display_name": "诊断范围",
+      "category": "diagnostic_semantic",
+      "layer": "diagnostic",
+      "source_mode": "declared",
+      "definition": "诊断定位、比较或适用范围的概念定义，与工程上的具体范围实例分开。",
+      "aliases": [
+        "DiagnosticScopeType"
+      ],
+      "semantic_role": "domain_knowledge_concept",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/DiagnosticScope"
+      }
+    },
+    "DiagnosticParameter": {
+      "display_name": "诊断参数",
+      "category": "external_reference",
+      "layer": "diagnostic",
+      "source_mode": "declared",
+      "definition": "诊断参数的名称、用途、单位和外部绑定定义，不包含未经配置的数值。",
+      "aliases": [
+        "DiagnosticParameterType"
+      ],
+      "semantic_role": "versioned_external_knowledge_reference",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/DiagnosticParameter"
+      }
+    },
+    "ReferenceStatistic": {
+      "display_name": "参考统计",
+      "category": "external_reference",
+      "layer": "diagnostic",
+      "source_mode": "declared",
+      "definition": "描述性统计的外部引用定义，不作为诊断评分或因果证明。",
+      "aliases": [
+        "ReferenceStatisticType"
+      ],
+      "semantic_role": "versioned_external_knowledge_reference",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/ReferenceStatistic"
+      }
+    },
+    "RuleVersion": {
+      "display_name": "规则版本",
+      "category": "external_reference",
+      "layer": "rule",
+      "source_mode": "declared",
+      "purpose": "为外置诊断规则文档提供图上锚点，使\"某版规则影响哪些现象与哪些参数\"可被查询；规则内容与阈值数值仍然外置",
+      "definition": "外部诊断规则的版本引用锚点，不复制其执行引擎和运行参数。",
+      "aliases": [],
+      "semantic_role": "versioned_external_knowledge_reference",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/RuleVersion"
+      }
+    },
+    "EngineeringContainer": {
+      "display_name": "工程容器",
+      "definition": "工程、母线槽系统和分区共有的结构归属语义。",
+      "aliases": [],
+      "semantic_role": "abstract_type",
+      "abstract": true,
+      "instantiable": false,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/EngineeringContainer"
+      }
+    },
+    "EngineeringComponent": {
+      "display_name": "工程构件",
+      "definition": "工程拓扑中具体构件的共同类型，不推定任何构件已经发生故障。",
+      "aliases": [],
+      "semantic_role": "abstract_type",
+      "abstract": true,
+      "instantiable": false,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/EngineeringComponent"
+      }
+    },
+    "ObservableConcept": {
+      "display_name": "可观测量概念",
+      "definition": "来源可观测量与派生可观测量的共同语义上位类型，不限定 availability。",
+      "aliases": [],
+      "semantic_role": "abstract_type",
+      "abstract": true,
+      "instantiable": false,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/ObservableConcept"
+      }
+    },
+    "DiagnosticScopeInstance": {
+      "display_name": "诊断范围实例",
+      "definition": "特定项目、拓扑版本及必要条件下的具体诊断成员集合；不表示诊断结论。",
+      "aliases": [],
+      "semantic_role": "derived_context",
+      "abstract": false,
+      "instantiable": true,
+      "property_schema": {
+        "$ref": "#/property_definitions/entity_types/DiagnosticScopeInstance"
+      },
+      "category": "diagnostic_context",
+      "layer": "scope",
+      "source_mode": "derived",
+      "introduced_in": "5.0.0",
+      "definition_basis": "Explicit representation of source layer kind scope_instance."
+    }
+  },
+  "type_hierarchy": {
+    "subtype_of": [
+      {
+        "child": "Project",
+        "parent": "EngineeringContainer"
+      },
+      {
+        "child": "Busway",
+        "parent": "EngineeringContainer"
+      },
+      {
+        "child": "Section",
+        "parent": "EngineeringContainer"
+      },
+      {
+        "child": "EndFeedUnit",
+        "parent": "EngineeringComponent"
+      },
+      {
+        "child": "Flange",
+        "parent": "EngineeringComponent"
+      },
+      {
+        "child": "Joint",
+        "parent": "EngineeringComponent"
+      },
+      {
+        "child": "PlugInUnit",
+        "parent": "EngineeringComponent"
+      },
+      {
+        "child": "StraightSection",
+        "parent": "EngineeringComponent"
+      },
+      {
+        "child": "Observable",
+        "parent": "ObservableConcept"
+      },
+      {
+        "child": "DerivedObservable",
+        "parent": "ObservableConcept"
+      }
+    ],
+    "disjoint_type_sets": [],
+    "classification": "explicit_source_type_or_governed_mapping_with_evidence",
+    "abstract_type_instantiation": "forbidden",
+    "cycles": "reject",
+    "inheritance": {
+      "allowed": [
+        "type_membership",
+        "compatible_property_constraints"
+      ],
+      "constraint_combination": "intersection_no_silent_weakening",
+      "conflicting_constraints": "reject",
+      "instance_values_and_relationships": "never_inherit_from_other_instances",
+      "composition_is_subtyping": false
+    },
+    "concept_hierarchies": {
+      "phenomenon_specialization": {
+        "relationship_type": "SPECIALIZES",
+        "direction": "specific_to_general",
+        "acyclic": true,
+        "node_types": [
+          "Phenomenon"
+        ],
+        "is_entity_type_subtyping": false,
+        "evidence_basis": "Direction follows the supplied instances.diagnostic.yaml SPECIALIZES records."
+      }
+    },
+    "domain_notes": [
+      "DerivedObservable 与 Observable 同属 ObservableConcept；不直接设前者为后者的子类，避免继承 availability=source_point 而排除 computed_on_demand。",
+      "CONTAINS 是工程组成关系，不表示 Project、Busway、Section 互为子类型。"
+    ]
+  },
+  "relation_categories": {
+    "structural": {
+      "display_name": "结构组成",
+      "definition": "工程容器、构件、端口和测点的组成或归属关系。"
+    },
+    "topology_evidence": {
+      "display_name": "拓扑证据",
+      "definition": "端口对端等来源组态信息，为拓扑判断提供依据。"
+    },
+    "topology": {
+      "display_name": "拓扑关系",
+      "definition": "前接、分支和结构相邻；不自动证明运行电流连续或诊断适用。"
+    },
+    "semantic_binding": {
+      "display_name": "观测语义绑定",
+      "definition": "区分已配置可观测能力与诊断要求的可观测能力。"
+    },
+    "semantic": {
+      "display_name": "知识语义与依赖",
+      "definition": "可观测量、现象、范围及参数之间的语义关联和依赖。"
+    },
+    "taxonomy": {
+      "display_name": "概念分类",
+      "definition": "领域概念之间的上下位关系，与实体类型继承分开。"
+    },
+    "type_template": {
+      "display_name": "类别通用知识",
+      "definition": "实体类型与知识概念之间的一般性适用陈述，不是实例事实。"
+    },
+    "reference": {
+      "display_name": "知识引用",
+      "definition": "规则版本、参考统计等知识依据的引用。"
+    },
+    "candidate_causality": {
+      "display_name": "候选因果",
+      "definition": "现象到候选根因的解释关系，不是已确认诊断。"
+    },
+    "scope_membership": {
+      "display_name": "范围归属",
+      "definition": "工程诊断范围实例与范围概念、成员之间的辅助关系。"
+    }
+  },
+  "relation_types": {
+    "CONTAINS": {
+      "display_name": "包含",
+      "category": "structural",
+      "layer": "structure",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Project",
+          "Busway",
+          "Section"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Busway",
+          "Section",
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "allowed_type_pairs": [
+        {
+          "from": "Project",
+          "to": "Busway"
+        },
+        {
+          "from": "Busway",
+          "to": "Section"
+        },
+        {
+          "from": "Section",
+          "to": "EndFeedUnit"
+        },
+        {
+          "from": "Section",
+          "to": "Flange"
+        },
+        {
+          "from": "Section",
+          "to": "Joint"
+        },
+        {
+          "from": "Section",
+          "to": "PlugInUnit"
+        },
+        {
+          "from": "Section",
+          "to": "StraightSection"
+        }
+      ],
+      "persistence": "materialized_from_topology",
+      "definition": "工程容器直接包含下一级工程对象；只允许列出的类型配对。",
+      "aliases": [
+        "contains"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/CONTAINS"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": 1
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "A structural child, port or point has one owner within the same project configuration."
+      },
+      "inverse_query_aliases": {
+        "part_of": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "HAS_PORT": {
+      "display_name": "拥有端口",
+      "category": "structural",
+      "layer": "port",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Port"
+        ]
+      },
+      "persistence": "materialized_from_topology",
+      "definition": "构件拥有某个具体组态端口。",
+      "aliases": [
+        "has_port"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/HAS_PORT"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": 1
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "A structural child, port or point has one owner within the same project configuration."
+      },
+      "inverse_query_aliases": {
+        "port_of": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "CONNECTS_TO_COMPONENT": {
+      "display_name": "连接到部件",
+      "category": "topology_evidence",
+      "layer": "port",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Port"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "persistence": "materialized_from_topology",
+      "source_attribute": "Port.Load",
+      "definition": "组态端口的对端引用指向具体构件。",
+      "aliases": [],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/CONNECTS_TO_COMPONENT"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      }
+    },
+    "PRECEDES": {
+      "display_name": "前接于",
+      "category": "topology",
+      "layer": "topology",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "persistence": "derived_from_port_evidence",
+      "definition": "由端口证据支持的构件前后连接方向。",
+      "aliases": [
+        "precedes"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/PRECEDES"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      },
+      "inverse_query_aliases": {
+        "follows": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "BRANCHES_INTO": {
+      "display_name": "分支连接",
+      "category": "topology",
+      "layer": "topology",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "persistence": "derived_from_port_evidence",
+      "definition": "由端口证据支持的构件分支连接。",
+      "aliases": [
+        "branches_into"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/BRANCHES_INTO"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      },
+      "inverse_query_aliases": {
+        "branches_from": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "TOPOLOGICALLY_ADJACENT_TO": {
+      "display_name": "拓扑相邻于",
+      "category": "topology",
+      "layer": "topology",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "pair_semantics": "symmetric_stored_in_flow_direction",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Joint"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Joint"
+        ]
+      },
+      "persistence": "derived_from_topology_path",
+      "derivation_path": [
+        "PRECEDES"
+      ],
+      "interpretation": "structural_adjacency_not_current_continuity",
+      "definition_authority": {
+        "document": "rule_v2.md",
+        "document_version": "2.0.0",
+        "clause": "D3",
+        "note": "相邻判定口径以外置规则 D3 为准，本体不得放宽"
+      },
+      "scope_eligibility": {
+        "eligible_grade": "rule_d3_qualified",
+        "disqualified_edges_are_structural_facts_only": true
+      },
+      "semantic_boundaries": {
+        "current_continuity_assertion": false,
+        "thermal_measurement_assertion": false,
+        "diagnostic_assertion": false,
+        "edge_existence_implies_rule_applicability": false
+      },
+      "definition": "依据有界拓扑路径形成的接头结构相邻；诊断资格由证据等级另行约束。",
+      "aliases": [],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/TOPOLOGICALLY_ADJACENT_TO"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      }
+    },
+    "HAS_POINT": {
+      "display_name": "拥有逻辑测点",
+      "category": "structural",
+      "layer": "point",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "MeasurementPoint"
+        ]
+      },
+      "persistence": "materialized_from_topology",
+      "interpretation": "acquisition_ownership_not_diagnostic_importance",
+      "definition": "构件承载某个已配置的逻辑测点。",
+      "aliases": [
+        "has_measurement_point"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/HAS_POINT"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": 1
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "A structural child, port or point has one owner within the same project configuration."
+      },
+      "inverse_query_aliases": {
+        "mounted_on": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "OBSERVES": {
+      "display_name": "观测",
+      "category": "semantic_binding",
+      "layer": "point",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "MeasurementPoint"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable"
+        ]
+      },
+      "persistence": "derived_from_observable_mapping",
+      "definition": "逻辑测点绑定到其观测量语义。",
+      "aliases": [
+        "observes"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/OBSERVES"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": 1
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "A configured point cannot have conflicting observable bindings; missing binding is reported by ingestion validation."
+      },
+      "inverse_query_aliases": {
+        "observed_by": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "EXPOSES_OBSERVABLE": {
+      "display_name": "提供可观测量",
+      "category": "semantic_binding",
+      "layer": "observable",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable"
+        ]
+      },
+      "persistence": "derived_materialized_from_relation_path",
+      "derivation_path": [
+        "HAS_POINT",
+        "OBSERVES"
+      ],
+      "semantic_boundaries": {
+        "source_topology_fact": false,
+        "telemetry_assertion": false,
+        "diagnostic_assertion": false
+      },
+      "definition": "由 HAS_POINT 到 OBSERVES 路径证明的组态观测能力，不保证已有有效测量值。",
+      "aliases": [],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/EXPOSES_OBSERVABLE"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      }
+    },
+    "EXPECTED_OBSERVABLE": {
+      "display_name": "应当具备可观测量",
+      "category": "semantic_binding",
+      "layer": "observable",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable"
+        ]
+      },
+      "persistence": "derived_materialized_from_rule_applicability",
+      "purpose": "表达\"本体认为该部件实例应当具备哪些可观测量\"。EXPOSES_OBSERVABLE 只表达组态里实际接出了测点， 两者的差集就是仪表缺口。缺了这一层，一个部件在图上\"没有连到某个量\"会同时意味着\"不该有\"和\"该有但没装\"， 而这两件事的处置责任完全不同（ONT-116）",
+      "definition_authority": {
+        "kind": "derived_within_ontology",
+        "basis": "由该实例所属诊断范围上 scope_role=localization 的现象，取其 criterion_role=rule_criterion 的判据量推出。全部口径来自 ONT-112/ONT-113 已对账的登记，不引入 rule_v2.md 之外的任何新判断",
+        "derivation_path": [
+          "HAS_SCOPE_MEMBER",
+          "INSTANCE_OF_SCOPE",
+          "APPLICABLE_TO_SCOPE",
+          "CHARACTERIZED_BY"
+        ]
+      },
+      "granularity_guard": {
+        "expand_to_members_only_when": "single_component_instance",
+        "rationale": "只有当诊断范围本身就是\"单个部件\"时，判据量才落在部件上。多成员范围（相邻接头对、 干路电流段、母线槽系统）的判据量是范围级的，逐个成员展开会重演 ONT-110——把段级的三相不平衡 报警当成每个部件都该有的测点",
+        "violation_behavior": "reject"
+      },
+      "semantic_boundaries": {
+        "source_topology_fact": false,
+        "telemetry_assertion": false,
+        "diagnostic_assertion": false,
+        "instrumentation_assertion": false,
+        "occurrence_assertion": false
+      },
+      "definition": "在适用规则及范围条件下要求某部件具备的可观测能力；不等于已布点或已发生异常。",
+      "aliases": [],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/EXPECTED_OBSERVABLE"
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "requirement",
+        "modality": "required"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      },
+      "derivation_contract": {
+        "execution": "external_versioned_bounded_knowledge_derivation",
+        "legacy_relation_name_list_is_an_executable_path": false,
+        "start": "subject_component",
+        "steps": [
+          {
+            "relation": "HAS_SCOPE_MEMBER",
+            "traverse": "reverse",
+            "bind": "scope_instance"
+          },
+          {
+            "relation": "INSTANCE_OF_SCOPE",
+            "traverse": "forward",
+            "bind": "scope_definition"
+          },
+          {
+            "relation": "APPLICABLE_TO_SCOPE",
+            "traverse": "reverse",
+            "bind": "phenomenon",
+            "property_filters": {
+              "scope_role": "localization"
+            }
+          },
+          {
+            "relation": "CHARACTERIZED_BY",
+            "traverse": "forward",
+            "bind": "observable",
+            "property_filters": {
+              "criterion_role": "rule_criterion"
+            }
+          }
+        ],
+        "guards": {
+          "scope_derivation_method": "single_component_instance",
+          "scope_definition_member_constraints_must_validate": true,
+          "scope_instance_distinct_member_count": 1,
+          "subject_must_equal_the_only_scope_member": true,
+          "scope_instance_must_match_subject_project_and_configuration": true,
+          "rule_clause_and_rule_version_must_resolve": true,
+          "aggregate_scope_expansion_to_each_member": "forbidden",
+          "missing_or_incomplete_premises": "no_conclusion_report_incomplete"
+        }
+      }
+    },
+    "DERIVED_FROM": {
+      "display_name": "派生自",
+      "category": "semantic",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "DerivedObservable"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable"
+        ]
+      },
+      "definition": "派生可观测量对输入可观测量的语义依赖，不执行公式或生成运行值。",
+      "aliases": [
+        "derived_from_observable"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/DERIVED_FROM"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "formation_note": "旧 assertion=derived 在此表示可观测量的依赖语义，不能据此认定本条知识是规则自动派生。形成方式按真实导入活动记录。",
+      "inverse_query_aliases": {
+        "input_to_derived_observable": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "CHARACTERIZED_BY": {
+      "display_name": "由可观测量表征",
+      "category": "semantic",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Phenomenon"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable"
+        ]
+      },
+      "interpretation": "knowledge_context_not_rule_match",
+      "semantic_boundaries": {
+        "criterion_role_is_rule_match": false,
+        "contextual_only_implies_irrelevant": false,
+        "criterion_completeness_guaranteed": false
+      },
+      "definition_authority": {
+        "kind": "diagnostic_rule",
+        "document": "rule_v2.md",
+        "document_version": "2.0.0",
+        "clauses": [
+          "D1",
+          "D2",
+          "D3",
+          "D4",
+          "D5",
+          "D6",
+          "C5"
+        ]
+      },
+      "definition": "现象由哪些量表征，使用 criterion_role 区分规则实际读取的判据和背景信息。",
+      "aliases": [
+        "characterized_by_observable"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/CHARACTERIZED_BY"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "supports_characterization_of": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "SPECIALIZES": {
+      "display_name": "特化于",
+      "category": "taxonomy",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Phenomenon"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Phenomenon"
+        ]
+      },
+      "definition": "从更具体的现象概念指向更一般的现象概念；沿用来源实例方向，区别于类型继承。",
+      "aliases": [
+        "specializes_phenomenon"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/SPECIALIZES"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "generalizes_phenomenon": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "MAY_EXHIBIT": {
+      "display_name": "可能呈现",
+      "category": "type_template",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity_type",
+        "allowed_types": [
+          "Joint",
+          "Busway"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Phenomenon"
+        ]
+      },
+      "materialization": "forbidden",
+      "instance_expansion": "forbidden",
+      "definition": "某实体类别可能呈现某种现象的一般性知识。",
+      "aliases": [
+        "may_exhibit"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/MAY_EXHIBIT"
+      },
+      "statement_semantics": {
+        "scope_kind": "type_general",
+        "statement_kind": "general_knowledge",
+        "modality": "possible"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "possibly_exhibited_by_asset_class": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "MAY_AFFECT": {
+      "display_name": "可能影响",
+      "category": "type_template",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "RootCause"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity_type",
+        "allowed_types": [
+          "Joint",
+          "Busway"
+        ]
+      },
+      "materialization": "forbidden",
+      "instance_expansion": "forbidden",
+      "definition": "候选根因可能影响某实体类别的一般性知识。",
+      "aliases": [
+        "may_affect_asset_class"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/MAY_AFFECT"
+      },
+      "statement_semantics": {
+        "scope_kind": "type_general",
+        "statement_kind": "general_knowledge",
+        "modality": "possible"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "possibly_affected_by_root_cause": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "APPLICABLE_TO_SCOPE": {
+      "display_name": "适用于范围",
+      "category": "semantic",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable",
+          "Phenomenon",
+          "RootCause"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "DiagnosticScope"
+        ]
+      },
+      "unresolved_scope_materialization": "forbidden",
+      "definition_authority": {
+        "kind": "diagnostic_rule",
+        "document": "rule_v2.md",
+        "document_version": "2.0.0",
+        "clauses": [
+          "D1",
+          "D2",
+          "D3",
+          "D4",
+          "D5",
+          "D6",
+          "C5",
+          "G3",
+          "M6"
+        ]
+      },
+      "semantic_boundaries": {
+        "scope_applicability_is_confirmed_diagnosis": false,
+        "localization_scope_implies_comparison_scope": false
+      },
+      "definition": "知识概念适用于某诊断范围；定位、比较、适用依据与报告上下文分别标识。",
+      "aliases": [
+        "applicable_to_scope"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/APPLICABLE_TO_SCOPE"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "scope_supports_concept": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "REQUIRES_PARAMETER": {
+      "display_name": "需要参数",
+      "category": "semantic",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Observable",
+          "DerivedObservable",
+          "Phenomenon",
+          "RootCause"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "DiagnosticParameter"
+        ]
+      },
+      "definition": "知识概念依赖某个参数定义，不提供参数数值。",
+      "aliases": [
+        "requires_parameter"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/REQUIRES_PARAMETER"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "parameter_required_by": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "HAS_REFERENCE_STATISTIC": {
+      "display_name": "具有参考统计",
+      "category": "reference",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "RootCause"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "ReferenceStatistic"
+        ]
+      },
+      "definition": "候选根因引用描述性统计，不据此生成诊断评分。",
+      "aliases": [
+        "has_reference_statistic"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/HAS_REFERENCE_STATISTIC"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "statistic_describes_root_cause": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "EVALUATED_BY": {
+      "display_name": "由规则评估",
+      "category": "reference",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Phenomenon",
+          "RootCause"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "RuleVersion"
+        ]
+      },
+      "semantic_boundaries": {
+        "rule_binding_is_rule_match": false,
+        "rule_binding_implies_data_availability": false
+      },
+      "purpose": "使\"改动某版规则会影响哪些现象、哪些根因、进而哪些参数\"可在图上一跳查出",
+      "definition": "现象或根因与规则版本及条款的绑定，不表示规则已经匹配。",
+      "aliases": [],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/EVALUATED_BY"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "general_knowledge",
+        "modality": "asserted"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      }
+    },
+    "POSSIBLE_CAUSE": {
+      "display_name": "可能原因",
+      "category": "candidate_causality",
+      "layer": "from_target_node",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Phenomenon"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "RootCause"
+        ]
+      },
+      "interpretation": "candidate_only_not_confirmed_diagnosis",
+      "definition": "现象的一种候选根因解释，不能直接作为确认结论。",
+      "aliases": [
+        "has_possible_cause"
+      ],
+      "role": "domain_relation",
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/POSSIBLE_CAUSE"
+      },
+      "statement_semantics": {
+        "scope_kind": "concept_general",
+        "statement_kind": "candidate_explanation",
+        "modality": "possible"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 0,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_configuration_and_overlapping_validity_when_applicable",
+        "basis": "No additional global cardinality invented; role-specific restrictions are defined separately."
+      },
+      "inverse_query_aliases": {
+        "possible_cause_of": {
+          "traverse": "reverse",
+          "materialize_inverse_edge": false
+        }
+      }
+    },
+    "INSTANCE_OF_SCOPE": {
+      "display_name": "实例化自范围",
+      "definition": "具体诊断范围实例对应的范围概念。",
+      "category": "scope_membership",
+      "layer": "scope",
+      "role": "auxiliary_relation",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "DiagnosticScopeInstance"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "DiagnosticScope"
+        ]
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/INSTANCE_OF_SCOPE"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 1,
+          "max": 1
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_topology_and_derivation_context"
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      },
+      "introduced_in": "5.0.0",
+      "definition_basis": "Previously declared under layers.graph_only_relation_layers."
+    },
+    "HAS_SCOPE_MEMBER": {
+      "display_name": "包含范围成员",
+      "definition": "具体诊断范围包含的工程成员；归属不表示该成员可测或已经故障。",
+      "category": "scope_membership",
+      "layer": "scope",
+      "role": "auxiliary_relation",
+      "direction": "directed",
+      "canonical_storage": "forward_only",
+      "inverse_traversal": "query_only",
+      "from": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "DiagnosticScopeInstance"
+        ]
+      },
+      "to": {
+        "endpoint_kind": "entity",
+        "allowed_types": [
+          "Busway",
+          "EndFeedUnit",
+          "Flange",
+          "Joint",
+          "PlugInUnit",
+          "StraightSection"
+        ]
+      },
+      "statement_semantics": {
+        "scope_kind": "instance",
+        "statement_kind": "fact_statement",
+        "modality": "asserted"
+      },
+      "property_schema": {
+        "$ref": "#/property_definitions/relation_types/HAS_SCOPE_MEMBER"
+      },
+      "cardinality": {
+        "outgoing_per_source": {
+          "min": 1,
+          "max": null
+        },
+        "incoming_per_target": {
+          "min": 0,
+          "max": null
+        },
+        "scope": "same_project_topology_and_derivation_context"
+      },
+      "formation_policy": {
+        "origin": "RULE_DERIVED",
+        "authority": "SECONDARY",
+        "execution": "requires_supported_versioned_bounded_derivation_outside_ontology_loader"
+      },
+      "introduced_in": "5.0.0",
+      "definition_basis": "Previously declared under layers.graph_only_relation_layers."
+    }
+  },
+  "property_definitions": {
+    "value_types": [
+      "string",
+      "integer",
+      "number",
+      "boolean",
+      "date",
+      "datetime",
+      "duration",
+      "uri",
+      "object",
+      "array[string]",
+      "array[object]"
+    ],
+    "semantics": {
+      "required": "property_presence",
+      "array_min_max_items": "collection_length_not_property_presence",
+      "required_when": "additional_conditional_presence_constraint",
+      "required_when_accepted_forms": {
+        "predicate_object": {
+          "property": "declared_property_name",
+          "operator": [
+            "equals",
+            "in"
+          ],
+          "value": "typed_value_or_array"
+        },
+        "legacy_in_object": "{property_name}_in maps to an in predicate",
+        "legacy_equality_string": "only the bounded form property_name == enum_value; never evaluate code"
+      },
+      "unit": "declared_canonical_unit_preserve_original_value_and_unit_in_evidence",
+      "undeclared_properties": "reject",
+      "reference_values": "resolve_in_authenticated_namespace",
+      "unknown_enum_value": "reject_or_quarantine_when_an_allowed_values_set_is_declared",
+      "unit_validation": {
+        "numeric_quantity": "require_compatible_unit_when_the_property_declares_a_unit_requirement",
+        "canonical_unit_in_property_definition": "may_determine_normalized_unit_while_preserving_original_source_representation",
+        "non_numeric_or_dimensionless": "no_blanket_unit_requirement",
+        "ambiguous_unit": "reject_or_quarantine_not_guess"
+      }
+    },
+    "entity_types": {
+      "Project": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        }
+      },
+      "Busway": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        }
+      },
+      "Section": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        }
+      },
+      "EndFeedUnit": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        },
+        "field_code": {
+          "value_type": "string",
+          "required": false
+        },
+        "element_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "temp_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "source_algorithm_route_code": {
+          "value_type": "string",
+          "required": true,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_status": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_basis": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_annotations": {
+          "value_type": "object",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        }
+      },
+      "Flange": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        },
+        "field_code": {
+          "value_type": "string",
+          "required": false
+        },
+        "element_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "temp_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "source_algorithm_route_code": {
+          "value_type": "string",
+          "required": true,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_status": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_basis": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_annotations": {
+          "value_type": "object",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        }
+      },
+      "Joint": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        },
+        "field_code": {
+          "value_type": "string",
+          "required": false
+        },
+        "element_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "temp_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "source_algorithm_route_code": {
+          "value_type": "string",
+          "required": true,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_status": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_basis": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_annotations": {
+          "value_type": "object",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        }
+      },
+      "PlugInUnit": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        },
+        "field_code": {
+          "value_type": "string",
+          "required": false
+        },
+        "element_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "temp_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "source_algorithm_route_code": {
+          "value_type": "string",
+          "required": true,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_status": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_basis": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_annotations": {
+          "value_type": "object",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        }
+      },
+      "StraightSection": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "full_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "code": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "full_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "description": {
+          "value_type": "string",
+          "required": false
+        },
+        "field_code": {
+          "value_type": "string",
+          "required": false
+        },
+        "element_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "temp_type_code": {
+          "value_type": "string",
+          "required": true
+        },
+        "source_algorithm_route_code": {
+          "value_type": "string",
+          "required": true,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_status": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_algorithm_route_basis": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        },
+        "source_annotations": {
+          "value_type": "object",
+          "required": false,
+          "semantic_status": "source_annotation_only"
+        }
+      },
+      "Port": {
+        "ordinal": {
+          "value_type": "integer",
+          "required": true
+        },
+        "name": {
+          "value_type": "string",
+          "required": true
+        },
+        "display_name": {
+          "value_type": "string",
+          "required": false
+        },
+        "port_type_code": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "501",
+            "502",
+            "503"
+          ]
+        },
+        "role": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "input",
+            "output",
+            "attachment"
+          ]
+        },
+        "enabled": {
+          "value_type": "boolean",
+          "required": true
+        },
+        "source_load_full_code": {
+          "value_type": "string",
+          "required": false,
+          "semantic_status": "source_evidence_only"
+        }
+      },
+      "MeasurementPoint": {
+        "item": {
+          "value_type": "string",
+          "required": true
+        },
+        "variable_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "measurement_system_ref": {
+          "value_type": "string",
+          "required": true
+        }
+      },
+      "Observable": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": false
+        },
+        "quantity_kind": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "active_power",
+            "alarm_state",
+            "duration",
+            "electric_current",
+            "electric_voltage",
+            "frequency",
+            "power_factor",
+            "ratio",
+            "reactive_power",
+            "relative_humidity",
+            "statistical_correlation",
+            "temperature",
+            "temperature_change_rate",
+            "temperature_difference"
+          ]
+        },
+        "canonical_unit": {
+          "value_type": "string",
+          "required": true
+        },
+        "value_kind": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "boolean",
+            "continuous"
+          ]
+        },
+        "availability": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "source_point"
+          ]
+        }
+      },
+      "DerivedObservable": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": false
+        },
+        "quantity_kind": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "active_power",
+            "alarm_state",
+            "duration",
+            "electric_current",
+            "electric_voltage",
+            "frequency",
+            "power_factor",
+            "ratio",
+            "reactive_power",
+            "relative_humidity",
+            "statistical_correlation",
+            "temperature",
+            "temperature_change_rate",
+            "temperature_difference"
+          ]
+        },
+        "canonical_unit": {
+          "value_type": "string",
+          "required": true
+        },
+        "value_kind": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "boolean",
+            "continuous"
+          ]
+        },
+        "derivation_mode": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "source_calculated"
+          ]
+        },
+        "availability": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "source_point",
+            "computed_on_demand"
+          ]
+        }
+      },
+      "Phenomenon": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": true
+        },
+        "diagnostic_scope_status": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "in_scope",
+            "outside_current_product_scope",
+            "unconfirmed"
+          ]
+        },
+        "rule_evaluation_status": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "produced_by_rule",
+            "intermediate_criterion_only",
+            "not_evaluated_by_current_rules"
+          ],
+          "definition": "该现象在当前权威规则版本中的地位。produced_by_rule=有 D 类规则直接产出；intermediate_criterion_only=仅作为其他规则的中间判据出现，不单独输出；not_evaluated_by_current_rules=知识层存在但当前规则无法判定",
+          "rationale": "若不区分，图上八个现象看起来同等可诊断，实际只有六个是规则输出"
+        },
+        "rule_evaluation_note": {
+          "value_type": "string",
+          "required": false,
+          "definition": "当 rule_evaluation_status 不是 produced_by_rule 时，说明该现象在规则体系中的确切地位与缺口",
+          "required_when": {
+            "rule_evaluation_status_in": [
+              "intermediate_criterion_only",
+              "not_evaluated_by_current_rules"
+            ]
+          }
+        }
+      },
+      "RootCause": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": true
+        }
+      },
+      "DiagnosticScope": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": true
+        },
+        "instance_derivation": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "single_component_instance",
+            "topologically_adjacent_joint_pair",
+            "trunk_current_segment",
+            "proven_unsplit_extension",
+            "busway_system"
+          ],
+          "semantic_note": "声明该范围的实例如何从当前工程拓扑枚举，避免范围只被声明而无法实例化"
+        },
+        "instance_derivation_status": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "derivable_from_topology",
+            "requires_external_runtime_evidence"
+          ]
+        }
+      },
+      "DiagnosticParameter": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": true
+        },
+        "parameter_key": {
+          "value_type": "string",
+          "required": true
+        },
+        "parameter_role": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "band",
+            "correlation",
+            "design_reference",
+            "duration",
+            "lag",
+            "lower_bound",
+            "rate",
+            "stability"
+          ]
+        },
+        "parameter_unit": {
+          "value_type": "string",
+          "required": true
+        },
+        "parameter_binding_status": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "unresolved",
+            "configured"
+          ]
+        },
+        "parameter_value_source": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "external_parameter_registry"
+          ]
+        }
+      },
+      "ReferenceStatistic": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": true
+        },
+        "statistic_key": {
+          "value_type": "string",
+          "required": true
+        },
+        "statistic_kind": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "historical_incident_share"
+          ]
+        },
+        "statistic_binding_status": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "unresolved",
+            "configured"
+          ]
+        },
+        "not_for_diagnostic_scoring": {
+          "value_type": "boolean",
+          "required": true,
+          "const": true
+        }
+      },
+      "RuleVersion": {
+        "display_name": {
+          "value_type": "string",
+          "required": true
+        },
+        "definition": {
+          "value_type": "string",
+          "required": true
+        },
+        "document": {
+          "value_type": "string",
+          "required": true
+        },
+        "document_version": {
+          "value_type": "string",
+          "required": true
+        },
+        "profile_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "lifecycle_status": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "active",
+            "superseded"
+          ]
+        },
+        "rule_content_in_ontology": {
+          "value_type": "boolean",
+          "required": true,
+          "const": false,
+          "definition": "规则判据与阈值数值不得搬进本体，本实体只是引用锚点"
+        }
+      },
+      "EngineeringContainer": {},
+      "EngineeringComponent": {},
+      "ObservableConcept": {},
+      "DiagnosticScopeInstance": {
+        "project_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "topology_version": {
+          "value_type": "string",
+          "required": true
+        },
+        "derivation_rule_id": {
+          "value_type": "string",
+          "required": true
+        },
+        "derivation_rule_version": {
+          "value_type": "string",
+          "required": true
+        },
+        "context_key": {
+          "value_type": "string",
+          "required": true,
+          "definition": "范围概念、成员集合及适用条件的稳定上下文标识，由受治理派生流程生成。"
+        }
+      }
+    },
+    "relation_types": {
+      "CONTAINS": {},
+      "HAS_PORT": {},
+      "CONNECTS_TO_COMPONENT": {
+        "port_role": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "input",
+            "output",
+            "attachment"
+          ],
+          "definition": "该端口在所属部件上承担的角色，取自 topology.xml 的端口组态"
+        },
+        "port_enabled": {
+          "value_type": "boolean",
+          "required": true,
+          "definition": "该端口在组态中是否启用。禁用端口不构成 PRECEDES 证据，进而使相邻判定降级为 disqualified_port_not_enabled"
+        }
+      },
+      "PRECEDES": {
+        "evidence_port_refs": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 1,
+          "item_reference_kind": "stable_ref"
+        },
+        "all_ports_enabled": {
+          "value_type": "boolean",
+          "required": true,
+          "definition": "构成本条前接关系的两端端口是否均处于启用状态。为假时该链路不得作为 D3 相邻判定的合格证据"
+        }
+      },
+      "BRANCHES_INTO": {
+        "evidence_port_refs": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 1,
+          "item_reference_kind": "stable_ref"
+        }
+      },
+      "TOPOLOGICALLY_ADJACENT_TO": {
+        "evidence_port_refs": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 2,
+          "item_reference_kind": "stable_ref",
+          "definition": "构成相邻链路的端口序列，逐跳给出。本属性替代早先声明的 evidence_relation_ids——见 constraints.relation_identity"
+        },
+        "intermediate_component_refs": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 0,
+          "max_items": 1,
+          "item_reference_kind": "stable_ref"
+        },
+        "path_length": {
+          "value_type": "integer",
+          "required": true,
+          "minimum": 1,
+          "maximum": 2
+        },
+        "crosses_branch_point": {
+          "value_type": "boolean",
+          "required": true
+        },
+        "all_path_ports_enabled": {
+          "value_type": "boolean",
+          "required": true
+        },
+        "adjacency_evidence_grade": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "rule_d3_qualified",
+            "disqualified_branch_present",
+            "disqualified_port_not_enabled"
+          ],
+          "definition": "是否满足 rule_v2.md D3 的相邻链路证据要求；仅 rule_d3_qualified 可进入诊断范围"
+        }
+      },
+      "HAS_POINT": {},
+      "OBSERVES": {},
+      "EXPOSES_OBSERVABLE": {
+        "evidence_point_refs": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 1,
+          "item_reference_kind": "stable_ref"
+        },
+        "path_count": {
+          "value_type": "integer",
+          "required": true,
+          "minimum": 1
+        }
+      },
+      "EXPECTED_OBSERVABLE": {
+        "via_scope": {
+          "value_type": "string",
+          "required": true
+        },
+        "via_scope_instance": {
+          "value_type": "string",
+          "required": true
+        },
+        "via_phenomenon": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 1,
+          "item_reference_kind": "stable_ref",
+          "semantics": "本条应然绑定由哪些现象推出。是集合而非单值——同一个量可能被多个现象共同要求， 压成分隔符拼接的字符串会让「按现象过滤」必须先解析文本，且分隔符全靠约定"
+        },
+        "rule_clause": {
+          "value_type": "array[string]",
+          "required": true,
+          "min_items": 1,
+          "semantics": "要求该量的条款号集合。同上，是聚合结果而非单值；声明侧 （CHARACTERIZED_BY / EVALUATED_BY）的 rule_clause 才是单值，两者语义不同不可混用"
+        },
+        "instrumented": {
+          "value_type": "boolean",
+          "required": true
+        },
+        "provision": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "source_point",
+            "computed_on_demand"
+          ],
+          "semantics": "取自目标可观测量的 availability。只有 source_point 的量缺失才构成仪表缺口； computed_on_demand 的量由 DERIVED_FROM 的输入算出，期待它有物理测点是落点误判"
+        },
+        "instrumentation_evidence": {
+          "value_type": "array[string]",
+          "required": false,
+          "item_reference_kind": "stable_ref"
+        }
+      },
+      "DERIVED_FROM": {},
+      "CHARACTERIZED_BY": {
+        "criterion_role": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "rule_criterion",
+            "contextual_only"
+          ],
+          "definition": "该可观测量在权威规则中承担的角色。rule_criterion=被 rule_clause 指定的条款直接读取并参与判定；contextual_only=与现象语义相关但当前规则条款不读取",
+          "rationale": "不区分二者会让本体宽于 rule_v2.md，可视化据此判断\"可诊断性\"时会得出错误结论（例如把母线槽级报警当作接头级 D1 的判据）"
+        },
+        "rule_clause": {
+          "value_type": "string",
+          "required_when": "criterion_role == rule_criterion",
+          "definition": "读取该量的权威条款编号，必须已在 constraints.rule_alignment.clause_reconciliation 或现象的 EVALUATED_BY 中登记"
+        },
+        "criterion_note": {
+          "value_type": "string",
+          "required_when": "criterion_role == contextual_only",
+          "definition": "说明为何该量不是判据，避免下游误以为遗漏"
+        }
+      },
+      "SPECIALIZES": {},
+      "MAY_EXHIBIT": {},
+      "MAY_AFFECT": {},
+      "APPLICABLE_TO_SCOPE": {
+        "scope_role": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "localization",
+            "comparison_basis",
+            "applicability_basis",
+            "reporting_context"
+          ],
+          "definition": "该范围在判据中承担的角色。localization=现象断言的落点（每个现象至多一个）；comparison_basis=判据聚合或比较所依据的成员集合；applicability_basis=该量在何范围内有效（如干路电流适用性）；reporting_context=随断言一并上报的上下文粒度，不参与判定也不改变落点",
+          "rationale": "四者混用会导致\"在单接头范围内求同范围均值\"这类不可执行的声明，或让同一现象出现两个互相矛盾的落点"
+        }
+      },
+      "REQUIRES_PARAMETER": {},
+      "HAS_REFERENCE_STATISTIC": {},
+      "EVALUATED_BY": {
+        "rule_clause": {
+          "value_type": "string",
+          "required": true,
+          "definition": "该现象或根因在规则文档中对应的条款编号"
+        },
+        "clause_role": {
+          "value_type": "string",
+          "required": true,
+          "allowed_values": [
+            "produces_phenomenon",
+            "produces_root_cause",
+            "intermediate_criterion"
+          ],
+          "definition": "该条款相对于本实体的作用；intermediate_criterion 表示实体只作为条款的中间判据，不由该条款单独输出"
+        }
+      },
+      "POSSIBLE_CAUSE": {},
+      "INSTANCE_OF_SCOPE": {},
+      "HAS_SCOPE_MEMBER": {}
+    }
+  },
+  "identity_constraints": {
+    "application_ids": {
+      "entities": "entity_id",
+      "statements": "assertion_id",
+      "relationships": "relationship_id",
+      "property_values": "property_value_id",
+      "neo4j_element_id_as_persistent_identity": false,
+      "reimport_and_retry": "stable_and_idempotent",
+      "tenant_scope": "server_supplied"
+    },
+    "entity_identity": {
+      "Project": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "Busway": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "Section": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "EndFeedUnit": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "Flange": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "Joint": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "PlugInUnit": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "StraightSection": {
+        "source_graph_id_template": "asset:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id"
+        ],
+        "business_key_properties": [
+          "full_code"
+        ],
+        "source_reference_template": "{project_id}/{full_code}",
+        "source_key_role": "audited_external_identity_key"
+      },
+      "Port": {
+        "source_graph_id_template": "port:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "owner_entity_id"
+        ],
+        "business_key_properties": [
+          "ordinal"
+        ],
+        "owner_relation": "HAS_PORT",
+        "owner_endpoint": "from",
+        "source_reference_template": "{owner_stable_ref}/port/{ordinal}"
+      },
+      "MeasurementPoint": {
+        "source_graph_id_template": "point:{stable_ref}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "owner_entity_id"
+        ],
+        "business_key_properties": [
+          "item"
+        ],
+        "owner_relation": "HAS_POINT",
+        "owner_endpoint": "from",
+        "source_reference_template": "{owner_stable_ref}#{item}"
+      },
+      "Observable": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id"
+      },
+      "DerivedObservable": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id"
+      },
+      "Phenomenon": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id"
+      },
+      "RootCause": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id"
+      },
+      "DiagnosticScope": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id"
+      },
+      "DiagnosticParameter": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id",
+        "additional_unique_property_sets": [
+          [
+            "parameter_key"
+          ]
+        ]
+      },
+      "ReferenceStatistic": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id",
+        "additional_unique_property_sets": [
+          [
+            "statistic_key"
+          ]
+        ]
+      },
+      "RuleVersion": {
+        "source_graph_id_template": "{namespace}{entity_id}",
+        "stable_application_id_required": true,
+        "uniqueness_scope": [
+          "tenant_id",
+          "namespace"
+        ],
+        "record_identity_fields": [
+          "entity_id"
+        ],
+        "identity_assignment": "explicit_stable_knowledge_record_id"
+      },
+      "DiagnosticScopeInstance": {
+        "uniqueness_scope": [
+          "tenant_id",
+          "project_id",
+          "topology_version"
+        ],
+        "business_key_properties": [
+          "context_key"
+        ],
+        "identity_assignment": "stable_application_registry"
+      }
+    },
+    "relationship_identity": {
+      "stable_application_id_required": true,
+      "required_for_direct_and_derived_relationships": true,
+      "aggregate_relationship_id_distinct_from_supporting_assertion_ids": true,
+      "endpoint_triple_alone_identifies_evidence_revision": false,
+      "different_sources_and_contexts": "retain_separate_assertions_and_evidence",
+      "migration_note": "替代源本体中物化边无稳定 ID 的延期约定；持久业务标识不使用 Neo4j elementId。"
+    },
+    "resolution": {
+      "same_label_or_name_is_sufficient": false,
+      "business_key_change": "audited_identity_mapping_preserving_history",
+      "unsupported_identity": "quarantine_not_guess"
+    },
+    "source_identity_invariants": {
+      "entity_type_ids_unique": true,
+      "relation_type_ids_unique": true,
+      "declared_entity_ids_unique": true,
+      "declared_relation_ids_unique": true,
+      "project_full_code_unique": true,
+      "project_identity_sources_equal": true,
+      "stable_ref_unique": true,
+      "graph_id_unique": true,
+      "graph_id_template_matches_identity_scheme": true,
+      "port_ordinal_unique_per_owner": true,
+      "point_item_unique_per_owner": true,
+      "diagnostic_parameter_key_unique": true,
+      "reference_statistic_key_unique": true
+    }
+  },
+  "statement_model": {
+    "definition": "每条记录表达一个可追溯的知识陈述；陈述可指向实体、关系或某个属性值。事实陈述表示来源这样声称，是否认可另由治理状态决定。",
+    "record_id": "assertion_id",
+    "subjects": [
+      "entity",
+      "entity_type",
+      "relationship"
+    ],
+    "objects": [
+      "entity",
+      "entity_type",
+      "typed_literal"
+    ],
+    "required_fields": [
+      "assertion_id",
+      "subject",
+      "predicate",
+      "object",
+      "semantics",
+      "provenance"
+    ],
+    "semantics": {
+      "scope_kind": [
+        "instance",
+        "type_general",
+        "concept_general"
+      ],
+      "statement_kind": [
+        "fact_statement",
+        "general_knowledge",
+        "requirement",
+        "candidate_explanation"
+      ],
+      "modality": [
+        "asserted",
+        "possible",
+        "required"
+      ],
+      "polarity": [
+        "positive",
+        "negative"
+      ],
+      "independent_of": [
+        "origin",
+        "authority",
+        "governance_status"
+      ],
+      "defaults": "do_not_invent_missing_required_semantics",
+      "scope_kind_definitions": {
+        "instance": "涉及具体工程对象、配置或范围实例的陈述；statement_kind 仍区分事实和要求。",
+        "type_general": "以实体类型为适用对象的一般性陈述；端点明确引用类型注册表。",
+        "concept_general": "领域知识概念之间的通用陈述；概念虽然以实体记录存储，但不表示某台设备的事实。"
+      }
+    },
+    "context_fields": {
+      "project_id": {
+        "value_type": "string",
+        "required": false
+      },
+      "applicable_type_ids": {
+        "value_type": "array[string]",
+        "required": false,
+        "reference_kind": "entity_type"
+      },
+      "scope_entity_ids": {
+        "value_type": "array[string]",
+        "required": false,
+        "reference_kind": "entity"
+      },
+      "configuration_version": {
+        "value_type": "string",
+        "required": false
+      },
+      "valid_from": {
+        "value_type": "datetime",
+        "required": false
+      },
+      "valid_to": {
+        "value_type": "datetime",
+        "required": false
+      },
+      "observed_at": {
+        "value_type": "datetime",
+        "required": false
+      },
+      "operating_conditions": {
+        "value_type": "array[object]",
+        "required": false
+      },
+      "rule_version": {
+        "value_type": "string",
+        "required": false
+      }
+    },
+    "context_policy": {
+      "absent_context": "unknown_or_not_stated_not_universal_applicability",
+      "time_range": "valid_from_precedes_valid_to_when_both_present",
+      "conditions": "typed_predicates_with_declared_operators_no_arbitrary_code",
+      "missing_evidence": "unknown_not_false",
+      "applicability_match_required_before_using_general_knowledge": true,
+      "same_name_implies_same_entity_or_class": false
+    },
+    "type_general_knowledge": {
+      "entity_type_reference": "same_type_registry_as_entity_types",
+      "retrieval": "resolve_entity_type_then_return_applicable_general_statements_with_qualifiers",
+      "presentation": "preserve_type_general_scope_and_modality",
+      "copy_to_instance_fact_edges": false,
+      "copy_specific_other_instance_property_values": false
+    },
+    "provenance": {
+      "evidence": {
+        "$ref": "#/governance_constraints/evidence"
+      },
+      "source_authority": {
+        "$ref": "#/governance_constraints/source_authority"
+      },
+      "origin": [
+        "EXPERT_IMPORT",
+        "EXPERT_CREATED",
+        "LLM_EXTRACTED",
+        "AUTHORITATIVE_EXTRACTED",
+        "HUMAN_SUPPLEMENT",
+        "RULE_DERIVED",
+        "FIXTURE"
+      ],
+      "governance_status": [
+        "CANDIDATE",
+        "APPROVED",
+        "PUBLISHED",
+        "QUARANTINED",
+        "REJECTED",
+        "SUPERSEDED"
+      ],
+      "confidence": {
+        "value_type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "meaning": "extraction_or_assertion_confidence_not_authority"
+      }
+    },
+    "storage_contract": "Reuse governed mention/assertion/value revision records; property graph need not create a business node for every statement.",
+    "legacy_import_semantics": {
+      "relation_assertion_terms": {
+        "TOPOLOGICALLY_ADJACENT_TO": [
+          "derived"
+        ],
+        "EXPOSES_OBSERVABLE": [
+          "derived"
+        ],
+        "EXPECTED_OBSERVABLE": [
+          "expected"
+        ],
+        "DERIVED_FROM": [
+          "derived"
+        ],
+        "CHARACTERIZED_BY": [
+          "characterization"
+        ],
+        "SPECIALIZES": [
+          "taxonomic"
+        ],
+        "MAY_EXHIBIT": [
+          "possible_applicability"
+        ],
+        "MAY_AFFECT": [
+          "possible_applicability"
+        ],
+        "APPLICABLE_TO_SCOPE": [
+          "scope_applicability"
+        ],
+        "REQUIRES_PARAMETER": [
+          "parameter_dependency"
+        ],
+        "HAS_REFERENCE_STATISTIC": [
+          "descriptive_reference"
+        ],
+        "EVALUATED_BY": [
+          "rule_binding"
+        ],
+        "POSSIBLE_CAUSE": [
+          "possible"
+        ]
+      },
+      "do_not_use_as_single_combined_enum": true,
+      "legacy_review_status_mapping": {
+        "source_documented": {
+          "meaning": "来源声称有文档依据",
+          "governance_status": "CANDIDATE"
+        },
+        "derived_from_rule_reconciliation": {
+          "meaning": "来源声称由规则对账补充",
+          "governance_status": "CANDIDATE"
+        }
+      },
+      "origin_assignment": "actual_ingestion_activity_and_server_profile_not_legacy_status_name",
+      "grade_assignment": "current_upload_selection_not_legacy_review_status"
+    }
+  },
+  "governance_constraints": {
+    "source_authority": {
+      "levels": {
+        "AUTHORITATIVE": {
+          "display_name": "权威"
+        },
+        "SECONDARY": {
+          "display_name": "次权威"
+        }
+      },
+      "assigned_by": "document_upload_selection",
+      "upload_field": "knowledge_scope",
+      "upload_value_mapping": {
+        "AUTHORITATIVE": "AUTHORITATIVE",
+        "BUSINESS": "SECONDARY"
+      },
+      "propagation": "inherit_document_authority_for_source_extracted_information",
+      "applies_to": [
+        "entity_identity_assertion",
+        "entity_type_assertion",
+        "relationship_assertion",
+        "entity_property_assertion",
+        "relationship_property_assertion"
+      ],
+      "stored_fields": {
+        "api": "trust.authority",
+        "graph_and_storage": "authority_level"
+      },
+      "missing_selection": {
+        "upload_default": "BUSINESS",
+        "authority": "SECONDARY"
+      },
+      "authority_from_ontology_file_content": "forbidden",
+      "source_grade_change": "new_governed_revision_preserving_previous_evidence",
+      "multi_source": {
+        "retain_authority_per_source_assertion": true,
+        "entity_display_aggregation": "authority_levels",
+        "relationship_display_aggregation": "authority_levels",
+        "overwrite_all_information_on_entity": false,
+        "property_inheritance": "inherit_own_evidence_source_or_same_source_enclosing_assertion",
+        "highest_grade_silently_resolves_conflict": false
+      },
+      "formation_and_review": {
+        "separate_fields": [
+          "origin",
+          "authority",
+          "status"
+        ],
+        "review_changes_authority": false,
+        "authority_implies_approved_or_published": false,
+        "extraction_confidence_is_source_authority": false
+      },
+      "current_service_binding": {
+        "authoritative_upload_requires_scopes": [
+          "knowledge:construct",
+          "knowledge:import"
+        ],
+        "authoritative_upload_extraction_modes": [
+          "LLM"
+        ],
+        "origin_to_authority": {
+          "EXPERT_IMPORT": "AUTHORITATIVE",
+          "EXPERT_CREATED": "AUTHORITATIVE",
+          "AUTHORITATIVE_EXTRACTED": "AUTHORITATIVE",
+          "LLM_EXTRACTED": "SECONDARY",
+          "HUMAN_SUPPLEMENT": "SECONDARY",
+          "RULE_DERIVED": "SECONDARY",
+          "FIXTURE": "SECONDARY"
+        },
+        "derived_authority": "SECONDARY",
+        "derived_inherits_premise_authority": false,
+        "note": "沿用当前服务约束。上传等级传递针对文档抽取信息；规则新派生的陈述仍使用 RULE_DERIVED，不能冒充原文抽取。"
+      }
+    },
+    "evidence": {
+      "reference_model": "platform_chunk_evidence_v1",
+      "targets": [
+        "entity_identity_assertion",
+        "entity_type_assertion",
+        "relationship_assertion",
+        "entity_property_assertion",
+        "relationship_property_assertion"
+      ],
+      "direct_evidence_required_fields": [
+        "document_id",
+        "version_id",
+        "chunk_id",
+        "char_start",
+        "char_end",
+        "quoted_text"
+      ],
+      "source_resolution": "document_id_resolves_registered_source_id",
+      "document_version_resolution": "version_id_resolves_immutable_document_version_and_checksum",
+      "range_semantics": "zero_based_half_open_global_character_range_in_canonical_document_text",
+      "checks": [
+        "document_version_belongs_to_document",
+        "chunk_belongs_to_document_version",
+        "range_is_nonempty_and_within_chunk",
+        "quoted_text_matches_canonical_source_range",
+        "referenced_source_supports_the_specific_statement"
+      ],
+      "structured_source": {
+        "optional_locators": [
+          "xml_path",
+          "json_pointer",
+          "yaml_path"
+        ],
+        "replaces_chunk_evidence": false,
+        "canonicalization_and_original_document_version_link_required": true
+      },
+      "property_granularity": {
+        "reference_owner_id_required": true,
+        "reference_property_name_required": true,
+        "reference_specific_value_or_value_revision_required": true,
+        "whole_entity_document_reference_is_sufficient": false
+      },
+      "derived_evidence": {
+        "required": [
+          "derivation_rule_id",
+          "derivation_rule_version",
+          "premise_assertion_ids",
+          "input_snapshot_id"
+        ],
+        "premises_must_resolve_to_chunk_evidence": true,
+        "recursion_and_graph_expansion": "bounded_by_platform_policy",
+        "claim_direct_source_quote_for_derived_conclusion": false,
+        "input_snapshot": {
+          "identity": "immutable_server_registered_manifest",
+          "contains": [
+            "ontology_version",
+            "source_document_versions",
+            "premise_assertion_revisions",
+            "rule_version"
+          ],
+          "candidate_construction": "candidate_input_snapshot_without_required_prior_publication",
+          "published_knowledge": "published_input_snapshot_with_publication_reference"
+        },
+        "publication_binding": "Bind generated assertion to its publication when published; do not require a future output publication during candidate construction."
+      },
+      "multiple_sources": "retain_separate_support_and_conflict_records",
+      "unresolved_evidence": "not_publishable_as_confirmed_fact",
+      "manual_information": "register_versioned_reviewable_source_before_publication",
+      "security_context": {
+        "supplied_by": "server_authenticated_context",
+        "fields": [
+          "tenant_id",
+          "access_policy_id",
+          "access_policy_version",
+          "access_groups"
+        ],
+        "ontology_or_upload_content_may_override": false
+      }
+    },
+    "consistency": {
+      "type_reference_closure": true,
+      "entity_reference_closure": true,
+      "evidence_reference_closure": true,
+      "endpoint_type_validation": true,
+      "allowed_type_pairs_override_cartesian_product": true,
+      "validate_property_values": true,
+      "validate_identity": true,
+      "conflicts": "retain_and_flag_do_not_silently_overwrite",
+      "unsupported_semantics": "reject_activation_not_ignore_fields",
+      "canonical_direction_only": true,
+      "phenomenon_specialization_acyclic": true
+    },
+    "semantic_safety": {
+      "general_knowledge_implies_instance_fact": false,
+      "possible_cause_is_confirmed_diagnosis": false,
+      "expected_observable_implies_instrumentation": false,
+      "missing_evidence_implies_false": false,
+      "runtime_measurements_in_ontology": "forbidden",
+      "runtime_diagnostic_results_in_ontology": "forbidden",
+      "type_templates_are_graph_nodes": false,
+      "type_template_instance_expansion": "forbidden",
+      "measurement_host_implies_fault_subject": false,
+      "raw_graph_degree_implies_diagnostic_importance": false,
+      "characterized_by_is_rule_match": false,
+      "topological_adjacency_implies_current_continuity": false,
+      "trunk_current_segment_implies_thermal_comparability": false,
+      "topological_adjacency_implies_rule_applicability": false,
+      "scope_membership_implies_measurability": false,
+      "expected_observable_implies_occurrence": false,
+      "absent_exposes_observable_implies_not_required": false,
+      "outside_scope_phenomenon_has_possible_cause": false,
+      "missing_instance_evidence_behavior": "fail_closed",
+      "scope_role_required_on_applicable_to_scope": true,
+      "phenomenon_without_localization_scope": "reject",
+      "aggregating_criterion_on_single_entity_scope": "reject",
+      "localization_scope_reused_as_comparison_basis": "reject",
+      "type_templates_are_graph_nodes_explanation": "不创建冒充业务实例的类别模板节点；类别端点引用本体类型注册表，展示可使用明确标注的类型视图节点。"
+    },
+    "external_values": {
+      "diagnostic_parameter_numeric_values": "forbidden",
+      "reference_statistic_distribution_values": "forbidden",
+      "forbidden_declared_entity_property_names": [
+        "value",
+        "numeric_value",
+        "threshold_value",
+        "ratio_value",
+        "default_value"
+      ],
+      "reference_statistics_for_scoring": false,
+      "unresolved_parameter_behavior": "fail_closed"
+    },
+    "source_scope": {
+      "upload_authority_does_not_widen_applicability": true,
+      "generic_domain_source_cannot_assert_current_project_instances": true,
+      "topology_source_cannot_assert_live_measurements_or_diagnosis": true,
+      "algorithm_route_annotations_grant_applicability": false,
+      "physical_point_bindings": "external_data_adapter"
+    },
+    "materialization_safety": {
+      "unknown_node_type": "reject",
+      "observable_no_match": "reject",
+      "observable_cross_target_conflict": "reject",
+      "source_point_entities_allowed_types": [
+        "Observable",
+        "DerivedObservable"
+      ],
+      "computed_on_demand_observable_point_mapping": "forbidden",
+      "algorithm_route_annotations_grant_applicability": false,
+      "disabled_port_source_fact_preserved": true,
+      "disabled_port_proves_operational_connectivity": false,
+      "adjacency_cycle": "reject",
+      "adjacency_endpoint_type_mismatch": "reject",
+      "adjacency_unknown_intermediate_type": "reject",
+      "adjacency_derivation_wider_than_rule_clause": "reject",
+      "unresolved_scope_instance_derivation": "reject"
+    },
+    "rule_alignment": {
+      "purpose": "本体把诊断规则列为外置权威，必须保证本体内的派生口径与规则条款一致；ONT-107 实证过口径走样会直接污染诊断范围",
+      "definition_authority_required_for": [
+        "relation_types.APPLICABLE_TO_SCOPE",
+        "relation_types.CHARACTERIZED_BY",
+        "versioned_derivation_rules",
+        "topology_mapping_rules"
+      ],
+      "definition_authority_kinds": [
+        "source_schema",
+        "derived_within_ontology",
+        "diagnostic_rule"
+      ],
+      "missing_definition_authority": "reject",
+      "derivation_wider_than_cited_clause": "reject",
+      "rules_document_version_change_requires_reconciliation": true,
+      "unreconciled_clause_behavior": "reject",
+      "every_produced_phenomenon_requires_evaluated_by": true,
+      "every_root_cause_requires_evaluated_by": true,
+      "evaluated_by_clause_must_be_registered": true,
+      "single_localization_scope_per_phenomenon": true,
+      "root_cause_localization_inherits_phenomenon": true,
+      "criterion_role_required_on_characterized_by": true,
+      "criterion_role_requires_registered_clause": true,
+      "criterion_must_be_evaluable_within_localization_scope": "warn",
+      "contextual_only_must_not_be_treated_as_criterion": true,
+      "fixed_rule_filename_or_instance_id_required_for_ontology_loading": false,
+      "registered_clause_resolution": "versioned_rule_binding_registry_at_knowledge_validation_time"
+    },
+    "record_shape": {
+      "business_properties": "declared_by_type_only",
+      "abstract_instances": "forbidden",
+      "reserved_legacy_generic_instance_types": [
+        "Entity",
+        "Concept",
+        "Asset",
+        "Component"
+      ],
+      "statement_fields": {
+        "$ref": "#/statement_model"
+      },
+      "source_review_labels_are_approval": false
+    },
+    "semantic_layer_assignment": {
+      "definitions": {
+        "$ref": "#/annotations/semantic_layers/definitions"
+      },
+      "entity_layer_source": "entity_types.*.layer",
+      "relationship_layer_source": "relation_types.*.layer",
+      "relationship_layer_keywords": {
+        "from_target_node": "该关系落在其目标节点所在层——声明层关系的层应随语义对象走， 例如 DERIVED_FROM 指向可观测量就归可观测量层，EVALUATED_BY 指向规则版本就归规则层"
+      },
+      "type_endpoint_relationship_layer": "type_template",
+      "scope_instance_type": "DiagnosticScopeInstance",
+      "scope_instance_layer": "scope",
+      "validation": {
+        "entity_type_without_layer": "reject",
+        "relation_type_without_layer": "reject",
+        "undefined_layer_reference": "reject",
+        "layer_declared_but_unused": "reject",
+        "abstract_type_without_business_layer": "allowed_in_type_hierarchy_view_only"
+      }
+    },
+    "diagnostic_scope_integrity": {
+      "scope_definition_relation": "INSTANCE_OF_SCOPE",
+      "member_relation": "HAS_SCOPE_MEMBER",
+      "scope_definition_binding": "versioned_domain_scope_definition_not_a_hardcoded_instance_id",
+      "definition_requires": [
+        "derivation_method",
+        "allowed_member_types",
+        "member_cardinality",
+        "applicability_conditions",
+        "definition_version"
+      ],
+      "missing_scope_definition": "reject_scope_derivation_not_ontology_loading",
+      "checks": [
+        "member_types_match_scope_definition",
+        "distinct_member_count_matches_scope_definition",
+        "all_members_in_same_project_and_configuration",
+        "premise_evidence_and_scope_conditions_resolve"
+      ],
+      "method_constraints": {
+        "single_component_instance": {
+          "distinct_members": 1,
+          "allowed_member_types": "from_versioned_scope_definition"
+        },
+        "topologically_adjacent_joint_pair": {
+          "distinct_members": 2,
+          "allowed_member_types": [
+            "Joint"
+          ],
+          "required_member_relationship": "TOPOLOGICALLY_ADJACENT_TO",
+          "required_relationship_properties": {
+            "adjacency_evidence_grade": "rule_d3_qualified"
+          }
+        },
+        "proven_unsplit_extension": {
+          "external_runtime_evidence_required": true,
+          "topology_alone_is_sufficient": false
+        }
+      },
+      "source_package_single_joint_scope": {
+        "binding_location": "../new_files/mapping.topology_xml.yaml#/materialization/topology_xml/scope_derivations/SINGLE_JOINT_SCOPE",
+        "interpretation": "本次来源绑定的单接头范围要求恰好一个 Joint；其他领域的单成员范围由其各自版本化定义决定。",
+        "binding_is_ontology_load_dependency": false
+      }
+    },
+    "observation_availability_semantics": {
+      "HAS_POINT_and_OBSERVES": "declared_configuration_not_confirmed_physical_installation_or_live_data",
+      "EXPOSES_OBSERVABLE": "evidence_backed_configured_observation_binding",
+      "EXPECTED_OBSERVABLE.instrumented": "configuration_level_coverage_flag_resolved_from_applicable_observation_binding",
+      "instrumented_requires_complete_input_configuration_snapshot": true,
+      "incomplete_snapshot": "unknown_no_false_absence_claim",
+      "provision_source_point_gap": "missing_expected_configured_source_point_binding",
+      "provision_computed_on_demand_gap": "dependency_or_computation_capability_gap_not_missing_physical_sensor",
+      "actual_installation_and_runtime_data_availability": "require_separate_external_evidence"
+    }
+  },
+  "annotations": {
+    "section_guide": {
+      "metadata": "1. 本体元信息：合同版本、标识、命名空间、领域、语义依赖与生命周期。",
+      "entity_types": "2. 实体类型：稳定类型 ID、定义、别名、语义角色及是否允许实例化。",
+      "type_hierarchy": "3. 类型层级：子类型、归类、互斥与继承约束；组成关系不属于类型继承。",
+      "relation_categories": "4. 关系分类：分类标识、名称和含义；分类不产生关系继承或实例事实。",
+      "relation_types": "5. 关系类型：含义、方向、端点种类、类型组合、基数及受支持的可选语义。",
+      "property_definitions": "6. 属性：按实体类型或关系类型分别定义值类型、单位、枚举、范围、必填与集合约束。",
+      "identity_constraints": "7. 身份：稳定应用 ID、业务键及唯一性范围；不能仅按名称合并。",
+      "statement_model": "8. 知识陈述：陈述内容、类别或实例对象、可能性、否定、条件、项目、时间与配置版本。",
+      "governance_constraints": "9. 一致性、来源分级与证据：上传等级传递、逐项引用、语义边界和有效性校验。",
+      "annotations": "10. 语义注释：填写说明、语义分层、定义出处、兼容说明；不承载执行规则或页面样式。"
+    },
+    "template_usage": [
+      "本文件已填写母线槽领域定义，采用 ontology.template.json 同一合同；当前状态 DRAFT。",
+      "原 18 个类型和 20 个领域关系保留；新增 3 个禁止实例化的上位类型，并显式定义原来隐含的范围实例类型和 2 个辅助关系。",
+      "关系中 persistence、derivation_path 和 definition_authority 保留来源定义的形成依据；它们不是可自行执行的导入脚本。",
+      "rule_v2.md 的条款号属于本次来源定义的依据，不固定未来工程的规则版本；规则绑定应在知识数据中版本化管理。",
+      "语义依赖为空，可独立读取本体；下列源文件定位只供设计溯源，不作为本体加载必须存在的实例依赖。"
+    ],
+    "semantic_layers": {
+      "purpose": "语义分层，用于类型与关系分组；颜色、布局、字号和缩放由视图配置负责。",
+      "definitions": {
+        "structure": {
+          "display_name": "结构层",
+          "order": 1,
+          "definition": "工程容器（项目/母线槽/分区）及其父子归属，回答\"这段母线槽在哪个分区\""
+        },
+        "component": {
+          "display_name": "构件层",
+          "order": 2,
+          "definition": "可发生故障的物理构件实例，是诊断定位的落点"
+        },
+        "port": {
+          "display_name": "端口层",
+          "order": 3,
+          "definition": "构件的连接端口及其对端引用，是拓扑相邻得以派生的证据层"
+        },
+        "topology": {
+          "display_name": "拓扑层",
+          "order": 4,
+          "definition": "构件之间的顺序、分流与相邻关系。只有边、没有节点——拓扑是构件间的关系而非独立实体"
+        },
+        "point": {
+          "display_name": "测点层",
+          "order": 5,
+          "definition": "工程组态中声明的逻辑测点；说明配置存在，不能单独证明物理安装、绑定激活或运行数据有效。"
+        },
+        "observable": {
+          "display_name": "可观测量层",
+          "order": 6,
+          "definition": "可观测量及其来源或计算语义；已声明观测绑定与规则要求分别表达，缺口须结合完整配置及 provision 判断。"
+        },
+        "diagnostic": {
+          "display_name": "诊断层",
+          "order": 7,
+          "definition": "现象、根因、诊断范围与其参数/统计依赖，承载\"看到什么—可能是什么\"的推断语义"
+        },
+        "scope": {
+          "display_name": "定位范围层",
+          "order": 8,
+          "definition": "由 DiagnosticScopeInstance 表示的具体诊断范围及成员；与 DiagnosticScope 范围概念分开。"
+        },
+        "rule": {
+          "display_name": "规则层",
+          "order": 9,
+          "definition": "外置权威规则的版本锚点，用于标明判据由哪一版规则授权"
+        },
+        "type_template": {
+          "display_name": "类型模板层",
+          "order": 10,
+          "definition": "类型层一般性知识的语义分组；视图可显示类型节点，存储时不创建冒充设备实例的模板节点。"
+        }
+      }
+    },
+    "definition_provenance": {
+      "adapted_from": {
+        "path": "../new_files/ontology.yaml",
+        "sha256": "75d413ade495dc60f80345e833bf1bd890af6ceee15864f1ae38204db09e3ae7",
+        "ontology_version": "4.0.0",
+        "original_status_declaration": "validated",
+        "status_declaration_is_current_validation": false
+      },
+      "definition_changes": [
+        "按用户确认的十部分合同重组并加入上传来源等级、逐属性证据要求。",
+        "新增抽象父类仅表达原有工程容器、构件、可观测量分组；没有增加设备事实或故障结论。",
+        "DiagnosticScopeInstance 与两个辅助关系用于将原来的 scope_instance 图角色纳入闭合类型注册表。",
+        "稳定关系应用 ID 取代源包延期身份策略；实际生成和治理仍需应用实现。",
+        "SPECIALIZES 明确为具体到一般，依据用户提供的实例记录；显示名由“细化为”修正为“特化于”，不改变关系 ID 或边方向。"
+      ],
+      "source_catalog_snapshot": {
+        "BUSWAY_KNOWLEDGE_20260710_V1_3": {
+          "source_type": "domain_knowledge_record",
+          "document_title": "母线槽知识点记录 - 2026.7.10 - v1.3",
+          "version": "1.3",
+          "status": "provided",
+          "availability": "external_not_in_repository",
+          "path_resolution_required": false,
+          "consumption_status": "consumed_into_ontology_and_rules",
+          "consumption_note": "该记录已被人工整理为本本体的声明层与外部规则文件；其正文不作为运行期依赖，evidence.locator 供人工溯源使用",
+          "topology_context": "legacy_relative_to_current_project_topology",
+          "current_topology_equivalence": "not_assumed",
+          "applicability_level": "generic_domain_only",
+          "authority_scope": [
+            "domain_concepts",
+            "generic_domain_applicability",
+            "candidate_causality",
+            "parameter_definitions",
+            "reference_statistics"
+          ],
+          "excluded_authority": [
+            "current_project_topology",
+            "current_project_component_instances",
+            "current_project_port_connectivity",
+            "current_project_measurement_availability",
+            "current_project_instance_applicability",
+            "project_parameter_values",
+            "unresolved_open_questions",
+            "runtime_diagnosis"
+          ]
+        },
+        "CURRENT_PROJECT_TOPOLOGY": {
+          "source_type": "project_topology",
+          "relative_path": "topology.xml",
+          "relative_path_base": "ontology_file_directory",
+          "availability": "in_repository",
+          "path_resolution_required": true,
+          "project_id": "PBMBaseProj_2512",
+          "status": "current_project_baseline",
+          "authority_scope": [
+            "current_project_component_instances",
+            "current_project_port_connectivity",
+            "current_project_logical_measurement_points",
+            "current_project_source_annotations"
+          ],
+          "excluded_authority": [
+            "generic_domain_causality",
+            "diagnostic_rule_decisions",
+            "runtime_measurement_values",
+            "runtime_branch_operating_state"
+          ]
+        }
+      },
+      "source_evidence_catalog_snapshot": {
+        "OBSERVABLE_AND_DERIVATION_SEMANTICS": {
+          "source_id": "BUSWAY_KNOWLEDGE_20260710_V1_3",
+          "locator": "三、母线槽诊断标准 / 3.1 数据识别与 3.3 故障现象诊断",
+          "evidence_role": "semantic_definition"
+        },
+        "DIAGNOSTIC_APPLICABILITY": {
+          "source_id": "BUSWAY_KNOWLEDGE_20260710_V1_3",
+          "locator": "三、母线槽诊断标准 / 3.1 数据识别与 3.3 故障现象诊断",
+          "evidence_role": "generic_domain_applicability_definition",
+          "applicability_level": "generic_domain_only",
+          "current_project_validation_source": "CURRENT_PROJECT_TOPOLOGY",
+          "current_project_validation_required": true
+        },
+        "ROOT_CAUSE_CANDIDATES": {
+          "source_id": "BUSWAY_KNOWLEDGE_20260710_V1_3",
+          "locator": "三、母线槽诊断标准 / 3.4 故障根因诊断",
+          "evidence_role": "candidate_causality"
+        },
+        "PARAMETER_SEMANTICS": {
+          "source_id": "BUSWAY_KNOWLEDGE_20260710_V1_3",
+          "locator": "三、母线槽诊断标准 / 3.3、3.4及其中待定参数说明",
+          "evidence_role": "parameter_definition_only"
+        },
+        "HISTORICAL_CAUSE_DISTRIBUTION": {
+          "source_id": "BUSWAY_KNOWLEDGE_20260710_V1_3",
+          "locator": "二、母线槽故障背景及三、3.4故障占比参考",
+          "evidence_role": "descriptive_statistic"
+        },
+        "PHYSICAL_HEATING_MECHANISM": {
+          "source_id": "BUSWAY_KNOWLEDGE_20260710_V1_3",
+          "locator": "五、其他关键信息 / 第2项",
+          "evidence_role": "physical_mechanism"
+        }
+      },
+      "snapshot_semantics": {
+        "base_for_original_relative_paths": "../new_files/",
+        "source_authority_scope_is_not_upload_grade": true,
+        "catalog_is_accepted_chunk_evidence": false,
+        "external_not_in_repository_source_verified": false,
+        "evidence_resolution_required_before_publishing_claims_from_catalog": true
+      }
+    },
+    "reference_patterns": {
+      "statements_and_qualifiers": "https://www.mediawiki.org/wiki/Wikibase/DataModel",
+      "provenance": "https://www.w3.org/TR/prov-o/",
+      "property_graph_constraints": "https://neo4j.com/docs/cypher-manual/current/schema/constraints/",
+      "note": "借鉴概念和建模方式；本项目 JSON 合同不声称是上述标准的原生序列化。"
+    },
+    "source_material_locations": [
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/schema/file_layout",
+        "owner": "knowledge_package_manifest",
+        "reason": "文件职责与装配入口",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/schema/expected_declared_counts",
+        "owner": "source_package_validation_baseline",
+        "reason": "固定 69/124 等快照数量不是本体加载条件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/schema/forbidden_legacy_top_level_keys",
+        "owner": "legacy_import_adapter",
+        "reason": "旧文件形状限制由迁移适配器处理",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/schema/entity_record",
+        "owner": "legacy_import_adapter",
+        "reason": "旧实体记录转换为通用陈述与证据合同",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/schema/relation_record",
+        "owner": "legacy_import_adapter",
+        "reason": "旧 assertion/review_status 转换，不作为发布或权威凭证",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/source_authority",
+        "owner": "knowledge_package_and_data_adapter_configuration",
+        "reason": "具体项目来源、外部绑定和规则版本登记",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/relation_identity",
+        "owner": "migration_record",
+        "reason": "旧无稳定物化边 ID 约定被应用稳定 ID 合同取代",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/finding_classification",
+        "owner": "quality_evaluation_catalog",
+        "reason": "体检分类、历史问题和项目快照",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/compatibility/legacy_path_aliases",
+        "owner": "legacy_import_adapter",
+        "reason": "旧字段路径的适配规则",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/authoritative_rules_document",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/authoritative_rules_version",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/clause_reconciliation",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/clauses_without_ontology_binding",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/criterion_role_rationale",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/known_unreconciled",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/reconciliation_ledger",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/rule_version_anchor_entity",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/rule_alignment/rules_profile_id",
+        "owner": "versioned_rule_binding_and_reconciliation",
+        "reason": "条款绑定、版本或历史对账信息保留在来源附件",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/materialization_safety/unknown_component_element_type",
+        "owner": "topology_xml_adapter",
+        "reason": "数据源专用解析与选择器约束",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/materialization_safety/unknown_port_type",
+        "owner": "topology_xml_adapter",
+        "reason": "数据源专用解析与选择器约束",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/materialization_safety/unresolved_port_load",
+        "owner": "topology_xml_adapter",
+        "reason": "数据源专用解析与选择器约束",
+        "required_to_load_ontology": false
+      },
+      {
+        "source": "../new_files/ontology.yaml",
+        "json_pointer": "/constraints/materialization_safety/selector_dialect_enforced",
+        "owner": "topology_xml_adapter",
+        "reason": "数据源专用解析与选择器约束",
+        "required_to_load_ontology": false
+      }
+    ],
+    "compatibility": {
+      "previous_ontology_version": "4.0.0",
+      "stable_entity_ids": "retained",
+      "stable_relation_ids": "retained",
+      "entity_type_aliases": {
+        "ObservableProperty": "Observable",
+        "DerivedObservableProperty": "DerivedObservable",
+        "PhenomenonType": "Phenomenon",
+        "RootCauseType": "RootCause",
+        "DiagnosticScopeType": "DiagnosticScope",
+        "DiagnosticParameterType": "DiagnosticParameter",
+        "ReferenceStatisticType": "ReferenceStatistic",
+        "MeasurementQuantity": "Observable",
+        "Fault": "RootCause"
+      },
+      "relation_type_aliases": {
+        "contains": "CONTAINS",
+        "has_port": "HAS_PORT",
+        "precedes": "PRECEDES",
+        "branches_into": "BRANCHES_INTO",
+        "has_measurement_point": "HAS_POINT",
+        "observes": "OBSERVES",
+        "derived_from_observable": "DERIVED_FROM",
+        "characterized_by_observable": "CHARACTERIZED_BY",
+        "specializes_phenomenon": "SPECIALIZES",
+        "may_exhibit": "MAY_EXHIBIT",
+        "may_affect_asset_class": "MAY_AFFECT",
+        "applicable_to_scope": "APPLICABLE_TO_SCOPE",
+        "requires_parameter": "REQUIRES_PARAMETER",
+        "has_reference_statistic": "HAS_REFERENCE_STATISTIC",
+        "has_possible_cause": "POSSIBLE_CAUSE"
+      },
+      "historical_previous_ontology_version": "3.1.0",
+      "alias_semantics": "旧类型与关系名称仅作迁移说明；可执行名称解析使用 entity_types/relation_types 中的 aliases，逆向查询别名写在对应关系定义中。"
+    },
+    "integration_notes": [
+      "当前 API 的 OntologyImportRequest 只接受旧 JSON 形状；本文件及模板需后续导入器、校验器、存储和视图适配。",
+      "现有关系属性已有独立证据，但未必有独立 trust 对象；同源属性继承外层陈述等级，多来源值要保留各自证据与等级。",
+      "新旧 XML 映射仍存在 evidence_relation_ids 与 evidence_port_refs/evidence_point_refs 的输出差异，接入前应统一。",
+      "定义级引用并非已经入库的 Chunk；原包引用的外部知识记录正文未提供，不能伪造版本、Chunk 或审核结果。",
+      "本次未导入拓扑、诊断实例、规则或点位绑定；本体文件不代表完成实例构建和诊断闭环。"
+    ]
+  }
+}

@@ -10,6 +10,7 @@ from pydantic import Field, JsonValue, StringConstraints, field_validator, model
 
 from graphrag_prod.graph.browse_models import GraphBrowseQuery, GraphReadPin
 from graphrag_prod.graph.view_tokens import MAX_GRAPH_TOKEN_CHARS
+from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
 
 from .contracts import (
     Checksum, GraphEvidenceResponse, GraphName, GraphTypeName, Identifier,
@@ -103,7 +104,7 @@ class GraphBrowseNodeResponse(StrictAPIModel):
     label: GraphName
     canonical_key: GraphName
     authority_levels: Annotated[tuple[GraphAuthority, ...], Field(min_length=1, max_length=2)]
-    mention_revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=500)]
+    mention_revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
 
 
 class GraphRelationshipSourceResponse(StrictAPIModel):
@@ -136,9 +137,9 @@ class GraphBrowseEdgeResponse(StrictAPIModel):
 
     fact_key: Identifier
     relationship_id: Identifier
-    revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=500)]
-    source_count: Annotated[int, Field(strict=True, ge=1, le=500)]
-    sources: Annotated[tuple[GraphRelationshipSourceResponse, ...], Field(min_length=1, max_length=500)]
+    revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    source_count: Annotated[int, Field(strict=True, ge=1, le=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    sources: Annotated[tuple[GraphRelationshipSourceResponse, ...], Field(min_length=1, max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
     authority_levels: Annotated[tuple[GraphAuthority, ...], Field(min_length=1, max_length=2)]
     relationship_properties: tuple[GraphRelationshipQualifierResponse, ...] = ()
 
@@ -223,6 +224,18 @@ class GraphEvidenceItemResponse(StrictAPIModel):
     source_kind: SourceKind | None
     applicability: GraphSourceApplicabilityResponse
     evidence: GraphEvidenceResponse
+    context_value_evidence: GraphEvidenceResponse | None = None
+
+    @model_validator(mode="after")
+    def validate_context_source(self):
+        value = self.context_value_evidence
+        if value is not None and (self.record_kind != "ASSERTION"
+                or value.provenance != self.evidence.provenance
+                or value.citation.document_id != self.evidence.citation.document_id
+                or value.citation.version_id != self.evidence.citation.version_id
+                or value.citation.version_checksum != self.evidence.citation.version_checksum):
+            raise ValueError("context evidence must belong to the assertion source revision")
+        return self
 
 
 class GraphEvidenceResponseEnvelope(StrictAPIModel):

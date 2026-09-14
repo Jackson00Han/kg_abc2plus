@@ -29,6 +29,7 @@ from graphrag_prod.graph.published_quality import (
     PublishedGraphQualityReport,
 )
 from graphrag_prod.graph.quality import IssueSeverity
+from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
 
 
 TENANT = "tenant-inventory"
@@ -476,7 +477,7 @@ class PublishedInventoryTests(unittest.TestCase):
         self.assertEqual(len(quality.calls), 1)
         self.assertIn("active-publication-inventory:manifest", driver.tx.calls[0][0])
         self.assertIn("active-publication-inventory:items", driver.tx.calls[1][0])
-        self.assertEqual(driver.tx.calls[1][1]["row_limit"], 501)
+        self.assertEqual(driver.tx.calls[1][1]["row_limit"], MAX_PUBLICATION_MANIFEST_RECORDS + 1)
         self.assertIn(
             "active-publication-inventory:relationship-properties",
             driver.tx.calls[2][0],
@@ -637,15 +638,15 @@ class PublishedInventoryTests(unittest.TestCase):
                     )
 
     def test_complete_manifest_hard_cap_is_enforced_before_item_read(self) -> None:
-        ids = [f"revision-{index:04d}" for index in range(501)]
+        ids = [f"revision-{index:04d}" for index in range(MAX_PUBLICATION_MANIFEST_RECORDS + 1)]
         manifest = {
             "manifest_revision_ids": ids,
-            "membership_count": 501,
-            "distinct_revision_count": 501,
+            "membership_count": MAX_PUBLICATION_MANIFEST_RECORDS + 1,
+            "distinct_revision_count": MAX_PUBLICATION_MANIFEST_RECORDS + 1,
             "membership_revision_ids": list(reversed(ids)),
-            "valid_revision_count": 501,
+            "valid_revision_count": MAX_PUBLICATION_MANIFEST_RECORDS + 1,
         }
-        report = replace(_quality(), counts=(("revisions", 501),))
+        report = replace(_quality(), counts=(("revisions", MAX_PUBLICATION_MANIFEST_RECORDS + 1),))
         driver = _Driver(manifest=manifest)
 
         with self.assertRaises(ActivePublicationInventoryLimitExceeded):

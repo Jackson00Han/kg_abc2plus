@@ -1,0 +1,40 @@
+======================================================================
+ERROR: test_inventory_counts_full_manifest_while_items_remain_paged (tests.unit.test_publication_capacity.PublicationCapacityTests.test_inventory_counts_full_manifest_while_items_remain_paged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/unit/test_publication_capacity.py", line 137, in test_inventory_counts_full_manifest_while_items_remain_paged
+    response = ActivePublicationInventoryResponse.model_validate({
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/pydantic/main.py", line 732, in model_validate
+    return cls.__pydantic_validator__.validate_python(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 8 validation errors for ActivePublicationInventoryResponse
+items.0.evidence
+  Field required [type=missing]
+    For further information visit https://errors.pydantic.dev/2.13/v/missing
+items.0.document_id
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+items.0.version_id
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+items.0.chunk_id
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+items.0.evidence_chunk_ordinal
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+items.0.evidence_char_start
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+items.0.evidence_char_end
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+tenant_id
+  Extra inputs are not permitted [type=extra_forbidden]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+
+----------------------------------------------------------------------
+Ran 48 tests in 0.341s
+
+FAILED (errors=1)

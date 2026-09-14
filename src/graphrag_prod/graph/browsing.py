@@ -118,10 +118,12 @@ class Neo4jPublishedGraphBrowser:
             raise GraphViewChanged()
         chunks: dict[str, str] = {}
         for row in (*mentions, *assertions):
-            citation = row["citation"]
-            previous = chunks.setdefault(citation["chunk_id"], citation["chunk_text"])
-            if previous != citation["chunk_text"]:
-                raise GraphViewChanged()
+            for citation in (row["citation"], row.get("context_citation")):
+                if citation is None:
+                    continue
+                previous = chunks.setdefault(citation["chunk_id"], citation["chunk_text"])
+                if previous != citation["chunk_text"]:
+                    raise GraphViewChanged()
         if sum(map(len, chunks.values())) > 500_000 or sum(len(str(row.get("source_metadata") or "")) for row in (*mentions, *assertions)) > 4_000_000:
             raise GraphBrowseLimitExceeded()
         return mentions, assertions
@@ -170,6 +172,9 @@ class Neo4jPublishedGraphBrowser:
             for assertion in graph.assertions:
                 assertion_values[assertion.revision_id] = assertion
                 evidence[assertion.revision_id] = cls._evidence_item(assertion.evidence, row_by_id[assertion.revision_id], "ASSERTION")
+                if assertion.context_value_evidence is not None:
+                    evidence[assertion.revision_id]["context_value_evidence"] = cls._evidence_item(
+                        assertion.context_value_evidence, row_by_id[assertion.revision_id], "ASSERTION")["evidence"]
 
         # Validate each record through the existing strict projection machinery.
         # Per-entity *display* evidence caps must not truncate the authorized

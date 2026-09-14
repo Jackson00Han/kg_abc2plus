@@ -1,0 +1,6 @@
+{"kind": "ENTITY_MENTION", "variant": "before", "query_sha256": "7f42fa8d068f5fb8d14c3c1c806027e566b421719accf4fc4f28f0a676c6cec6", "wall_seconds": 2.887, "server_ms": 2628, "row_count": 0, "rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}
+{"kind": "ENTITY_MENTION", "variant": "partitioned", "query_sha256": "b861ee1c665a5a634c33f1d0714e60deb646ddaeefa1a2297ea46ec65917a6f7", "wall_seconds": 1.232, "server_ms": 1221, "row_count": 0, "rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}
+{"kind": "ASSERTION", "variant": "before", "query_sha256": "a0964fb3ec8c7afb5de0c0eb1f0f269faa24698a746b3cbbe6a3692dc79763f8", "wall_seconds": 34.023, "server_ms": 33573, "row_count": 2, "rows_sha256": "b635a0d97cc9d1e690b9cfb9142f5bbf63b036a6e1aa208e994f7f64ab52ed46"}
+{"kind": "ASSERTION", "variant": "partitioned", "query_sha256": "40146851ef130144e8afdbdc2a6f1a8e42a3b252be168c65d445abecd3cf41e3", "wall_seconds": 1.982, "server_ms": 1953, "row_count": 2, "rows_sha256": "b635a0d97cc9d1e690b9cfb9142f5bbf63b036a6e1aa208e994f7f64ab52ed46"}
+{"role": "PRIMARY", "wall_seconds": 8.963, "exact_range": true, "quoted_chars": 655}
+{"role": "CONTEXT_VALUE", "wall_seconds": 2.881, "exact_range": true, "quoted_chars": 18}

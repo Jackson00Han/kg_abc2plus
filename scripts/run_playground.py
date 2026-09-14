@@ -45,8 +45,10 @@ from graphrag_prod.api.runtime import (
     BackendResult,
     DependencyUnavailableError,
     RuntimePolicy,
+    UploadInProgressError,
 )
 from graphrag_prod.construction import (
+    BoundedDocumentParser,
     ConstructionConfig,
     ExtractionLimits,
     Neo4jKnowledgeConstructionWorkflow,
@@ -81,26 +83,22 @@ from graphrag_prod.retrieval import (
 from tests.fixtures.dev_corpus import load_dev_corpus_fixture
 from graphrag_prod.playground.demo_corpus import load_demo_corpus
 from scripts.playground_reset_store import capture_reset_embeddings, reset_playground_corpus
+from graphrag_prod.construction.structured import StructuredDocumentParser, select_structured_extractor
 
 
-_PLAYGROUND_CONSTRUCTION_LIMITS = {
-    "max_document_bytes": 5 * 1024 * 1024,
-    "max_chunks": 4,
-    "max_llm_chunks": 2,
-    "max_validation_attempts": 2,
-    "max_model_calls": 4,
-    "max_total_extraction_chars": 16_000,
-    "deadline_seconds": 90.0,
-    "per_model_call_timeout_seconds": 30.0,
-    "max_model_output_tokens": 2_048,
-}
+_PLAYGROUND_CONSTRUCTION_LIMITS = json.loads(
+    (ROOT / "contracts/profiles/dev-mini-construction.v2.json").read_text(encoding="utf-8")
+)
 _PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v6-exact-json-spans"
 
 
 def _build_playground_extractor(client, model, tbox):
     """DashScope extraction is bounded structured work, not deep reasoning."""
     return OpenAICompatibleOntologyExtractor(
-        client=client.with_options(max_retries=0, timeout=30.0),
+        client=client.with_options(
+            max_retries=0,
+            timeout=_PLAYGROUND_CONSTRUCTION_LIMITS["per_model_call_timeout_seconds"],
+        ),
         model=model,
         active_tbox=tbox,
         prompt_version=_PLAYGROUND_EXTRACTION_PROMPT,
@@ -110,9 +108,9 @@ def _build_playground_extractor(client, model, tbox):
         include_span_hints=True,
         max_validation_attempts=_PLAYGROUND_CONSTRUCTION_LIMITS["max_validation_attempts"],
         limits=ExtractionLimits(
-            max_response_chars=16_384,
-            max_output_tokens=2_048,
-            timeout_seconds=30.0,
+            max_response_chars=_PLAYGROUND_CONSTRUCTION_LIMITS["max_model_response_chars"],
+            max_output_tokens=_PLAYGROUND_CONSTRUCTION_LIMITS["max_model_output_tokens"],
+            timeout_seconds=_PLAYGROUND_CONSTRUCTION_LIMITS["per_model_call_timeout_seconds"],
         ),
     )
 
@@ -283,8 +281,10 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
         construction: Any,
         embedder: _OpenAICompatibleEmbedder,
         database: str,
+        auto_review_service: Any | None = None,
     ) -> None:
-        super().__init__(driver=driver, construction=construction, database=database)
+        super().__init__(driver=driver, construction=construction, database=database,
+                         auto_review_service=auto_review_service)
         self._driver = driver
         self._database = database
         self._embedder = embedder
@@ -293,7 +293,9 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
     def construct(self, principal: Principal, request: Any) -> BackendResult:
         # One local process serializes construction plus the matching index CAS.
         # This does not weaken the database-side source/publication CAS rules.
-        with self._generation_lock:
+        if not self._generation_lock.acquire(blocking=False):
+            raise UploadInProgressError()
+        try:
             try:
                 result = super().construct(principal, request)
             except Exception:
@@ -308,6 +310,8 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
                 raise
             self._refresh_embedding_generation(principal.tenant_id)
             return result
+        finally:
+            self._generation_lock.release()
 
     def retire_document(
         self,
@@ -894,15 +898,25 @@ def build_playground_app(
         )
     from graphrag_prod.industrial.construction import Neo4jIndustrialUploadPolicy, industrial_upload_parser
     prompt_signature = _PLAYGROUND_EXTRACTION_PROMPT
+    construction_embedder = _OpenAICompatibleEmbedder(
+        embedder.client.with_options(
+            max_retries=0,
+            timeout=_PLAYGROUND_CONSTRUCTION_LIMITS["per_embedding_call_timeout_seconds"],
+        ),
+        provider=embedder.provider, model=embedder.model, revision=embedder.revision,
+        dimensions=embedder.dimensions,
+    )
     construction = Neo4jKnowledgeConstructionWorkflow(
         driver=driver,
         database=database,
+        parser=StructuredDocumentParser(),
+        document_extractor_selector=select_structured_extractor,
         pipeline=Neo4jIncrementalPipeline(
             driver,
             database,
             worker_id="local-playground-construction",
         ),
-        embedding_provider=embedder,
+        embedding_provider=construction_embedder,
         embedding_profile=EmbeddingProfile(
             embedder.provider,
             embedder.model,
@@ -919,6 +933,8 @@ def build_playground_app(
             extractor_signature=f"openai-compatible:{extraction_model}:v3",
             prompt_signature=prompt_signature,
             max_chunks=_PLAYGROUND_CONSTRUCTION_LIMITS["max_chunks"],
+            max_concurrency=_PLAYGROUND_CONSTRUCTION_LIMITS["max_concurrency"],
+            embedding_call_timeout_seconds=_PLAYGROUND_CONSTRUCTION_LIMITS["per_embedding_call_timeout_seconds"],
             max_model_calls=_PLAYGROUND_CONSTRUCTION_LIMITS["max_model_calls"],
             max_total_extraction_chars=_PLAYGROUND_CONSTRUCTION_LIMITS[
                 "max_total_extraction_chars"
@@ -926,11 +942,22 @@ def build_playground_app(
             deadline_seconds=_PLAYGROUND_CONSTRUCTION_LIMITS["deadline_seconds"],
         ),
     )
+    from graphrag_prod.knowledge.auto_review import Neo4jAutoReviewService
+    from graphrag_prod.knowledge.auto_review_model import OpenAICompatibleAutoReviewer
+    from graphrag_prod.knowledge.context_projection import Neo4jContextProjectionService
+    from graphrag_prod.construction.context_mapping import OpenAICompatibleContextMapper
+
     knowledge_operations = _PlaygroundKnowledgeOperations(
         driver=driver,
         database=database,
         construction=construction,
         embedder=embedder,
+        auto_review_service=Neo4jAutoReviewService(
+            driver, database,
+            reviewer=OpenAICompatibleAutoReviewer(client=embedder.client, model=extraction_model, enable_thinking=False),
+            context_projection=Neo4jContextProjectionService(driver, database,
+                planner=OpenAICompatibleContextMapper(client=embedder.client, model=extraction_model, enable_thinking=False)),
+        ),
     )
     backend = GraphRAGApplicationBackend(
         documents=_ReadOnlyDocuments(),
@@ -987,9 +1014,10 @@ def build_playground_app(
         runtime_policy=RuntimePolicy(
             max_workers=8,
             max_queue_size=8,
-            # A small document can require several sequential extraction calls;
-            # every provider call is independently capped by the extractor.
+            # Whole-document construction has a separate, bounded deadline;
+            # interactive reads retain their existing request timeout.
             timeout_seconds=105.0,
+            construction_timeout_seconds=_PLAYGROUND_CONSTRUCTION_LIMITS["http_timeout_seconds"],
             max_attempts=1,
         ),
         shutdown_callbacks=(driver.close,),

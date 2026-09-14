@@ -1,0 +1,100 @@
+/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+{"duration_ms":0.391851,"error_code":"unauthenticated","event":"request_completed","level":"WARNING","method":"GET","request_id":"f68868e49ee4438281d7846238c03909","route":"<unknown>","service":"reset-unit","status":401,"timestamp":"2026-09-13T10:37:34.178764Z","trace_id":"be70ce548f9043daa84182b7582ff877"}
+{"duration_ms":1.823908,"event":"request_completed","level":"INFO","method":"GET","request_id":"1d65ae1399e1435bbf90954caa57e418","route":"/v1/ontologies","service":"reset-unit","status":200,"timestamp":"2026-09-13T10:37:34.181877Z","trace_id":"a7fe90d653d246c8956841ac760566b3"}
+{"duration_ms":1.644397,"error_code":"forbidden","event":"request_completed","level":"WARNING","method":"POST","request_id":"5bddd7f1b6ce40539731ee9b143470d7","route":"/v1/ontologies:import","service":"reset-unit","status":403,"timestamp":"2026-09-13T10:37:34.185823Z","trace_id":"33c7331026694035932efc53d2af5d34"}
+[4/5] External provider warm-up explicitly skipped; connectivity is unverified. Uploads and queries still require the real provider.
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[1/5] Verifying the versioned dev-corpus-v1 corpus
+[2/5] Verifying the existing production graph schema
+[3/5] Verifying current embedding profiles; preserving existing data
+[4/5] Warming the bounded retrieval path for both tenants
+[4/5] Warming the bounded retrieval path for both tenants
+[4/5] Warming the bounded retrieval path for both tenants
+      Retrieval warm-up timed out for alpha; retrying once with the same bounds and query embedding
+[4/5] Warming the bounded retrieval path for both tenants
+[4/5] Warming the bounded retrieval path for both tenants
+      Retrieval warm-up timed out for alpha; retrying once with the same bounds and query embedding
+[4/5] Warming the bounded retrieval path for both tenants
+      Retrieval warm-up timed out for alpha; retrying once with the same bounds and query embedding
+[4/5] Warming the bounded retrieval path for both tenants
+      Retrieval warm-up timed out for alpha; retrying once with the same bounds and query embedding
+----------------------------------------------------------------------
+Ran 141 tests in 22.546s
+
+OK

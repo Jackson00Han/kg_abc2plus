@@ -154,6 +154,7 @@ class PropertyDefinition:
     cardinality: Cardinality
     unit: str | None = None
     description: str | None = None
+    constraints_json: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _type_name(self.name, "property name"))
@@ -185,6 +186,11 @@ class PropertyDefinition:
             "description",
             _optional_text(self.description, "property description"),
         )
+        if self.constraints_json is not None:
+            from .source import canonical_json, validate_property_constraints_schema  # noqa: PLC0415
+            constraints = json.loads(self.constraints_json)
+            validate_property_constraints_schema(constraints, self.datatype.value)
+            object.__setattr__(self, "constraints_json", canonical_json(constraints))
         if self.required != self.cardinality.required:
             raise ValueError("property required must agree with cardinality minimum")
 
@@ -194,7 +200,7 @@ class PropertyDefinition:
         _strict_keys(
             value,
             required=frozenset({"name", "datatype", "required", "cardinality"}),
-            optional=frozenset({"unit", "description"}),
+            optional=frozenset({"unit", "description", "constraints_json"}),
             object_name="property definition",
         )
         return cls(
@@ -204,6 +210,7 @@ class PropertyDefinition:
             cardinality=value["cardinality"],
             unit=value.get("unit"),
             description=value.get("description"),
+            constraints_json=value.get("constraints_json"),
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -213,6 +220,8 @@ class PropertyDefinition:
             "required": self.required,
             "cardinality": self.cardinality.value,
         }
+        if self.constraints_json is not None:
+            result["constraints_json"] = self.constraints_json
         if self.unit is not None:
             result["unit"] = self.unit
         if self.description is not None:
@@ -229,8 +238,11 @@ class EntityTypeDefinition:
     properties: tuple[PropertyDefinition, ...] = ()
     identity_properties: tuple[str, ...] = ()
     description: str | None = None
+    instance_allowed: bool = True
 
     def __post_init__(self) -> None:
+        if not isinstance(self.instance_allowed, bool):
+            raise ValueError("entity instance_allowed must be boolean")
         object.__setattr__(self, "name", _type_name(self.name, "entity type name"))
         namespaces = tuple(
             _required_text(item, "canonical key namespace").casefold()
@@ -245,6 +257,11 @@ class EntityTypeDefinition:
             raise ValueError("entity properties must contain PropertyDefinition values")
         _unique([item.name for item in properties], "entity property names")
         object.__setattr__(self, "properties", properties)
+        property_names = {item.name for item in properties}
+        for item in properties:
+            predicate = json.loads(item.constraints_json or "{}").get("required_when")
+            if predicate and predicate["property"] not in property_names:
+                raise ValueError("conditional presence references an undeclared property")
         identity_properties = tuple(
             _type_name(item, "identity property name")
             for item in self.identity_properties
@@ -272,7 +289,7 @@ class EntityTypeDefinition:
         _strict_keys(
             value,
             required=frozenset({"name", "canonical_key_namespaces"}),
-            optional=frozenset({"properties", "identity_properties", "description"}),
+            optional=frozenset({"properties", "identity_properties", "description", "instance_allowed"}),
             object_name="entity type definition",
         )
         return cls(
@@ -291,6 +308,7 @@ class EntityTypeDefinition:
                 _sequence(value.get("identity_properties", ()), "identity_properties")
             ),
             description=value.get("description"),
+            instance_allowed=value.get("instance_allowed", True),
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -300,6 +318,8 @@ class EntityTypeDefinition:
             "properties": [item.to_mapping() for item in self.properties],
             "identity_properties": list(self.identity_properties),
         }
+        if not self.instance_allowed:
+            result["instance_allowed"] = False
         if self.description is not None:
             result["description"] = self.description
         return result
@@ -316,8 +336,12 @@ class RelationshipTypeDefinition:
     source_cardinality: Cardinality = Cardinality.ZERO_OR_MORE
     target_cardinality: Cardinality = Cardinality.ZERO_OR_MORE
     description: str | None = None
+    instance_allowed: bool = True
+    allowed_type_pairs: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.instance_allowed, bool):
+            raise ValueError("relationship instance_allowed must be boolean")
         object.__setattr__(self, "name", _type_name(self.name, "relationship type name"))
         source_types = tuple(
             _type_name(item, "relationship source type") for item in self.source_types
@@ -331,6 +355,12 @@ class RelationshipTypeDefinition:
         _unique(target_types, "relationship target types")
         object.__setattr__(self, "source_types", source_types)
         object.__setattr__(self, "target_types", target_types)
+        pairs = tuple(tuple(pair) for pair in self.allowed_type_pairs)
+        if any(len(pair) != 2 or pair[0] not in source_types or pair[1] not in target_types for pair in pairs):
+            raise ValueError("allowed type pair must use declared endpoints")
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("allowed type pairs must be unique")
+        object.__setattr__(self, "allowed_type_pairs", pairs)
         properties = tuple(self.properties)
         if any(not isinstance(item, PropertyDefinition) for item in properties):
             raise ValueError(
@@ -338,6 +368,11 @@ class RelationshipTypeDefinition:
             )
         _unique([item.name for item in properties], "relationship property names")
         object.__setattr__(self, "properties", properties)
+        property_names = {item.name for item in properties}
+        for item in properties:
+            predicate = json.loads(item.constraints_json or "{}").get("required_when")
+            if predicate and predicate["property"] not in property_names:
+                raise ValueError("conditional presence references an undeclared property")
         object.__setattr__(
             self,
             "source_cardinality",
@@ -362,6 +397,10 @@ class RelationshipTypeDefinition:
             _optional_text(self.description, "relationship type description"),
         )
 
+    def allows_instances(self, source_type: str, target_type: str) -> bool:
+        return (self.instance_allowed and source_type in self.source_types and target_type in self.target_types
+                and (not self.allowed_type_pairs or (source_type, target_type) in self.allowed_type_pairs))
+
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> RelationshipTypeDefinition:
         value = _mapping(value, "relationship type definition")
@@ -374,6 +413,8 @@ class RelationshipTypeDefinition:
                     "source_cardinality",
                     "target_cardinality",
                     "description",
+                    "instance_allowed",
+                    "allowed_type_pairs",
                 }
             ),
             object_name="relationship type definition",
@@ -397,6 +438,8 @@ class RelationshipTypeDefinition:
                 "target_cardinality", Cardinality.ZERO_OR_MORE
             ),
             description=value.get("description"),
+            instance_allowed=value.get("instance_allowed", True),
+            allowed_type_pairs=tuple(tuple(pair) for pair in value.get("allowed_type_pairs", ())),
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -408,6 +451,10 @@ class RelationshipTypeDefinition:
             "source_cardinality": self.source_cardinality.value,
             "target_cardinality": self.target_cardinality.value,
         }
+        if not self.instance_allowed:
+            result["instance_allowed"] = False
+        if self.allowed_type_pairs:
+            result["allowed_type_pairs"] = [list(pair) for pair in self.allowed_type_pairs]
         if self.description is not None:
             result["description"] = self.description
         return result
@@ -476,6 +523,8 @@ class TBoxVersion:
     relationship_types: tuple[RelationshipTypeDefinition, ...]
     description: str | None = None
     hierarchies: tuple[HierarchyDefinition, ...] = ()
+    source_contract_json: str | None = None
+    rule_reference_registry_json: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tenant_id", _required_text(self.tenant_id, "tenant_id"))
@@ -568,6 +617,10 @@ class TBoxVersion:
                 {**item.to_mapping(), "node_types": sorted(item.node_types)}
                 for item in sorted(self.hierarchies, key=lambda item: item.name.casefold())
             ]
+        if self.source_contract_json is not None:
+            payload["source_contract_json"] = self.source_contract_json
+        if self.rule_reference_registry_json is not None:
+            payload["rule_reference_registry_json"] = self.rule_reference_registry_json
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @property
@@ -595,6 +648,10 @@ class TBoxVersion:
             result["description"] = self.description
         if self.hierarchies:
             result["hierarchies"] = [item.to_mapping() for item in self.hierarchies]
+        if self.source_contract_json is not None:
+            result["source_contract_json"] = self.source_contract_json
+        if self.rule_reference_registry_json is not None:
+            result["rule_reference_registry_json"] = self.rule_reference_registry_json
         if include_computed:
             result["tbox_id"] = self.tbox_id
             result["checksum"] = self.checksum
@@ -615,7 +672,7 @@ class TBoxVersion:
                     "relationship_types",
                 }
             ),
-            optional=frozenset({"description", "tbox_id", "checksum", "hierarchies"}),
+            optional=frozenset({"description", "tbox_id", "checksum", "hierarchies", "source_contract_json", "rule_reference_registry_json"}),
             object_name="T-Box",
         )
         result = cls(
@@ -636,11 +693,26 @@ class TBoxVersion:
                 )
             ),
             description=value.get("description"),
+            source_contract_json=value.get("source_contract_json"),
+            rule_reference_registry_json=value.get("rule_reference_registry_json"),
             hierarchies=tuple(
                 HierarchyDefinition.from_mapping(_mapping(item, "hierarchy"))
                 for item in _sequence(value.get("hierarchies", ()), "hierarchies")
             ),
         )
+        if result.rule_reference_registry_json is not None:
+            from .source import canonical_json, validate_rule_reference_registry  # noqa: PLC0415
+            registry = validate_rule_reference_registry(json.loads(result.rule_reference_registry_json))
+            object.__setattr__(result, "rule_reference_registry_json", canonical_json(registry))
+        if result.source_contract_json is not None:
+            from .source import compile_source_contract  # noqa: PLC0415
+            expected = compile_source_contract(json.loads(result.source_contract_json))
+            object.__setattr__(result, "source_contract_json", expected.pop("source_contract_json"))
+            expected.update(tenant_id=result.tenant_id, status=result.status.value)
+            normalized = cls.from_mapping(expected)
+            actual = dataclasses.replace(result, source_contract_json=None, rule_reference_registry_json=None)
+            if normalized.key != actual.key or normalized.version != actual.version or normalized.checksum != actual.checksum:
+                raise ValueError("compiled T-Box differs from its immutable source contract")
         if "tbox_id" in value and value["tbox_id"] != result.tbox_id:
             raise ValueError("T-Box tbox_id does not match its identity fields")
         if "checksum" in value and value["checksum"] != result.checksum:
@@ -672,6 +744,7 @@ class TBoxVersion:
             raise ValueError(
                 "a governance policy requires at least one relationship type"
             )
+        instantiable_names = {item.name for item in self.entity_types if item.instance_allowed}
         return GraphGovernancePolicy(
             policy_id=f"{self.tenant_id}:{self.key}:v{self.version}",
             policy_version=self.version,
@@ -684,18 +757,27 @@ class TBoxVersion:
                     required_properties=frozenset(ENTITY_FIELDS),
                     allowed_properties=frozenset(ENTITY_FIELDS),
                 )
-                for item in self.entity_types
+                for item in self.entity_types if item.instance_allowed
             ),
             relationship_rules=tuple(
                 RelationshipRule(
                     predicate=item.name,
-                    subject_types=frozenset(item.source_types),
+                    subject_types=frozenset(source_types),
                     object_kind="entity",
-                    object_types=frozenset(item.target_types),
+                    object_types=frozenset(target_types),
                     required_properties=frozenset(ASSERTION_FIELDS),
                     allowed_properties=frozenset(ASSERTION_FIELDS),
                 )
-                for item in self.relationship_types
+                for item in self.relationship_types if item.instance_allowed
+                for raw_sources, raw_targets in (
+                    [((source,), (target,)) for source, target in item.allowed_type_pairs]
+                    if item.allowed_type_pairs else [(item.source_types, item.target_types)]
+                )
+                for source_types, target_types in [(
+                    tuple(name for name in raw_sources if name in instantiable_names),
+                    tuple(name for name in raw_targets if name in instantiable_names),
+                )]
+                if source_types and target_types
             ),
             minimum_entity_confidence=minimum_entity_confidence,
             minimum_assertion_confidence=minimum_assertion_confidence,

@@ -12,9 +12,8 @@ from graphrag_prod.construction.preflight import (
     Neo4jUploadPreflight,
     UploadPreflightUnavailable,
     _BOUNDARY,
-    _EXACT,
-    _SIMILAR,
-    _TEXT,
+    _POSSIBLE,
+    _MATCHES,
     _first_difference,
     _jaccard,
     _shingles,
@@ -59,11 +58,13 @@ class _Transaction:
 
     def run(self, query, **parameters):
         self.calls.append((query, parameters))
-        if query == _EXACT:
+        if query == _POSSIBLE:
+            return [{"possible": True}] if self.exact or self.candidates else []
+        if query == _MATCHES and parameters["comparison_mode"] == "EXACT":
             return deepcopy(self.exact)
-        if query == _SIMILAR:
+        if query == _MATCHES and parameters["comparison_mode"] == "SIMILAR":
             return deepcopy(self.candidates)
-        if query == _TEXT:
+        if query == _MATCHES and parameters["comparison_mode"] == "TEXT":
             return [{"version_id": key, "checksum": content_checksum(self.texts[key]),
                      "text": self.texts[key]}
                     for key in parameters["version_ids"] if key in self.texts]
@@ -99,7 +100,7 @@ class UploadPreflightTests(unittest.TestCase):
         self.assertIsNone(match["difference"])
         self.assertNotIn("text", match)
         self.assertNotIn("_groups", match)
-        self.assertFalse(any(query == _TEXT for query, _ in tx.calls))
+        self.assertFalse(any(params.get("comparison_mode") == "TEXT" for _, params in tx.calls))
         self.assertTrue(result["similarity_checked"])
         self.assertFalse(result["truncated"])
         self.assertEqual(result["compared_versions"], 0)
@@ -144,7 +145,7 @@ class UploadPreflightTests(unittest.TestCase):
         self.assertEqual(result["truncation_reasons"], ["SIMILARITY_CANDIDATE_LIMIT"])
         self.assertEqual(result["compared_versions"], 50)
         self.assertEqual(len(result["similar_matches"]), 50)
-        text_parameters = next(params for query, params in tx.calls if query == _TEXT)
+        text_parameters = next(params for query, params in tx.calls if params.get("comparison_mode") == "TEXT")
         self.assertEqual(len(text_parameters["version_ids"]), 50)
         self.assertNotIn("pump-version-50", text_parameters["version_ids"])
 
@@ -155,7 +156,7 @@ class UploadPreflightTests(unittest.TestCase):
         self.assertTrue(result["truncated"])
         self.assertIn("EXACT_RESULT_LIMIT", result["truncation_reasons"])
         self.assertNotIn("total_documents", result)
-        self.assertTrue(all(params["limit"] in (21, 51) for _, params in tx.calls))
+        self.assertTrue(all(params["limit"] in (21, 51) for query, params in tx.calls if query != _POSSIBLE))
 
     def test_large_input_still_checks_exact_but_never_claims_similarity_checked(self):
         large = (PUMP * (MAX_SIMILARITY_CHARACTERS // len(PUMP) + 1)).encode()
@@ -164,18 +165,79 @@ class UploadPreflightTests(unittest.TestCase):
         self.assertFalse(result["similarity_checked"])
         self.assertTrue(result["truncated"])
         self.assertEqual(result["truncation_reasons"], ["INPUT_SIMILARITY_CHARACTER_LIMIT"])
-        self.assertTrue(all(query == _EXACT for query, _ in tx.calls))
+        self.assertTrue(all(query == _POSSIBLE for query, _ in tx.calls))
+        self.assertTrue(all(not params["similarity_checked"] for _, params in tx.calls))
+
+    def test_large_input_with_visible_exact_match_keeps_exact_rechecks_without_text_reads(self):
+        large = PUMP * (MAX_SIMILARITY_CHARACTERS // len(PUMP) + 1)
+        tx = _Transaction(exact=[_row(large)])
+        result = _reader(tx).check(PRINCIPAL, large.encode(), canonical_uri=URI)
+        self.assertEqual(len(result["exact_matches"]), 1)
+        self.assertEqual(result["compared_versions"], 0)
+        self.assertFalse(result["similarity_checked"])
+        self.assertEqual(result["truncation_reasons"], ["INPUT_SIMILARITY_CHARACTER_LIMIT"])
+        self.assertEqual([params.get("comparison_mode") for _, params in tx.calls],
+                         [None, "EXACT", "EXACT"])
+
+    def test_empty_candidate_shortcut_checks_twice_without_compiling_full_queries(self):
+        tx = _Transaction()
+        result = _reader(tx).check(PRINCIPAL, PUMP.encode(), canonical_uri=URI)
+        self.assertEqual([query for query, _ in tx.calls], [_POSSIBLE, _POSSIBLE])
+        self.assertEqual(result["exact_matches"], [])
+        self.assertEqual(result["similar_matches"], [])
+        self.assertFalse(result["truncated"])
+        self.assertEqual(result["compared_versions"], 0)
+
+    def test_candidate_inserted_or_newly_authorized_after_first_empty_read_fails_closed(self):
+        class Appeared(_Transaction):
+            def run(self, query, **parameters):
+                result = super().run(query, **parameters)
+                if query == _POSSIBLE and len(self.calls) == 2:
+                    return [{"possible": True}]
+                return result
+
+        with self.assertRaises(UploadPreflightUnavailable):
+            _reader(Appeared()).check(PRINCIPAL, PUMP.encode(), canonical_uri=URI)
+
+    def test_possible_candidate_query_scopes_acl_and_supersets_both_match_conditions(self):
+        for clause in (
+            "document:Document {tenant_id: $tenant_id}",
+            "version:DocumentVersion {tenant_id: $tenant_id}",
+            "any(g IN $principal_groups WHERE g IN coalesce(document.access_groups, []))",
+            "version.checksum = $checksum OR version.original_checksum = $original_checksum",
+            "size(version.normalized_text) >= $minimum_characters",
+            "size(version.normalized_text) <= $maximum_characters",
+            "size(version.normalized_text) <= $maximum_similarity_characters", "LIMIT 1",
+        ):
+            self.assertIn(clause, _POSSIBLE)
+        self.assertNotIn("AS text", _POSSIBLE)
+        self.assertNotIn("canonical_uri AS", _POSSIBLE)
 
     def test_changed_authorization_before_response_fails_closed(self):
         class Revoked(_Transaction):
             def run(self, query, **parameters):
                 result = super().run(query, **parameters)
-                if query == _EXACT and sum(q == _EXACT for q, _ in self.calls) > 1:
+                if (parameters.get("comparison_mode") == "EXACT"
+                        and sum(p.get("comparison_mode") == "EXACT" for _, p in self.calls) > 1):
                     return []
                 return result
 
         with self.assertRaises(UploadPreflightUnavailable):
             _reader(Revoked(exact=[_row()])).check(PRINCIPAL, PUMP.encode(), canonical_uri=URI)
+
+    def test_similarity_authorization_changed_before_response_never_exposes_difference(self):
+        class Revoked(_Transaction):
+            def run(self, query, **parameters):
+                result = super().run(query, **parameters)
+                if (parameters.get("comparison_mode") == "SIMILAR"
+                        and sum(p.get("comparison_mode") == "SIMILAR" for _, p in self.calls) > 1):
+                    return []
+                return result
+
+        tx = Revoked(candidates=[_row()], texts={"pump-version-0": PUMP})
+        with self.assertRaises(UploadPreflightUnavailable):
+            _reader(tx).check(PRINCIPAL, PUMP.replace("37.5", "38.5").encode(), canonical_uri=URI)
+        self.assertTrue(any(params.get("comparison_mode") == "TEXT" for _, params in tx.calls))
 
     def test_partial_visibility_or_changed_source_never_exposes_diff(self):
         candidate = _row()
@@ -216,12 +278,21 @@ class UploadPreflightTests(unittest.TestCase):
             "chunk.char_end <> size(version.normalized_text)", "previous.char_end = chunk.char_start",
         ):
             self.assertIn(required, _BOUNDARY)
-        for query in (_EXACT, _SIMILAR, _TEXT):
-            self.assertTrue(query.startswith(_BOUNDARY))
-            self.assertNotIn(" SET ", query)
-            self.assertNotIn(" MERGE ", query)
-        self.assertNotIn("AS text", _EXACT)
-        self.assertNotIn("AS text", _SIMILAR)
+        self.assertTrue(_MATCHES.startswith(_BOUNDARY))
+        self.assertNotIn(" SET ", _MATCHES)
+        self.assertNotIn(" MERGE ", _MATCHES)
+        self.assertIn("CASE WHEN $comparison_mode = 'TEXT' THEN version.normalized_text ELSE null END AS text", _MATCHES)
+
+    def test_exact_similarity_text_and_rechecks_share_one_bounded_query_plan(self):
+        tx = _Transaction(candidates=[_row()], texts={"pump-version-0": PUMP})
+        _reader(tx).check(PRINCIPAL, PUMP.replace("37.5", "38.5").encode(), canonical_uri=URI)
+        compared = [(query, params) for query, params in tx.calls if query != _POSSIBLE]
+        self.assertEqual({query for query, _ in compared}, {_MATCHES})
+        self.assertEqual([params["comparison_mode"] for _, params in compared],
+                         ["EXACT", "SIMILAR", "TEXT", "EXACT", "SIMILAR"])
+        self.assertEqual([params["limit"] for _, params in compared], [21, 51, 50, 21, 51])
+        self.assertTrue(all(params["version_ids"] == [] for _, params in compared
+                            if params["comparison_mode"] != "TEXT"))
 
 
 if __name__ == "__main__":

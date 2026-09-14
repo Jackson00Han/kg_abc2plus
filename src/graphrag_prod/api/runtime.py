@@ -81,6 +81,8 @@ class OperationKind(str, Enum):
     KNOWLEDGE_CONSTRUCT = "knowledge_construct"
     KNOWLEDGE_CONSTRUCTION_JOB = "knowledge_construction_job"
     KNOWLEDGE_CONSTRUCTION_JOBS = "knowledge_construction_jobs"
+    KNOWLEDGE_AUTO_REVIEW = "knowledge_auto_review"
+    KNOWLEDGE_AUTO_REVIEW_RUN = "knowledge_auto_review_run"
     KNOWLEDGE_REVIEW_QUEUE = "knowledge_review_queue"
     KNOWLEDGE_REVISION_HISTORY = "knowledge_revision_history"
     KNOWLEDGE_REVIEW_BATCH = "knowledge_review_batch"
@@ -122,6 +124,7 @@ class OperationKind(str, Enum):
             self.ONTOLOGY_PUBLISH,
             self.KNOWLEDGE_IMPORT,
             self.KNOWLEDGE_CONSTRUCT,
+            self.KNOWLEDGE_AUTO_REVIEW_RUN,
             self.KNOWLEDGE_REVIEW_BATCH,
             self.PROPERTY_ASSIGNMENT_APPLY,
             self.ENTITY_RESOLUTION_APPLY,
@@ -142,6 +145,7 @@ class OperationKind(str, Enum):
             self.KNOWLEDGE_PREFLIGHT,
             self.KNOWLEDGE_CONSTRUCTION_JOB,
             self.KNOWLEDGE_CONSTRUCTION_JOBS,
+            self.KNOWLEDGE_AUTO_REVIEW,
             self.KNOWLEDGE_REVIEW_QUEUE,
             self.KNOWLEDGE_REVISION_HISTORY,
             self.ENTITY_RESOLUTION_SUGGEST,
@@ -184,6 +188,8 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.KNOWLEDGE_CONSTRUCT: "knowledge:construct",
         OperationKind.KNOWLEDGE_CONSTRUCTION_JOB: "knowledge:construct",
         OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS: "knowledge:construct",
+        OperationKind.KNOWLEDGE_AUTO_REVIEW: "knowledge:review",
+        OperationKind.KNOWLEDGE_AUTO_REVIEW_RUN: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_QUEUE: "knowledge:review",
         OperationKind.KNOWLEDGE_REVISION_HISTORY: "knowledge:review",
         OperationKind.KNOWLEDGE_REVIEW_BATCH: "knowledge:review",
@@ -336,6 +342,7 @@ class ErrorCode(str, Enum):
     DEPENDENCY_TIMEOUT = "dependency_timeout"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     CONSTRUCTION_INGESTION_FAILED = "construction_ingestion_failed"
+    CONSTRUCTION_MAPPING_INVALID = "construction_mapping_invalid"
     CONSTRUCTION_INPUT_LIMIT = "construction_input_limit"
     OVERLOADED = "overloaded"
     RUNTIME_CLOSED = "runtime_closed"
@@ -504,6 +511,12 @@ class ConstructionIngestionFailedError(ApiRuntimeError):
     default_message = "source preparation failed; retry with a new construction operation after recovery"
 
 
+class ConstructionMappingInvalidError(ApiRuntimeError):
+    code = ErrorCode.CONSTRUCTION_MAPPING_INVALID
+    status_code = 422
+    default_message = "structured field mapping failed validation; inspect the construction job findings"
+
+
 class DependencyTimeoutError(ApiRuntimeError):
     code = ErrorCode.DEPENDENCY_TIMEOUT
     status_code = 504
@@ -573,8 +586,14 @@ class RuntimePolicy:
     initial_backoff_seconds: float = 0.05
     max_backoff_seconds: float = 1.0
     overload_retry_after_seconds: float = 1.0
+    construction_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
+        if self.construction_timeout_seconds is not None:
+            object.__setattr__(
+                self, "construction_timeout_seconds",
+                _finite_positive(self.construction_timeout_seconds, "construction_timeout_seconds"),
+            )
         _positive_integer(self.max_workers, "max_workers")
         _nonnegative_integer(self.max_queue_size, "max_queue_size")
         object.__setattr__(
@@ -722,7 +741,13 @@ class BoundedOperationRunner:
             raise RequestValidationError("operation envelope is invalid")
         self._ensure_open()
         started = self._monotonic()
-        deadline = started + self.policy.timeout_seconds
+        timeout = self.policy.timeout_seconds
+        if (
+            envelope.operation in {OperationKind.KNOWLEDGE_CONSTRUCT, OperationKind.KNOWLEDGE_AUTO_REVIEW_RUN}
+            and self.policy.construction_timeout_seconds is not None
+        ):
+            timeout = self.policy.construction_timeout_seconds
+        deadline = started + timeout
         attempts = (
             self.policy.max_attempts
             if envelope.operation.is_retry_safe

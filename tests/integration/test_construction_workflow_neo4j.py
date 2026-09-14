@@ -23,6 +23,8 @@ from graphrag_prod.api.knowledge_contracts import (
     PublicationRequest,
 )
 from graphrag_prod.construction import (
+    BoundedDocumentParser,
+    ChunkingConfig,
     ConstructionConfig,
     ConstructionMetadata,
     ConstructionConflict,
@@ -172,6 +174,10 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
                 os.environ["TEST_NEO4J_USER"],
                 os.environ["TEST_NEO4J_PASSWORD"],
             ),
+            # An empty fixture lacks optional lifecycle properties. Repeating
+            # their informational notifications obscures test failures; schema
+            # verification and all authorization assertions remain unchanged.
+            notifications_min_severity="OFF",
         )
         cls.driver.verify_connectivity()
         records, _, _ = cls.driver.execute_query(
@@ -283,6 +289,21 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             database_=self.database,
         )
 
+    def _activate_source_index(self, result) -> None:
+        from graphrag_prod.domain import ChunkEmbedding, chunk_embedding_id
+        from graphrag_prod.ingestion import Neo4jEmbeddingIndexManager
+
+        profile = self.workflow.embedding_profile
+        chunk_id = result.chunks[0].chunk_id
+        embedding = ChunkEmbedding(
+            chunk_embedding_id(chunk_id, profile.embedding_space_id), self.tenant_id,
+            chunk_id, profile.embedding_space_id, profile.provider, profile.model,
+            profile.revision, profile.dimensions, profile.normalization, NOW, (0.6, 0.8),
+        )
+        indexes = Neo4jEmbeddingIndexManager(self.driver, self.database)
+        generation = indexes.prepare(tenant_id=self.tenant_id, embedding_profile=embedding, generation_version=1)
+        indexes.activate(generation.generation_id, expected_active_generation_id=None)
+
     def test_authoritative_document_candidates_keep_source_authority_and_acl(self) -> None:
         principal = replace(self.principal, capabilities=self.principal.capabilities | {"knowledge:import"})
         metadata = replace(self.metadata, knowledge_scope="AUTHORITATIVE")
@@ -303,8 +324,10 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
 
     def test_manual_source_requires_complete_active_publication_and_keeps_provenance(self) -> None:
         from graphrag_prod.construction.manual import prepare_manual_record
+        from graphrag_prod.graph.browse_models import GraphViewChanged
         from graphrag_prod.knowledge.review import ReviewRecordKind
-        from graphrag_prod.retrieval.engine import HYDRATE_QUERY, _ACTIVE_CORPUS_GUARD
+        from graphrag_prod.knowledge.source_library import Neo4jSourceLibrary
+        from graphrag_prod.retrieval import Neo4jRetrievalEngine, RetrievalRequest, VersionFilter
         record = prepare_manual_record({"kind": "RELATIONSHIP",
             "subject": {"entity_type": "Company", "canonical_name": "Acme"},
             "predicate": "OWNS", "object_entity": {"entity_type": "Asset", "canonical_name": "Pump-7"}})
@@ -314,12 +337,23 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(self.completions.calls, [])
         self.assertEqual(self.workflow.run(self.principal, record.text.encode(), metadata).job_id, result.job_id)
         self.assertEqual(self.embedding_calls, 1)
-        query = HYDRATE_QUERY.replace(_ACTIVE_CORPUS_GUARD, "")
+        self._activate_source_index(result)
+        engine = Neo4jRetrievalEngine(self.driver, self.database)
+        reader = replace(
+            self.principal,
+            capabilities=self.principal.capabilities | {"retrieval:read"},
+        )
+
         def visible(groups=("board",)):
-            rows, _, _ = self.driver.execute_query(query, tenant_id=self.tenant_id, groups=list(groups),
-                chunk_ids=[result.chunks[0].chunk_id], document_ids=[], version_ids=[], published_before=None,
-                database_=self.database)
-            return rows
+            # Exercise the supported reader with its own publication/corpus
+            # pins; a low-level hydration query is not the public read path.
+            return list(engine.retrieve(RetrievalRequest(
+                query_text="Acme Pump-7",
+                query_vector=(0.6, 0.8),
+                principal=replace(reader, groups=frozenset(groups)),
+                query_embedding_space_id=self.workflow.embedding_profile.embedding_space_id,
+                version_filter=VersionFilter(document_ids=frozenset({result.document_id})),
+            )).chunks)
         self.assertEqual(visible(), [])
         service = Neo4jKnowledgeReviewService(self.driver, self.database)
         approved = []
@@ -339,11 +373,19 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
         published = adapter.publish(principal, PublicationRequest(approved_revision_ids=approved)).payload
         self.assertEqual(len(visible()), 1)
         self.assertEqual(visible(("public",)), [])
-        self.assertEqual(visible()[0]["source_name"], "人工补充记录")
+        self.assertEqual(visible()[0].citation.source_name, "人工补充记录")
+        library = Neo4jSourceLibrary(self.driver, self.database)
+        published_source = library.read(
+            reader, document_id=result.document_id, version_id=result.version_id,
+        )
+        self.assertEqual(published_source["text"], record.text)
+        self.assertEqual(published_source["source_name"], "人工补充记录")
         # A partial record must never expose the complete human statement.
         self.driver.execute_query("MATCH (p:KnowledgePublication {publication_id:$id})-[r:PUBLISHES_KNOWLEDGE_REVISION]->(:GovernedAssertionRevision) DELETE r",
                                   id=published.publication_id, database_=self.database)
         self.assertEqual(visible(), [])
+        with self.assertRaises(GraphViewChanged):
+            library.read(reader, document_id=result.document_id, version_id=result.version_id)
 
     def _enable_validation_feedback(self, *steps: str) -> _FeedbackCompletions:
         completions = _FeedbackCompletions(*steps)
@@ -364,6 +406,70 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             self.workflow.config, max_model_calls=4, deadline_seconds=30.0,
         )
         return completions
+
+    def test_parallel_whole_document_preserves_all_audits_acl_and_replay(self) -> None:
+        previous = self.workflow
+
+        def extractor_factory(tbox):
+            return OpenAICompatibleOntologyExtractor(
+                client=SimpleNamespace(chat=SimpleNamespace(completions=self.completions)),
+                model="deterministic-test-model", active_tbox=tbox,
+                prompt_version="industrial-prompt:v1", max_validation_attempts=2,
+                limits=ExtractionLimits(timeout_seconds=1.0),
+            )
+
+        workflow = Neo4jKnowledgeConstructionWorkflow(
+            driver=self.driver, database=self.database, pipeline=previous.pipeline,
+            embedding_provider=previous.embedding_provider,
+            embedding_profile=previous.embedding_profile, extractor_factory=extractor_factory,
+            config=replace(previous.config, max_concurrency=4, max_chunks=12, max_model_calls=24),
+            parser=BoundedDocumentParser(chunking=ChunkingConfig(
+                max_chars=len(SOURCE), minimum_boundary_ratio=1.0,
+            )), clock=lambda: NOW,
+        )
+        result = workflow.run(self.principal, SOURCE * 12, self.metadata)
+        self.assertEqual(len(result.chunks), 12)
+        self.assertTrue(all(item.status == "CANDIDATE" for item in result.chunks))
+        self.assertTrue(all(len(item.validation_attempts) == 1 for item in result.chunks))
+        job = workflow.audit_store.get_job(self.principal, result.job_id)
+        self.assertEqual((job.expected_chunks, job.completed_chunks, job.status), (12, 12, "COMPLETED"))
+        self.assertEqual(job.operation_key, self.metadata.operation_key)
+        self.assertEqual(workflow.audit_store.list_jobs(self.principal)[0].operation_key, self.metadata.operation_key)
+        hidden = replace(self.principal, groups=frozenset({"public"}))
+        self.assertIsNone(workflow.audit_store.get_job(hidden, result.job_id))
+        foreign = replace(self.principal, tenant_id="other-tenant")
+        self.assertIsNone(workflow.audit_store.get_job(foreign, result.job_id))
+        counts = self._proposal_and_outcome_counts()
+        calls = len(self.completions.calls)
+        # Reproduce the interleaving in which one parallel call fails before
+        # another finishes persisting its valid outcome. The late success must
+        # not make the interrupted job appear RUNNING again.
+        self.driver.execute_query(
+            "MATCH (job:KnowledgeConstructionJob {job_id:$job}) SET job.status='RUNNING'",
+            job=result.job_id, database_=self.database,
+        )
+        workflow.audit_store.record_retryable_failure(
+            tenant_id=self.tenant_id, job_id=result.job_id,
+            chunk_id=result.chunks[-1].chunk_id,
+            findings=(ExtractionFinding("MODEL_CALL_TIMEOUT", "REJECT", "$", "timeout"),),
+            failed_at=NOW,
+        )
+        rows, _, _ = self.driver.execute_query(
+            "MATCH (outcome:KnowledgeConstructionChunkOutcome {job_id:$job,chunk_id:$chunk}) "
+            "RETURN outcome.artifact_input_hash AS input_hash, outcome.artifact_profile_id AS profile_id",
+            job=result.job_id, chunk=result.chunks[0].chunk_id, database_=self.database,
+        )
+        workflow.audit_store.persist_outcome(
+            self.principal, job_id=result.job_id, result=result.chunks[0],
+            access_groups=self.metadata.access_groups,
+            artifact_input_hash=rows[0]["input_hash"], artifact_profile_id=rows[0]["profile_id"],
+            completed_at=NOW,
+        )
+        self.assertEqual(workflow.audit_store.get_job(self.principal, result.job_id).status, "RETRY_WAIT")
+        repeated = workflow.run(self.principal, SOURCE * 12, self.metadata)
+        self.assertEqual(repeated.job_id, result.job_id)
+        self.assertEqual(len(self.completions.calls), calls)
+        self.assertEqual(self._proposal_and_outcome_counts(), counts)
 
     def _extraction_audits(self) -> dict[str, str]:
         rows, _, _ = self.driver.execute_query(
@@ -1011,6 +1117,7 @@ class Neo4jConstructionWorkflowIntegrationTests(unittest.TestCase):
             driver=self.driver, database=self.database, construction=self.workflow,
             clock=lambda: NOW,
         )
+        self._activate_source_index(source)
 
         def evidence(text: str, start: int) -> dict[str, object]:
             return {

@@ -1,0 +1,577 @@
+[
+  {
+    "chunk": {
+      "text": "{\n      \"asset_ref\": \"PBMBaseProj_2512/BUS1.S1.FE1\",\n      \"entity_type\": \"Flange\",\n      \"entity_type_name\": \"法兰\",\n      \"parent_asset_ref\": \"PBMBaseProj_2512/BUS1.S1\",\n      \"full_code\": \"BUS1.S1.FE1\",\n      \"code\": \"FE1\",\n      \"display_name\": \"FE1\",\n      \"full_name\": \"BUS1.Section1.FE1\",\n      \"description\": \"根节点0.母线1.分区1.法兰1\",\n      \"field_code\": \"BUS1.FE1\",\n      \"source_node_type_code\": \"2\",\n      \"element_type_code\": \"430\",\n      \"source_element_type_description\": \"FE\",\n      \"temp_type_code\": \"0\",\n      \"source_algorithm_route_code\": \"None\",\n      \"source_xpath\": \"/Project/NodeTree//Child[@FullCode='BUS1.S1.FE1']\"\n    },\n    ",
+      "document_id": "6f3e0188-004f-5b65-90e6-d20b24a58282",
+      "ordinal": 8,
+      "tenant_id": "workspace-43b248f9-927a-5811-8b86-c2af24bb8cc6",
+      "checksum": "9645bcb2293da2bee61c839e077f5dfb0ee175e55b241b88845c968dda8e4efb",
+      "version_id": "b7a1c735-bea9-55c8-9be8-4b50eb26f08a",
+      "char_end": 7725,
+      "access_policy_version": 1,
+      "access_groups": [
+        "administrators",
+        "members"
+      ],
+      "access_policy_id": "principal-acl:e6920a99a6e248548423679952747bb0cba97fb3a046837dd408ce14604cf250",
+      "char_start": 7082,
+      "splitter_version": "bounded-boundary:v1:max=1200:min-ratio=0.6|json-record-boundaries:v1",
+      "chunk_id": "62ba409c-636d-518c-a4fb-510a14ce5852",
+      "retrieval_scope": "grscopeactive grscopetenant8cf486aecd30a31d9864f041e77ad101d4769e367dcc928e2f69b9870a0cf224 grscopegroup3c530c2f44b31d186782cdbee8a0b0a815350ea53d4cb7b9782ec9daad16b6c7 grscopegroup17373ca1c7634a4be4a13861a891abd975ec916caab8f3dcf5142fa4997d0b96"
+    },
+    "attempts": [
+      {
+        "access_groups": [
+          "administrators",
+          "members"
+        ],
+        "access_policy_id": "principal-acl:e6920a99a6e248548423679952747bb0cba97fb3a046837dd408ce14604cf250",
+        "access_policy_version": 1,
+        "attempt": 1,
+        "audit_type": "VALIDATION_ATTEMPT",
+        "chunk_checksum": "9645bcb2293da2bee61c839e077f5dfb0ee175e55b241b88845c968dda8e4efb",
+        "chunk_id": "62ba409c-636d-518c-a4fb-510a14ce5852",
+        "document_id": "6f3e0188-004f-5b65-90e6-d20b24a58282",
+        "extractor_version": "openai-compatible:qwen3.8-max:v3:request-policy:fa4d6380dde8af0eca367baf2089a603b6c2ad47ac290989502c9da269be0121",
+        "finding_codes": [
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE"
+        ],
+        "findings": [
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[0].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[0].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[1].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[2].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[2].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[3].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[4].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[4].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[5].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[5].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[6].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[6].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[7].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[7].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[8].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[8].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[9].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[9].entity_ref"
+          }
+        ],
+        "format_version": 1,
+        "job_id": "ac4e6fb1-6cd2-54b4-bad5-34ebe5ee88ec",
+        "model": "qwen3.8-max",
+        "ontology_checksum": "68c03632d9b506d9f3e91021a650cdbef7776fa57ecf0bdc00bbbc99b50af366",
+        "ontology_version_id": "058fe9f4-5042-5cf2-833b-540629bceb11",
+        "parent_artifact_id": "ec96f98d-8980-5981-b26d-d345d973628a",
+        "previous_attempt_artifact_id": null,
+        "profile_id": "7cbb2c62-c912-5e01-b41f-9a9122850eca",
+        "prompt_version": "industrial-property-graph-extraction:v6-exact-json-spans",
+        "provider_seconds": 13.026905164006166,
+        "recorded_at": "2026-09-13T09:51:32.290591+00:00",
+        "response": "{\"entities\":[{\"ref\":\"e1\",\"type\":\"Flange\",\"mentions\":[{\"text\":\"FE1\",\"start\":248,\"end\":251,\"confidence\":1.0},{\"text\":\"BUS1.S1.FE1\",\"start\":190,\"end\":201,\"confidence\":1.0}]}],\"relationships\":[],\"property_facts\":[{\"entity_ref\":\"e1\",\"property\":\"project_id\",\"raw_literal\":\"PBMBaseProj_2512\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"asset_ref\\\": \\\"PBMBaseProj_2512/BUS1.S1.FE1\\\"\",\"start\":19,\"end\":51},\"confidence\":0.9},{\"entity_ref\":\"e1\",\"property\":\"full_code\",\"raw_literal\":\"BUS1.S1.FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_code\\\": \\\"BUS1.S1.FE1\\\"\",\"start\":177,\"end\":202},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"code\",\"raw_literal\":\"FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"code\\\": \\\"FE1\\\"\",\"start\":211,\"end\":223},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"display_name\",\"raw_literal\":\"FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"display_name\\\": \\\"FE1\\\"\",\"start\":232,\"end\":252},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"full_name\",\"raw_literal\":\"BUS1.Section1.FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_name\\\": \\\"BUS1.Section1.FE1\\\"\",\"start\":261,\"end\":292},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"description\",\"raw_literal\":\"根节点0.母线1.分区1.法兰1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"description\\\": \\\"根节点0.母线1.分区1.法兰1\\\"\",\"start\":301,\"end\":333},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"field_code\",\"raw_literal\":\"BUS1.FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"field_code\\\": \\\"BUS1.FE1\\\"\",\"start\":342,\"end\":365},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"element_type_code\",\"raw_literal\":\"430\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"element_type_code\\\": \\\"430\\\"\",\"start\":410,\"end\":435},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"temp_type_code\",\"raw_literal\":\"0\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"temp_type_code\\\": \\\"0\\\"\",\"start\":491,\"end\":511},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"source_algorithm_route_code\",\"raw_literal\":\"None\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"source_algorithm_route_code\\\": \\\"None\\\"\",\"start\":520,\"end\":556},\"confidence\":1.0}]}",
+        "response_chars": 2509,
+        "response_checksum": "1afced4eecd2eb57f7fade3d196daf52b82d47a291fce39aa9888bb5fb733b5b",
+        "status": "REJECTED",
+        "tenant_id": "workspace-43b248f9-927a-5811-8b86-c2af24bb8cc6",
+        "validation_run_id": "1a302a01d85f4da3982050aaaaf28de6",
+        "version_id": "b7a1c735-bea9-55c8-9be8-4b50eb26f08a"
+      },
+      {
+        "access_groups": [
+          "administrators",
+          "members"
+        ],
+        "access_policy_id": "principal-acl:e6920a99a6e248548423679952747bb0cba97fb3a046837dd408ce14604cf250",
+        "access_policy_version": 1,
+        "attempt": 2,
+        "audit_type": "VALIDATION_ATTEMPT",
+        "chunk_checksum": "9645bcb2293da2bee61c839e077f5dfb0ee175e55b241b88845c968dda8e4efb",
+        "chunk_id": "62ba409c-636d-518c-a4fb-510a14ce5852",
+        "document_id": "6f3e0188-004f-5b65-90e6-d20b24a58282",
+        "extractor_version": "openai-compatible:qwen3.8-max:v3:request-policy:fa4d6380dde8af0eca367baf2089a603b6c2ad47ac290989502c9da269be0121",
+        "finding_codes": [
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE"
+        ],
+        "findings": [
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[4].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[5].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[6].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[7].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[8].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[9].entity_ref"
+          }
+        ],
+        "format_version": 1,
+        "job_id": "ac4e6fb1-6cd2-54b4-bad5-34ebe5ee88ec",
+        "model": "qwen3.8-max",
+        "ontology_checksum": "68c03632d9b506d9f3e91021a650cdbef7776fa57ecf0bdc00bbbc99b50af366",
+        "ontology_version_id": "058fe9f4-5042-5cf2-833b-540629bceb11",
+        "parent_artifact_id": "ec96f98d-8980-5981-b26d-d345d973628a",
+        "previous_attempt_artifact_id": "26dc58f1-017a-5bc3-a24c-dc0848f1b17d",
+        "profile_id": "7cbb2c62-c912-5e01-b41f-9a9122850eca",
+        "prompt_version": "industrial-property-graph-extraction:v6-exact-json-spans",
+        "provider_seconds": 15.09158284199657,
+        "recorded_at": "2026-09-13T09:51:47.410386+00:00",
+        "response": "{\"entities\":[{\"ref\":\"e1\",\"type\":\"Flange\",\"mentions\":[{\"text\":\"FE1\",\"start\":248,\"end\":251,\"confidence\":1.0},{\"text\":\"BUS1.S1.FE1\",\"start\":190,\"end\":201,\"confidence\":1.0}]}],\"relationships\":[],\"property_facts\":[{\"entity_ref\":\"e1\",\"property\":\"project_id\",\"raw_literal\":\"PBMBaseProj_2512\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"asset_ref\\\": \\\"PBMBaseProj_2512/BUS1.S1.FE1\\\",\\n      \\\"entity_type\\\": \\\"Flange\\\",\\n      \\\"entity_type_name\\\": \\\"法兰\\\",\\n      \\\"parent_asset_ref\\\": \\\"PBMBaseProj_2512/BUS1.S1\\\",\\n      \\\"full_code\\\": \\\"BUS1.S1.FE1\\\",\\n      \\\"code\\\": \\\"FE1\\\",\\n      \\\"display_name\\\": \\\"FE1\\\"\",\"start\":8,\"end\":252},\"confidence\":0.9},{\"entity_ref\":\"e1\",\"property\":\"full_code\",\"raw_literal\":\"BUS1.S1.FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_code\\\": \\\"BUS1.S1.FE1\\\"\",\"start\":176,\"end\":202},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"code\",\"raw_literal\":\"FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"code\\\": \\\"FE1\\\",\\n      \\\"display_name\\\": \\\"FE1\\\"\",\"start\":210,\"end\":252},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"display_name\",\"raw_literal\":\"FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"display_name\\\": \\\"FE1\\\"\",\"start\":231,\"end\":252},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"full_name\",\"raw_literal\":\"BUS1.Section1.FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_name\\\": \\\"BUS1.Section1.FE1\\\"\",\"start\":260,\"end\":292},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"description\",\"raw_literal\":\"根节点0.母线1.分区1.法兰1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"description\\\": \\\"根节点0.母线1.分区1.法兰1\\\"\",\"start\":300,\"end\":333},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"field_code\",\"raw_literal\":\"BUS1.FE1\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"field_code\\\": \\\"BUS1.FE1\\\"\",\"start\":341,\"end\":365},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"element_type_code\",\"raw_literal\":\"430\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"element_type_code\\\": \\\"430\\\"\",\"start\":409,\"end\":435},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"temp_type_code\",\"raw_literal\":\"0\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"temp_type_code\\\": \\\"0\\\"\",\"start\":490,\"end\":511},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"source_algorithm_route_code\",\"raw_literal\":\"None\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"source_algorithm_route_code\\\": \\\"None\\\"\",\"start\":519,\"end\":556},\"confidence\":1.0}]}",
+        "response_chars": 2774,
+        "response_checksum": "2172016b4bade62c698a766434911c34cd60176502fa6ca9ba269370aa3c66ac",
+        "status": "REJECTED",
+        "tenant_id": "workspace-43b248f9-927a-5811-8b86-c2af24bb8cc6",
+        "validation_run_id": "1a302a01d85f4da3982050aaaaf28de6",
+        "version_id": "b7a1c735-bea9-55c8-9be8-4b50eb26f08a"
+      }
+    ]
+  },
+  {
+    "chunk": {
+      "text": "{\n      \"asset_ref\": \"PBMBaseProj_2512/BUS1.S1.PIU4\",\n      \"entity_type\": \"PlugInUnit\",\n      \"entity_type_name\": \"插接箱\",\n      \"parent_asset_ref\": \"PBMBaseProj_2512/BUS1.S1\",\n      \"full_code\": \"BUS1.S1.PIU4\",\n      \"code\": \"PIU4\",\n      \"display_name\": \"Plug-in Unit4\",\n      \"full_name\": \"BUS1.Section1.Plug-in Unit4\",\n      \"description\": \"根节点0.母线1.分区1.插接箱4\",\n      \"field_code\": \"BUS1.PIU4\",\n      \"source_node_type_code\": \"2\",\n      \"element_type_code\": \"440\",\n      \"source_element_type_description\": \"PIU\",\n      \"temp_type_code\": \"0\",\n      \"source_algorithm_route_code\": \"None\",\n      \"source_xpath\": \"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\",\n      \"source_annotations\": {\n        \"CurrentRating\": \"1250 A\",\n        \"BreakerInterruptingCapability\": \"50kA\",\n        \"BreakerPolarity\": \"3\"\n      }\n    },\n    ",
+      "document_id": "6f3e0188-004f-5b65-90e6-d20b24a58282",
+      "ordinal": 14,
+      "tenant_id": "workspace-43b248f9-927a-5811-8b86-c2af24bb8cc6",
+      "checksum": "7739e82e862342fef53fd5d05332360952be7dff4fa8f2e0ee3831f7f7ea7bb5",
+      "version_id": "b7a1c735-bea9-55c8-9be8-4b50eb26f08a",
+      "char_end": 13256,
+      "access_policy_version": 1,
+      "access_groups": [
+        "administrators",
+        "members"
+      ],
+      "access_policy_id": "principal-acl:e6920a99a6e248548423679952747bb0cba97fb3a046837dd408ce14604cf250",
+      "char_start": 12427,
+      "splitter_version": "bounded-boundary:v1:max=1200:min-ratio=0.6|json-record-boundaries:v1",
+      "chunk_id": "149b7c0d-23ce-5c2f-acc2-6a0ab7ac323a",
+      "retrieval_scope": "grscopeactive grscopetenant8cf486aecd30a31d9864f041e77ad101d4769e367dcc928e2f69b9870a0cf224 grscopegroup3c530c2f44b31d186782cdbee8a0b0a815350ea53d4cb7b9782ec9daad16b6c7 grscopegroup17373ca1c7634a4be4a13861a891abd975ec916caab8f3dcf5142fa4997d0b96"
+    },
+    "attempts": [
+      {
+        "access_groups": [
+          "administrators",
+          "members"
+        ],
+        "access_policy_id": "principal-acl:e6920a99a6e248548423679952747bb0cba97fb3a046837dd408ce14604cf250",
+        "access_policy_version": 1,
+        "attempt": 1,
+        "audit_type": "VALIDATION_ATTEMPT",
+        "chunk_checksum": "7739e82e862342fef53fd5d05332360952be7dff4fa8f2e0ee3831f7f7ea7bb5",
+        "chunk_id": "149b7c0d-23ce-5c2f-acc2-6a0ab7ac323a",
+        "document_id": "6f3e0188-004f-5b65-90e6-d20b24a58282",
+        "extractor_version": "openai-compatible:qwen3.8-max:v3:request-policy:fa4d6380dde8af0eca367baf2089a603b6c2ad47ac290989502c9da269be0121",
+        "finding_codes": [
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "EVIDENCE_SPAN_MISMATCH",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "FACT_TOKEN_OUTSIDE_EVIDENCE"
+        ],
+        "findings": [
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[0].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[0].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[1].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[1].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[2].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[3].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[3].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[4].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[4].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[5].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[5].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[6].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[6].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[7].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[7].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[8].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[8].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[9].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[9].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "EVIDENCE_SPAN_MISMATCH",
+            "detail": "fact evidence text must exactly match its relative Chunk span",
+            "path": "$.property_facts[10].evidence"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[10].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "FACT_TOKEN_OUTSIDE_EVIDENCE",
+            "detail": "fact tokens must occur verbatim inside exact evidence",
+            "path": "$.property_facts[10].raw_literal"
+          }
+        ],
+        "format_version": 1,
+        "job_id": "ac4e6fb1-6cd2-54b4-bad5-34ebe5ee88ec",
+        "model": "qwen3.8-max",
+        "ontology_checksum": "68c03632d9b506d9f3e91021a650cdbef7776fa57ecf0bdc00bbbc99b50af366",
+        "ontology_version_id": "058fe9f4-5042-5cf2-833b-540629bceb11",
+        "parent_artifact_id": "79cbaf4c-831d-5e80-b29e-ea4d6f403b5c",
+        "previous_attempt_artifact_id": null,
+        "profile_id": "7cbb2c62-c912-5e01-b41f-9a9122850eca",
+        "prompt_version": "industrial-property-graph-extraction:v6-exact-json-spans",
+        "provider_seconds": 14.549584898049943,
+        "recorded_at": "2026-09-13T09:52:53.064433+00:00",
+        "response": "{\"entities\":[{\"ref\":\"e1\",\"type\":\"PlugInUnit\",\"mentions\":[{\"text\":\"PIU4\",\"start\":226,\"end\":230,\"confidence\":1.0}]}],\"property_facts\":[{\"entity_ref\":\"e1\",\"property\":\"project_id\",\"raw_literal\":\"PBMBaseProj_2512\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"asset_ref\\\": \\\"PBMBaseProj_2512/BUS1.S1.PIU4\\\"\",\"start\":19,\"end\":52},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"full_code\",\"raw_literal\":\"BUS1.S1.PIU4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_code\\\": \\\"BUS1.S1.PIU4\\\"\",\"start\":183,\"end\":209},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"code\",\"raw_literal\":\"PIU4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"code\\\": \\\"PIU4\\\"\",\"start\":218,\"end\":231},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"display_name\",\"raw_literal\":\"Plug-in Unit4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"display_name\\\": \\\"Plug-in Unit4\\\"\",\"start\":240,\"end\":270},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"full_name\",\"raw_literal\":\"BUS1.Section1.Plug-in Unit4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_name\\\": \\\"BUS1.Section1.Plug-in Unit4\\\"\",\"start\":279,\"end\":320},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"description\",\"raw_literal\":\"根节点0.母线1.分区1.插接箱4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"description\\\": \\\"根节点0.母线1.分区1.插接箱4\\\"\",\"start\":329,\"end\":362},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"field_code\",\"raw_literal\":\"BUS1.PIU4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"field_code\\\": \\\"BUS1.PIU4\\\"\",\"start\":371,\"end\":395},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"element_type_code\",\"raw_literal\":\"440\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"element_type_code\\\": \\\"440\\\"\",\"start\":440,\"end\":465},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"temp_type_code\",\"raw_literal\":\"0\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"temp_type_code\\\": \\\"0\\\"\",\"start\":522,\"end\":542},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"source_algorithm_route_code\",\"raw_literal\":\"None\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"source_algorithm_route_code\\\": \\\"None\\\"\",\"start\":551,\"end\":587},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"source_annotations\",\"raw_literal\":\"{\\\"CurrentRating\\\": \\\"1250 A\\\",\\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\\"BreakerPolarity\\\": \\\"3\\\"}\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":672,\"end\":817},\"confidence\":1.0}],\"relationships\":[]}",
+        "response_chars": 2963,
+        "response_checksum": "920194a658fee60299e35ddd1099b7bc5225bb9a0f1a67303c9f3ee3773c036f",
+        "status": "REJECTED",
+        "tenant_id": "workspace-43b248f9-927a-5811-8b86-c2af24bb8cc6",
+        "validation_run_id": "9f43953d72f24eddbd81b9b9d6e6a742",
+        "version_id": "b7a1c735-bea9-55c8-9be8-4b50eb26f08a"
+      },
+      {
+        "access_groups": [
+          "administrators",
+          "members"
+        ],
+        "access_policy_id": "principal-acl:e6920a99a6e248548423679952747bb0cba97fb3a046837dd408ce14604cf250",
+        "access_policy_version": 1,
+        "attempt": 2,
+        "audit_type": "VALIDATION_ATTEMPT",
+        "chunk_checksum": "7739e82e862342fef53fd5d05332360952be7dff4fa8f2e0ee3831f7f7ea7bb5",
+        "chunk_id": "149b7c0d-23ce-5c2f-acc2-6a0ab7ac323a",
+        "document_id": "6f3e0188-004f-5b65-90e6-d20b24a58282",
+        "extractor_version": "openai-compatible:qwen3.8-max:v3:request-policy:fa4d6380dde8af0eca367baf2089a603b6c2ad47ac290989502c9da269be0121",
+        "finding_codes": [
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "ENDPOINT_OUTSIDE_EVIDENCE",
+          "FACT_TOKEN_OUTSIDE_EVIDENCE"
+        ],
+        "findings": [
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[3].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[4].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[5].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[6].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[7].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[8].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[9].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "ENDPOINT_OUTSIDE_EVIDENCE",
+            "detail": "fact evidence must enclose an entity mention",
+            "path": "$.property_facts[10].entity_ref"
+          },
+          {
+            "action": "REJECT",
+            "code": "FACT_TOKEN_OUTSIDE_EVIDENCE",
+            "detail": "fact tokens must occur verbatim inside exact evidence",
+            "path": "$.property_facts[10].raw_literal"
+          }
+        ],
+        "format_version": 1,
+        "job_id": "ac4e6fb1-6cd2-54b4-bad5-34ebe5ee88ec",
+        "model": "qwen3.8-max",
+        "ontology_checksum": "68c03632d9b506d9f3e91021a650cdbef7776fa57ecf0bdc00bbbc99b50af366",
+        "ontology_version_id": "058fe9f4-5042-5cf2-833b-540629bceb11",
+        "parent_artifact_id": "79cbaf4c-831d-5e80-b29e-ea4d6f403b5c",
+        "previous_attempt_artifact_id": "9aea40c7-5137-5926-a876-31ba0dcbc556",
+        "profile_id": "7cbb2c62-c912-5e01-b41f-9a9122850eca",
+        "prompt_version": "industrial-property-graph-extraction:v6-exact-json-spans",
+        "provider_seconds": 29.26770880096592,
+        "recorded_at": "2026-09-13T09:53:22.360288+00:00",
+        "response": "{\"entities\":[{\"ref\":\"e1\",\"type\":\"PlugInUnit\",\"mentions\":[{\"text\":\"PIU4\",\"start\":226,\"end\":230,\"confidence\":1.0}]}],\"property_facts\":[{\"entity_ref\":\"e1\",\"property\":\"project_id\",\"raw_literal\":\"PBMBaseProj_2512\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"asset_ref\\\": \\\"PBMBaseProj_2512/BUS1.S1.PIU4\\\",\\n      \\\"entity_type\\\": \\\"PlugInUnit\\\",\\n      \\\"entity_type_name\\\": \\\"插接箱\\\",\\n      \\\"parent_asset_ref\\\": \\\"PBMBaseProj_2512/BUS1.S1\\\",\\n      \\\"full_code\\\": \\\"BUS1.S1.PIU4\\\",\\n      \\\"code\\\": \\\"PIU4\\\"\",\"start\":8,\"end\":231},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"full_code\",\"raw_literal\":\"BUS1.S1.PIU4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_code\\\": \\\"BUS1.S1.PIU4\\\",\\n      \\\"code\\\": \\\"PIU4\\\"\",\"start\":182,\"end\":231},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"code\",\"raw_literal\":\"PIU4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"code\\\": \\\"PIU4\\\"\",\"start\":217,\"end\":231},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"display_name\",\"raw_literal\":\"Plug-in Unit4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"display_name\\\": \\\"Plug-in Unit4\\\",\\n      \\\"full_name\\\": \\\"BUS1.Section1.Plug-in Unit4\\\",\\n      \\\"description\\\": \\\"根节点0.母线1.分区1.插接箱4\\\",\\n      \\\"field_code\\\": \\\"BUS1.PIU4\\\",\\n      \\\"source_node_type_code\\\": \\\"2\\\",\\n      \\\"element_type_code\\\": \\\"440\\\",\\n      \\\"source_element_type_description\\\": \\\"PIU\\\",\\n      \\\"temp_type_code\\\": \\\"0\\\",\\n      \\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":239,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"full_name\",\"raw_literal\":\"BUS1.Section1.Plug-in Unit4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"full_name\\\": \\\"BUS1.Section1.Plug-in Unit4\\\",\\n      \\\"description\\\": \\\"根节点0.母线1.分区1.插接箱4\\\",\\n      \\\"field_code\\\": \\\"BUS1.PIU4\\\",\\n      \\\"source_node_type_code\\\": \\\"2\\\",\\n      \\\"element_type_code\\\": \\\"440\\\",\\n      \\\"source_element_type_description\\\": \\\"PIU\\\",\\n      \\\"temp_type_code\\\": \\\"0\\\",\\n      \\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":278,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"description\",\"raw_literal\":\"根节点0.母线1.分区1.插接箱4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"description\\\": \\\"根节点0.母线1.分区1.插接箱4\\\",\\n      \\\"field_code\\\": \\\"BUS1.PIU4\\\",\\n      \\\"source_node_type_code\\\": \\\"2\\\",\\n      \\\"element_type_code\\\": \\\"440\\\",\\n      \\\"source_element_type_description\\\": \\\"PIU\\\",\\n      \\\"temp_type_code\\\": \\\"0\\\",\\n      \\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":328,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"field_code\",\"raw_literal\":\"BUS1.PIU4\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"field_code\\\": \\\"BUS1.PIU4\\\",\\n      \\\"source_node_type_code\\\": \\\"2\\\",\\n      \\\"element_type_code\\\": \\\"440\\\",\\n      \\\"source_element_type_description\\\": \\\"PIU\\\",\\n      \\\"temp_type_code\\\": \\\"0\\\",\\n      \\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":370,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"element_type_code\",\"raw_literal\":\"440\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"element_type_code\\\": \\\"440\\\",\\n      \\\"source_element_type_description\\\": \\\"PIU\\\",\\n      \\\"temp_type_code\\\": \\\"0\\\",\\n      \\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":439,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"temp_type_code\",\"raw_literal\":\"0\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"temp_type_code\\\": \\\"0\\\",\\n      \\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":521,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"source_algorithm_route_code\",\"raw_literal\":\"None\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"source_algorithm_route_code\\\": \\\"None\\\",\\n      \\\"source_xpath\\\": \\\"/Project/NodeTree//Child[@FullCode='BUS1.S1.PIU4']\\\",\\n      \\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":550,\"end\":817},\"confidence\":1.0},{\"entity_ref\":\"e1\",\"property\":\"source_annotations\",\"raw_literal\":\"{\\\"CurrentRating\\\": \\\"1250 A\\\",\\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\\"BreakerPolarity\\\": \\\"3\\\"}\",\"unit\":null,\"valid_from\":null,\"valid_to\":null,\"observed_at\":null,\"evidence\":{\"text\":\"\\\"source_annotations\\\": {\\n        \\\"CurrentRating\\\": \\\"1250 A\\\",\\n        \\\"BreakerInterruptingCapability\\\": \\\"50kA\\\",\\n        \\\"BreakerPolarity\\\": \\\"3\\\"\\n      }\",\"start\":671,\"end\":817},\"confidence\":1.0}],\"relationships\":[]}",
+        "response_chars": 6290,
+        "response_checksum": "808ca42cf31c4c4e6a9d5aa158cd3628e49386373a88b5b167792d0c1768c039",
+        "status": "REJECTED",
+        "tenant_id": "workspace-43b248f9-927a-5811-8b86-c2af24bb8cc6",
+        "validation_run_id": "9f43953d72f24eddbd81b9b9d6e6a742",
+        "version_id": "b7a1c735-bea9-55c8-9be8-4b50eb26f08a"
+      }
+    ]
+  }
+]

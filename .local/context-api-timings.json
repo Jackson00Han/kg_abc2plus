@@ -1,0 +1,50 @@
+[
+  {
+    "timestamp": "2026-09-14T00:45:08.280708Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}",
+    "status": 200,
+    "duration_ms": 6087.068241
+  },
+  {
+    "timestamp": "2026-09-14T00:46:27.715524Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}/auto-review:run",
+    "status": 200,
+    "duration_ms": 78905.373016
+  },
+  {
+    "timestamp": "2026-09-14T00:46:33.586424Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}",
+    "status": 200,
+    "duration_ms": 5797.208887
+  },
+  {
+    "timestamp": "2026-09-14T00:46:33.680339Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}",
+    "status": 200,
+    "duration_ms": 5755.825381
+  },
+  {
+    "timestamp": "2026-09-14T00:47:30.954612Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}",
+    "status": 200,
+    "duration_ms": 577.931329
+  },
+  {
+    "timestamp": "2026-09-14T00:47:31.572814Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}",
+    "status": 200,
+    "duration_ms": 268.277608
+  },
+  {
+    "timestamp": "2026-09-14T00:47:31.879146Z",
+    "route": "/v1/knowledge/construction-jobs/{job_id}",
+    "status": 200,
+    "duration_ms": 266.039375
+  },
+  {
+    "timestamp": "2026-09-14T00:47:42.717648Z",
+    "route": "/v1/knowledge/publications:preview",
+    "status": 200,
+    "duration_ms": 10808.66875
+  }
+]

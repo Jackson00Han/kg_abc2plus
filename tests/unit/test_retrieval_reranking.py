@@ -39,7 +39,8 @@ class FixtureDriver:
         self.queries = []
         self.revoked = set()
         self.state = dict(corpus_revision=4, generation_id="g1", embedding_space_id="space1", dimensions=2,
-                          knowledge_publication_id="pub1", knowledge_activation_generation=1)
+                          knowledge_publication_id="pub1", knowledge_activation_generation=1,
+                          knowledge_manifest_complete=True)
         self.rows = {}
         for i in range(count):
             identifier = f"chunk-{i:03}"

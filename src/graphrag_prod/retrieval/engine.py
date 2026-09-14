@@ -23,6 +23,7 @@ from neo4j.exceptions import (
 
 from graphrag_prod.domain import Principal, retrieval_scope_token
 from graphrag_prod.graph.browse_models import GraphViewChanged
+from graphrag_prod.knowledge.publication_guard import publication_members_guard
 
 from .models import (
     Citation,
@@ -125,8 +126,8 @@ RETURN coalesce(state.corpus_revision, 0) AS corpus_revision,
        tbox.checksum AS knowledge_tbox_checksum,
        tbox.tenant_id AS knowledge_tbox_tenant_id,
        tbox.tbox_id AS knowledge_bound_tbox_id,
-       count(tbox_binding) AS knowledge_tbox_links
-"""
+       count(tbox_binding) AS knowledge_tbox_links,
+""" + publication_members_guard("publication") + " AS knowledge_manifest_complete\n"
 
 
 _PUBLICATION_GUARD = """
@@ -138,6 +139,7 @@ CALL () {
     WHERE publication_state.activation_generation = $knowledge_activation_generation
       AND (coalesce(read_publication.embedding_space_id, read_publication.legacy_embedding_space_id) IS NULL
            OR coalesce(read_publication.embedding_space_id, read_publication.legacy_embedding_space_id) = $embedding_space_id)
+      AND (""" + publication_members_guard("read_publication") + """)
     RETURN true AS active_publication_guard
 }
 """
@@ -852,7 +854,8 @@ class Neo4jRetrievalEngine:
             row = rows[0]
             Neo4jRetrievalEngine._validate_publication_embedding(row)
             if (
-                row.get("corpus_revision") != trace.corpus_revision
+                (trace.knowledge_publication_id is not None and row.get("knowledge_manifest_complete") is not True)
+                or row.get("corpus_revision") != trace.corpus_revision
                 or row.get("generation_id") != trace.embedding_generation_id
                 or (trace.embedding_generation_id is not None and row.get("embedding_space_id") != trace.embedding_space_id)
                 or Neo4jRetrievalEngine._publication_identity(row)
@@ -986,7 +989,8 @@ class Neo4jRetrievalEngine:
         row, trace = rows[0], prepared.result.trace
         Neo4jRetrievalEngine._validate_publication_embedding(row)
         if (
-            row.get("corpus_revision") != trace.corpus_revision
+            (trace.knowledge_publication_id is not None and row.get("knowledge_manifest_complete") is not True)
+            or row.get("corpus_revision") != trace.corpus_revision
             or row.get("generation_id") != trace.embedding_generation_id
             or (trace.embedding_generation_id is not None and row.get("embedding_space_id") != trace.embedding_space_id)
             or row.get("dimensions") != len(prepared.request.query_vector)
@@ -1133,7 +1137,10 @@ class Neo4jRetrievalEngine:
             }
         )
 
-        no_published_context = version_filter.match_none or publication_identity[0] is None
+        no_published_context = (
+            version_filter.match_none or publication_identity[0] is None
+            or state.get("knowledge_manifest_complete") is not True
+        )
         vector_records = [] if no_published_context else _records(
             tx,
             VECTOR_RECALL_QUERY,
@@ -1311,6 +1318,7 @@ class Neo4jRetrievalEngine:
         )
         if (
             final_identity != captured_identity
+            or final_state.get("knowledge_manifest_complete") != state.get("knowledge_manifest_complete")
             or Neo4jRetrievalEngine._publication_identity(final_state) != publication_identity
             or Neo4jRetrievalEngine._tbox_identity(final_state) != tbox_identity
         ):

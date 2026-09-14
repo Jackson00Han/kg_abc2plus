@@ -38,6 +38,7 @@ from scripts.run_playground import (
     _OpenAICompatibleEmbedder,
     _PlaygroundKnowledgeOperations,
     _build_playground_extractor,
+    _PLAYGROUND_CONSTRUCTION_LIMITS,
 )
 
 
@@ -415,7 +416,7 @@ class PlaygroundRuntimeTests(unittest.TestCase):
 
         client = Mock()
         extractor = _build_playground_extractor(client, "qwen3.8-max", _tbox())
-        client.with_options.assert_called_once_with(max_retries=0, timeout=30.0)
+        client.with_options.assert_called_once_with(max_retries=0, timeout=60.0)
         self.assertIs(extractor.client, client.with_options.return_value)
         self.assertEqual(extractor.model, "qwen3.8-max")
         self.assertFalse(extractor.enable_thinking)
@@ -425,15 +426,57 @@ class PlaygroundRuntimeTests(unittest.TestCase):
             extractor.prompt_version,
             "industrial-property-graph-extraction:v6-exact-json-spans",
         )
-        self.assertEqual(extractor.limits.max_output_tokens, 2048)
-        self.assertEqual(extractor.limits.max_response_chars, 16384)
-        self.assertEqual(extractor.limits.timeout_seconds, 30.0)
+        self.assertEqual(extractor.limits.max_output_tokens, 8192)
+        self.assertEqual(extractor.limits.max_response_chars, 65536)
+        self.assertEqual(extractor.limits.timeout_seconds, 60.0)
         self.assertIsNone(extractor.seed)
         source = (Path(__file__).parents[2] / "scripts" / "run_playground.py").read_text()
-        self.assertIn('"max_chunks": 4', source)
-        self.assertIn('"max_model_calls": 4', source)
-        self.assertIn('"deadline_seconds": 90.0', source)
+        budget = _PLAYGROUND_CONSTRUCTION_LIMITS
+        self.assertEqual(budget["profile"], "dev-mini-construction.v2")
+        self.assertEqual(budget["max_chunks"], 128)
+        self.assertEqual(budget["max_llm_chunks"], 128)
+        self.assertGreaterEqual(budget["max_model_calls"], budget["max_llm_chunks"] * 2)
+        self.assertGreater(budget["deadline_seconds"],
+            budget["max_model_calls"] * budget["per_model_call_timeout_seconds"] / budget["max_concurrency"])
+        self.assertGreater(budget["http_timeout_seconds"], budget["deadline_seconds"])
         self.assertIn("timeout_seconds=105.0", source)
+
+    def test_playground_accepts_complete_development_document(self) -> None:
+        from graphrag_prod.construction import BoundedDocumentParser, ConstructionConfig
+        from graphrag_prod.construction.workflow import Neo4jKnowledgeConstructionWorkflow
+
+        # A complete structured document larger than the previous two-Chunk
+        # allowance; this test does not depend on a particular equipment pack.
+        document = json.dumps({"devices": [
+            {"id": f"device-{index}", "description": "Configured equipment connection " * 8}
+            for index in range(250)
+        ]}).encode()
+        parsed = BoundedDocumentParser(json_record_boundaries=True).parse(document, mime_type="application/json")
+        budget = _PLAYGROUND_CONSTRUCTION_LIMITS
+        config = ConstructionConfig("extractor", "prompt", **{
+            key: budget[key] for key in (
+                "max_chunks", "max_model_calls", "max_total_extraction_chars",
+                "deadline_seconds", "max_concurrency",
+            )
+        })
+        workflow = object.__new__(Neo4jKnowledgeConstructionWorkflow)
+        workflow.config = config
+        workflow._preflight_budget(parsed, extraction_mode="LLM")
+        self.assertGreater(len(parsed.chunks), 50)
+        self.assertLessEqual(len(parsed.chunks) * 2, config.max_model_calls)
+
+    def test_construction_rejects_busy_generation_without_waiting_or_writing(self) -> None:
+        from graphrag_prod.api.runtime import UploadInProgressError
+        operations = _PlaygroundKnowledgeOperations(
+            driver=Mock(), database="neo4j", construction=Mock(), embedder=Mock(),
+        )
+        operations._generation_lock.acquire()
+        try:
+            with self.assertRaises(UploadInProgressError):
+                operations.construct(Mock(), Mock())
+            operations.construction.run.assert_not_called()
+        finally:
+            operations._generation_lock.release()
 
     def test_construction_refreshes_stale_tenant_embedding_generation(self) -> None:
         driver = Mock()
@@ -746,6 +789,7 @@ function snapshot(id, revision = 'revision-1') {
 }
 const context = vm.createContext({$:()=>null,state, elements, requests, apiRequest, snapshot,
   showConstructionFlow() {},
+  beginButtonFeedback: () => () => {},
   flush: () => new Promise(resolve => setImmediate(resolve)),
   URLSearchParams, assert, showToast() {}, escapeHtml: String, number: String,
   shortId: String, output() {}, activePublication: () => state.publications[0],

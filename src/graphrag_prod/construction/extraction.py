@@ -748,14 +748,14 @@ class OpenAICompatibleOntologyExtractor:
     def response_schema(self) -> dict[str, Any]:
         """Compile the active T-Box into the strict response contract."""
 
-        entity_types = [item.name for item in self.active_tbox.entity_types]
+        entity_types = [item.name for item in self.active_tbox.entity_types if item.instance_allowed]
         relationship_types = [
-            item.name for item in self.active_tbox.relationship_types
+            item.name for item in self.active_tbox.relationship_types if item.instance_allowed
         ]
         property_names = sorted(
             {
                 definition.name
-                for item in self.active_tbox.entity_types
+                for item in self.active_tbox.entity_types if item.instance_allowed
                 for definition in item.properties
             }
         )
@@ -769,7 +769,7 @@ class OpenAICompatibleOntologyExtractor:
         relationship_property_names = sorted(
             {
                 definition.name
-                for item in self.active_tbox.relationship_types
+                for item in self.active_tbox.relationship_types if item.instance_allowed
                 for definition in item.properties
             }
         )
@@ -1020,12 +1020,13 @@ class OpenAICompatibleOntologyExtractor:
                         for property_definition in item.properties
                     ],
                 }
-                for item in self.active_tbox.entity_types
+                for item in self.active_tbox.entity_types if item.instance_allowed
             ],
             "relationship_types": [
                 {
                     "name": item.name,
                     "source_types": list(item.source_types),
+                    "allowed_type_pairs": [list(pair) for pair in item.allowed_type_pairs],
                     "target_types": list(item.target_types),
                     "source_cardinality": item.source_cardinality.value,
                     "target_cardinality": item.target_cardinality.value,
@@ -1035,7 +1036,7 @@ class OpenAICompatibleOntologyExtractor:
                     ],
                     "description": item.description,
                 }
-                for item in self.active_tbox.relationship_types
+                for item in self.active_tbox.relationship_types if item.instance_allowed
             ],
         }
         instructions = (
@@ -1214,7 +1215,7 @@ class OpenAICompatibleOntologyExtractor:
                 )
             )
 
-        allowed_entity_types = {item.name for item in self.active_tbox.entity_types}
+        allowed_entity_types = {item.name for item in self.active_tbox.entity_types if item.instance_allowed}
         entities: list[_EntityCandidate] = []
         references: set[str] = set()
         for index, raw_entity in enumerate(raw_entities[: self.limits.max_entities]):
@@ -1369,7 +1370,7 @@ class OpenAICompatibleOntologyExtractor:
 
         by_reference = {item.reference: item for item in entities}
         relationship_definitions = {
-            item.name: item for item in self.active_tbox.relationship_types
+            item.name: item for item in self.active_tbox.relationship_types if item.instance_allowed
         }
         relationships: list[_RelationshipCandidate] = []
         seen_relationships: set[tuple[str, str, str, int, int]] = set()
@@ -1496,8 +1497,7 @@ class OpenAICompatibleOntologyExtractor:
                 relationship_valid = False
             if definition is not None and source is not None and target is not None:
                 if (
-                    source.entity_type not in definition.source_types
-                    or target.entity_type not in definition.target_types
+                    not definition.allows_instances(source.entity_type, target.entity_type)
                 ):
                     findings.append(
                         ExtractionFinding(
@@ -1836,6 +1836,11 @@ class OpenAICompatibleOntologyExtractor:
                     confidence,
                 )
             )
+        from graphrag_prod.ontology.source import validate_conditional_properties  # noqa: PLC0415
+        try:
+            validate_conditional_properties(declared.values(), {item.property_name: item.literal.typed_value for item in values})
+        except ValueError as exc:
+            findings.append(ExtractionFinding("CONDITIONAL_PROPERTY_REQUIRED", "REJECT", path, str(exc)))
         for name, property_definition in declared.items():
             count = counts.get(name, 0)
             if property_definition.cardinality.required and count == 0:
@@ -2143,6 +2148,36 @@ class OpenAICompatibleOntologyExtractor:
                 )
         return tuple(facts)
 
+    def _entity_identity(self, candidate, ordered_mentions, chunk):
+        identity_payload = json.dumps(
+            {
+                "ontology": self.active_tbox.tbox_id,
+                "chunk": chunk.chunk_id,
+                "type": candidate.entity_type,
+                "mentions": [
+                    [item.text, item.start, item.end] for item in ordered_mentions
+                ],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        provisional_key = (
+            f"{self.provisional_namespace}:"
+            + hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+        )
+        canonical_name = normalize_display_name(ordered_mentions[0].text)
+        aliases = tuple(
+            sorted(
+                {
+                    normalize_display_name(item.text)
+                    for item in ordered_mentions[1:]
+                    if normalize_display_name(item.text) != canonical_name
+                }
+            )
+        )
+        return provisional_key, canonical_name, aliases
+
     def _to_domain_output(
         self,
         entities: tuple[_EntityCandidate, ...],
@@ -2161,22 +2196,8 @@ class OpenAICompatibleOntologyExtractor:
                     key=lambda item: (item.start, item.end, item.text),
                 )
             )
-            identity_payload = json.dumps(
-                {
-                    "ontology": self.active_tbox.tbox_id,
-                    "chunk": chunk.chunk_id,
-                    "type": candidate.entity_type,
-                    "mentions": [
-                        [item.text, item.start, item.end] for item in ordered_mentions
-                    ],
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            provisional_key = (
-                f"{self.provisional_namespace}:"
-                + hashlib.sha256(identity_payload.encode("utf-8")).hexdigest()
+            provisional_key, canonical_name, aliases = self._entity_identity(
+                candidate, ordered_mentions, chunk,
             )
             identifier = entity_id(
                 chunk.tenant_id,
@@ -2184,16 +2205,6 @@ class OpenAICompatibleOntologyExtractor:
                 provisional_key,
             )
             entity_ids[candidate.reference] = identifier
-            canonical_name = normalize_display_name(ordered_mentions[0].text)
-            aliases = tuple(
-                sorted(
-                    {
-                        normalize_display_name(item.text)
-                        for item in ordered_mentions[1:]
-                        if normalize_display_name(item.text) != canonical_name
-                    }
-                )
-            )
             entity_records.append(
                 Entity(
                     entity_id=identifier,

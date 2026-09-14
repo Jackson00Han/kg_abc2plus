@@ -403,9 +403,13 @@ class BoundedDocumentParser:
         limits: ParserLimits | None = None,
         chunking: ChunkingConfig | None = None,
         plugins: tuple[DocumentParserPlugin, ...] | None = None,
+        json_record_boundaries: bool = False,
     ) -> None:
         self.limits = limits or ParserLimits()
         self.chunking = chunking or ChunkingConfig()
+        if not isinstance(json_record_boundaries, bool):
+            raise TypeError("json_record_boundaries must be a boolean")
+        self.json_record_boundaries = json_record_boundaries
         selected_plugins = plugins or (
             Utf8TextParser(),
             JsonDocumentParser(self.limits),
@@ -447,9 +451,12 @@ class BoundedDocumentParser:
         normalized = located.text if located else _normalize_text(parsed)
         if len(normalized) > self.limits.max_normalized_chars:
             raise DocumentParseError("normalized source exceeds the character limit")
+        record_chunks = self.json_record_boundaries and canonical_mime == "application/json" and not located
         chunks = (
             split_located_gapless(located, config=self.chunking)
             if located
+            else split_json_records_gapless(normalized, config=self.chunking)
+            if record_chunks
             else split_gapless(normalized, config=self.chunking)
         )
         return ParsedDocument(
@@ -461,6 +468,8 @@ class BoundedDocumentParser:
                 f"{self.chunking.signature}|{located.parser_version}:"
                 f"pages={','.join(str(page) for page in located.selected_pages)}"
                 if located
+                else f"{self.chunking.signature}|json-record-boundaries:v1"
+                if record_chunks
                 else self.chunking.signature
             ),
             chunks=chunks,
@@ -533,6 +542,81 @@ def split_gapless(
                 char_end=end,
             )
         )
+        start = end
+    return tuple(seeds)
+
+
+def split_json_records_gapless(
+    normalized_text: str, *, config: ChunkingConfig | None = None,
+) -> tuple[ChunkSeed, ...]:
+    """Keep bounded JSON collection records intact without rewriting evidence.
+
+    Called only after the JSON plugin validates syntax, depth and node count.
+    Root-array elements and elements of root-object array members are records;
+    other root members are kept whole when they fit. Oversized values retain
+    the ordinary exact-text splitter's hard character bound.
+    """
+
+    selected = config or ChunkingConfig()
+    decoder = json.JSONDecoder()
+    boundaries = {0, len(normalized_text)}
+
+    def skip_space(cursor: int) -> int:
+        while cursor < len(normalized_text) and normalized_text[cursor].isspace():
+            cursor += 1
+        return cursor
+
+    def array_end(cursor: int) -> int:
+        cursor = skip_space(cursor + 1)
+        while normalized_text[cursor] != "]":
+            boundaries.add(cursor)
+            _, cursor = decoder.raw_decode(normalized_text, cursor)
+            boundaries.add(cursor)
+            cursor = skip_space(cursor)
+            if normalized_text[cursor] == ",":
+                cursor = skip_space(cursor + 1)
+        return cursor + 1
+
+    cursor = skip_space(0)
+    if normalized_text[cursor] == "[":
+        array_end(cursor)
+    elif normalized_text[cursor] == "{":
+        cursor = skip_space(cursor + 1)
+        while normalized_text[cursor] != "}":
+            _, cursor = decoder.raw_decode(normalized_text, cursor)
+            cursor = skip_space(skip_space(cursor) + 1)  # Validated member colon.
+            boundaries.add(cursor)
+            if normalized_text[cursor] == "[":
+                cursor = array_end(cursor)
+            else:
+                _, cursor = decoder.raw_decode(normalized_text, cursor)
+            boundaries.add(cursor)
+            cursor = skip_space(cursor)
+            if normalized_text[cursor] == ",":
+                cursor = skip_space(cursor + 1)
+
+    ordered = sorted(boundaries)
+    seeds: list[ChunkSeed] = []
+    start = 0
+    boundary_index = 1
+    while start < len(normalized_text):
+        hard_end = min(start + selected.max_chars, len(normalized_text))
+        end = start
+        while boundary_index < len(ordered) and ordered[boundary_index] <= hard_end:
+            end = ordered[boundary_index]
+            boundary_index += 1
+        if end <= start:
+            # We are inside an oversized value. Split only up to the next
+            # structural boundary, then resume ordinary record packing.
+            next_boundary = ordered[boundary_index]
+            fragment = split_gapless(
+                normalized_text[start:min(next_boundary, hard_end + 1)], config=selected,
+            )[0]
+            end = start + fragment.char_end
+        seeds.append(ChunkSeed(
+            ordinal=len(seeds), text=normalized_text[start:end],
+            char_start=start, char_end=end,
+        ))
         start = end
     return tuple(seeds)
 

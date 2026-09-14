@@ -1,0 +1,28 @@
+[
+  {
+    "probe": 1,
+    "status": "COMPLETE",
+    "seconds": 25.653,
+    "records": 8,
+    "input_chars": 13761,
+    "calls": 1,
+    "actions": {
+      "NEW": 8
+    },
+    "failure_code": null,
+    "new_groups_match_input": true
+  },
+  {
+    "probe": 2,
+    "status": "COMPLETE",
+    "seconds": 26.473,
+    "records": 8,
+    "input_chars": 13761,
+    "calls": 1,
+    "actions": {
+      "NEW": 8
+    },
+    "failure_code": null,
+    "new_groups_match_input": true
+  }
+]

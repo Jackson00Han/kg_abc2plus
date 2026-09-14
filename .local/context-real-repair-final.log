@@ -1,0 +1,8 @@
+Chromium ready: 153.0.8010.12
+{"at":"2026-09-14T00:36:21.691Z","progress":{"hidden":false,"text":"自动审核完成，发布前仍需处理映射缺口"}}
+{"at":"2026-09-14T00:36:36.642Z","progress":{"hidden":false,"text":"正在核对文档上下文与适用范围"}}
+{"status":"failed","mode":"repair","job_id":"a85f4970-47a0-5105-95e7-b2425b5a5fc8","started_at":"2026-09-14T00:35:32.022Z","repair_posts":1,"screenshots":[],"errors":[],"blocked":[],"evidence_api_verified":false,"evidence_ui_verified":false,"error":"Same-job repair must remove stale gaps.\n\n1 !== 0\n","finished_at":"2026-09-14T00:36:48.690Z"}
+Same-job repair must remove stale gaps.
+
+1 !== 0
+

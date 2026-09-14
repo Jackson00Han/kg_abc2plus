@@ -23,6 +23,7 @@ from graphrag_prod.observability.logging import StructuredJsonLogger
 from graphrag_prod.observability.metrics import MetricsRegistry
 
 from .auth import AuthenticatedIdentity
+from .auto_review_contracts import AutoReviewResponse, AutoReviewRunRequest
 from .auth import AuthenticationError as JWTAuthenticationError
 from .auth import JWTAuthenticator, extract_bearer_token
 from .contracts import (
@@ -903,6 +904,16 @@ def create_app(
             OperationKind.KNOWLEDGE_CONSTRUCTION_JOB,
             {"job_id": job_id},
         )
+
+    @app.get("/v1/knowledge/construction-jobs/{job_id}/auto-review", response_model=AutoReviewResponse)
+    async def knowledge_auto_review(request: Request, job_id: JobPath, identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.KNOWLEDGE_AUTO_REVIEW, {"job_id": job_id})
+
+    @app.post("/v1/knowledge/construction-jobs/{job_id}/auto-review:run", response_model=AutoReviewResponse)
+    async def knowledge_auto_review_run(request: Request, job_id: JobPath, body: AutoReviewRunRequest,
+                                        identity: IdentityDependency) -> Any:
+        return await run_operation(request, identity, OperationKind.KNOWLEDGE_AUTO_REVIEW_RUN,
+                                   {"job_id": job_id, **body.model_dump(mode="python")})
 
     @app.get(
         "/v1/knowledge/construction-jobs",

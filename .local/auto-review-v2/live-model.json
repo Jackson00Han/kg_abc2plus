@@ -1,0 +1,65 @@
+{
+  "version": "evidence-auto-review:v2",
+  "data": "synthetic only",
+  "knowledge_writes": 0,
+  "model": "qwen3.8-max",
+  "results": {
+    "mapping": {
+      "status": "COMPLETE",
+      "decisions": [
+        {
+          "record_id": "mapping:joint-name",
+          "action": "VALID",
+          "target_id": null,
+          "new_group_id": null,
+          "evidence_ids": [
+            "source-1",
+            "source-2",
+            "source-3"
+          ],
+          "reason": "三个样本均显示full_name为Joint字符串属性，映射方向与语义一致。"
+        }
+      ],
+      "calls": 1,
+      "failure_code": null
+    },
+    "facts": {
+      "status": "COMPLETE",
+      "decisions": [
+        {
+          "record_id": "fact-1",
+          "action": "APPROVE",
+          "target_id": null,
+          "new_group_id": null,
+          "evidence_ids": [
+            "source-1"
+          ],
+          "reason": "source-1明确给出TEST/SECTION/J1的full_name为Test.Section.Joint1。"
+        },
+        {
+          "record_id": "fact-2",
+          "action": "APPROVE",
+          "target_id": null,
+          "new_group_id": null,
+          "evidence_ids": [
+            "source-2"
+          ],
+          "reason": "source-2明确给出TEST/SECTION/J2的full_name为Test.Section.Joint2。"
+        },
+        {
+          "record_id": "fact-3",
+          "action": "UNCERTAIN",
+          "target_id": null,
+          "new_group_id": null,
+          "evidence_ids": [
+            "source-3"
+          ],
+          "reason": "source-3中full_name为Test.Section.Joint3，与提议Wrong.Name不符。"
+        }
+      ],
+      "calls": 1,
+      "failure_code": null
+    }
+  },
+  "status": "passed"
+}

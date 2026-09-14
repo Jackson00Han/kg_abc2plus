@@ -46,6 +46,7 @@ from graphrag_prod.retrieval import (
 )
 from graphrag_prod.retrieval.engine import RerankAttemptedFailure
 from .runtime import RerankingFailedError
+from .auto_review_contracts import AutoReviewResponse, AutoReviewRunRequest
 
 from .contracts import (
     AnswerRequest,
@@ -669,6 +670,7 @@ def _typed_literal_payload(value: Any) -> dict[str, object] | None:
         "raw_valid_from": value.raw_valid_from,
         "raw_valid_to": value.raw_valid_to,
         "raw_observed_at": value.raw_observed_at,
+        **({"source_encoding": value.source_encoding} if value.source_encoding != "TEXT" else {}),
     }
 
 
@@ -708,6 +710,8 @@ def _graph_assertion_payload(value: Any) -> dict[str, object]:
             for item in value.relationship_properties
         ),
         "evidence": _graph_evidence_payload(value.evidence),
+        "context_value_evidence": (None if value.context_value_evidence is None
+            else _graph_evidence_payload(value.context_value_evidence)),
     }
 
 
@@ -750,6 +754,8 @@ def _subgraph_payload(value: EvidenceSubgraph) -> dict[str, object]:
                     for value in item.relationship_properties
                 ),
                 "evidence": _graph_evidence_payload(item.evidence),
+                "context_value_evidence": (None if item.context_value_evidence is None
+                    else _graph_evidence_payload(item.context_value_evidence)),
             }
             for item in value.paths
         ),
@@ -1006,12 +1012,14 @@ class GraphRAGQueryOperations:
                 for entity in graph.entities
                 for item in entity.evidence
             ) + tuple(
-                item.evidence
+                evidence
                 for item in (
                     *graph.relationship_assertions,
                     *graph.literal_assertions,
                     *graph.paths,
                 )
+                for evidence in (item.evidence, item.context_value_evidence)
+                if evidence is not None
             )
             if any(
                 entity.entity.tenant_id != principal.tenant_id
@@ -1259,6 +1267,8 @@ class GraphRAGApplicationBackend:
             OperationKind.KNOWLEDGE_CONSTRUCT,
             OperationKind.KNOWLEDGE_CONSTRUCTION_JOB,
             OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS,
+            OperationKind.KNOWLEDGE_AUTO_REVIEW,
+            OperationKind.KNOWLEDGE_AUTO_REVIEW_RUN,
             OperationKind.KNOWLEDGE_REVIEW_QUEUE,
             OperationKind.KNOWLEDGE_REVISION_HISTORY,
             OperationKind.KNOWLEDGE_REVIEW_BATCH,
@@ -1335,6 +1345,17 @@ class GraphRAGApplicationBackend:
                     self._knowledge.construction_job(principal, job_id),
                     ConstructionJobResponse,
                 )
+            if envelope.operation in {OperationKind.KNOWLEDGE_AUTO_REVIEW, OperationKind.KNOWLEDGE_AUTO_REVIEW_RUN}:
+                if "knowledge:construct" not in principal.capabilities:
+                    raise AuthorizationError()
+                job_id = _internal_identifier(envelope.payload.get("job_id"))
+                request = None
+                if envelope.operation is OperationKind.KNOWLEDGE_AUTO_REVIEW_RUN:
+                    request = _validated(AutoReviewRunRequest, {k:v for k,v in envelope.payload.items() if k != "job_id"})
+                operation = getattr(self._knowledge, "auto_review", None)
+                if not callable(operation):
+                    raise DependencyUnavailableError()
+                return _response(operation(principal, job_id, request), AutoReviewResponse)
             if envelope.operation is OperationKind.KNOWLEDGE_CONSTRUCTION_JOBS:
                 request = _validated(ConstructionJobListRequest, envelope.payload)
                 return _response(

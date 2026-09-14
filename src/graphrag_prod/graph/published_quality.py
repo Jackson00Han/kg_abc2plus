@@ -21,6 +21,8 @@ from neo4j import unit_of_work
 
 from graphrag_prod.domain.facts import literal_signature
 from graphrag_prod.domain.access import Principal
+from graphrag_prod.knowledge.models import ContextPropertyEvidence
+from graphrag_prod.knowledge.store import CONTEXT_PROPERTY_KEYS, context_evidence_guard, context_navigation_guard
 from graphrag_prod.domain.ids import ID_NAMESPACE, assertion_id, mention_id
 from graphrag_prod.domain.models import (
     RelationshipPropertyValue,
@@ -409,7 +411,9 @@ CALL (publication, revision) {
            min(chunk.chunk_id) AS evidence_chunk_id,
            count(DISTINCT document) AS evidence_document_count,
            count(DISTINCT snapshot) AS active_snapshot_count,
-           sum(valid_path) AS valid_evidence_path_count
+           sum(valid_path) AS valid_evidence_path_count,
+           min(CASE WHEN revision.context_property_evidence_json IS NOT NULL
+                    AND valid_path = 1 THEN version.normalized_text ELSE null END) AS context_source_text
 }
 CALL (revision) {
     OPTIONAL MATCH (revision)-[:REFERS_TO]->(entity:Entity)
@@ -573,7 +577,7 @@ CALL (publication, revision) {
                     'literal_observed_at',
                     'literal_raw_valid_from',
                     'literal_raw_valid_to',
-                    'literal_raw_observed_at',
+                    'literal_raw_observed_at', 'literal_source_encoding',
                     'relationship_properties_format_version',
                     'relationship_properties_json'
                 ] WHERE
@@ -700,7 +704,7 @@ CALL (publication, revision) {
                .literal_observed_at,
                .literal_raw_valid_from,
                .literal_raw_valid_to,
-               .literal_raw_observed_at,
+               .literal_raw_observed_at, .literal_source_encoding,
                .evidence_chunk_id,
                .evidence_char_start,
                .evidence_char_end,
@@ -730,7 +734,7 @@ RETURN revision {
            .literal_raw_value, .literal_raw_unit, .literal_canonical_value,
            .literal_canonical_unit, .literal_valid_from, .literal_valid_to,
            .literal_observed_at, .literal_raw_valid_from,
-           .literal_raw_valid_to, .literal_raw_observed_at,
+           .literal_raw_valid_to, .literal_raw_observed_at, .literal_source_encoding,
            .relationship_properties_format_version,
            .relationship_properties_json
        } AS revision,
@@ -754,7 +758,7 @@ RETURN revision {
        head_tenant_id, head_record_kind, head_current_revision,
        evidence_link_count, evidence_chunk_count, evidence_chunk_id,
        evidence_document_count, active_snapshot_count,
-       valid_evidence_path_count,
+       valid_evidence_path_count, context_source_text,
        entity_link_count, linked_entity_id, linked_entity_type,
        linked_entity_tenant_id,
        subject_link_count, linked_subject_id, linked_subject_type,
@@ -771,6 +775,21 @@ RETURN revision {
        valid_materialized_property_count, materialized_property_values
 ORDER BY revision.revision_id
 """
+_REVISIONS_QUERY = _REVISIONS_QUERY.replace(
+    "AND revision.access_groups = chunk.access_groups",
+    "AND revision.access_groups = chunk.access_groups AND " + context_evidence_guard(version="version", snapshot="snapshot", document="document", primary="chunk"),
+).replace(
+    "'relationship_properties_json'", "'relationship_properties_json', " + ", ".join(repr(k) for k in CONTEXT_PROPERTY_KEYS),
+).replace(
+    ".relationship_properties_json\n       } AS revision",
+    ".relationship_properties_json, " + ", ".join("." + k for k in CONTEXT_PROPERTY_KEYS) + "\n       } AS revision",
+).replace(
+    "revision.evidence_text CONTAINS revision.literal_",
+    "(CASE WHEN revision.context_property_evidence_json IS NULL THEN revision.evidence_text ELSE revision.context_evidence_text END) CONTAINS revision.literal_",
+).replace(
+    "AND navigation.accepted = true",
+    "AND navigation.accepted = true AND " + context_navigation_guard(),
+)
 
 
 _ENTITIES_QUERY = """
@@ -1045,6 +1064,43 @@ def _literal_semantics(revision: dict[str, Any]) -> TypedLiteralValue | None:
         return None
 
 
+def _context_source_valid(row: Mapping[str, Any], revision: Mapping[str, Any]) -> bool:
+    payload = revision.get("context_property_evidence_json")
+    if payload is None:
+        return all(revision.get(key) is None for key in CONTEXT_PROPERTY_KEYS)
+    try:
+        import hashlib
+        from graphrag_prod.construction.context_mapping import validate_context_binding
+        from graphrag_prod.construction.structured import locate_json
+        context = ContextPropertyEvidence.from_mapping(json.loads(payload))
+        value = context.value_evidence
+        expected = {"context_property_evidence_version": context.version,
+            "context_source_checksum": context.source_checksum,
+            "context_mapping_checksum": context.mapping_checksum,
+            "context_chunk_id": value.chunk_id, "context_char_start": value.char_start,
+            "context_char_end": value.char_end, "context_evidence_text": value.quoted_text}
+        if any(revision.get(key) != expected_value for key, expected_value in expected.items()):
+            return False
+        if any(revision.get(key) != getattr(value, key) for key in ("tenant_id", "document_id", "version_id", "access_policy_id", "access_policy_version")):
+            return False
+        if frozenset(revision.get("access_groups", ())) != value.access_groups:
+            return False
+        source = row.get("context_source_text")
+        if not isinstance(source, str) or hashlib.sha256(source.encode()).hexdigest() != context.source_checksum:
+            return False
+        root = locate_json(source)
+        record, token = root.at(context.record_pointer), root.at(context.value_pointer)
+        if (record is None or token is None
+                or (record.start, record.end) != (revision.get("evidence_char_start"), revision.get("evidence_char_end"))
+                or (token.start, token.end) != (value.char_start, value.char_end)):
+            return False
+        validate_context_binding(source, context, subject_type=revision["subject_entity_type"],
+            predicate=revision["predicate"], raw_literal=revision["literal_value"])
+        return True
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def _relationship_properties(
     revision: Mapping[str, Any],
 ) -> tuple[RelationshipPropertyValue, ...] | None:
@@ -1265,6 +1321,7 @@ def _typed_literal_matches(
             valid_from=literal.raw_valid_from,
             valid_to=literal.raw_valid_to,
             observed_at=literal.raw_observed_at,
+            source_encoding=literal.source_encoding,
         )
     except LiteralNormalizationError:
         return False
@@ -1638,6 +1695,7 @@ def _audit_revision(
             and literal is not None
             and _typed_literal_matches(literal, definition)
             and row.get("literal_source_tokens_valid") is True
+            and _context_source_valid(row, revision)
             and relationship_properties == ()
             and _count(row, "object_link_count") == 0
             and revision.get("object_entity_id") is None

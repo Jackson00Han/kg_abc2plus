@@ -18,6 +18,8 @@ from neo4j import unit_of_work
 
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.models import RelationshipPropertyValue
+from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
+from graphrag_prod.knowledge.store import CONTEXT_PROPERTY_KEYS, context_evidence_guard, context_navigation_guard
 
 from .published_quality import (
     PUBLISHED_QUALITY_CAPABILITIES,
@@ -126,6 +128,7 @@ class InventoryAssertionSummary:
     object_entity: InventoryEntitySummary | None = None
     literal: InventoryLiteralSummary | None = None
     relationship_properties: tuple[InventoryRelationshipPropertySummary, ...] = ()
+    context_value_reference: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,7 +449,7 @@ CALL (publication, revision) {
                        'literal_observed_at',
                        'literal_raw_valid_from',
                        'literal_raw_valid_to',
-                       'literal_raw_observed_at',
+                       'literal_raw_observed_at', 'literal_source_encoding',
                        'relationship_properties_format_version',
                        'relationship_properties_json'
                    ] WHERE
@@ -538,6 +541,21 @@ RETURN revision {
        assertion_membership_count,
        valid_assertion_projection_count
 """
+
+
+_ITEMS_QUERY = _ITEMS_QUERY.replace(
+    "AND revision.access_groups = chunk.access_groups",
+    "AND revision.access_groups = chunk.access_groups AND " + context_evidence_guard(version="version", snapshot="snapshot", document="document", primary="chunk"),
+).replace(
+    "'relationship_properties_json'", "'relationship_properties_json', " + ", ".join(repr(k) for k in CONTEXT_PROPERTY_KEYS),
+).replace(
+    ".relationship_properties_json\n       } AS revision",
+    ".relationship_properties_json, " + ", ".join("." + k for k in CONTEXT_PROPERTY_KEYS
+        if k not in {"context_property_evidence_json", "context_evidence_text"}) + "\n       } AS revision",
+).replace(
+    "AND navigation.accepted = true",
+    "AND navigation.accepted = true AND " + context_navigation_guard(),
+)
 
 
 _PROPERTY_VALUES_QUERY = """
@@ -1042,6 +1060,11 @@ def _decode_item(
                 object_kind="literal",
                 literal=_literal_summary(revision),
                 relationship_properties=relationship_properties,
+                context_value_reference=(None if revision.get("context_chunk_id") is None else {
+                    "chunk_id": revision["context_chunk_id"], "char_start": revision["context_char_start"],
+                    "char_end": revision["context_char_end"], "source_checksum": revision["context_source_checksum"],
+                    "mapping_checksum": revision["context_mapping_checksum"],
+                }),
             )
         else:
             raise ActivePublicationInventoryConflict()
@@ -1192,7 +1215,7 @@ class Neo4jActivePublicationInventoryService:
             and sorted(manifest_ids) == sorted(membership_ids)
         ):
             raise ActivePublicationInventoryConflict()
-        if membership_count > MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS:
+        if membership_count > MAX_PUBLICATION_MANIFEST_RECORDS:
             raise ActivePublicationInventoryLimitExceeded()
 
         # Pull and revalidate the complete manifest inside this transaction.
@@ -1201,7 +1224,7 @@ class Neo4jActivePublicationInventoryService:
         rows = tx.run(
             _ITEMS_QUERY,
             **parameters,
-            row_limit=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS + 1,
+            row_limit=MAX_PUBLICATION_MANIFEST_RECORDS + 1,
         )
         item_rows = tuple(dict(row) for row in rows)
         property_summaries = _validate_relationship_property_materializations(

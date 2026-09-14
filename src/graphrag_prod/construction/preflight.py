@@ -31,13 +31,46 @@ class UploadPreflightUnavailable(RuntimeError):
     """The authorized source view changed or could not be verified."""
 
 
+# A necessary (not sufficient) condition for every exact/similar match below.
+# New workspaces and unrelated input sizes need not compile the much larger
+# snapshot-integrity plans. This returns no source metadata; possible matches
+# still pass every existing document, Chunk, lifecycle and publication guard.
+_POSSIBLE = """
+MATCH (document:Document {tenant_id: $tenant_id})-[:HAS_VERSION]->
+      (version:DocumentVersion {tenant_id: $tenant_id})
+WHERE any(g IN $principal_groups WHERE g IN coalesce(document.access_groups, []))
+  AND (version.checksum = $checksum OR version.original_checksum = $original_checksum
+       OR ($similarity_checked
+           AND size(version.normalized_text) >= $minimum_characters
+           AND size(version.normalized_text) <= $maximum_characters
+           AND size(version.normalized_text) <= $maximum_similarity_characters))
+RETURN true AS possible
+LIMIT 1
+"""
+
+
 # DocumentVersion and KnowledgeSnapshot inherit source authorization through
 # their one Document and complete Chunk membership; they have no independent
 # ACL properties. Superseded sources remain eligible only when pinned by the
 # CURRENT publication. A source withdrawal always overrides that pin.
+# DISTINCT stages bound the planner's joins before the expensive membership
+# guards. All modes share this one parameterized plan, including source-text
+# hydration, so a cold request need not compile three complex boundary plans.
 _BOUNDARY = """
 MATCH (document:Document {tenant_id: $tenant_id})-[:HAS_VERSION]->
       (version:DocumentVersion {tenant_id: $tenant_id})
+USING INDEX document:Document(tenant_id)
+WHERE any(g IN $principal_groups WHERE g IN coalesce(document.access_groups, []))
+  AND CASE $comparison_mode
+    WHEN 'EXACT' THEN version.checksum = $checksum OR version.original_checksum = $original_checksum
+    WHEN 'SIMILAR' THEN version.checksum <> $checksum AND version.original_checksum <> $original_checksum
+      AND size(version.normalized_text) >= $minimum_characters
+      AND size(version.normalized_text) <= $maximum_characters
+      AND size(version.normalized_text) <= $maximum_similarity_characters
+    WHEN 'TEXT' THEN version.version_id IN $version_ids
+      AND size(version.normalized_text) <= $maximum_similarity_characters
+    ELSE false END
+WITH DISTINCT document, version
 MATCH (snapshot:KnowledgeSnapshot {tenant_id: $tenant_id})-[:OF_VERSION]->(version)
 WHERE version.document_id = document.document_id
   AND snapshot.document_id = document.document_id
@@ -65,13 +98,15 @@ WHERE version.document_id = document.document_id
            (:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
            -[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot)
        })
-  AND COUNT { MATCH (snapshot)-[:OF_VERSION]->() } = 1
+WITH DISTINCT document, version, snapshot
+WHERE COUNT { MATCH (snapshot)-[:OF_VERSION]->() } = 1
   AND COUNT { MATCH (:Document)-[:HAS_VERSION]->(version) } = 1
   AND snapshot.expected_chunk_count > 0
   AND snapshot.actual_chunk_count = snapshot.expected_chunk_count
   AND COUNT { MATCH (snapshot)-[:INCLUDES_CHUNK]->() } = snapshot.expected_chunk_count
   AND COUNT { MATCH (version)-[:HAS_CHUNK]->() } = snapshot.expected_chunk_count
-  AND NOT EXISTS {
+WITH DISTINCT document, version, snapshot
+WHERE NOT EXISTS {
     MATCH (snapshot)-[:INCLUDES_CHUNK]->(chunk)
     WHERE NOT chunk:Chunk OR coalesce(chunk.tenant_id, '') <> $tenant_id
        OR coalesce(chunk.document_id, '') <> document.document_id
@@ -109,13 +144,14 @@ WHERE version.document_id = document.document_id
            WHERE other <> chunk AND other.ordinal = chunk.ordinal
        }
   }
-  AND NOT EXISTS {
+WITH DISTINCT document, version, snapshot
+WHERE NOT EXISTS {
     MATCH (version)-[:HAS_CHUNK]->(member)
     WHERE NOT EXISTS { MATCH (snapshot)-[:INCLUDES_CHUNK]->(member) }
   }
 """
 
-_METADATA = """
+_MATCHES = _BOUNDARY + """
 WITH DISTINCT document, version, snapshot ORDER BY snapshot.snapshot_id
 WITH document, version, collect(snapshot.snapshot_id) AS _snapshot_ids
 RETURN document.document_id AS document_id, version.version_id AS version_id,
@@ -125,31 +161,11 @@ RETURN document.document_id AS document_id, version.version_id AS version_id,
        document.access_policy_id AS _policy_id,
        document.access_policy_version AS _policy_version,
        document.access_groups AS _groups,
-       coalesce(document.generation, 0) AS _generation, _snapshot_ids
+       coalesce(document.generation, 0) AS _generation, _snapshot_ids,
+       CASE WHEN $comparison_mode = 'TEXT' THEN version.normalized_text ELSE null END AS text
 ORDER BY CASE WHEN canonical_uri = $canonical_uri THEN 0 ELSE 1 END,
          document_id, version_id
 LIMIT $limit
-"""
-
-_EXACT = _BOUNDARY + """
-  AND (version.checksum = $checksum OR version.original_checksum = $original_checksum)
-""" + _METADATA
-
-_SIMILAR = _BOUNDARY + """
-  AND version.checksum <> $checksum AND version.original_checksum <> $original_checksum
-  AND size(version.normalized_text) >= $minimum_characters
-  AND size(version.normalized_text) <= $maximum_characters
-  AND size(version.normalized_text) <= $maximum_similarity_characters
-""" + _METADATA
-
-_TEXT = _BOUNDARY + """
-  AND version.version_id IN $version_ids
-  AND size(version.normalized_text) <= $maximum_similarity_characters
-WITH DISTINCT version
-RETURN version.version_id AS version_id, version.checksum AS checksum,
-       version.normalized_text AS text
-ORDER BY version_id
-LIMIT $text_limit
 """
 
 
@@ -232,22 +248,40 @@ class Neo4jUploadPreflight:
         def read(query: str, **extra: Any) -> list[dict[str, Any]]:
             return [dict(row) for row in tx.run(query, **parameters, **extra)]
 
-        exact = read(_EXACT, limit=MAX_EXACT_MATCHES + 1)
+        def compare(mode: str, limit: int, *, version_ids: list[str] | None = None) -> list[dict[str, Any]]:
+            return read(_MATCHES, comparison_mode=mode, limit=limit, version_ids=version_ids or [])
+
+        similarity_checked = len(text) <= MAX_SIMILARITY_CHARACTERS
+        if not read(_POSSIBLE, similarity_checked=similarity_checked):
+            # READ COMMITTED can observe newly inserted sources or changed
+            # access between reads. Do not return a stale empty receipt.
+            if read(_POSSIBLE, similarity_checked=similarity_checked):
+                raise UploadPreflightUnavailable("upload comparison sources changed")
+            return {
+                "checksum": parameters["checksum"],
+                "original_checksum": parameters["original_checksum"],
+                "exact_matches": [], "similar_matches": [],
+                "similarity_checked": similarity_checked,
+                "truncated": not similarity_checked,
+                "truncation_reasons": [] if similarity_checked else ["INPUT_SIMILARITY_CHARACTER_LIMIT"],
+                "compared_versions": 0, "method": SIMILARITY_METHOD,
+                "threshold": SIMILARITY_THRESHOLD,
+            }
+        exact = compare("EXACT", MAX_EXACT_MATCHES + 1)
         reasons = []
         if len(exact) > MAX_EXACT_MATCHES:
             reasons.append("EXACT_RESULT_LIMIT")
-        similarity_checked = len(text) <= MAX_SIMILARITY_CHARACTERS
         candidates = []
         matches = []
         if similarity_checked:
-            candidates = read(_SIMILAR, limit=MAX_SIMILARITY_CANDIDATES + 1)
+            candidates = compare("SIMILAR", MAX_SIMILARITY_CANDIDATES + 1)
             if len(candidates) > MAX_SIMILARITY_CANDIDATES:
                 reasons.append("SIMILARITY_CANDIDATE_LIMIT")
             selected = candidates[:MAX_SIMILARITY_CANDIDATES]
             if selected:
-                rows = read(
-                    _TEXT, version_ids=[row["version_id"] for row in selected],
-                    text_limit=MAX_SIMILARITY_CANDIDATES,
+                rows = compare(
+                    "TEXT", MAX_SIMILARITY_CANDIDATES,
+                    version_ids=[row["version_id"] for row in selected],
                 )
                 by_id = {row["version_id"]: row for row in rows}
                 if len(by_id) != len(selected):
@@ -271,9 +305,9 @@ class Neo4jUploadPreflight:
         # Read-committed transactions can observe an intervening ACL change or
         # withdrawal. Recheck the complete authorized selection before exposing
         # any document metadata, counts, scores, or short source excerpts.
-        if exact != read(_EXACT, limit=MAX_EXACT_MATCHES + 1):
+        if exact != compare("EXACT", MAX_EXACT_MATCHES + 1):
             raise UploadPreflightUnavailable("upload comparison sources changed")
-        if similarity_checked and candidates != read(_SIMILAR, limit=MAX_SIMILARITY_CANDIDATES + 1):
+        if similarity_checked and candidates != compare("SIMILAR", MAX_SIMILARITY_CANDIDATES + 1):
             raise UploadPreflightUnavailable("upload comparison sources changed")
         return {
             "checksum": parameters["checksum"],

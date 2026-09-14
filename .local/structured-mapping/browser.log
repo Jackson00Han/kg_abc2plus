@@ -1,0 +1,2 @@
+Chromium ready: 153.0.8010.12
+{"status":"passed","mode":"isolated receipt fixture; real browser and workbench; no knowledge writes","screenshots":["receipt-1280.png","mapping-1280.png","mapping-scroll-1280.png","receipt-1440.png","mapping-1440.png","mapping-scroll-1440.png","receipt-1920.png","mapping-1920.png","mapping-scroll-1920.png","validation-1920.png"],"errors":[],"blocked":[]}

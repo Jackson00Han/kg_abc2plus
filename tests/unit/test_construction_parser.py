@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import unittest
 
 from graphrag_prod.construction import (
@@ -16,6 +17,43 @@ from graphrag_prod.construction import (
 
 
 class ConstructionParserTests(unittest.TestCase):
+    def test_json_collection_records_keep_exact_complete_spans(self) -> None:
+        records = [
+            {"id": f"device-{index}", "name": "电气设备", "note": 'escaped \\\" }, [ text',
+             "nested": [{"unit": "A", "value": index}]}
+            for index in range(5)
+        ]
+        for value in (records, {"metadata": {"version": 1}, "devices": records, "other": []}):
+            source = json.dumps(value, ensure_ascii=False, indent=2)
+            parser = BoundedDocumentParser(
+                chunking=ChunkingConfig(max_chars=250), json_record_boundaries=True,
+            )
+            parsed = parser.parse(source.encode(), mime_type="application/json")
+            self.assertEqual("".join(chunk.text for chunk in parsed.chunks), source)
+            self.assertTrue(all(len(chunk.text) <= 250 for chunk in parsed.chunks))
+            self.assertIn("json-record-boundaries:v1", parsed.splitter_signature)
+            for index in range(5):
+                # Exact nested record fields must remain in the same Chunk.
+                owner = next(chunk for chunk in parsed.chunks if f'"device-{index}"' in chunk.text)
+                self.assertIn(f'"value": {index}', owner.text)
+            self.assertEqual(parser.parse(source.encode(), mime_type="application/json"), parsed)
+
+    def test_json_record_splitter_bounds_oversized_values_and_leaves_other_formats_unchanged(self) -> None:
+        source = json.dumps({"metadata": "x" * 300, "records": [{"id": "last-record"}]}, indent=2)
+        parser = BoundedDocumentParser(chunking=ChunkingConfig(max_chars=80), json_record_boundaries=True)
+        parsed = parser.parse(source.encode(), mime_type="application/json")
+        self.assertTrue(all(len(chunk.text) <= 80 for chunk in parsed.chunks))
+        self.assertEqual("".join(chunk.text for chunk in parsed.chunks), source)
+        self.assertIn('"last-record"', parsed.chunks[-1].text)
+        for value in ("[]", "{}", "42", '"text"'):
+            parsed = parser.parse(value.encode(), mime_type="application/json")
+            self.assertEqual("".join(chunk.text for chunk in parsed.chunks), value)
+        ordinary = BoundedDocumentParser(chunking=ChunkingConfig(max_chars=80))
+        self.assertEqual(parser.parse(b"ordinary text", mime_type="text/plain"),
+                         ordinary.parse(b"ordinary text", mime_type="text/plain"))
+        with self.assertRaisesRegex(DocumentParseError, "duplicate key"):
+            parser.parse(b'{"items":[],"items":[]}', mime_type="application/json")
+
     def test_builtin_formats_are_strict_utf8_and_normalized(self) -> None:
         parser = BoundedDocumentParser(chunking=ChunkingConfig(max_chars=8))
         source = b"\xef\xbb\xbfCafe\xcc\x81\r\nstatus"

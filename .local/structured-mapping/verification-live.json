@@ -1,0 +1,17 @@
+{
+  "live_model": true,
+  "model_calls": 2,
+  "mapping_attempts": 2,
+  "mapping_seconds": 23.037,
+  "execution_seconds": 0.288,
+  "records": 139,
+  "entities": 139,
+  "properties": 727,
+  "relations": 171,
+  "chunks": 20,
+  "mapping_audits": [
+    "verification-mapping-66eb53d7836f99071f47b51e9c0efc3e7ae67793483039b16eb842db880996a0.json",
+    "verification-mapping-d4e602d1626df6abbde2d3ccd132e25ffde1c2e82a9428be49ea6033e6a75fe7.json"
+  ],
+  "knowledge_writes": 0
+}

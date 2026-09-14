@@ -1,0 +1,102 @@
+{
+  "registry_id": "ai_power.busway.rule_references",
+  "version": 1,
+  "documents": [
+    {
+      "document": "rule_v2.md",
+      "document_version": "2.0.0",
+      "profile_id": "diagnostic64_v2",
+      "sha256": "0ceb3c80312c6fa3b01be81ef421d90fdd45be760a693bb853fd5f61b6d4755a",
+      "clauses": [
+        {
+          "id": "C1",
+          "line": 246
+        },
+        {
+          "id": "C2",
+          "line": 258
+        },
+        {
+          "id": "C3",
+          "line": 271
+        },
+        {
+          "id": "C4",
+          "line": 287
+        },
+        {
+          "id": "C5",
+          "line": 303
+        },
+        {
+          "id": "D1",
+          "line": 119
+        },
+        {
+          "id": "D2",
+          "line": 176
+        },
+        {
+          "id": "D3",
+          "line": 201
+        },
+        {
+          "id": "D4",
+          "line": 218
+        },
+        {
+          "id": "D5",
+          "line": 146
+        },
+        {
+          "id": "D6",
+          "line": 234
+        },
+        {
+          "id": "G1",
+          "line": 103
+        },
+        {
+          "id": "G2",
+          "line": 104
+        },
+        {
+          "id": "G3",
+          "line": 105
+        },
+        {
+          "id": "G4",
+          "line": 106
+        },
+        {
+          "id": "G5",
+          "line": 107
+        },
+        {
+          "id": "M2",
+          "line": 324
+        },
+        {
+          "id": "M3",
+          "line": 240
+        },
+        {
+          "id": "M4",
+          "line": 326
+        },
+        {
+          "id": "M5",
+          "line": 327
+        },
+        {
+          "id": "M6",
+          "line": 328
+        },
+        {
+          "id": "M7",
+          "line": 329
+        }
+      ]
+    }
+  ]
+}

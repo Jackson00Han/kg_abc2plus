@@ -6,8 +6,10 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS, publication_members_guard
 
-MAX_GRAPH_RECORDS = 500
+
+MAX_GRAPH_RECORDS = MAX_PUBLICATION_MANIFEST_RECORDS
 MAX_GRAPH_NODES = 150
 MAX_GRAPH_EDGES = 200
 MAX_GRAPH_HOPS = 2
@@ -110,7 +112,8 @@ RETURN coalesce(corpus.corpus_revision,0) AS corpus_revision,
        publication {.publication_id,.tenant_id,.generation,.ontology_version_id,.status} AS publication,
        count(DISTINCT active) AS active_links,
        count(binding) AS tbox_links,
-       collect(tbox {.tbox_id,.tenant_id,.key,.version,.status,.checksum,.definition_json}) AS tboxes
+       collect(tbox {.tbox_id,.tenant_id,.key,.version,.status,.checksum,.definition_json}) AS tboxes,
+""" + publication_members_guard("publication") + """ AS publication_members_complete
 LIMIT 2
 """
 
@@ -129,7 +132,9 @@ def read_graph_state(tx: Any, tenant_id: str) -> tuple[GraphReadPin, Any]:
             if row["active_links"] != 0 or row["tbox_links"] != 0:
                 raise GraphViewChanged()
             return GraphReadPin(None, 0, row["activation_generation"], None, None, row["corpus_revision"]), None
-        if row["active_links"] != 1 or row["tbox_links"] != 1 or len(row["tboxes"]) != 1 or publication["tenant_id"] != tenant_id or publication["status"] != "ACTIVE":
+        if (row.get("publication_members_complete") is not True
+                or row["active_links"] != 1 or row["tbox_links"] != 1 or len(row["tboxes"]) != 1
+                or publication["tenant_id"] != tenant_id or publication["status"] != "ACTIVE"):
             raise GraphViewChanged()
         tbox = _decode_tbox(row["tboxes"][0])
         if tbox.tenant_id != tenant_id or tbox.status.value not in {"PUBLISHED", "RETIRED"} or tbox.tbox_id != publication["ontology_version_id"]:

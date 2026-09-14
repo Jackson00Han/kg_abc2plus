@@ -1,0 +1,230 @@
+Starting disposable Stage 8 Neo4j container: sample-graphrag-stage8-neo4j-57324
+Waiting for Neo4j on 127.0.0.1:63947
+Running Stage 8 Neo4j integration tests
+test_candidate_inserted_between_empty_reads_invalidates_receipt (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_candidate_inserted_between_empty_reads_invalidates_receipt) ... ok
+test_concurrent_claim_is_unique_and_release_allows_next_owner (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_concurrent_claim_is_unique_and_release_allows_next_owner) ... ok
+test_context_releases_after_workflow_failure (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_context_releases_after_workflow_failure) ... ok
+test_cross_tenant_private_sources_and_one_inaccessible_chunk_never_leak (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_cross_tenant_private_sources_and_one_inaccessible_chunk_never_leak) ... ERROR
+test_empty_and_acl_ineligible_candidates_use_only_two_cheap_reads (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_empty_and_acl_ineligible_candidates_use_only_two_cheap_reads) ... ok
+test_exact_renamed_normalized_and_near_uploads_use_current_source (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_exact_renamed_normalized_and_near_uploads_use_current_source) ... ERROR
+test_expiry_recovery_fences_stale_release_and_scope_does_not_leak (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_expiry_recovery_fences_stale_release_and_scope_does_not_leak) ... ok
+test_latest_upload_does_not_hide_old_source_pinned_by_active_publication (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_latest_upload_does_not_hide_old_source_pinned_by_active_publication) ... ERROR
+test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) ... 
+  test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation="MATCH (d:Document {document_id:$id}) SET d.retirement_id='withdrawn'") ... ERROR
+  test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation="MATCH (v:DocumentVersion {version_id:$id}) SET v.lifecycle_status='RETIRED'") ... FAIL
+  test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation="MATCH (s:KnowledgeSnapshot {snapshot_id:$id}) SET s.retirement_id='withdrawn'") ... FAIL
+  test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation='MATCH (c:Chunk {chunk_id:$id}) SET c.char_start=-1') ... FAIL
+
+======================================================================
+ERROR: test_cross_tenant_private_sources_and_one_inaccessible_chunk_never_leak (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_cross_tenant_private_sources_and_one_inaccessible_chunk_never_leak)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 190, in test_cross_tenant_private_sources_and_one_inaccessible_chunk_never_leak
+    result = self.check()
+             ^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 108, in check
+    return self.preflight.check(principal or self.principal, text.encode(), canonical_uri=URI)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 246, in check
+    return session.execute_read(self._work, parameters, parsed.normalized_text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 693, in execute_read
+    return self._run_transaction(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 577, in _run_transaction
+    result = transaction_function(tx, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_work/query.py", line 142, in wrapped
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 269, in _check_tx
+    exact = read(_EXACT, limit=MAX_EXACT_MATCHES + 1)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 251, in read
+    return [dict(row) for row in tx.run(query, **parameters, **extra)]
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/transaction.py", line 201, in run
+    result._tx_ready_run(query, parameters)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 180, in _tx_ready_run
+    self._run(query, parameters, None, None, None, None, None, None)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 240, in _run
+    self._attach()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 441, in _attach
+    self._connection.fetch_message()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 193, in inner
+    func(*args, **kwargs)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt.py", line 860, in fetch_message
+    res = self._process_message(tag, fields)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt5.py", line 1202, in _process_message
+    response.on_failure(summary_metadata or {})
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 263, in on_failure
+    raise self._hydrate_error(metadata)
+neo4j.exceptions.ClientError: {neo4j_code: Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration} {message: The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. } {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Unexpected error has occurred. See debug log for details.}
+
+======================================================================
+ERROR: test_exact_renamed_normalized_and_near_uploads_use_current_source (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_exact_renamed_normalized_and_near_uploads_use_current_source)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 160, in test_exact_renamed_normalized_and_near_uploads_use_current_source
+    result = self.preflight.check(self.principal, PUMP.replace("\n", "\r\n").encode(),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 246, in check
+    return session.execute_read(self._work, parameters, parsed.normalized_text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 693, in execute_read
+    return self._run_transaction(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 577, in _run_transaction
+    result = transaction_function(tx, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_work/query.py", line 142, in wrapped
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 276, in _check_tx
+    candidates = read(_SIMILAR, limit=MAX_SIMILARITY_CANDIDATES + 1)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 251, in read
+    return [dict(row) for row in tx.run(query, **parameters, **extra)]
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/transaction.py", line 201, in run
+    result._tx_ready_run(query, parameters)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 180, in _tx_ready_run
+    self._run(query, parameters, None, None, None, None, None, None)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 240, in _run
+    self._attach()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 441, in _attach
+    self._connection.fetch_message()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 193, in inner
+    func(*args, **kwargs)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt.py", line 860, in fetch_message
+    res = self._process_message(tag, fields)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt5.py", line 1202, in _process_message
+    response.on_failure(summary_metadata or {})
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 263, in on_failure
+    raise self._hydrate_error(metadata)
+neo4j.exceptions.ClientError: {neo4j_code: Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration} {message: The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. } {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Unexpected error has occurred. See debug log for details.}
+
+======================================================================
+ERROR: test_latest_upload_does_not_hide_old_source_pinned_by_active_publication (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_latest_upload_does_not_hide_old_source_pinned_by_active_publication)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 171, in test_latest_upload_does_not_hide_old_source_pinned_by_active_publication
+    self.assertFalse(self.check()["exact_matches"])
+                     ^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 108, in check
+    return self.preflight.check(principal or self.principal, text.encode(), canonical_uri=URI)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 246, in check
+    return session.execute_read(self._work, parameters, parsed.normalized_text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 693, in execute_read
+    return self._run_transaction(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 577, in _run_transaction
+    result = transaction_function(tx, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_work/query.py", line 142, in wrapped
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 276, in _check_tx
+    candidates = read(_SIMILAR, limit=MAX_SIMILARITY_CANDIDATES + 1)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 251, in read
+    return [dict(row) for row in tx.run(query, **parameters, **extra)]
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/transaction.py", line 201, in run
+    result._tx_ready_run(query, parameters)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 180, in _tx_ready_run
+    self._run(query, parameters, None, None, None, None, None, None)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 240, in _run
+    self._attach()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 441, in _attach
+    self._connection.fetch_message()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 193, in inner
+    func(*args, **kwargs)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt.py", line 860, in fetch_message
+    res = self._process_message(tag, fields)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt5.py", line 1202, in _process_message
+    response.on_failure(summary_metadata or {})
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 263, in on_failure
+    raise self._hydrate_error(metadata)
+neo4j.exceptions.ClientError: {neo4j_code: Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration} {message: The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. } {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Unexpected error has occurred. See debug log for details.}
+
+======================================================================
+ERROR: test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation="MATCH (d:Document {document_id:$id}) SET d.retirement_id='withdrawn'")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 210, in test_withdrawal_broken_membership_and_bad_ranges_are_excluded
+    self.assertFalse(self.check()["exact_matches"])
+                     ^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 108, in check
+    return self.preflight.check(principal or self.principal, text.encode(), canonical_uri=URI)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 246, in check
+    return session.execute_read(self._work, parameters, parsed.normalized_text)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 693, in execute_read
+    return self._run_transaction(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/session.py", line 577, in _run_transaction
+    result = transaction_function(tx, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_work/query.py", line 142, in wrapped
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 276, in _check_tx
+    candidates = read(_SIMILAR, limit=MAX_SIMILARITY_CANDIDATES + 1)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/src/graphrag_prod/construction/preflight.py", line 251, in read
+    return [dict(row) for row in tx.run(query, **parameters, **extra)]
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/transaction.py", line 201, in run
+    result._tx_ready_run(query, parameters)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 180, in _tx_ready_run
+    self._run(query, parameters, None, None, None, None, None, None)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 240, in _run
+    self._attach()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/work/result.py", line 441, in _attach
+    self._connection.fetch_message()
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 193, in inner
+    func(*args, **kwargs)
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt.py", line 860, in fetch_message
+    res = self._process_message(tag, fields)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_bolt5.py", line 1202, in _process_message
+    response.on_failure(summary_metadata or {})
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/neo4j/_sync/io/_common.py", line 263, in on_failure
+    raise self._hydrate_error(metadata)
+neo4j.exceptions.ClientError: {neo4j_code: Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration} {message: The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. } {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Unexpected error has occurred. See debug log for details.}
+
+======================================================================
+FAIL: test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation="MATCH (v:DocumentVersion {version_id:$id}) SET v.lifecycle_status='RETIRED'")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 212, in test_withdrawal_broken_membership_and_bad_ranges_are_excluded
+    self.assertTrue(self.check()["exact_matches"])
+AssertionError: [] is not true
+
+======================================================================
+FAIL: test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation="MATCH (s:KnowledgeSnapshot {snapshot_id:$id}) SET s.retirement_id='withdrawn'")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 212, in test_withdrawal_broken_membership_and_bad_ranges_are_excluded
+    self.assertTrue(self.check()["exact_matches"])
+AssertionError: [] is not true
+
+======================================================================
+FAIL: test_withdrawal_broken_membership_and_bad_ranges_are_excluded (test_upload_preflight_neo4j.UploadPreflightNeo4jTests.test_withdrawal_broken_membership_and_bad_ranges_are_excluded) (mutation='MATCH (c:Chunk {chunk_id:$id}) SET c.char_start=-1')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_upload_preflight_neo4j.py", line 212, in test_withdrawal_broken_membership_and_bad_ranges_are_excluded
+    self.assertTrue(self.check()["exact_matches"])
+AssertionError: [] is not true
+
+----------------------------------------------------------------------
+Ran 9 tests in 150.232s
+
+FAILED (failures=3, errors=4)

@@ -1,0 +1,2295 @@
+# 实例（A-Box）：手写的诊断层实例（现象、根因、诊断范围、可观测量等）。
+# 资产层实例不在此处——它由 mapping.topology_xml.yaml 从 topology.xml 物化得到。
+# 本文件将来整体迁入图库。
+entities:
+  ambient_temperature:
+    type: Observable
+    display_name: 环境温度
+    quantity_kind: temperature
+    canonical_unit: °C
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  busway_body_absolute_temperature:
+    type: Observable
+    display_name: 母线槽直身绝对温度
+    quantity_kind: temperature
+    canonical_unit: °C
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  joint_absolute_temperature:
+    type: Observable
+    display_name: 接头绝对温度
+    quantity_kind: temperature
+    canonical_unit: °C
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  temperature_rise:
+    type: DerivedObservable
+    display_name: 温升
+    quantity_kind: temperature_difference
+    canonical_unit: K
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  temperature_rise_rate:
+    type: DerivedObservable
+    display_name: 温升变化率
+    quantity_kind: temperature_change_rate
+    canonical_unit: K/min
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  relative_humidity:
+    type: Observable
+    display_name: 相对湿度
+    quantity_kind: relative_humidity
+    canonical_unit: '%'
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  battery_voltage:
+    type: Observable
+    display_name: 电池电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_a_current:
+    type: Observable
+    display_name: A相电流
+    quantity_kind: electric_current
+    canonical_unit: A
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_b_current:
+    type: Observable
+    display_name: B相电流
+    quantity_kind: electric_current
+    canonical_unit: A
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_c_current:
+    type: Observable
+    display_name: C相电流
+    quantity_kind: electric_current
+    canonical_unit: A
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_a_to_neutral_voltage:
+    type: Observable
+    display_name: A相对中性线电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_b_to_neutral_voltage:
+    type: Observable
+    display_name: B相对中性线电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_c_to_neutral_voltage:
+    type: Observable
+    display_name: C相对中性线电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_ab_voltage:
+    type: Observable
+    display_name: AB线电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_bc_voltage:
+    type: Observable
+    display_name: BC线电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_ca_voltage:
+    type: Observable
+    display_name: CA线电压
+    quantity_kind: electric_voltage
+    canonical_unit: V
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  frequency:
+    type: Observable
+    display_name: 电网频率
+    quantity_kind: frequency
+    canonical_unit: Hz
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_a_power_factor:
+    type: Observable
+    display_name: A相功率因数
+    quantity_kind: power_factor
+    canonical_unit: '1'
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_b_power_factor:
+    type: Observable
+    display_name: B相功率因数
+    quantity_kind: power_factor
+    canonical_unit: '1'
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_c_power_factor:
+    type: Observable
+    display_name: C相功率因数
+    quantity_kind: power_factor
+    canonical_unit: '1'
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  total_power_factor:
+    type: Observable
+    display_name: 总功率因数
+    quantity_kind: power_factor
+    canonical_unit: '1'
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_a_active_power:
+    type: Observable
+    display_name: A相有功功率
+    quantity_kind: active_power
+    canonical_unit: kW
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_b_active_power:
+    type: Observable
+    display_name: B相有功功率
+    quantity_kind: active_power
+    canonical_unit: kW
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_c_active_power:
+    type: Observable
+    display_name: C相有功功率
+    quantity_kind: active_power
+    canonical_unit: kW
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  total_active_power:
+    type: Observable
+    display_name: 总有功功率
+    quantity_kind: active_power
+    canonical_unit: kW
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_a_reactive_power:
+    type: Observable
+    display_name: A相无功功率
+    quantity_kind: reactive_power
+    canonical_unit: kVAr
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_b_reactive_power:
+    type: Observable
+    display_name: B相无功功率
+    quantity_kind: reactive_power
+    canonical_unit: kVAr
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_c_reactive_power:
+    type: Observable
+    display_name: C相无功功率
+    quantity_kind: reactive_power
+    canonical_unit: kVAr
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  total_reactive_power:
+    type: Observable
+    display_name: 总无功功率
+    quantity_kind: reactive_power
+    canonical_unit: kVAr
+    value_kind: continuous
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  water_ingress_alarm_state:
+    type: Observable
+    display_name: 进水报警状态
+    quantity_kind: alarm_state
+    canonical_unit: '1'
+    value_kind: boolean
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  phase_imbalance_alarm_state:
+    type: Observable
+    display_name: 三相不平衡报警状态
+    quantity_kind: alarm_state
+    canonical_unit: '1'
+    value_kind: boolean
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  busway_temperature_rise_alarm_state:
+    type: Observable
+    display_name: 母线温升报警状态
+    quantity_kind: alarm_state
+    canonical_unit: '1'
+    value_kind: boolean
+    availability: source_point
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+  current_load_ratio:
+    type: DerivedObservable
+    display_name: 电流负载率
+    definition: 实际负载电流相对于适用额定电流的无量纲比例；额定电流取值由工程参数提供
+    quantity_kind: ratio
+    canonical_unit: '1'
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: computed_on_demand
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  adjacent_joint_temperature_difference:
+    type: DerivedObservable
+    display_name: 相邻接头温升差
+    definition: 由真实拓扑相邻的两个可测接头温升计算的差异量
+    quantity_kind: temperature_difference
+    canonical_unit: K
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: computed_on_demand
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  joint_temperature_deviation_from_average:
+    type: DerivedObservable
+    display_name: 接头温升相对均值偏差
+    definition: 单一接头温升相对于同一诊断范围内可比较接头温升均值的偏差量
+    quantity_kind: temperature_difference
+    canonical_unit: K
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: computed_on_demand
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  temperature_current_correlation:
+    type: DerivedObservable
+    display_name: 温升与电流相关性
+    definition: 在同一有效时间窗口内温升序列与适用电流序列的统计相关程度
+    quantity_kind: statistical_correlation
+    canonical_unit: '1'
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: computed_on_demand
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  temperature_stability_range:
+    type: DerivedObservable
+    display_name: 稳态温升波动范围
+    definition: 在被判定为稳态的有效时间窗口内温升序列的波动范围
+    quantity_kind: temperature_difference
+    canonical_unit: K
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: computed_on_demand
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  cooling_response_lag:
+    type: DerivedObservable
+    display_name: 降温响应滞后
+    definition: 负载下降后温升响应开始或恢复所表现的时间滞后
+    quantity_kind: duration
+    canonical_unit: min
+    value_kind: continuous
+    derivation_mode: source_calculated
+    availability: computed_on_demand
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TEMP_THRESHOLD_EXCEEDED:
+    type: Phenomenon
+    display_name: 温升阈值超限
+    definition: 接头温升满足某一版本规则规定的阈值与持续条件
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: produced_by_rule
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TEMP_RISE_ABNORMAL:
+    type: Phenomenon
+    display_name: 温升异常
+    definition: 温升、趋势或报警表现异常但不限定单一判据
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: produced_by_rule
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  CURRENT_LOAD_ABNORMAL:
+    type: Phenomenon
+    display_name: 电流负载异常
+    definition: 负载率或温升与负载关系表现异常
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: produced_by_rule
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  JOINT_TEMP_DIFF:
+    type: Phenomenon
+    display_name: 相邻接头温差异常
+    definition: 拓扑相邻接头之间的温升分布表现异常
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: produced_by_rule
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  WATER_ALARM:
+    type: Phenomenon
+    display_name: 进水报警
+    definition: 有效进水报警逻辑测点处于触发状态
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: produced_by_rule
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  THREE_PHASE_IMBALANCE:
+    type: Phenomenon
+    display_name: 三相不平衡
+    definition: 三相不平衡报警或等价的已确认不平衡现象
+    diagnostic_scope_status: outside_current_product_scope
+    rule_evaluation_status: produced_by_rule
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  LOCAL_HOTSPOT:
+    type: Phenomenon
+    display_name: 局部热点
+    definition: 单一接头相对于拓扑相邻或同范围可比较接头表现出显著局部温升偏离
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: intermediate_criterion_only
+    rule_evaluation_note: 当前规则中局部热点只作为 C5 条件1 的中间判据出现，没有任何 D 类规则单独输出它
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  DISTRIBUTED_TEMP_RISE:
+    type: Phenomenon
+    display_name: 分布式温升异常
+    definition: 多个接头或母线槽范围内出现非孤立的持续温升异常分布
+    diagnostic_scope_status: in_scope
+    rule_evaluation_status: not_evaluated_by_current_rules
+    rule_evaluation_note: 知识记录中存在该现象，但 rule_v2.md 2.0.0 没有任何条款能判定它；其候选根因（散热问题、负载过高）目前只能经由其他现象进入。缺口登记为 ONT-109
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  WATER_INGRESS:
+    type: RootCause
+    display_name: 进水
+    definition: 水或潮气进入母线槽或相关部件并可能引发异常
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  OVERLOAD:
+    type: RootCause
+    display_name: 负载过高
+    definition: 负载处于规则规定的高负载区并可能驱动发热；极端过载属于该根因的严重分支
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  LOOSE_BOLTS:
+    type: RootCause
+    display_name: 螺栓未拧紧
+    definition: 接头紧固不足导致接触电阻和局部发热增加
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  CONTACT_OXIDATION:
+    type: RootCause
+    display_name: 接触面氧化或污染
+    definition: 接触面退化或污染导致接触电阻和局部发热增加
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  HEAT_DISSIPATION:
+    type: RootCause
+    display_name: 散热问题
+    definition: 散热条件或降温响应异常导致多点持续发热
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  SINGLE_JOINT_SCOPE:
+    type: DiagnosticScope
+    display_name: 单接头范围
+    definition: 以一个确定的接头实例为诊断中心的范围
+    instance_derivation: single_component_instance
+    instance_derivation_status: derivable_from_topology
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  ADJACENT_JOINT_PAIR_SCOPE:
+    type: DiagnosticScope
+    display_name: 相邻接头对范围
+    definition: 由 topology.xml 的真实端口连接证明相邻的两个可测接头范围；成员由 TOPOLOGICALLY_ADJACENT_TO 中 adjacency_evidence_grade=rule_d3_qualified 的边枚举（rule_v2.md D3：JPK 直连 JPK，或经单个直身段 ST 的无分支连续链路，相关端口须全部启用）
+    instance_derivation: topologically_adjacent_joint_pair
+    instance_derivation_status: derivable_from_topology
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TRUNK_CURRENT_SEGMENT_SCOPE:
+    type: DiagnosticScope
+    display_name: 干路电流段范围
+    definition: 使用同一适用干路电流且未跨越已确认分流点的母线槽范围
+    instance_derivation: trunk_current_segment
+    instance_derivation_status: derivable_from_topology
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  PROVEN_UNSPLIT_EXTENSION_SCOPE:
+    type: DiagnosticScope
+    display_name: 已证明未分流扩展范围
+    definition: 虽经过分支部件但有外部运行证据证明支路未工作或断路时可扩展的电流适用范围
+    instance_derivation: proven_unsplit_extension
+    instance_derivation_status: requires_external_runtime_evidence
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  BUSWAY_SYSTEM_SCOPE:
+    type: DiagnosticScope
+    display_name: 母线槽系统范围
+    definition: 由同一工程和真实拓扑限定的母线槽系统级范围
+    instance_derivation: busway_system
+    instance_derivation_status: derivable_from_topology
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  RATED_CURRENT_PARAMETER:
+    type: DiagnosticParameter
+    display_name: 额定电流参数
+    definition: 计算电流负载率所需的工程额定电流；具体数值由外部项目参数提供
+    parameter_key: current.rated_current
+    parameter_role: design_reference
+    parameter_unit: A
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TEMP_RISE_WARNING_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 温升预警阈值
+    definition: 温升进入预警状态所需的外部配置下界
+    parameter_key: temp_rise.warning_limit
+    parameter_role: lower_bound
+    parameter_unit: K
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TEMP_RISE_CRITICAL_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 温升严重阈值
+    definition: 温升进入严重状态所需的外部配置下界
+    parameter_key: temp_rise.critical_limit
+    parameter_role: lower_bound
+    parameter_unit: K
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  SUSTAINED_DURATION_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 持续时间阈值
+    definition: 现象需连续满足条件的外部配置时长
+    parameter_key: diagnosis.sustained_duration
+    parameter_role: duration
+    parameter_unit: min
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  ADJACENT_TEMP_DIFF_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 相邻温升差阈值
+    definition: 相邻接头温升差被判定异常所需的外部配置下界
+    parameter_key: joint.adjacent_temperature_difference_limit
+    parameter_role: lower_bound
+    parameter_unit: K
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  LOCAL_HOTSPOT_DEVIATION_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 局部热点偏差阈值
+    definition: 单一接头相对同范围均值偏差被判定异常所需的外部配置下界
+    parameter_key: joint.local_hotspot_deviation_limit
+    parameter_role: lower_bound
+    parameter_unit: K
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  LOAD_RATIO_BAND_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 负载率分档阈值
+    definition: 低负载、正常负载和高负载等语义区间的外部分档参数
+    parameter_key: current.load_ratio_bands
+    parameter_role: band
+    parameter_unit: '1'
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  CURRENT_STABILITY_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 电流稳定性阈值
+    definition: 判断时间窗口内电流是否近似稳定的外部配置容差
+    parameter_key: current.stability_limit
+    parameter_role: stability
+    parameter_unit: '1'
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TEMP_CURRENT_CORRELATION_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 温升电流相关性阈值
+    definition: 温升与电流统计相关性是否足够显著的外部配置界限
+    parameter_key: diagnosis.temperature_current_correlation_limit
+    parameter_role: correlation
+    parameter_unit: '1'
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  TEMP_RISE_RATE_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 温升变化率阈值
+    definition: 温升变化速度被判定异常所需的外部配置界限
+    parameter_key: diagnosis.temperature_rise_rate_limit
+    parameter_role: rate
+    parameter_unit: K/min
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  COOLING_LAG_THRESHOLD:
+    type: DiagnosticParameter
+    display_name: 降温响应滞后阈值
+    definition: 负载下降后温升响应滞后被判定异常所需的外部配置时长
+    parameter_key: diagnosis.cooling_response_lag_limit
+    parameter_role: lag
+    parameter_unit: min
+    parameter_binding_status: unresolved
+    parameter_value_source: external_parameter_registry
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  BUSWAY_INCIDENT_CAUSE_DISTRIBUTION:
+    type: ReferenceStatistic
+    display_name: 母线槽故障原因历史占比
+    definition: 厂商历史事件中各类原因所占比例的描述性参考；具体比例从外部参数或统计文件取得
+    statistic_key: busway.incident_cause_distribution
+    statistic_kind: historical_incident_share
+    statistic_binding_status: unresolved
+    not_for_diagnostic_scoring: true
+    provenance:
+      source_refs:
+      - BUSWAY_KNOWLEDGE_20260710_V1_3
+      status: source_documented
+  DIAGNOSTIC_RULES_V2:
+    type: RuleVersion
+    display_name: 母线槽诊断规则 v2
+    definition: 当前唯一生效的诊断规则文档版本；本实体只是图上的引用锚点，规则判据与阈值数值仍然外置
+    document: rule_v2.md
+    document_version: 2.0.0
+    profile_id: diagnostic64_v2
+    lifecycle_status: active
+    rule_content_in_ontology: false
+    provenance:
+      source_refs:
+      - CURRENT_PROJECT_TOPOLOGY
+      status: source_documented
+relations:
+  DER_001:
+    type: DERIVED_FROM
+    from:
+      entity: temperature_rise
+    to:
+      entity: joint_absolute_temperature
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    - PHYSICAL_HEATING_MECHANISM
+    review_status: source_documented
+  DER_002:
+    type: DERIVED_FROM
+    from:
+      entity: temperature_rise
+    to:
+      entity: ambient_temperature
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    - PHYSICAL_HEATING_MECHANISM
+    review_status: source_documented
+  DER_003:
+    type: DERIVED_FROM
+    from:
+      entity: temperature_rise_rate
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_004:
+    type: DERIVED_FROM
+    from:
+      entity: current_load_ratio
+    to:
+      entity: phase_a_current
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_005:
+    type: DERIVED_FROM
+    from:
+      entity: current_load_ratio
+    to:
+      entity: phase_b_current
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_006:
+    type: DERIVED_FROM
+    from:
+      entity: current_load_ratio
+    to:
+      entity: phase_c_current
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_007:
+    type: DERIVED_FROM
+    from:
+      entity: adjacent_joint_temperature_difference
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_008:
+    type: DERIVED_FROM
+    from:
+      entity: joint_temperature_deviation_from_average
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_009:
+    type: DERIVED_FROM
+    from:
+      entity: temperature_current_correlation
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    - PHYSICAL_HEATING_MECHANISM
+    review_status: source_documented
+  DER_010:
+    type: DERIVED_FROM
+    from:
+      entity: temperature_current_correlation
+    to:
+      entity: current_load_ratio
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    - PHYSICAL_HEATING_MECHANISM
+    review_status: source_documented
+  DER_011:
+    type: DERIVED_FROM
+    from:
+      entity: temperature_stability_range
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_012:
+    type: DERIVED_FROM
+    from:
+      entity: cooling_response_lag
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  DER_013:
+    type: DERIVED_FROM
+    from:
+      entity: cooling_response_lag
+    to:
+      entity: current_load_ratio
+    scope: declared_graph
+    assertion: derived
+    evidence:
+    - OBSERVABLE_AND_DERIVATION_SEMANTICS
+    review_status: source_documented
+  CHR_001:
+    type: CHARACTERIZED_BY
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D1
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_002:
+    type: CHARACTERIZED_BY
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: busway_temperature_rise_alarm_state
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D1 判据（rule_v2.md 5.1.1）只读取目标接头连续有效的 TempDiff，并与该条款规定的温升阈值比较；母线槽级温升报警状态不参与 D1 判定，仅作运维上下文"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_003:
+    type: CHARACTERIZED_BY
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_004:
+    type: CHARACTERIZED_BY
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: temperature_rise_rate
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D5 判据（rule_v2.md 5.2.1）是 TempDiff 对 I_bus² 的最小二乘回归 R²，不读取温升变化率"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_005:
+    type: CHARACTERIZED_BY
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: temperature_current_correlation
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_006:
+    type: CHARACTERIZED_BY
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: cooling_response_lag
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D5 判据只含 rule_v2.md 5.2.1 规定窗口内的回归 R²，不读取冷却响应滞后"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_007:
+    type: CHARACTERIZED_BY
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: current_load_ratio
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D2
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_008:
+    type: CHARACTERIZED_BY
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: temperature_current_correlation
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D2 判据（rule_v2.md 5.3.1）是窗口内平均 TempDiff 与按负载率折算的期望温升之间的偏差，窗口长度与折算系数均由该条款规定；不读取 D5 口径的温度-电流相关性 R²"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_009:
+    type: CHARACTERIZED_BY
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: adjacent_joint_temperature_difference
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D3
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_010:
+    type: CHARACTERIZED_BY
+    from:
+      entity: WATER_ALARM
+    to:
+      entity: water_ingress_alarm_state
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D4
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_011:
+    type: CHARACTERIZED_BY
+    from:
+      entity: THREE_PHASE_IMBALANCE
+    to:
+      entity: phase_imbalance_alarm_state
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: D6
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_012:
+    type: CHARACTERIZED_BY
+    from:
+      entity: THREE_PHASE_IMBALANCE
+    to:
+      entity: phase_a_current
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D6 判据（rule_v2.md 5.6.1）只读取三相电流不平衡报警逻辑测点的 0/1 信号，不读取 A 相电流原始值"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_013:
+    type: CHARACTERIZED_BY
+    from:
+      entity: THREE_PHASE_IMBALANCE
+    to:
+      entity: phase_b_current
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D6 判据只读取不平衡报警逻辑测点信号，不读取 B 相电流原始值"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_014:
+    type: CHARACTERIZED_BY
+    from:
+      entity: THREE_PHASE_IMBALANCE
+    to:
+      entity: phase_c_current
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "D6 判据只读取不平衡报警逻辑测点信号，不读取 C 相电流原始值"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_015:
+    type: CHARACTERIZED_BY
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: joint_temperature_deviation_from_average
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: C5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_016:
+    type: CHARACTERIZED_BY
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: adjacent_joint_temperature_difference
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "C5 热点判据是「目标接头 TempDiff 减同一诊断范围内全部可用连接点 TempDiff 的均值」与该条款规定阈值比较，不读取 D3 口径的相邻接头温差"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_017:
+    type: CHARACTERIZED_BY
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: rule_criterion
+    rule_clause: C5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_018:
+    type: CHARACTERIZED_BY
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: temperature_rise
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "rule_v2.md 2.0.0 无任何条款判定 DISTRIBUTED_TEMP_RISE（见 ONT-109），因此其全部表征量当前都不是判据"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_019:
+    type: CHARACTERIZED_BY
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: temperature_stability_range
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "同 CHR_018：该现象当前无可判定条款"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  CHR_020:
+    type: CHARACTERIZED_BY
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: cooling_response_lag
+    scope: declared_graph
+    assertion: characterization
+    criterion_role: contextual_only
+    criterion_note: "同 CHR_018：该现象当前无可判定条款"
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  TAX_001:
+    type: SPECIALIZES
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: TEMP_RISE_ABNORMAL
+    scope: declared_graph
+    assertion: taxonomic
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  TAX_002:
+    type: SPECIALIZES
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: TEMP_RISE_ABNORMAL
+    scope: declared_graph
+    assertion: taxonomic
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  TAX_003:
+    type: SPECIALIZES
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: TEMP_RISE_ABNORMAL
+    scope: declared_graph
+    assertion: taxonomic
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  TAX_004:
+    type: SPECIALIZES
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: TEMP_RISE_ABNORMAL
+    scope: declared_graph
+    assertion: taxonomic
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_001:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Joint
+    to:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_002:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Joint
+    to:
+      entity: TEMP_RISE_ABNORMAL
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_003:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Joint
+    to:
+      entity: JOINT_TEMP_DIFF
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_004:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Joint
+    to:
+      entity: WATER_ALARM
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_005:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Joint
+    to:
+      entity: LOCAL_HOTSPOT
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_006:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Busway
+    to:
+      entity: CURRENT_LOAD_ABNORMAL
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_007:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Busway
+    to:
+      entity: DISTRIBUTED_TEMP_RISE
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_008:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Busway
+    to:
+      entity: THREE_PHASE_IMBALANCE
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_009:
+    type: MAY_EXHIBIT
+    from:
+      entity_type: Busway
+    to:
+      entity: WATER_ALARM
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  APP_010:
+    type: MAY_AFFECT
+    from:
+      entity: WATER_INGRESS
+    to:
+      entity_type: Joint
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_011:
+    type: MAY_AFFECT
+    from:
+      entity: WATER_INGRESS
+    to:
+      entity_type: Busway
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_012:
+    type: MAY_AFFECT
+    from:
+      entity: OVERLOAD
+    to:
+      entity_type: Busway
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_013:
+    type: MAY_AFFECT
+    from:
+      entity: OVERLOAD
+    to:
+      entity_type: Joint
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_014:
+    type: MAY_AFFECT
+    from:
+      entity: LOOSE_BOLTS
+    to:
+      entity_type: Joint
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_015:
+    type: MAY_AFFECT
+    from:
+      entity: CONTACT_OXIDATION
+    to:
+      entity_type: Joint
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_016:
+    type: MAY_AFFECT
+    from:
+      entity: HEAT_DISSIPATION
+    to:
+      entity_type: Busway
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  APP_017:
+    type: MAY_AFFECT
+    from:
+      entity: HEAT_DISSIPATION
+    to:
+      entity_type: Joint
+    scope: type_template
+    materialization: forbidden
+    instance_expansion: forbidden
+    assertion: possible_applicability
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  SCP_001:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: SINGLE_JOINT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: D1
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_002:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: SINGLE_JOINT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: D5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_003:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: TRUNK_CURRENT_SEGMENT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D2
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_004:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: ADJACENT_JOINT_PAIR_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: comparison_basis
+    rule_clause: D3
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_005:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: WATER_ALARM
+    to:
+      entity: SINGLE_JOINT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: D4
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_006:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: WATER_ALARM
+    to:
+      entity: BUSWAY_SYSTEM_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: reporting_context
+    rule_clause: D4
+    rule_basis: rule_v2.md 5.5.1/6.1 中 D4 与 C1 的定位表述是"沿用 D4 定位的母线槽和接头"，接头是断言落点，母线槽只是随附上报的上下文；此前误标为第二个 localization，导致同一现象出现两个落点，且体检器要求在母线槽全域求进水报警可得性
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_007:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: THREE_PHASE_IMBALANCE
+    to:
+      entity: TRUNK_CURRENT_SEGMENT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: D6
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_008:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: SINGLE_JOINT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: C5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_009:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: ADJACENT_JOINT_PAIR_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: comparison_basis
+    rule_clause: C5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_010:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: BUSWAY_SYSTEM_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: C5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_011:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: current_load_ratio
+    to:
+      entity: TRUNK_CURRENT_SEGMENT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D2
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_012:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: current_load_ratio
+    to:
+      entity: PROVEN_UNSPLIT_EXTENSION_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D2
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_013:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: adjacent_joint_temperature_difference
+    to:
+      entity: ADJACENT_JOINT_PAIR_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: comparison_basis
+    rule_clause: D3
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  SCP_015:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: SINGLE_JOINT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: D2
+    rule_basis: D2 规定"每次只判断一个明确目标接头"，现象落点是单接头，干路电流段只是电流适用性基准
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_016:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: PROVEN_UNSPLIT_EXTENSION_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D2
+    rule_basis: D2 规定目标接头须"位于总管电流段**或可证明未分流**"，后半句此前在本体中缺失
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_017:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: SINGLE_JOINT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: localization
+    rule_clause: D3
+    rule_basis: D3 命中后"定位后接头 j 并启动 Phase 2"，落点是单接头，相邻对只是比较基准
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_018:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: TRUNK_CURRENT_SEGMENT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D5
+    rule_basis: D5 前置条件含"目标接头位于总管电流段或可证明未分流"，且需 I_bus 参与回归；此前本体只声明了单接头落点
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_019:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: PROVEN_UNSPLIT_EXTENSION_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D5
+    rule_basis: 同 D5"或可证明未分流"分支
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_020:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: BUSWAY_SYSTEM_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: comparison_basis
+    rule_clause: C5
+    rule_basis: 热点判据为"目标接头TempDiff-average(同一诊断范围内全部可用连接点TempDiff)"，且 C5 条件1 要求"诊断范围内热点数量<5"，仅两成员的相邻对无法承载该计数语义
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_021:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: temperature_current_correlation
+    to:
+      entity: PROVEN_UNSPLIT_EXTENSION_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D5
+    rule_basis: 与 current_load_ratio 保持一致；D5 的"或可证明未分流"同样适用于温升-电流相关性
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  SCP_014:
+    type: APPLICABLE_TO_SCOPE
+    from:
+      entity: temperature_current_correlation
+    to:
+      entity: TRUNK_CURRENT_SEGMENT_SCOPE
+    scope: declared_graph
+    assertion: scope_applicability
+    scope_role: applicability_basis
+    rule_clause: D5
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: source_documented
+  PAR_001:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: current_load_ratio
+    to:
+      entity: RATED_CURRENT_PARAMETER
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_002:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: TEMP_RISE_WARNING_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_003:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: TEMP_RISE_CRITICAL_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_004:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: SUSTAINED_DURATION_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_005:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: TEMP_RISE_RATE_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_006:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: TEMP_CURRENT_CORRELATION_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_007:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: COOLING_LAG_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_008:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: LOAD_RATIO_BAND_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_009:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: CURRENT_STABILITY_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_010:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: TEMP_CURRENT_CORRELATION_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_011:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: ADJACENT_TEMP_DIFF_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_012:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: SUSTAINED_DURATION_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_013:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: LOCAL_HOTSPOT_DEVIATION_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_014:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: SUSTAINED_DURATION_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_015:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: COOLING_LAG_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PAR_016:
+    type: REQUIRES_PARAMETER
+    from:
+      entity: temperature_rise_rate
+    to:
+      entity: TEMP_RISE_RATE_THRESHOLD
+    scope: declared_graph
+    assertion: parameter_dependency
+    evidence:
+    - PARAMETER_SEMANTICS
+    review_status: source_documented
+  PCL_001:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: WATER_INGRESS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_002:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: OVERLOAD
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_003:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: LOOSE_BOLTS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_004:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: CONTACT_OXIDATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_005:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: HEAT_DISSIPATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_006:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: WATER_INGRESS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_007:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: OVERLOAD
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_008:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: LOOSE_BOLTS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_009:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: CONTACT_OXIDATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_010:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: HEAT_DISSIPATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_011:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: LOOSE_BOLTS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_012:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: CONTACT_OXIDATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_013:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: OVERLOAD
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_014:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: WATER_ALARM
+    to:
+      entity: WATER_INGRESS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_015:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: LOOSE_BOLTS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_016:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: CONTACT_OXIDATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_017:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: WATER_INGRESS
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_018:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: HEAT_DISSIPATION
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  PCL_019:
+    type: POSSIBLE_CAUSE
+    from:
+      entity: DISTRIBUTED_TEMP_RISE
+    to:
+      entity: OVERLOAD
+    scope: declared_graph
+    assertion: possible
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: source_documented
+  REF_001:
+    type: HAS_REFERENCE_STATISTIC
+    from:
+      entity: WATER_INGRESS
+    to:
+      entity: BUSWAY_INCIDENT_CAUSE_DISTRIBUTION
+    scope: declared_graph
+    assertion: descriptive_reference
+    evidence:
+    - HISTORICAL_CAUSE_DISTRIBUTION
+    review_status: source_documented
+  REF_002:
+    type: HAS_REFERENCE_STATISTIC
+    from:
+      entity: LOOSE_BOLTS
+    to:
+      entity: BUSWAY_INCIDENT_CAUSE_DISTRIBUTION
+    scope: declared_graph
+    assertion: descriptive_reference
+    evidence:
+    - HISTORICAL_CAUSE_DISTRIBUTION
+    review_status: source_documented
+  EVL_001:
+    type: EVALUATED_BY
+    from:
+      entity: TEMP_THRESHOLD_EXCEEDED
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: D1
+    clause_role: produces_phenomenon
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_002:
+    type: EVALUATED_BY
+    from:
+      entity: CURRENT_LOAD_ABNORMAL
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: D2
+    clause_role: produces_phenomenon
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_003:
+    type: EVALUATED_BY
+    from:
+      entity: JOINT_TEMP_DIFF
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: D3
+    clause_role: produces_phenomenon
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_004:
+    type: EVALUATED_BY
+    from:
+      entity: WATER_ALARM
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: D4
+    clause_role: produces_phenomenon
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_005:
+    type: EVALUATED_BY
+    from:
+      entity: TEMP_RISE_ABNORMAL
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: D5
+    clause_role: produces_phenomenon
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_006:
+    type: EVALUATED_BY
+    from:
+      entity: THREE_PHASE_IMBALANCE
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: D6
+    clause_role: produces_phenomenon
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_007:
+    type: EVALUATED_BY
+    from:
+      entity: LOCAL_HOTSPOT
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: C5
+    clause_role: intermediate_criterion
+    evidence:
+    - DIAGNOSTIC_APPLICABILITY
+    review_status: derived_from_rule_reconciliation
+  EVL_008:
+    type: EVALUATED_BY
+    from:
+      entity: WATER_INGRESS
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: C1
+    clause_role: produces_root_cause
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: derived_from_rule_reconciliation
+  EVL_009:
+    type: EVALUATED_BY
+    from:
+      entity: OVERLOAD
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: C2
+    clause_role: produces_root_cause
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: derived_from_rule_reconciliation
+  EVL_010:
+    type: EVALUATED_BY
+    from:
+      entity: LOOSE_BOLTS
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: C3
+    clause_role: produces_root_cause
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: derived_from_rule_reconciliation
+  EVL_011:
+    type: EVALUATED_BY
+    from:
+      entity: CONTACT_OXIDATION
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: C4
+    clause_role: produces_root_cause
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: derived_from_rule_reconciliation
+  EVL_012:
+    type: EVALUATED_BY
+    from:
+      entity: HEAT_DISSIPATION
+    to:
+      entity: DIAGNOSTIC_RULES_V2
+    scope: declared_graph
+    assertion: rule_binding
+    rule_clause: C5
+    clause_role: produces_root_cause
+    evidence:
+    - ROOT_CAUSE_CANDIDATES
+    review_status: derived_from_rule_reconciliation

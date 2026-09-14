@@ -91,6 +91,8 @@
     .industrial-governance .ontology-list, .industrial-governance .review-list, .industrial-governance .history-list { display: grid; gap: 8px; margin-top: 11px; }
     .industrial-governance .governance-item { padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
     .industrial-governance .governance-item-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+    .industrial-governance #ontology-list .governance-item-head > div { min-width: 0; }
+    .industrial-governance #ontology-list .trust-badge { flex-shrink: 0; white-space: nowrap; }
     .industrial-governance .governance-item strong { color: var(--strong); font-size:var(--text-help,13px); overflow-wrap: anywhere; }
     .industrial-governance .governance-item p { margin: 5px 0; color: var(--muted); font-size:var(--text-help,13px); white-space: pre-wrap; overflow-wrap: anywhere; }
     .industrial-governance .governance-item .json-editor { margin-top: 8px; }
@@ -192,12 +194,21 @@
 .industrial-governance .build-visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .industrial-governance .ontology-workspace > .workbench-card { padding: 24px; margin-bottom: 12px; }
 .industrial-governance .ontology-workspace > .workbench-actions { justify-content: flex-start; margin: 0; }
+.industrial-governance .ontology-input-error { padding: 12px 14px; border: 1px solid #d6b6ad; border-radius: 6px; background: #fbf2ef; color: #833b29; font-size: var(--text-body,15px); line-height: 1.6; overflow-wrap: anywhere; }
+.industrial-governance #ontology-editor[aria-invalid="true"] { border-color: #b97865; }
 
 /* Keep the next action close to the essential fields; secondary setup remains below. */
 .industrial-governance .upload-submit-bar { position: sticky; bottom: 0; z-index: 5; align-items: center; justify-content: space-between; margin: 18px -24px 0; padding: 14px 24px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); }
 .industrial-governance .upload-submit-bar p { margin: 0; color: var(--muted); font-size: var(--text-help,13px); }
 .industrial-governance .upload-submit-bar .button { min-width: 132px; }
 .industrial-governance #construction-output { scroll-margin-bottom: 90px; }
+.industrial-governance .construction-result-overview { white-space: normal; }
+.industrial-governance .construction-result-overview p { margin: 4px 0; }
+.industrial-governance .construction-result-counts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0; }
+.industrial-governance .construction-result-details, .industrial-governance .construction-validation-details { margin-top: 8px; white-space: normal; }
+.industrial-governance .construction-result-details > summary, .industrial-governance .construction-validation-details > summary { cursor: pointer; color: var(--muted); }
+.industrial-governance .construction-structured-summary { max-height: 240px; overflow: auto; margin: 8px 0 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: var(--text-help,13px); white-space: pre-wrap; overflow-wrap: anywhere; }
+.industrial-governance .construction-validation-list { max-height: 400px; overflow: auto; margin-top: 8px; }
 .industrial-governance .review-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .industrial-governance .build-empty-state { padding: 28px 24px; margin: 12px 0 20px; border: 1px solid var(--line); border-radius: var(--control-radius); background: var(--surface-2); }
 .industrial-governance .build-empty-state h3 { margin: 0 0 8px; font-size: 18px; }
@@ -229,3 +240,30 @@
 .industrial-governance .upload-difference { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
 .industrial-governance .upload-difference > div { min-width: 0; }
 .industrial-governance .upload-difference pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; padding: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+
+/* Automated review keeps clear decisions separate from the human work queue. */
+.industrial-governance .auto-review-summary { margin: 14px 0; padding: 16px 18px; border: 1px solid var(--line); border-left: 4px solid var(--teal); border-radius: 8px; background: var(--surface-2); white-space: normal; overflow-wrap: anywhere; }
+.industrial-governance .auto-review-summary[data-auto-review-status="FAILED"], .industrial-governance .auto-review-summary[data-auto-review-status="PARTIAL"] { border-left-color: #a07542; }
+.industrial-governance .auto-review-counts { display: grid; gap: 4px; margin: 8px 0; }
+.industrial-governance .auto-review-counts p, .industrial-governance .auto-review-item p { margin: 3px 0; }
+.industrial-governance .auto-review-summary .workbench-actions { justify-content: flex-start; margin: 10px 0 0; }
+.industrial-governance .auto-review-details { margin-top: 12px; }
+.industrial-governance .auto-review-details > summary { cursor: pointer; color: var(--teal); }
+.industrial-governance .auto-review-items { max-height: 440px; overflow: auto; margin: 10px 0; padding-right: 6px; }
+.industrial-governance .auto-review-item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.industrial-governance .auto-review-item:first-child { padding-top: 0; }
+.industrial-governance .auto-review-item small { color: var(--muted); }
+.industrial-governance .auto-review-item [data-auto-review-evidence-panel] { margin-top: 12px; padding: 12px; border-radius: 6px; background: var(--surface); }
+.industrial-governance .auto-review-gaps { margin: 14px 0; padding: 14px 16px; border: 1px solid #d9c5a3; border-left: 4px solid #a07542; border-radius: 6px; background: #fbf7ee; }
+.industrial-governance .auto-review-gaps > strong { color: #745226; }
+.industrial-governance .auto-review-gaps p { margin: 6px 0; }
+.industrial-governance .auto-review-gap-details { margin-top: 10px; }
+.industrial-governance .auto-review-gap-details > summary { cursor: pointer; color: #745226; }
+.industrial-governance .auto-review-gap-details code { overflow-wrap: anywhere; }
+.industrial-governance .review-mapping-gap { border-color: #d9c5a3; }
+.industrial-governance .context-mapping-summary { margin: 14px 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.industrial-governance .context-mapping-summary > p { margin: 6px 0; }
+.industrial-governance .context-mapping-summary > details > summary { cursor: pointer; color: var(--teal); }
+.industrial-governance .context-mapping-summary > details { margin-top: 10px; }
+.industrial-governance .context-property-evidence { margin: 10px 0; padding-left: 10px; border-left: 2px solid var(--line); }
+.industrial-governance .context-property-evidence > details { margin: 8px 0; }

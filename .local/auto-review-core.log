@@ -1,0 +1,27 @@
+Starting disposable Stage 8 Neo4j container: sample-graphrag-stage8-neo4j-55225
+Waiting for Neo4j on 127.0.0.1:53786
+Running Stage 8 Neo4j integration tests
+test_complete_groups_facts_replay_audit_and_access (test_auto_review_neo4j.AutoReviewNeo4jTests.test_complete_groups_facts_replay_audit_and_access) ... FAIL
+test_provider_unavailable_retains_candidates_and_retry_works (test_auto_review_neo4j.AutoReviewNeo4jTests.test_provider_unavailable_retains_candidates_and_retry_works) ... FAIL
+test_uncertain_identity_only_blocks_related_fact_and_cross_source_names_stay_unmerged (test_auto_review_neo4j.AutoReviewNeo4jTests.test_uncertain_identity_only_blocks_related_fact_and_cross_source_names_stay_unmerged) ... ok
+
+======================================================================
+FAIL: test_complete_groups_facts_replay_audit_and_access (test_auto_review_neo4j.AutoReviewNeo4jTests.test_complete_groups_facts_replay_audit_and_access)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_auto_review_neo4j.py", line 63, in test_complete_groups_facts_replay_audit_and_access
+    self.assertEqual(result["counts"]["approved_assertions"],4,self.errors())
+AssertionError: 0 != 4 : []
+
+======================================================================
+FAIL: test_provider_unavailable_retains_candidates_and_retry_works (test_auto_review_neo4j.AutoReviewNeo4jTests.test_provider_unavailable_retains_candidates_and_retry_works)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/integration/test_auto_review_neo4j.py", line 112, in test_provider_unavailable_retains_candidates_and_retry_works
+    self.assertEqual(second["counts"]["approved_assertions"],2,self.errors())
+AssertionError: 0 != 2 : []
+
+----------------------------------------------------------------------
+Ran 3 tests in 172.129s
+
+FAILED (failures=2)

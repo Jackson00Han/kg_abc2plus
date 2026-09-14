@@ -1,0 +1,10 @@
+{
+  "scope": "manual_source_formal_retrieval_probe",
+  "tests_run": 1,
+  "passed_test_ids": [],
+  "failures": [
+    "tests.integration.test_construction_workflow_neo4j.Neo4jConstructionWorkflowIntegrationTests.test_manual_source_requires_complete_active_publication_and_keeps_provenance"
+  ],
+  "errors": [],
+  "skipped": []
+}

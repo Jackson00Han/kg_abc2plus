@@ -427,9 +427,19 @@ class TypedLiteralValue:
     raw_valid_from: str | None = None
     raw_valid_to: str | None = None
     raw_observed_at: str | None = None
+    source_encoding: str = "TEXT"
 
     def __post_init__(self) -> None:
         datatype = _text(self.datatype, "literal datatype").upper()
+        if self.source_encoding not in {"TEXT", "JSON_STRING"}:
+            raise ValueError("unsupported literal source encoding")
+        if self.source_encoding == "JSON_STRING":
+            try:
+                decoded = json.loads(self.raw_value)
+            except (ValueError, TypeError) as error:
+                raise ValueError("JSON_STRING requires a complete JSON string token") from error
+            if not isinstance(decoded, str):
+                raise ValueError("JSON_STRING requires a JSON string")
         if datatype not in _LITERAL_DATATYPES:
             raise ValueError("literal datatype is unsupported")
         object.__setattr__(self, "datatype", datatype)
@@ -551,6 +561,7 @@ class TypedLiteralValue:
             "raw_valid_from": self.raw_valid_from,
             "raw_valid_to": self.raw_valid_to,
             "raw_observed_at": self.raw_observed_at,
+            **({"source_encoding": self.source_encoding} if self.source_encoding != "TEXT" else {}),
         }
 
     def to_flat_properties(self, prefix: str = "literal_") -> dict[str, object]:
@@ -580,7 +591,7 @@ class TypedLiteralValue:
             "raw_valid_to",
             "raw_observed_at",
         }
-        if set(value) != required:
+        if not required <= set(value) or set(value) - required - {"source_encoding"}:
             raise ValueError("typed literal mapping fields do not match the contract")
         return cls(
             datatype=value["datatype"],  # type: ignore[arg-type]
@@ -595,6 +606,7 @@ class TypedLiteralValue:
             raw_valid_from=value["raw_valid_from"],  # type: ignore[arg-type]
             raw_valid_to=value["raw_valid_to"],  # type: ignore[arg-type]
             raw_observed_at=value["raw_observed_at"],  # type: ignore[arg-type]
+            source_encoding=value.get("source_encoding", "TEXT"),
         )
 
     @classmethod
@@ -631,6 +643,8 @@ class TypedLiteralValue:
         present = {
             field for field in fields if f"{prefix}{field}" in properties
         }
+        if f"{prefix}source_encoding" in properties:
+            present.add("source_encoding")
         if not present:
             return None
         required = {"datatype", "typed_value", "raw_value", "canonical_value"}
@@ -644,6 +658,8 @@ class TypedLiteralValue:
             field: properties.get(f"{prefix}{field}")
             for field in fields
         }
+        if f"{prefix}source_encoding" in properties:
+            value["source_encoding"] = properties[f"{prefix}source_encoding"]
         return cls.from_mapping(value)
 
     @staticmethod

@@ -13,6 +13,12 @@ import binascii
 from typing import Annotated, Literal, Self
 
 from pydantic import JsonValue, AwareDatetime, Field, StringConstraints, field_validator, model_validator
+from .auto_review_contracts import AutoReviewResponse
+
+from graphrag_prod.knowledge.publication_guard import (
+    MAX_PUBLICATION_CHANGE_RECORDS,
+    MAX_PUBLICATION_MANIFEST_RECORDS,
+)
 
 from .contracts import (
     GroupName,
@@ -39,7 +45,7 @@ MAX_ONTOLOGY_PROPERTIES = 256
 MAX_ONTOLOGY_HIERARCHIES = 32
 MAX_KNOWLEDGE_RECORDS = 500
 MAX_REVIEW_RECORDS = 100
-MAX_PUBLICATION_RECORDS = 500
+MAX_PUBLICATION_RECORDS = MAX_PUBLICATION_CHANGE_RECORDS
 MAX_PUBLISHED_QUALITY_ISSUES = 1_000
 MAX_PUBLISHED_QUALITY_SAMPLE = 20
 MAX_ACTIVE_DOCUMENTS = 100
@@ -153,6 +159,7 @@ DocumentCanonicalUri = Annotated[
 
 
 class OntologyProperty(StrictAPIModel):
+    constraints_json: Annotated[str, StringConstraints(strict=True, max_length=16_384)] | None = None
     name: TypeName
     datatype: Literal[
         "STRING",
@@ -176,6 +183,7 @@ class OntologyProperty(StrictAPIModel):
 
 
 class OntologyEntityType(StrictAPIModel):
+    instance_allowed: bool = True
     name: TypeName
     canonical_key_namespaces: Annotated[
         tuple[OntologyKey, ...], Field(min_length=1, max_length=64)
@@ -204,6 +212,14 @@ class OntologyEntityType(StrictAPIModel):
 
 
 class OntologyRelationshipType(StrictAPIModel):
+    instance_allowed: bool = True
+    allowed_type_pairs: Annotated[tuple[tuple[TypeName, TypeName], ...], Field(max_length=4096)] = ()
+
+    @field_validator("allowed_type_pairs", mode="before")
+    @classmethod
+    def accept_pairs(cls, value: object) -> object:
+        return tuple(tuple(pair) for pair in value) if isinstance(value, (list, tuple)) else value
+
     name: TypeName
     source_types: Annotated[tuple[TypeName, ...], Field(min_length=1, max_length=64)]
     target_types: Annotated[tuple[TypeName, ...], Field(min_length=1, max_length=64)]
@@ -255,6 +271,27 @@ class OntologyHierarchy(StrictAPIModel):
 
 
 class OntologyImportRequest(StrictAPIModel):
+    rule_reference_registry_json: Annotated[str, StringConstraints(strict=True, max_length=262_144)] | None = None
+    source_contract_json: Annotated[str, StringConstraints(strict=True, max_length=1_000_000)] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def compile_source_format(cls, value: object) -> object:
+        if isinstance(value, dict) and "rule_reference_registry" in value:
+            from graphrag_prod.ontology.source import canonical_json, validate_rule_reference_registry  # noqa: PLC0415
+            if "rule_reference_registry_json" in value:
+                raise ValueError("rule reference registry must use one representation")
+            value = dict(value)
+            registry = value.pop("rule_reference_registry")
+            if registry is not None:
+                value["rule_reference_registry_json"] = canonical_json(validate_rule_reference_registry(registry))
+        if isinstance(value, dict) and "metadata" in value:
+            from graphrag_prod.ontology.source import compile_source_contract  # noqa: PLC0415
+            transport = {key: value[key] for key in ("activate", "expected_active_tbox_id", "expected_checksum", "rule_reference_registry_json") if key in value}
+            source = {key: item for key, item in value.items() if key not in transport}
+            return {**compile_source_contract(source), **transport}
+        return value
+
     activate: bool = False
     expected_active_tbox_id: Identifier | None = None
     key: OntologyKey
@@ -297,7 +334,25 @@ class OntologyListRequest(StrictAPIModel):
     limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 100
 
 
+class OntologySourceCapabilities(StrictAPIModel):
+    profile: str
+    source_version: str
+    source_checksum: Digest
+    source_checksum_basis: str
+    blocked_entity_types: tuple[TypeName, ...]
+    blocked_relationship_types: tuple[TypeName, ...]
+    scope: str
+
+    @field_validator("blocked_entity_types", "blocked_relationship_types", mode="before")
+    @classmethod
+    def accept_arrays(cls, value: object) -> object:
+        return _json_array(value)
+
+
 class OntologyVersionResponse(StrictAPIModel):
+    rule_reference_registry: JsonValue | None = None
+    source_contract_json: Annotated[str, StringConstraints(strict=True, max_length=1_000_000)] | None = None
+    import_capabilities: OntologySourceCapabilities | None = None
     tbox_id: Identifier
     key: OntologyKey
     version: Annotated[int, Field(strict=True, ge=1)]
@@ -387,6 +442,7 @@ class RawLiteralInput(StrictAPIModel):
     raw_valid_from: LiteralTemporalText | None = None
     raw_valid_to: LiteralTemporalText | None = None
     raw_observed_at: LiteralTemporalText | None = None
+    source_encoding: Literal["TEXT", "JSON_STRING"] = "TEXT"
 
 
 class RelationshipPropertyInput(StrictAPIModel):
@@ -647,6 +703,36 @@ class ConstructionValidationAttemptResponse(StrictAPIModel):
         return _json_array(value)
 
 
+class ConstructionMappingPropertyResponse(StrictAPIModel):
+    field: Annotated[str, Field(max_length=512)]
+    property: Identifier
+
+
+class ConstructionMappingRelationResponse(StrictAPIModel):
+    field: Annotated[str, Field(max_length=512)]
+    target_collection: Annotated[str, Field(max_length=512)]
+    target_field: Annotated[str, Field(max_length=512)]
+    type: Identifier
+    direction: Literal["in", "out"]
+    properties: Annotated[list[ConstructionMappingPropertyResponse], Field(max_length=100)]
+
+
+class ConstructionMappingCollectionResponse(StrictAPIModel):
+    collection: Annotated[str, Field(max_length=512)]
+    id_field: Annotated[str, Field(max_length=512)]
+    entity_types: Annotated[list[Identifier], Field(max_length=256)]
+    record_count: Annotated[int, Field(ge=0, le=2000)]
+    properties: Annotated[list[ConstructionMappingPropertyResponse], Field(max_length=100)]
+    relations: Annotated[list[ConstructionMappingRelationResponse], Field(max_length=100)]
+    retained_fields: Annotated[list[Annotated[str, Field(max_length=512)]], Field(max_length=2000)]
+
+
+class ConstructionMappingSummaryResponse(StrictAPIModel):
+    mapping_checksum: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    record_count: Annotated[int, Field(ge=0, le=2000)]
+    collections: Annotated[list[ConstructionMappingCollectionResponse], Field(max_length=16)]
+
+
 class ConstructionChunkResponse(StrictAPIModel):
     chunk_id: Identifier
     artifact_id: Identifier
@@ -655,6 +741,7 @@ class ConstructionChunkResponse(StrictAPIModel):
     mention_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
     assertion_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
     replayed: bool
+    mapping_summary: ConstructionMappingSummaryResponse | None = None
     validation_attempts: Annotated[
         tuple[ConstructionValidationAttemptResponse, ...], Field(max_length=2)
     ] = ()
@@ -712,6 +799,7 @@ class KnowledgeUploadPreflightResponse(StrictAPIModel):
 
 
 class KnowledgeConstructionResponse(StrictAPIModel):
+    auto_review: AutoReviewResponse | None = None
     extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
     job_id: Identifier
     document_id: Identifier
@@ -757,7 +845,9 @@ class ConstructionJobListRequest(StrictAPIModel):
 
 
 class ConstructionJobResponse(StrictAPIModel):
+    auto_review: AutoReviewResponse | None = None
     extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
+    operation_key: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
     job_id: Identifier
     document_id: Identifier
     version_id: Identifier
@@ -821,6 +911,20 @@ class EvidenceResponse(StrictAPIModel):
     quoted_text: ExactEvidenceText
 
 
+class ContextPropertyEvidenceResponse(StrictAPIModel):
+    version: Literal["json-context-property:v1"]
+    source_checksum: Digest
+    mapping_checksum: Digest
+    scope_pointer: Annotated[str, Field(strict=True, max_length=4096)]
+    collection_pointer: Annotated[str, Field(strict=True, max_length=4096)]
+    record_pointer: Annotated[str, Field(strict=True, max_length=4096)]
+    identity_pointer: Annotated[str, Field(strict=True, max_length=4096)]
+    value_pointer: Annotated[str, Field(strict=True, max_length=4096)]
+    source_identity: Annotated[str, Field(strict=True, max_length=512)]
+    property_name: TypeName
+    value_evidence: EvidenceResponse
+
+
 class TrustResponse(StrictAPIModel):
     origin: Literal[
         "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
@@ -863,6 +967,7 @@ class ReviewRecordResponse(StrictAPIModel):
     object_mention_revision_id: Identifier | None = None
     literal_value: LiteralSourceText | None = None
     literal_semantics: TypedLiteralSemanticsResponse | None = None
+    context_property_evidence: ContextPropertyEvidenceResponse | None = None
     relationship_properties: Annotated[
         tuple[RelationshipPropertyResponse, ...],
         Field(max_length=MAX_ONTOLOGY_PROPERTIES),
@@ -886,6 +991,7 @@ class ReviewRecordResponse(StrictAPIModel):
                     self.object_mention_revision_id,
                     self.literal_value,
                     self.literal_semantics,
+                    self.context_property_evidence,
                 )
             ) or self.relationship_properties:
                 raise ValueError("entity mention review shape is invalid")
@@ -908,6 +1014,10 @@ class ReviewRecordResponse(StrictAPIModel):
             raise ValueError("assertion review mention linkage is invalid")
         if self.object_entity is not None and self.literal_semantics is not None:
             raise ValueError("entity assertion must not carry literal semantics")
+        if self.context_property_evidence is not None and (
+            self.object_entity is not None or self.context_property_evidence.property_name != self.predicate
+        ):
+            raise ValueError("context evidence must belong to its literal property")
         if self.object_entity is None and self.relationship_properties:
             raise ValueError("literal assertion must not carry relationship properties")
         if (
@@ -1006,6 +1116,7 @@ class ReviewEvidenceRequest(StrictAPIModel):
     expected_revision: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
     view: Literal['paragraph', 'surrounding', 'document'] = 'paragraph'
     offset: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)] = 0
+    evidence_role: Literal["PRIMARY", "CONTEXT_VALUE"] = "PRIMARY"
 
 
 class ReviewEvidenceResponse(StrictAPIModel):
@@ -1016,12 +1127,12 @@ class ReviewEvidenceResponse(StrictAPIModel):
     chunk_id: Identifier
     document_title: str
     source_uri: str | None
-    text: str
+    text: ExactEvidenceText
     context_start: int
     context_end: int
     char_start: int
     char_end: int
-    quoted_text: str
+    quoted_text: ExactEvidenceText
     total_characters: int
     document_accessible: bool
     view: Literal['paragraph', 'surrounding', 'document']
@@ -1370,6 +1481,12 @@ class PublicationRequest(StrictAPIModel):
             raise ValueError("record cannot be removed and replaced together")
         if self.replace_record_ids and not self.approved_revision_ids:
             raise ValueError("replacement requires approved revisions")
+        if sum(len(getattr(self, name)) for name in (
+            "approved_revision_ids", "remove_record_ids", "replace_record_ids",
+        )) > MAX_PUBLICATION_CHANGE_RECORDS:
+            raise ValueError(
+                f"publication change set exceeds its {MAX_PUBLICATION_CHANGE_RECORDS}-record limit"
+            )
         return self
 
 
@@ -1428,7 +1545,7 @@ class PublicationResponse(StrictAPIModel):
         tuple[Identifier, ...], Field(max_length=MAX_PUBLICATION_RECORDS)
     ]
     published_revision_ids: Annotated[
-        tuple[Identifier, ...], Field(max_length=MAX_PUBLICATION_RECORDS)
+        tuple[Identifier, ...], Field(max_length=MAX_PUBLICATION_MANIFEST_RECORDS)
     ]
     removed_record_ids: Annotated[
         tuple[Identifier, ...], Field(max_length=MAX_PUBLICATION_RECORDS)
@@ -1804,10 +1921,10 @@ class ActivePublicationInventoryResponse(StrictAPIModel):
     ontology_version_id: Identifier
     document_id: Identifier | None = None
     total_record_count: Annotated[
-        int, Field(strict=True, ge=1, le=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS)
+        int, Field(strict=True, ge=1, le=MAX_PUBLICATION_MANIFEST_RECORDS)
     ]
     matching_record_count: Annotated[
-        int, Field(strict=True, ge=0, le=MAX_ACTIVE_PUBLICATION_INVENTORY_ITEMS)
+        int, Field(strict=True, ge=0, le=MAX_PUBLICATION_MANIFEST_RECORDS)
     ]
     truncated: bool
     items: Annotated[

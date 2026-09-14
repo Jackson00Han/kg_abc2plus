@@ -58,9 +58,18 @@ client.personaId='unknown';assert.equal(currentPersona(),null);
     def run_js(self, scenario: str, *, upload: bool = False, detail: bool = False) -> None:
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node is required for executable UI validation")
-        code = self.source[
+        code = next(line for line in self.source.splitlines() if "const escapeHtml =" in line) + "\n"
+        code += self.source[
             self.source.index("function demoKit()"):
             self.source.index("function detectedMime(file)")
+        ]
+        code += self.source[
+            self.source.index("function ontologyImportDefinition("):
+            self.source.index("async function loadOntologyFile()")
+        ]
+        code += self.source[
+            self.source.index("function clearConstructionResult()"):
+            self.source.index("function selectUploadFile(")
         ]
         code += self.source[
             self.source.index("function setUploadKnowledgeScope("):
@@ -68,7 +77,7 @@ client.personaId='unknown';assert.equal(currentPersona(),null);
         ]
         if upload:
             code += self.source[
-                self.source.index("async function constructKnowledge()"):
+                self.source.index("async function constructKnowledge("):
                 self.source.index("function reviewEdit(item)")
             ]
         code += self.source[
@@ -78,7 +87,7 @@ client.personaId='unknown';assert.equal(currentPersona(),null);
         if detail:
             code += self.source[
                 self.source.index("async function loadConstructionJob(index, button)"):
-                self.source.index("async function constructKnowledge()")
+                self.source.index("async function constructKnowledge(")
             ]
         harness = r"""
 const vm = require('node:vm');
@@ -87,26 +96,41 @@ const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
 const fields = new Map();
 function $(id) {
   if (!fields.has(id)) fields.set(id, {value: '', textContent: '', disabled: false,
+    classList: {add() {}, remove() {}},
     scrollIntoView() {}, querySelectorAll: () => []});
   return fields.get(id);
 }
+$('upload-card').querySelectorAll = selector => {
+  assert.equal(selector, 'input, select');
+  return ['document-knowledge-scope', 'document-file', 'document-title'].map($);
+};
 const kit = input.kit;
 const source = kit.files.find(item => item.id === 'authoritative_source');
 const state = {bootstrap: {defaults: {industrial_demo: kit}}, identityEpoch: 0,
   constructionBusy: false, uploadKnowledgeScope: 'BUSINESS', demoSourceBinding: null, constructionJobs: []};
 $('document-knowledge-scope').value = 'BUSINESS';
 const elements = {aboxEditor: {value: 'user draft'}, aboxOutput: {},
-  ontologyEditor: {value: ''}, constructionOutput: {textContent: ''}};
+  ontologyEditor: {value: '',setAttribute(){}}, constructionOutput: {textContent: '', classList: {add() {}, remove() {}}}};
+function constructionSummary() {
+  const match=elements.constructionOutput.innerHTML.match(/<pre\b[^>]*data-construction-summary[^>]*>([\s\S]*?)<\/pre>/);
+  assert.ok(match,'the structured summary remains available in its folded pre');
+  const text=match[1].replace(/&(amp|lt|gt|quot|#39);/g,(_match,entity)=>({amp:'&',lt:'<',gt:'>',quot:'"','#39':"'"}[entity]));
+  return JSON.parse(text);
+}
 const metadata = {canonical_uri: source.metadata.canonical_uri,
   tbox_key: kit.ontology.key, extraction_mode: 'SOURCE_ONLY'};
 function result() { return {extraction_mode: 'SOURCE_ONLY', tbox_id: 'real-tbox',
   document_id: 'real-document', version_id: 'real-version', chunks: [{
     chunk_id: 'real-chunk', status: 'SOURCE_ONLY', mention_record_ids: [],
     assertion_record_ids: [], finding_codes: []}]}; }
-const requests = [];
+const requests = [], preflightRequests = [], timers = new Map();
+let timerId = 0;
 const context = vm.createContext({$, fields, kit, source, state, elements, metadata,
-  result, assert, requests, Uint8Array, MAX_UPLOAD_BYTES: 5242880,
-  escapeHtml: String, shortId: String, showToast() {}, output: (element, value) => {
+  result, assert, constructionSummary, requests, preflightRequests, Uint8Array, MAX_UPLOAD_BYTES: 5242880,
+  setTimeout(callback) {timers.set(++timerId, callback); return timerId;},
+  clearTimeout(id) {timers.delete(id);},
+  beginOperationFeedback() {return () => {};},
+  shortId: String, showToast() {}, output: (element, value) => {
     element.textContent = typeof value === 'string' ? value : JSON.stringify(value);
   }, currentPersona: () => ({id: 'persona-steward'}),
   uploadContext: () => null, selectedDocumentAccessGroups: () => ['alpha-finance'], detectedMime: () => 'text/plain',
@@ -120,7 +144,18 @@ const context = vm.createContext({$, fields, kit, source, state, elements, metad
   loadActiveDocuments: async () => {}, showConstructionFlow(flow) {state.constructionFlow = flow;},
   activeOntology: () => null,
   requirePublishedConstructionOntology: async () => true,
-  apiRequest: (url, options) => new Promise((resolve, reject) => requests.push({url, options, resolve, reject})),
+  apiRequest: (url, options) => {
+    if (url === '/v1/knowledge:preflight') {
+      assert.equal(options.method, 'POST');
+      preflightRequests.push({url, options});
+      // Model the read-only service's no-match result. Construction remains a
+      // separately controlled request, so identity/failure tests exercise the
+      // current preflight -> construct path without introducing implicit writes.
+      return Promise.resolve({exact_matches: [], similar_matches: [], truncated: false,
+        review_token: 'fixture-preflight-token'});
+    }
+    return new Promise((resolve, reject) => requests.push({url, options, resolve, reject}));
+  },
   flush: () => new Promise(resolve => setImmediate(resolve)),
 });
 vm.runInContext(input.code, context);
@@ -246,6 +281,9 @@ await flush();
 assert.equal(requests.length, 1);
 assert.equal(JSON.parse(requests[0].options.body).extraction_mode, 'LLM');
 assert.equal(JSON.parse(requests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
+assert.equal(requests[0].url, '/v1/knowledge:construct');
+assert.equal(preflightRequests.length, 1);
+assert.equal(JSON.parse(preflightRequests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
 assert.equal(state.fingerprints[0].knowledge_scope, 'AUTHORITATIVE');
 requests[0].resolve(result());
 await Promise.all([first, duplicate]);
@@ -277,6 +315,9 @@ completePreflight(true);
 await flush();
 assert.equal(requests.length, 1);
 assert.equal(JSON.parse(requests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
+assert.equal(requests[0].url, '/v1/knowledge:construct');
+assert.equal(preflightRequests.length, 1);
+assert.equal(JSON.parse(preflightRequests[0].options.body).knowledge_scope, 'AUTHORITATIVE');
 assert.equal(state.fingerprints[0].knowledge_scope, 'AUTHORITATIVE');
 requests[0].resolve(result());
 await pending;
@@ -361,7 +402,7 @@ payload.chunks[0].validation_attempts = [
 ];
 requests[0].resolve(payload);
 await pending;
-const summary = JSON.parse(elements.constructionOutput.textContent);
+const summary = constructionSummary();
 assert.equal(summary.chunks[0].validation_attempts.length, 2);
 assert.equal(summary.chunks[0].validation_attempts[0].finding_codes[0], 'ENDPOINT_OUTSIDE_EVIDENCE');
 const visible = $('construction-validation-summary').innerHTML;
@@ -370,7 +411,7 @@ assert.match(visible, /ENDPOINT_OUTSIDE_EVIDENCE/);
 assert.match(visible, /第二次校验通过/);
 assert.match(visible, /人工审核和明确发布/);
 assert.ok(!visible.includes('PRIVATE_MODEL_RESPONSE'));
-assert.ok(!elements.constructionOutput.textContent.includes('PRIVATE_MODEL_RESPONSE'));
+assert.ok(!elements.constructionOutput.innerHTML.includes('PRIVATE_MODEL_RESPONSE'));
 assert.equal($('construction-next').hidden, false);
 assert.equal($('construction-next-button').hidden, false);
 assert.match($('construction-next-note').textContent, /已生成可审核记录/);
@@ -446,6 +487,71 @@ assert.equal($('construction-next-button').hidden, true);
 assert.match($('construction-next-note').textContent, /未抽取到可审核/);
 """, upload=True)
 
+    def test_seventy_five_chunk_receipt_starts_compact_and_keeps_every_safe_detail(self) -> None:
+        self.run_js(r"""
+const payload=result();payload.extraction_mode='LLM';payload.status='COMPLETED';
+payload.expected_chunks=75;payload.completed_chunks=75;
+const statuses=[...Array(45).fill('CANDIDATE'),...Array(10).fill('REJECTED'),...Array(18).fill('EMPTY'),...Array(2).fill('QUARANTINED')];
+payload.chunks=statuses.map((status,index)=>({...result().chunks[0],chunk_id:'chunk-'+index,status,
+  validation_attempts:[{attempt:1,status,finding_codes:[],response_checksum:'a'.repeat(64)}]}));
+showConstructionResult(payload);
+const html=elements.constructionOutput.innerHTML, validation=$('construction-validation-summary').innerHTML;
+assert.match(html,/构建任务：已完成/);assert.match(html,/已处理 75 \/ 75 个片段/);
+for(const [status,count] of [['CANDIDATE',45],['REJECTED',10],['EMPTY',18],['SOURCE_ONLY',0],['QUARANTINED',2]]) {
+  assert.match(html,new RegExp('data-construction-count="'+status+'"[^>]*>[^<]*<strong>'+count+'</strong>'));
+}
+assert.ok(html.indexOf('data-construction-count="CANDIDATE"')<html.indexOf('<details'));
+assert.match(html,/<details class="construction-result-details">/);
+assert.match(validation,/<details class="construction-validation-details">/);
+assert.ok(!/<details\b[^>]*\sopen(?:[\s=>])/.test(html+validation));
+assert.match(validation,/逐片段校验记录（75）/);
+assert.equal((validation.match(/<article class="governance-item">/g)||[]).length,75);
+assert.equal(constructionSummary().chunks.length,75);
+assert.equal(constructionSummary().chunks[74].chunk_id,'chunk-74');
+assert.equal(constructionSummary().chunks[74].validation_attempts[0].response_checksum,'a'.repeat(64));
+assert.ok(html.includes('候选需经人工复核'));
+payload.extraction_mode='SOURCE_ONLY';
+payload.chunks=payload.chunks.map(chunk=>({...chunk,status:'SOURCE_ONLY',validation_attempts:[]}));
+showConstructionResult(payload);
+assert.match(elements.constructionOutput.innerHTML,/data-construction-count="SOURCE_ONLY"[^>]*>[^<]*<strong>75<\/strong>/);
+assert.match($('construction-validation-summary').innerHTML,/未执行 LLM 抽取/);
+""")
+
+    def test_partial_job_receipts_preserve_running_retry_and_failed_states(self) -> None:
+        self.run_js(r"""
+for(const [status,label] of [['RUNNING','处理中'],['RETRY_WAIT','已中断，等待重试'],['FAILED','已失败']]) {
+  const payload=result();payload.extraction_mode='LLM';payload.status=status;
+  payload.expected_chunks=75;payload.completed_chunks=34;
+  payload.chunks=Array.from({length:34},(_,index)=>({...result().chunks[0],chunk_id:'chunk-'+index,status:'CANDIDATE'}));
+  showConstructionResult(payload);
+  const html=elements.constructionOutput.innerHTML;
+  assert.ok(html.includes('构建任务：'+label));assert.match(html,/已处理 34 \/ 75 个片段/);
+  assert.ok(!html.includes('构建任务：已完成'));
+  assert.equal(constructionSummary().status,status);
+  assert.equal(constructionSummary().completed_chunks,34);
+}
+showConstructionResult(result());
+assert.match(elements.constructionOutput.innerHTML,/构建任务：结果已返回/);
+assert.equal(constructionSummary().status,undefined,'the construct response does not declare a job status');
+""")
+
+    def test_folded_summary_and_validation_cards_escape_untrusted_text(self) -> None:
+        self.run_js(r"""
+const attack='</pre><img src=x onerror="bad()">&';
+const payload=result();payload.extraction_mode='LLM';payload.job_id=attack;
+payload.raw_response='PRIVATE_MODEL_RESPONSE';payload.chunks[0].chunk_id=attack;
+payload.chunks[0].status='REJECTED';payload.chunks[0].raw_response='PRIVATE_MODEL_RESPONSE';
+payload.chunks[0].validation_attempts=[{attempt:1,status:'REJECTED',finding_codes:[attack],response_checksum:null,raw_response:'PRIVATE_MODEL_RESPONSE'}];
+showConstructionResult(payload);
+const html=elements.constructionOutput.innerHTML+$('construction-validation-summary').innerHTML;
+assert.ok(!html.includes('<img'));assert.ok(html.includes('&lt;img'));
+assert.ok(!html.includes('PRIVATE_MODEL_RESPONSE'));
+const summary=constructionSummary();assert.equal(summary.job_id,attack);
+assert.equal(summary.chunks[0].validation_attempts[0].finding_codes[0],attack);
+assert.equal(summary.raw_response,undefined);assert.equal(summary.chunks[0].raw_response,undefined);
+assert.equal(summary.chunks[0].validation_attempts[0].raw_response,undefined);
+""")
+
     def test_job_details_share_validation_summary_and_discard_old_identity_result(self) -> None:
         self.run_js(r"""
 state.constructionJobs = [{job_id: 'job-one'}];
@@ -460,7 +566,7 @@ requests[0].resolve(payload); await pending;
 assert.match($('construction-validation-summary').innerHTML, /BAD_EVIDENCE/);
 assert.match($('construction-validation-summary').innerHTML, /UNSUPPORTED_CLAIM/);
 assert.match($('construction-validation-summary').innerHTML, /结果已隔离/);
-assert.equal(JSON.parse(elements.constructionOutput.textContent).status, 'COMPLETED');
+assert.equal(constructionSummary().status, 'COMPLETED');
 const stale = loadConstructionJob(0, {});
 state.identityEpoch += 1;
 $('construction-validation-summary').innerHTML = 'new identity';
@@ -469,6 +575,24 @@ requests[1].resolve(payload); await stale;
 assert.equal($('construction-validation-summary').innerHTML, 'new identity');
 assert.equal(elements.constructionOutput.textContent, 'new identity');
 """, detail=True)
+
+    def test_structured_mapping_receipt_shows_records_and_safe_field_decisions(self) -> None:
+        self.run_js(r"""
+const payload=result();payload.extraction_mode='LLM';
+payload.chunks[0].status='CANDIDATE';payload.chunks[0].finding_codes=['STRUCTURED_MAPPING_APPLIED'];
+payload.chunks[0].mapping_summary={mapping_checksum:'a'.repeat(64),record_count:139,
+  raw_response:'PRIVATE_MODEL_RESPONSE',collections:[{collection:'/assets',id_field:'/asset_ref',
+    entity_types:['Asset'],record_count:139,properties:[{field:'/code',property:'code',raw_response:'PRIVATE_MODEL_RESPONSE'}],
+    relations:[],retained_fields:['<img src=x onerror=alert(1)>'],raw_response:'PRIVATE_MODEL_RESPONSE'}]};
+showConstructionResult(payload);
+const html=elements.constructionOutput.innerHTML+$('construction-validation-summary').innerHTML;
+assert.match(html,/结构化映射构建 · 139 条来源记录/);
+assert.match(html,/查看字段映射与未入图字段/);
+assert.match(html,/程序映射校验通过/);
+assert.ok(!html.includes('PRIVATE_MODEL_RESPONSE'));assert.ok(!html.includes('<img'));
+assert.ok(html.includes('&lt;img'));
+assert.equal(constructionSummary().chunks[0].mapping_summary.collections[0].properties[0].property,'code');
+""")
 
 
 if __name__ == "__main__":

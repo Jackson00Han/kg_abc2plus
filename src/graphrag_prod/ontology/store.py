@@ -98,6 +98,7 @@ def _entity_rows(value: TBoxVersion) -> list[dict[str, Any]]:
             "name": item.name,
             "canonical_key_namespaces": list(item.canonical_key_namespaces),
             "identity_properties": list(item.identity_properties),
+            "instance_allowed": item.instance_allowed,
             "description": item.description,
         }
         for item in value.entity_types
@@ -113,6 +114,8 @@ def _relationship_rows(value: TBoxVersion) -> list[dict[str, Any]]:
             "tbox_id": value.tbox_id,
             "tenant_id": value.tenant_id,
             "name": item.name,
+            "instance_allowed": item.instance_allowed,
+            "allowed_type_pairs_json": json.dumps(item.allowed_type_pairs),
             "source_types": list(item.source_types),
             "target_types": list(item.target_types),
             "source_cardinality": item.source_cardinality.value,
@@ -154,6 +157,7 @@ def _property_rows(value: TBoxVersion) -> list[dict[str, Any]]:
                     "owner_kind": owner_kind,
                     "owner_name": owner_name,
                     "name": item.name,
+                    "constraints_json": item.constraints_json,
                     "datatype": item.datatype.value,
                     "required": item.required,
                     "cardinality": item.cardinality.value,

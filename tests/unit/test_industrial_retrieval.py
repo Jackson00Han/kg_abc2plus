@@ -121,6 +121,7 @@ class EmptyRecallTransaction:
             return []
         self.state_calls += 1
         return [dict(corpus_revision=4, generation_id="generation-v1", embedding_space_id="space-v1", dimensions=2,
+                     knowledge_manifest_complete=True,
                      knowledge_publication_id=self.final_publication if self.state_calls > 1 else self.initial_publication,
                      knowledge_activation_generation=self.final_generation if self.state_calls > 1 else self.initial_generation)]
 
@@ -138,9 +139,11 @@ class IndustrialRetrievalConsistencyTests(unittest.TestCase):
         self.assertTrue(result.trace.version_filter.match_none)
         self.assertFalse(result.trace.vector_recall)
         self.assertFalse(result.trace.graph_expansion)
-        legacy = EmptyRecallTransaction()
-        Neo4jRetrievalEngine._retrieve_tx(legacy, self.request())
-        self.assertGreater(len(legacy.calls), 2)
+        published = EmptyRecallTransaction(
+            "publication-v1", 1, initial_publication="publication-v1", initial_generation=1,
+        )
+        Neo4jRetrievalEngine._retrieve_tx(published, self.request())
+        self.assertGreater(len(published.calls), 2)
 
     def test_first_publication_and_rollback_generation_invalidate_captured_context(self):
         transactions = (

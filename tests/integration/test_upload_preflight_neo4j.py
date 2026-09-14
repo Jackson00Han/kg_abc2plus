@@ -11,9 +11,11 @@ import unittest
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, unit_of_work
 
-from graphrag_prod.construction.preflight import Neo4jUploadPreflight
+from graphrag_prod.construction.preflight import (
+    Neo4jUploadPreflight, UploadPreflightUnavailable, _POSSIBLE,
+)
 from graphrag_prod.construction.upload_guard import Neo4jUploadGuard, UploadAlreadyRunning
 from graphrag_prod.domain.access import Principal
 from graphrag_prod.domain.ids import content_checksum, document_id, version_id, chunk_id, chunk_embedding_id
@@ -105,6 +107,54 @@ class UploadPreflightNeo4jTests(unittest.TestCase):
     def check(self, text=PUMP, principal=None):
         return self.preflight.check(principal or self.principal, text.encode(), canonical_uri=URI)
 
+    def test_empty_and_acl_ineligible_candidates_use_only_two_cheap_reads(self):
+        calls = []
+
+        @unit_of_work(timeout=15.0)
+        def observed(tx, *args):
+            class Proxy:
+                def run(self, query, **parameters):
+                    calls.append(query)
+                    return tx.run(query, **parameters)
+            return Neo4jUploadPreflight._check_tx(Proxy(), *args)
+
+        self.preflight._work = observed
+        self.assertEqual(self.check()["exact_matches"], [])
+        self.assertEqual(calls, [_POSSIBLE, _POSSIBLE])
+        self.source(tenant=self.tenant + "-other")
+        self.source(uri=URI + ".private", groups=frozenset({"private"}))
+        calls.clear()
+        result = self.check()
+        self.assertEqual(result["exact_matches"], [])
+        self.assertEqual(result["compared_versions"], 0)
+        self.assertEqual(calls, [_POSSIBLE, _POSSIBLE])
+
+    def test_candidate_inserted_between_empty_reads_invalidates_receipt(self):
+        reads = []
+
+        @unit_of_work(timeout=15.0)
+        def observed(tx, *args):
+            outer = self
+            class Proxy:
+                def run(self, query, **parameters):
+                    if query == _POSSIBLE:
+                        reads.append(query)
+                        if len(reads) == 2:
+                            outer.query(
+                                "CREATE (d:Document {tenant_id:$tenant,document_id:$document,access_groups:['members']}) "
+                                "CREATE (v:DocumentVersion {tenant_id:$tenant,version_id:$version,checksum:$checksum}) "
+                                "CREATE (d)-[:HAS_VERSION]->(v)",
+                                tenant=outer.tenant, document=uuid4().hex,
+                                version=uuid4().hex, checksum=content_checksum(PUMP),
+                            )
+                    return tx.run(query, **parameters)
+            return Neo4jUploadPreflight._check_tx(Proxy(), *args)
+
+        self.preflight._work = observed
+        with self.assertRaises(UploadPreflightUnavailable):
+            self.check()
+        self.assertEqual(len(reads), 2)
+
     def test_exact_renamed_normalized_and_near_uploads_use_current_source(self):
         source = self.source()
         result = self.preflight.check(self.principal, PUMP.replace("\n", "\r\n").encode(),
@@ -157,8 +207,10 @@ class UploadPreflightNeo4jTests(unittest.TestCase):
         for mutation, identifier, restore in mutations:
             with self.subTest(mutation=mutation):
                 self.query(mutation, id=identifier)
-                self.assertFalse(self.check()["exact_matches"])
-                self.query(restore, id=identifier)
+                try:
+                    self.assertFalse(self.check()["exact_matches"])
+                finally:
+                    self.query(restore, id=identifier)
                 self.assertTrue(self.check()["exact_matches"])
         self.query("""MATCH (s:KnowledgeSnapshot {snapshot_id:$snapshot})-[r:INCLUDES_CHUNK]->
                     (c:Chunk {chunk_id:$chunk}) DELETE r""", snapshot=source.snapshot_id, chunk=source.chunks[1].chunk_id)

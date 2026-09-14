@@ -1,0 +1,28 @@
+======================================================================
+FAIL: test_page_marks_exact_record_expands_and_keeps_selection (tests.unit.test_publication_issue.PublicationIssueTests.test_page_marks_exact_record_expands_and_keeps_selection)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/tests/unit/test_publication_issue.py", line 127, in test_page_marks_exact_record_expands_and_keeps_selection
+    self.assertEqual(result.returncode, 0, result.stderr)
+AssertionError: 1 != 0 : <anonymous_script>:49
+        panel.querySelector('[data-publication-upload]')?.addEventListener('click',foregroundAction('', ()=>showConstructionFlow('business','source-upload-slot')));
+              ^
+
+TypeError: panel.querySelector is not a function
+    at showPublicationIssue (eval at <anonymous> ([eval]:29:1), <anonymous>:49:15)
+    at [eval]:31:1
+    at runScriptInThisContext (node:internal/vm:209:10)
+    at node:internal/process/execution:449:12
+    at [eval]-wrapper:6:24
+    at runScriptInContext (node:internal/process/execution:447:60)
+    at evalFunction (node:internal/process/execution:280:30)
+    at evalTypeScript (node:internal/process/execution:292:3)
+    at node:internal/main/eval_string:71:3
+
+Node.js v23.11.0
+
+
+----------------------------------------------------------------------
+Ran 103 tests in 0.664s
+
+FAILED (failures=1)

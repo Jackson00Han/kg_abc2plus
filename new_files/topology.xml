@@ -1,0 +1,408 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <ProjectSettings>
+    <ProjectName>PBMBaseProj_2512</ProjectName>
+    <ProjectBasePath>C:\Users\Public\Documents\BusToolKit\Projects</ProjectBasePath>
+    <ProjectPath>C:\Users\Public\Documents\BusToolKit\Projects\PBMBaseProj_2512</ProjectPath>
+    <NodeNamingOption>Standard001</NodeNamingOption>
+    <PsoProjectName>PBMBaseProj_2512a</PsoProjectName>
+    <PsoProjectBasePath>C:\ProgramData\Schneider Electric\Power Operation\v2024\Config</PsoProjectBasePath>
+    <PsoProjectPath>C:\ProgramData\Schneider Electric\Power Operation\v2024\Config\PBMBaseProj_2512a</PsoProjectPath>
+    <PsoDeployUnusedVariablesInPack>false</PsoDeployUnusedVariablesInPack>
+  </ProjectSettings>
+  <NodeTree>
+    <Root Index="0" FullCode="PBMBaseProj_2512" Code="PBMBaseProj_2512" FullName="PBMBaseProj_2512" Name="PBMBaseProj_2512" Description="根节点0" NodeType="1" Naming="1" Paging="0" ElementType="0" TempType="0" AlgorithmType="None">
+      <Extension>
+        <Data Data1="BuswayCount" Data2="2" />
+        <Data Data1="ZoneCount" Data2="2" />
+        <Data Data1="ElementCount" Data2="19" />
+      </Extension>
+      <Children>
+        <Child Index="1" FullCode="BUS1" Code="BUS1" FullName="BUS1" Name="BUS1" Description="根节点0.母线1" NodeType="3" Naming="1" Paging="1" ElementType="0" TempType="0" AlgorithmType="None">
+          <Extension>
+            <Data Data1="ZoneCount" Data2="1" />
+            <Data Data1="ElementCount" Data2="7" />
+          </Extension>
+          <Children>
+            <Child Index="1" FullCode="BUS1.S1" Code="S1" FullName="BUS1.Section1" Name="Section1" Description="根节点0.母线1.分区1" NodeType="4" Naming="1" Paging="1" ElementType="0" TempType="0" AlgorithmType="None">
+              <Extension>
+                <Data Data1="ZoneCount" Data2="0" />
+                <Data Data1="ElementCount" Data2="7" />
+              </Extension>
+              <Children>
+                <Child Index="1" FullCode="BUS1.S1.FE1" Code="FE1" FieldCode="BUS1.FE1" FullName="BUS1.Section1.FE1" Name="FE1" Description="根节点0.母线1.分区1.法兰1" NodeType="2" Naming="1" Paging="0" ElementType="430" ElementTypeDes="FE" TempType="0" AlgorithmType="None">
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS1.S1.JPK1" Enabled="true" PortType="502" />
+                  </Ports>
+                </Child>
+                <Child Index="1" FullCode="BUS1.S1.JPK1" Code="JPK1" FieldCode="BUS1.JPK1" FullName="BUS1.Section1.Joint1" Name="Joint1" Description="根节点0.母线1.分区1.接头1" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="2" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="ConfigError">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1600 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="Etemp_1\Battery_Voltage_00" Unit="Etemp_1" Comment="@(Battery_Voltage)" Address="T:MV;m:15:u1;N:-1;E:2;L:P:32" Item="Battery" PackType="2" PackIndex="0" />
+                    <Variable Name="Etemp_1\Humidity_00" Unit="Etemp_1" Comment="@(Humidity)" Address="T:MV;m:18:u1;N:-2;E:3;L:P:32" Item="Humidity" PackType="2" PackIndex="0" />
+                    <Variable Name="Etemp_1\Temperature_00" Unit="Etemp_1" Comment="@(Temperature)" Address="T:MV;m:17:u1;N:-2;E:1;L:P:32" Item="Temp" PackType="2" PackIndex="0" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS1.S1.FE1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS1.S1.ST1" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="1" FullCode="BUS1.S1.ST1" Code="ST1" FieldCode="BUS1.ST1" FullName="BUS1.Section1.Straight1" Name="Straight1" Description="根节点0.母线1.分区1.直身1" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1600 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS1.S1.JPK1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS1.S1.JPK2" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="2" FullCode="BUS1.S1.JPK2" Code="JPK2" FieldCode="BUS1.JPK2" FullName="BUS1.Section1.Joint2" Name="Joint2" Description="根节点0.母线1.分区1.接头2" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="2" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="ConfigError">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1600 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="Etemp_1\Battery_Voltage_01" Unit="Etemp_1" Comment="@(Battery_Voltage)" Address="T:MV;m:48:u1;N:-1;E:2;L:P:32" Item="Battery" PackType="2" PackIndex="1" />
+                    <Variable Name="Etemp_1\Humidity_01" Unit="Etemp_1" Comment="@(Humidity)" Address="T:MV;m:51:u1;N:-2;E:3;L:P:32" Item="Humidity" PackType="2" PackIndex="1" />
+                    <Variable Name="Etemp_1\Temperature_01" Unit="Etemp_1" Comment="@(Temperature)" Address="T:MV;m:50:u1;N:-2;E:1;L:P:32" Item="Temp" PackType="2" PackIndex="1" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS1.S1.ST1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS1.S1.ST2" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="2" FullCode="BUS1.S1.ST2" Code="ST2" FieldCode="BUS1.ST2" FullName="BUS1.Section1.Straight2" Name="Straight2" Description="根节点0.母线1.分区1.直身2" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1600 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS1.S1.JPK2" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS1.S1.JPK3" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Load="BUS1.S1.PIU4" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="3" FullCode="BUS1.S1.JPK3" Code="JPK3" FieldCode="BUS1.JPK3" FullName="BUS1.Section1.Joint3" Name="Joint3" Description="根节点0.母线1.分区1.接头3" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="HorizontalComparison">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1600 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_003" Unit="EDock_1" Comment="@(Temperature)" Address="T:MV;m:433:u1;m:434:u1;E:2;L:P:37" Item="Temp" PackType="1" PackIndex="3" />
+                    <Variable Name="EDock_1\Temp_R_003" Unit="EDock_1" Comment="@(Temperature rise)" Address="T:MV;m:439:u1;m:440:u1;E:2;L:P:37" Item="TempDiff" PackType="1" PackIndex="3" />
+                    <Variable Name="EDock_1\Temp_RR_003" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="T:MV;m:445:u1;m:446:u1;E:2;L:P:37" Item="TempDiffRate" PackType="1" PackIndex="3" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS1.S1.ST2" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="4" FullCode="BUS1.S1.PIU4" Code="PIU4" FieldCode="BUS1.PIU4" FullName="BUS1.Section1.Plug-in Unit4" Name="Plug-in Unit4" Description="根节点0.母线1.分区1.插接箱4" NodeType="2" Naming="1" Paging="0" ElementType="440" ElementTypeDes="PIU" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1250 A" />
+                    <Data Data1="BreakerInterruptingCapability" Data2="50kA" />
+                    <Data Data1="BreakerPolarity" Data2="3" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="PM2125\MMXU1\A\phsA" Unit="PM2125" Comment="@(A 相电流)" Address="T:MV;m:3000:u1;m:3001:u1;E:2;L:P:37" Item="Ia" PackType="0" PackIndex="0" />
+                    <Variable Name="PM2125\MMXU1\A\phsB" Unit="PM2125" Comment="@(B 相电流)" Address="T:MV;m:3002:u1;m:3003:u1;E:2;L:P:37" Item="Ib" PackType="0" PackIndex="0" />
+                    <Variable Name="PM2125\MMXU1\A\phsC" Unit="PM2125" Comment="@(C 相电流)" Address="T:MV;m:3004:u1;m:3005:u1;E:2;L:P:37" Item="Ic" PackType="0" PackIndex="0" />
+                    <Variable Name="PM2125\MMXU1\TotPF" Unit="PM2125" Comment="@(功率因数)" Address="T:MV;m:3084:u2;E:2;L:P:58" Item="PFTot" PackType="0" PackIndex="0" />
+                    <Variable Name="PM2125\MMXU1\TotVAr" Unit="PM2125" Comment="@(无功功率)" Address="T:MV;m:3068:u1;m:3069:u1;E:2;L:P:37" Item="kVArTot" PackType="0" PackIndex="0" />
+                    <Variable Name="PM2125\MMXU1\TotW" Unit="PM2125" Comment="@(有功功率)" Address="T:MV;m:3060:u1;m:3061:u1;E:2;L:P:37" Item="kWTot" PackType="0" PackIndex="0" />
+                  </Variables>
+                </Child>
+              </Children>
+            </Child>
+          </Children>
+          <Standard>I-LINE H</Standard>
+        </Child>
+        <Child Index="2" FullCode="BUS2" Code="BUS2" FullName="BUS2" Name="BUS2" Description="根节点0.母线2" NodeType="3" Naming="1" Paging="1" ElementType="0" TempType="0" AlgorithmType="None">
+          <Extension>
+            <Data Data1="ZoneCount" Data2="1" />
+            <Data Data1="ElementCount" Data2="12" />
+          </Extension>
+          <Children>
+            <Child Index="1" FullCode="BUS2.S1" Code="S1" FullName="BUS2.Section1" Name="Section1" Description="根节点0.母线2.分区1" NodeType="4" Naming="1" Paging="1" ElementType="0" TempType="0" AlgorithmType="None">
+              <Extension>
+                <Data Data1="ZoneCount" Data2="0" />
+                <Data Data1="ElementCount" Data2="12" />
+              </Extension>
+              <Children>
+                <Child Index="1" FullCode="BUS2.S1.ETB1" Code="ETB1" FieldCode="BUS2.ETB1" FullName="BUS2.Section1.End Feed Unit1" Name="End Feed Unit1" Description="根节点0.母线2.分区1.馈电箱1" NodeType="2" Naming="1" Paging="0" ElementType="420" ElementTypeDes="ETB" TempType="0" AlgorithmType="None">
+                  <Variables>
+                    <Variable Name="PM5350\MMXU1\A\phsA" Unit="PM5350" Comment="@(A 相电流)" Address="T:MV;m:3000:u1;m:3001:u1;E:2;L:P:37" Item="Ia" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\A\phsB" Unit="PM5350" Comment="@(B 相电流)" Address="T:MV;m:3002:u1;m:3003:u1;E:2;L:P:37" Item="Ib" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\A\phsC" Unit="PM5350" Comment="@(C 相电流)" Address="T:MV;m:3004:u1;m:3005:u1;E:2;L:P:37" Item="Ic" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\Hz" Unit="PM5350" Comment="@(频率)" Address="T:MV;m:3110:u1;m:3111:u1;E:2;L:P:37" Item="Hz" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PF\phsA" Unit="PM5350" Comment="@(A 相功率因数)" Address="T:MV;m:3078:u2;E:2;L:P:58" Item="PFa" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PF\phsB" Unit="PM5350" Comment="@(B 相功率因数)" Address="T:MV;m:3080:u2;E:2;L:P:58" Item="PFb" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PF\phsC" Unit="PM5350" Comment="@(C 相功率因数)" Address="T:MV;m:3082:u2;E:2;L:P:58" Item="PFc" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PhV\phsA" Unit="PM5350" Comment="@(A-N 电压)" Address="T:MV;m:3028:u1;m:3029:u1;E:2;L:P:37" Item="Van" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PhV\phsB" Unit="PM5350" Comment="@(B-N 电压)" Address="T:MV;m:3030:u1;m:3031:u1;E:2;L:P:37" Item="Vbn" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PhV\phsC" Unit="PM5350" Comment="@(C-N 电压)" Address="T:MV;m:3032:u1;m:3033:u1;E:2;L:P:37" Item="Vcn" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PPV\phsAB" Unit="PM5350" Comment="@(A-B 电压)" Address="T:MV;m:3020:u1;m:3021:u1;E:2;L:P:37" Item="Vab" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PPV\phsBC" Unit="PM5350" Comment="@(B-C 电压)" Address="T:MV;m:3022:u1;m:3023:u1;E:2;L:P:37" Item="Vbc" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\PPV\phsCA" Unit="PM5350" Comment="@(C-A 电压)" Address="T:MV;m:3024:u1;m:3025:u1;E:2;L:P:37" Item="Vca" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\TotPF" Unit="PM5350" Comment="@(功率因数)" Address="T:MV;m:3084:u2;E:2;L:P:58" Item="PFTot" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\TotVAr" Unit="PM5350" Comment="@(无功功率)" Address="T:MV;m:3068:u1;m:3069:u1;E:2;L:P:37" Item="kVArTot" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\TotW" Unit="PM5350" Comment="@(有功功率)" Address="T:MV;m:3060:u1;m:3061:u1;E:2;L:P:37" Item="kWTot" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\VAr\phsA" Unit="PM5350" Comment="@(A 相无功功率)" Address="T:MV;m:3062:u1;m:3063:u1;E:2;L:P:37" Item="kVAra" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\VAr\phsB" Unit="PM5350" Comment="@(B 相无功功率)" Address="T:MV;m:3064:u1;m:3065:u1;E:2;L:P:37" Item="kVArb" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\VAr\phsC" Unit="PM5350" Comment="@(C 相无功功率)" Address="T:MV;m:3066:u1;m:3067:u1;E:2;L:P:37" Item="kVArc" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\W\phsA" Unit="PM5350" Comment="@(A 相有功功率)" Address="T:MV;m:3054:u1;m:3055:u1;E:2;L:P:37" Item="kWa" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\W\phsB" Unit="PM5350" Comment="@(B 相有功功率)" Address="T:MV;m:3056:u1;m:3057:u1;E:2;L:P:37" Item="kWb" PackType="0" PackIndex="0" />
+                    <Variable Name="PM5350\MMXU1\W\phsC" Unit="PM5350" Comment="@(C 相有功功率)" Address="T:MV;m:3058:u1;m:3059:u1;E:2;L:P:37" Item="kWc" PackType="0" PackIndex="0" />
+                    <Variable Name="Etemp_2\Temperature_00" Unit="Etemp_2" Comment="@(BUS2 ambient temperature)" Address="" Item="AmbientTemp" PackType="0" PackIndex="0" />
+                    <Variable Name="Alarm_1\PhaseImbalance" Unit="Alarm_1" Comment="@(Phase imbalance alarm)" Address="" Item="PhaseImbalanceAlarm" PackType="0" PackIndex="0" />
+                    <Variable Name="Alarm_1\TempRise" Unit="Alarm_1" Comment="@(Busway temperature rise alarm)" Address="" Item="TempRiseAlarm" PackType="0" PackIndex="0" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.JPK1" Enabled="true" PortType="502" />
+                  </Ports>
+                </Child>
+                <Child Index="1" FullCode="BUS2.S1.JPK1" Code="JPK1" FieldCode="BUS2.JPK1" FullName="BUS2.Section1.Joint1" Name="Joint1" Description="根节点0.母线2.分区1.接头1" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="TemperatureRise">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_000" Unit="EDock_1" Comment="@(Temperature)" Address="T:MV;m:313:u1;m:314:u1;E:2;L:P:37" Item="Temp" PackType="1" PackIndex="0" />
+                    <Variable Name="EDock_1\Temp_R_000" Unit="EDock_1" Comment="@(Temperature rise)" Address="T:MV;m:319:u1;m:320:u1;E:2;L:P:37" Item="TempDiff" PackType="1" PackIndex="0" />
+                    <Variable Name="EDock_1\Temp_RR_000" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="T:MV;m:325:u1;m:326:u1;E:2;L:P:37" Item="TempDiffRate" PackType="1" PackIndex="0" />
+                    <Variable Name="WaterAlarm_1\JPK_001" Unit="WaterAlarm_1" Comment="@(Joint water ingress alarm)" Address="" Item="WaterAlarm" PackType="0" PackIndex="0" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.ETB1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.ST1" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="1" FullCode="BUS2.S1.ST1" Code="ST1" FieldCode="BUS2.ST1" FullName="BUS2.Section1.Straight1" Name="Straight1" Description="根节点0.母线2.分区1.直身1" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.JPK1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.JPK2" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="2" FullCode="BUS2.S1.JPK2" Code="JPK2" FieldCode="BUS2.JPK2" FullName="BUS2.Section1.Joint2" Name="Joint2" Description="根节点0.母线2.分区1.接头2" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="TemperatureRise">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_001" Unit="EDock_1" Comment="@(Temperature)" Address="T:MV;m:353:u1;m:354:u1;E:2;L:P:37" Item="Temp" PackType="1" PackIndex="1" />
+                    <Variable Name="EDock_1\Temp_R_001" Unit="EDock_1" Comment="@(Temperature rise)" Address="T:MV;m:359:u1;m:360:u1;E:2;L:P:37" Item="TempDiff" PackType="1" PackIndex="1" />
+                    <Variable Name="EDock_1\Temp_RR_001" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="T:MV;m:365:u1;m:366:u1;E:2;L:P:37" Item="TempDiffRate" PackType="1" PackIndex="1" />
+                    <Variable Name="WaterAlarm_1\JPK_002" Unit="WaterAlarm_1" Comment="@(Joint water ingress alarm)" Address="" Item="WaterAlarm" PackType="0" PackIndex="1" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.ST1" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.ST2" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="2" FullCode="BUS2.S1.ST2" Code="ST2" FieldCode="BUS2.ST2" FullName="BUS2.Section1.Straight2" Name="Straight2" Description="根节点0.母线2.分区1.直身2" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.JPK2" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.JPK3" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="3" FullCode="BUS2.S1.JPK3" Code="JPK3" FieldCode="BUS2.JPK3" FullName="BUS2.Section1.Joint3" Name="Joint3" Description="根节点0.母线2.分区1.接头3" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="StaticTable">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_002" Unit="EDock_1" Comment="@(Temperature)" Address="T:MV;m:393:u1;m:394:u1;E:2;L:P:37" Item="Temp" PackType="1" PackIndex="2" />
+                    <Variable Name="EDock_1\Temp_R_002" Unit="EDock_1" Comment="@(Temperature rise)" Address="T:MV;m:399:u1;m:400:u1;E:2;L:P:37" Item="TempDiff" PackType="1" PackIndex="2" />
+                    <Variable Name="EDock_1\Temp_RR_002" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="T:MV;m:405:u1;m:406:u1;E:2;L:P:37" Item="TempDiffRate" PackType="1" PackIndex="2" />
+                    <Variable Name="WaterAlarm_1\JPK_003" Unit="WaterAlarm_1" Comment="@(Joint water ingress alarm)" Address="" Item="WaterAlarm" PackType="0" PackIndex="2" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.ST2" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.ST3" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="3" FullCode="BUS2.S1.ST3" Code="ST3" FieldCode="BUS2.ST3" FullName="BUS2.Section1.Straight3" Name="Straight3" Description="根节点0.母线2.分区1.直身3" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.JPK3" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Enabled="true" PortType="502" Load="BUS2.S1.JPK4" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="4" FullCode="BUS2.S1.JPK4" Code="JPK4" FieldCode="BUS2.JPK4" FullName="BUS2.Section1.Joint4" Name="Joint4" Description="BUS2 section 1 joint 4" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="StaticTable">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                    <Data Data1="AlgorithmRouteStatus" Data2="staging_assumption_unverified" />
+                    <Data Data1="AlgorithmRouteBasis" Data2="cloned_from_BUS2.S1.JPK3" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_004" Unit="EDock_1" Comment="@(Temperature)" Address="" Item="Temp" PackType="0" PackIndex="4" />
+                    <Variable Name="EDock_1\Temp_R_004" Unit="EDock_1" Comment="@(Temperature rise)" Address="" Item="TempDiff" PackType="0" PackIndex="4" />
+                    <Variable Name="EDock_1\Temp_RR_004" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="" Item="TempDiffRate" PackType="0" PackIndex="4" />
+                    <Variable Name="WaterAlarm_1\JPK_004" Unit="WaterAlarm_1" Comment="@(Joint water ingress alarm)" Address="" Item="WaterAlarm" PackType="0" PackIndex="3" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.ST3" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.ST4" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="4" FullCode="BUS2.S1.ST4" Code="ST4" FieldCode="BUS2.ST4" FullName="BUS2.Section1.Straight4" Name="Straight4" Description="BUS2 section 1 straight 4" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.JPK4" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Enabled="true" PortType="502" Load="BUS2.S1.JPK5" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="5" FullCode="BUS2.S1.JPK5" Code="JPK5" FieldCode="BUS2.JPK5" FullName="BUS2.Section1.Joint5" Name="Joint5" Description="BUS2 section 1 joint 5" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="StaticTable">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                    <Data Data1="AlgorithmRouteStatus" Data2="staging_assumption_unverified" />
+                    <Data Data1="AlgorithmRouteBasis" Data2="cloned_from_BUS2.S1.JPK3" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_005" Unit="EDock_1" Comment="@(Temperature)" Address="" Item="Temp" PackType="0" PackIndex="5" />
+                    <Variable Name="EDock_1\Temp_R_005" Unit="EDock_1" Comment="@(Temperature rise)" Address="" Item="TempDiff" PackType="0" PackIndex="5" />
+                    <Variable Name="EDock_1\Temp_RR_005" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="" Item="TempDiffRate" PackType="0" PackIndex="5" />
+                    <Variable Name="WaterAlarm_1\JPK_005" Unit="WaterAlarm_1" Comment="@(Joint water ingress alarm)" Address="" Item="WaterAlarm" PackType="0" PackIndex="4" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.ST4" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Load="BUS2.S1.ST5" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="5" FullCode="BUS2.S1.ST5" Code="ST5" FieldCode="BUS2.ST5" FullName="BUS2.Section1.Straight5" Name="Straight5" Description="BUS2 section 1 straight 5" NodeType="2" Naming="1" Paging="0" ElementType="450" ElementTypeDes="ST" TempType="0" AlgorithmType="None">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                  </Extension>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.JPK5" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Enabled="true" PortType="502" Load="BUS2.S1.JPK6" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+                <Child Index="6" FullCode="BUS2.S1.JPK6" Code="JPK6" FieldCode="BUS2.JPK6" FullName="BUS2.Section1.Joint6" Name="Joint6" Description="BUS2 section 1 joint 6" NodeType="2" Naming="1" Paging="0" ElementType="435" ElementTypeDes="JPK" TempType="1" VentilationCoefficient="配电房_+3K（默认）" AlgorithmType="StaticTable">
+                  <Extension>
+                    <Data Data1="CurrentRating" Data2="1000 A" />
+                    <Data Data1="Polarity" Data2="3L+N+PE" />
+                    <Data Data1="BusbarMaterial" Data2="@{Cu}" />
+                    <Data Data1="EarthCapacity" Data2="50%" />
+                    <Data Data1="ProtectionDegree" Data2="IP54" />
+                    <Data Data1="BuswayLength" Data2="标准直升（3m）" />
+                    <Data Data1="AlgorithmRouteStatus" Data2="staging_assumption_unverified" />
+                    <Data Data1="AlgorithmRouteBasis" Data2="cloned_from_BUS2.S1.JPK3" />
+                  </Extension>
+                  <Variables>
+                    <Variable Name="EDock_1\Temp_006" Unit="EDock_1" Comment="@(Temperature)" Address="" Item="Temp" PackType="0" PackIndex="6" />
+                    <Variable Name="EDock_1\Temp_R_006" Unit="EDock_1" Comment="@(Temperature rise)" Address="" Item="TempDiff" PackType="0" PackIndex="6" />
+                    <Variable Name="EDock_1\Temp_RR_006" Unit="EDock_1" Comment="@(Temperature rise rate)" Address="" Item="TempDiffRate" PackType="0" PackIndex="6" />
+                    <Variable Name="WaterAlarm_1\JPK_006" Unit="WaterAlarm_1" Comment="@(Joint water ingress alarm)" Address="" Item="WaterAlarm" PackType="0" PackIndex="5" />
+                  </Variables>
+                  <Ports>
+                    <Port Ordinal="1" Name="Input1" DisplayName="入口-1" Load="BUS2.S1.ST5" Enabled="true" PortType="501" />
+                    <Port Ordinal="2" Name="Output1" DisplayName="出口-1" Enabled="true" PortType="502" />
+                    <Port Ordinal="3" Name="Attach1" DisplayName="附件-1" Enabled="true" PortType="503" />
+                  </Ports>
+                </Child>
+              </Children>
+            </Child>
+          </Children>
+          <Standard>I-LINE TRACK</Standard>
+        </Child>
+      </Children>
+    </Root>
+  </NodeTree>
+</Project>

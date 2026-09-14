@@ -61,17 +61,19 @@ assert.equal(calls.length,2);assert.equal(client.pageGeneration,'before');
         self.run_module(r"""
 const nodes=new Map();
 const node=()=>({value:'private draft',textContent:'private source',innerHTML:'private source',disabled:true,hidden:false,
+  attrs:{},setAttribute(key,value){this.attrs[key]=value;},
   classList:{remove(){}},replaceChildren(){this.textContent='';this.innerHTML='';},querySelectorAll(){return[];}});
 const $=id=>{if(!nodes.has(id))nodes.set(id,node());return nodes.get(id);};
 const names=['reviewList','aboxEditor','qualitySaveButton','qualitySaveOutput','qualityHistoryPublication',
   'qualityHistoryList','qualityHistoryDetail','publicationRevisions','publicationRemovals','inventorySummary',
   'inventoryList','qualityContent','documentLifecycleSummary','documentLifecycleList','ontologyList','historyList',
-  'constructionJobList','constructionOutput','publicationOutput'];
+  'constructionJobList','constructionOutput','publicationOutput','ontologyEditor'];
 const elements=Object.fromEntries(names.map(name=>[name,node()]));
 const inputs=[$('document-file'),$('manual-subject-name'),elements.ontologyList];
 const state={revisionHistories:new Map([['private',{}]]),selectedCandidateRevisions:new Set(['private']),
   approvedRevisions:new Set(['private']),manualOperation:{fingerprint:'private fact'},manualBusy:true,ontologySaving:true,
   uploadKnowledgeScope:'AUTHORITATIVE',constructionBusy:true,
+  ontologyInputError:'private error',ontologyFileLoading:true,ontologyFileSelection:3,
   knowledgeBrowser:{reset(){}},qualityPresenter:{reset(){},invalidate(){}},maintenanceActions:{reset(){}}};
 const run=new Function('state','elements','$','host',`
   let loadedIdentity='old',loadingIdentity={identity:'old'},lastBuildFlow='baseline',buildStep='review';
@@ -92,6 +94,8 @@ assert.equal($('ontology-selection').open,false);
 assert.deepEqual(state.reviews,[]);assert.equal(state.resolutions.size,0);assert.equal(state.revisionHistories.size,0);
 assert.equal(state.reviewLoading,false);assert.equal($('review-bulk-actions').hidden,true);
 assert.equal(state.manualOperation,null);assert.equal(state.manualBusy,false);assert.equal(state.ontologySaving,false);
+assert.equal(state.ontologyInputError,'');assert.equal(state.ontologyFileLoading,false);assert.equal(state.ontologyFileSelection,4);
+assert.equal($('ontology-input-error').hidden,true);assert.equal(elements.ontologyEditor.attrs['aria-invalid'],'false');
 assert.equal(state.approvedRevisions.size,0);assert.equal(state.selectedCandidateRevisions.size,0);
 assert.equal(elements.publicationRevisions.value,'');assert.equal(elements.publicationRemovals.value,'');
 assert.equal($('manual-subject-name').value,'');assert.equal($('document-file').value,'');

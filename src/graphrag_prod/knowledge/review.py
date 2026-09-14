@@ -51,8 +51,14 @@ from .store import (
     _stored_assertion,
     _stored_mention,
     _validate_literal_semantics,
+    context_evidence_guard,
+    context_evidence_properties,
 )
 from .trust import GovernanceStatus
+from .publication_guard import (
+    MAX_PUBLICATION_CHANGE_RECORDS, MAX_PUBLICATION_MANIFEST_RECORDS,
+    MAX_PUBLICATION_RECORDS, publication_members_guard,
+)
 from .publication_sources import (
     canonical_json, compare_source_summaries, index_publication_sources_tx,
     load_publication_sources_tx, load_sources_tx, require_embedding_coverage_tx,
@@ -62,7 +68,6 @@ from .publication_sources import (
 
 MAX_REVIEW_BATCH = 100
 MAX_REVIEW_QUEUE = 200
-MAX_PUBLICATION_RECORDS = 500
 _PUBLICATION_ID_SCHEME = "knowledge-publication:v2"
 KNOWLEDGE_REVIEW_CAPABILITY = "knowledge:review"
 KNOWLEDGE_PUBLISH_CAPABILITY = "knowledge:publish"
@@ -504,6 +509,7 @@ def _active_revision_query(
             tenant_id: $tenant_id
         }})
         MATCH (snapshot)-[:OF_VERSION]->(version)
+        WITH DISTINCT head, revision, chunk, document, snapshot, version
         MATCH (:TBoxCatalog {{tenant_id: $tenant_id}})
               -[:ACTIVE_TBOX_VERSION]->(tbox:TBoxVersion {{
                   tenant_id: $tenant_id,
@@ -525,6 +531,7 @@ def _active_revision_query(
           AND any(group IN $groups WHERE group IN revision.access_groups)
           AND any(group IN $groups WHERE group IN chunk.access_groups)
           AND any(group IN $groups WHERE group IN document.access_groups)
+          AND {"revision.context_property_evidence_json IS NULL" if kind is ReviewRecordKind.ENTITY_MENTION else context_evidence_guard(version="version", snapshot="snapshot", document="document", primary="chunk")}
           {extra_where}
         RETURN {projection}
         ORDER BY revision.created_at, revision.record_id
@@ -557,7 +564,7 @@ def _revision_history_query(kind: ReviewRecordKind) -> str:
             record_id: $record_id,
             record_kind: '{record_kind}'
         }})
-        MATCH (revision:{label} {{tenant_id: $tenant_id}})
+        MATCH (revision:{label} {{tenant_id: $tenant_id, record_id: $record_id}})
               -[:{chunk_edge}]->(chunk:Chunk {{tenant_id: $tenant_id}})
         MATCH (document:Document {{
             tenant_id: $tenant_id,
@@ -566,6 +573,7 @@ def _revision_history_query(kind: ReviewRecordKind) -> str:
             tenant_id: $tenant_id,
             version_id: revision.version_id
         }})-[:HAS_CHUNK]->(chunk)
+        WITH DISTINCT head, revision, chunk, document, version
         MATCH (tbox:TBoxVersion {{
             tenant_id: $tenant_id,
             tbox_id: revision.ontology_version_id
@@ -586,6 +594,7 @@ def _revision_history_query(kind: ReviewRecordKind) -> str:
           AND any(group IN $groups WHERE group IN revision.access_groups)
           AND any(group IN $groups WHERE group IN chunk.access_groups)
           AND any(group IN $groups WHERE group IN document.access_groups)
+          AND {"revision.context_property_evidence_json IS NULL" if kind is ReviewRecordKind.ENTITY_MENTION else context_evidence_guard(version="version", document="document", primary="chunk")}
         RETURN revision {{.*}} AS revision
         ORDER BY revision.revision DESC
         LIMIT $limit
@@ -676,6 +685,9 @@ RETURN revision {.*} AS revision
 ORDER BY revision.record_id
 LIMIT $limit
 """
+_DEPENDENT_ASSERTION_QUERY = _DEPENDENT_ASSERTION_QUERY.replace(
+    "RETURN revision {.*} AS revision", "AND " + context_evidence_guard(version="version", snapshot="snapshot", document="document", primary="chunk") + "\nRETURN revision {.*} AS revision"
+)
 
 
 class SessionDriver(Protocol):
@@ -1396,7 +1408,9 @@ class Neo4jKnowledgeReviewService:
         properties = dict(row["revision"])
         if request.record_kind is ReviewRecordKind.ENTITY_MENTION:
             return _stored_mention(properties)
-        return _stored_assertion(properties)
+        record = _stored_assertion(properties)
+        Neo4jKnowledgeStore.verify_context_property_tx(tx, record)
+        return record
 
     @classmethod
     def _reviewed_record_tx(
@@ -1796,11 +1810,11 @@ class Neo4jKnowledgePublicationService:
                 "a record cannot be both removed and replaced"
             )
         if len(source_ids) + len(removed_ids) + len(replaced_ids) > (
-            MAX_PUBLICATION_RECORDS
+            MAX_PUBLICATION_CHANGE_RECORDS
         ):
             raise ValueError(
                 "publication change set exceeds the "
-                f"{MAX_PUBLICATION_RECORDS}-record limit"
+                f"{MAX_PUBLICATION_CHANGE_RECORDS}-record limit"
             )
         if not source_ids and not removed_ids and not replaced_ids:
             raise ValueError("publication change set must not be empty")
@@ -1898,8 +1912,7 @@ class Neo4jKnowledgePublicationService:
         rows = tuple(tx.run("""
             MATCH (p:KnowledgePublication {tenant_id:$tenant_id})
             WHERE p.status IN ['ACTIVE','RETIRED']
-              AND size(p.published_revision_ids)<=500
-              AND COUNT { MATCH (p)-[:PUBLISHES_KNOWLEDGE_REVISION]->() }=size(p.published_revision_ids)
+              AND (""" + publication_members_guard("p") + """)
               AND ($publication_id IS NULL OR p.publication_id=$publication_id)
               AND (NOT $active_only OR EXISTS {
                 MATCH (:KnowledgePublicationState {tenant_id:$tenant_id})
@@ -1960,10 +1973,10 @@ class Neo4jKnowledgePublicationService:
     ) -> tuple[str, ...]:
         if not isinstance(values, tuple):
             raise TypeError(f"{parameter_name} must be a tuple")
-        if len(values) > MAX_PUBLICATION_RECORDS:
+        if len(values) > MAX_PUBLICATION_CHANGE_RECORDS:
             raise ValueError(
                 "publication exceeds the "
-                f"{MAX_PUBLICATION_RECORDS}-record limit"
+                f"{MAX_PUBLICATION_CHANGE_RECORDS}-record limit"
             )
         normalized = tuple(
             _required_text(value, item_name)
@@ -2230,7 +2243,7 @@ class Neo4jKnowledgePublicationService:
             published_records.append(published)
             published_snapshots[published.revision_id] = snapshot_id
 
-        if len(published_records) > MAX_PUBLICATION_RECORDS:
+        if len(published_records) > MAX_PUBLICATION_MANIFEST_RECORDS:
             raise KnowledgePublicationConflict(
                 "active publication exceeds the bounded manifest limit"
             )
@@ -2529,7 +2542,7 @@ class Neo4jKnowledgePublicationService:
             tbox = _decode_tbox(rows[0]["tbox"])
             if tbox.tenant_id != tenant_id or tbox.tbox_id != ontology_version_id:
                 raise ValueError("hierarchy T-Box identity mismatch")
-            if len(records) > MAX_PUBLICATION_RECORDS:
+            if len(records) > MAX_PUBLICATION_MANIFEST_RECORDS:
                 raise ValueError("hierarchy manifest exceeds its publication budget")
             for record in records:
                 if record.tenant_id != tenant_id or record.trust.ontology_version_id != ontology_version_id:
@@ -2603,6 +2616,8 @@ class Neo4jKnowledgePublicationService:
                 OPTIONAL MATCH (type)-[:DECLARES_PROPERTY]->
                                (property:TBoxPropertyDefinition)
                 RETURN type.name AS entity_type,
+                       coalesce(type.instance_allowed, true) AS instance_allowed,
+                       tbox.definition_json AS source_definition_json,
                        collect(
                            CASE WHEN property IS NULL THEN NULL
                            ELSE properties(property)
@@ -2634,7 +2649,9 @@ class Neo4jKnowledgePublicationService:
                 "required T-Box is unavailable or has no entity definitions"
             )
 
+        allowed_entity_types = {row["entity_type"] for row in rows if row.get("instance_allowed", True)}
         entities: dict[str, EntityIdentity] = {}
+        literal_values: dict[str, dict[str, object]] = {}
         literal_counts: dict[tuple[str, str], set[tuple]] = {}
         relationship_records: list[AssertionRecord] = []
         for record in records:
@@ -2668,6 +2685,8 @@ class Neo4jKnowledgePublicationService:
                     "literal assertion violates the active T-Box",
                     issue=_publication_issue("PROPERTY_INVALID", (record,)),
                 ) from exc
+            if record.literal_semantics is not None:
+                literal_values.setdefault(record.subject.entity_id, {})[record.predicate] = record.literal_semantics.typed_value
             key = (record.subject.entity_id, record.predicate)
             # Cardinality concerns distinct meanings, not the number of sources.
             signature = literal_signature(record.literal_semantics)
@@ -2676,12 +2695,19 @@ class Neo4jKnowledgePublicationService:
             )
 
         for entity in entities.values():
+            if entity.entity_type not in allowed_entity_types:
+                raise KnowledgePublicationConflict("abstract or external-derived entity type cannot be published", issue=_publication_issue("SCHEMA_INVALID", entity=entity))
             entity_definitions = definitions.get(entity.entity_type)
             if entity_definitions is None:
                 raise KnowledgePublicationConflict(
                     "publication entity type is outside the active T-Box",
                     issue=_publication_issue("SCHEMA_INVALID", entity=entity),
                 )
+            from graphrag_prod.ontology.source import validate_conditional_properties  # noqa: PLC0415
+            try:
+                validate_conditional_properties(entity_definitions.values(), literal_values.get(entity.entity_id, {}))
+            except ValueError as exc:
+                raise KnowledgePublicationConflict(str(exc), issue=_publication_issue("PROPERTY_REQUIRED", entity=entity)) from exc
             for name, definition in entity_definitions.items():
                 count = len(literal_counts.get((entity.entity_id, name), set()))
                 if definition.cardinality.required and count == 0:
@@ -2722,6 +2748,8 @@ class Neo4jKnowledgePublicationService:
                 OPTIONAL MATCH (relationship)-[:DECLARES_PROPERTY]->
                                (property:TBoxPropertyDefinition)
                 RETURN relationship.name AS name,
+                       coalesce(relationship.instance_allowed, true) AS instance_allowed,
+                       relationship.allowed_type_pairs_json AS allowed_type_pairs_json,
                        relationship.source_types AS source_types,
                        relationship.target_types AS target_types,
                        coalesce(
@@ -2746,6 +2774,8 @@ class Neo4jKnowledgePublicationService:
         try:
             relationship_definitions = {
                 row.get("name"): {
+                    "instance_allowed": row.get("instance_allowed", True),
+                    "allowed_type_pairs": json.loads(row.get("allowed_type_pairs_json") or "[]"),
                     "source_types": frozenset(row.get("source_types") or ()),
                     "target_types": frozenset(row.get("target_types") or ()),
                     "source_cardinality": Cardinality(
@@ -2783,7 +2813,9 @@ class Neo4jKnowledgePublicationService:
                     issue=_publication_issue("SCHEMA_INVALID", (record,)),
                 )
             if (
-                record.subject.entity_type not in contract["source_types"]
+                not contract["instance_allowed"]
+                or (contract["allowed_type_pairs"] and [record.subject.entity_type, record.object_entity.entity_type] not in contract["allowed_type_pairs"])
+                or record.subject.entity_type not in contract["source_types"]
                 or record.object_entity.entity_type not in contract["target_types"]
             ):
                 raise KnowledgePublicationConflict(
@@ -2812,6 +2844,11 @@ class Neo4jKnowledgePublicationService:
                         issue=_publication_issue("RELATIONSHIP_PROPERTY_INVALID", (record,), property_name=value.name),
                     ) from exc
                 property_counts[value.name] = property_counts.get(value.name, 0) + 1
+            from graphrag_prod.ontology.source import validate_conditional_properties  # noqa: PLC0415
+            try:
+                validate_conditional_properties(contract["properties"].values(), {item.name: item.literal_semantics.typed_value for item in record.relationship_properties})
+            except ValueError as exc:
+                raise KnowledgePublicationConflict(str(exc), issue=_publication_issue("RELATIONSHIP_PROPERTY_INVALID", (record,))) from exc
             for name, definition in contract["properties"].items():
                 count = property_counts.get(name, 0)
                 if definition.cardinality.required and count == 0:
@@ -2875,6 +2912,16 @@ class Neo4jKnowledgePublicationService:
                             issue=_publication_issue("RELATIONSHIP_CARDINALITY", [item for item in relationship_records
                                 if item.predicate == predicate and item.object_entity.entity_id == entity.entity_id]),
                         )
+        source_definition = rows[0].get("source_definition_json") if rows else None
+        if source_definition:
+            source_contract = json.loads(source_definition).get("source_contract_json")
+            if source_contract:
+                from graphrag_prod.ontology.source_validation import validate_source_publication  # noqa: PLC0415
+                try:
+                    registry_json = json.loads(source_definition).get("rule_reference_registry_json")
+                    validate_source_publication(json.loads(source_contract), entities, literal_values, relationship_records, None if registry_json is None else json.loads(registry_json))
+                except ValueError as exc:
+                    raise KnowledgePublicationConflict(str(exc), issue=_publication_issue("SCHEMA_INVALID", records)) from exc
         return ontology_id
 
     @staticmethod
@@ -3062,7 +3109,7 @@ class Neo4jKnowledgePublicationService:
             RETURN revision {.*} AS revision,
                    labels(revision) AS labels,
                    snapshot.snapshot_id AS snapshot_id
-            """,
+            """.replace("RETURN revision {.*} AS revision,", "AND " + context_evidence_guard(version="version", snapshot="snapshot", document="document", primary="chunk") + "\nRETURN revision {.*} AS revision,"),
             tenant_id=principal.tenant_id,
             revision_id=revision_id,
             groups=sorted(principal.groups),
@@ -3082,6 +3129,8 @@ class Neo4jKnowledgePublicationService:
             record = _stored_mention(properties)
         elif "GovernedAssertionRevision" in labels:
             record = _stored_assertion(properties)
+            if require_current:
+                Neo4jKnowledgeStore.verify_context_property_tx(tx, record)
         else:
             raise KnowledgePublicationConflict(
                 "publication manifest references an invalid revision"
@@ -3121,7 +3170,7 @@ class Neo4jKnowledgePublicationService:
     ) -> tuple[
         tuple[EntityMentionRecord | AssertionRecord, str], ...
     ]:
-        if len(revision_ids) > MAX_PUBLICATION_RECORDS:
+        if len(revision_ids) > MAX_PUBLICATION_MANIFEST_RECORDS:
             raise KnowledgePublicationConflict(
                 "publication manifest size is invalid"
             )
@@ -3490,6 +3539,7 @@ class Neo4jKnowledgePublicationService:
             properties["fact_key"] = assertion.fact_key
         if assertion.literal_semantics is not None:
             properties.update(assertion.literal_semantics.to_flat_properties())
+        properties.update(context_evidence_properties(assertion))
         properties.update(
             relationship_properties_format_version=1,
             relationship_properties_json=json.dumps(
@@ -3595,6 +3645,18 @@ class Neo4jKnowledgePublicationService:
             raise KnowledgePublicationConflict(
                 "canonical assertion materialization conflicts or is stale"
             )
+        if assertion.context_property_evidence is not None:
+            linked = tx.run("""
+                MATCH (navigation:Assertion {tenant_id:$tenant_id,assertion_id:$assertion_id})
+                MATCH (revision:GovernedAssertionRevision {tenant_id:$tenant_id,revision_id:$revision_id})
+                  -[:CONTEXT_EVIDENCED_BY]->(context:Chunk {tenant_id:$tenant_id,chunk_id:$chunk_id})
+                MERGE (navigation)-[:CONTEXT_EVIDENCED_BY]->(context)
+                RETURN context.chunk_id AS chunk_id
+            """, tenant_id=principal.tenant_id, assertion_id=assertion_id,
+                revision_id=assertion.revision_id,
+                chunk_id=assertion.context_property_evidence.value_evidence.chunk_id).single()
+            if linked is None:
+                raise KnowledgePublicationConflict("context evidence materialization is unavailable")
         if assertion.relationship_properties:
             property_rows = tuple(
                 {

@@ -1,0 +1,13 @@
+{
+  "status": "COMPLETE",
+  "seconds": 13.347,
+  "review_units": 4,
+  "decision_count": 4,
+  "covered_facts": 30,
+  "actions": {
+    "APPROVE": 4
+  },
+  "calls": 1,
+  "failure": null,
+  "exact_top_level_ids": true
+}

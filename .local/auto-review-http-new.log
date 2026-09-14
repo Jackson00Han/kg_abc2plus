@@ -1,0 +1,11 @@
+/Users/shanzhonghan/Documents/mini_projects/ai_power/ai_power_kg/kg_training/sample-graphrag/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  from starlette.testclient import TestClient as TestClient  # noqa
+{"duration_ms":3.817745,"event":"request_completed","level":"INFO","method":"GET","request_id":"37983d3ffa064e5c8808de99eca8f8b8","route":"/v1/knowledge/construction-jobs/{job_id}/auto-review","service":"graphrag-prod","status":200,"timestamp":"2026-09-13T15:23:00.944319Z","trace_id":"84e95ddc18a843c7b51d8f70dcb94f04"}
+{"duration_ms":2.485051,"event":"request_completed","level":"INFO","method":"POST","request_id":"52fd8489d07d4714a305ea5ca1e2f4dc","route":"/v1/knowledge/construction-jobs/{job_id}/auto-review:run","service":"graphrag-prod","status":200,"timestamp":"2026-09-13T15:23:00.950355Z","trace_id":"a98993c2799d470496fbe85dba5ccd31"}
+{"duration_ms":1.708151,"error_code":"forbidden","event":"request_completed","level":"WARNING","method":"GET","request_id":"c77376471a0243e9a64a204228ee8a42","route":"/v1/knowledge/construction-jobs/{job_id}/auto-review","service":"graphrag-prod","status":403,"timestamp":"2026-09-13T15:23:01.078778Z","trace_id":"42a1989d6e61461ba92cf263e9d57536"}
+{"duration_ms":1.731151,"error_code":"forbidden","event":"request_completed","level":"WARNING","method":"POST","request_id":"110a00836f694623a2f25046a7697f79","route":"/v1/knowledge/construction-jobs/{job_id}/auto-review:run","service":"graphrag-prod","status":403,"timestamp":"2026-09-13T15:23:01.083411Z","trace_id":"f0e892e22c864ee1a8b39abae5be1fa6"}
+{"duration_ms":1.853793,"error_code":"invalid_request","event":"request_completed","level":"WARNING","method":"POST","request_id":"6457ef554bf349b99391bb14d54717d8","route":"/v1/knowledge/construction-jobs/{job_id}/auto-review:run","service":"graphrag-prod","status":422,"timestamp":"2026-09-13T15:23:01.280127Z","trace_id":"f5a1ea60055f4d628ee95ac0dd96038e"}
+----------------------------------------------------------------------
+Ran 4 tests in 0.477s
+
+OK

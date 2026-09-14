@@ -143,6 +143,7 @@ class TBoxLiteralNormalizer:
         valid_from: str | None,
         valid_to: str | None,
         observed_at: str | None,
+        source_encoding: str = "TEXT",
     ) -> TypedLiteralValue:
         if not isinstance(definition, PropertyDefinition):
             raise TypeError("definition must be a PropertyDefinition")
@@ -179,12 +180,28 @@ class TBoxLiteralNormalizer:
                 "the T-Box property requires an explicit source unit",
             )
 
+        decoded_value = raw_value
+        if source_encoding == "JSON_STRING":
+            try:
+                decoded_value = _strict_json(raw_value)
+            except (ValueError, TypeError, RecursionError) as error:
+                raise LiteralNormalizationError("INVALID_LITERAL_ENCODING", "expected a complete JSON string token") from error
+            if not isinstance(decoded_value, str) or not decoded_value:
+                raise LiteralNormalizationError("INVALID_LITERAL_ENCODING", "expected a nonempty JSON string")
+        elif source_encoding != "TEXT":
+            raise LiteralNormalizationError("INVALID_LITERAL_ENCODING", "unknown literal source encoding")
         typed_value, canonical_value = self._value(
             datatype,
-            raw_value,
+            decoded_value,
             raw_unit=raw_unit,
             canonical_unit=canonical_unit,
         )
+        if definition.constraints_json:
+            from graphrag_prod.ontology.source import validate_property_constraints  # noqa: PLC0415
+            try:
+                validate_property_constraints(definition.constraints_json, typed_value)
+            except (TypeError, ValueError, ArithmeticError) as exc:
+                raise LiteralNormalizationError("PROPERTY_CONSTRAINT_VIOLATION", str(exc)) from exc
         parsed_temporals: dict[str, datetime | None] = {}
         for name, value in (
             ("valid_from", valid_from),
@@ -206,6 +223,7 @@ class TBoxLiteralNormalizer:
             datatype=datatype.value,
             typed_value=typed_value,
             raw_value=raw_value,
+            source_encoding=source_encoding,
             raw_unit=raw_unit,
             canonical_value=canonical_value,
             canonical_unit=canonical_unit,
