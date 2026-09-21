@@ -31,7 +31,7 @@ from .review_context import _resolution_revision_query
 from .store import KnowledgeConflict, _stored_assertion, _stored_mention
 from .trust import GovernanceStatus
 
-POLICY_VERSION = "evidence-auto-review:v2"
+POLICY_VERSION = "evidence-auto-review:v4"
 # Reviewer upgrades must never change the stable identity namespace of objects.
 IDENTITY_KEY_VERSION = "evidence-auto-review:v1"
 MAX_RECORDS = 6000
@@ -161,6 +161,9 @@ class StructuredEvidence:
         return self.by_record.get(record.record_id)
 
     def fact_mapping(self, fact, mentions_by_revision):
+        if getattr(self, "document_candidates", False):
+            from .document_review_evidence import document_fact_mapping
+            return document_fact_mapping(self, fact, mentions_by_revision)
         subject_record = mentions_by_revision.get(fact.subject_mention_revision_id)
         subject = self.identity(subject_record) if subject_record else None
         if subject is None:
@@ -438,11 +441,16 @@ class Neo4jAutoReviewService:
         output["items"] = sorted(output.get("items", []),key=lambda i:(priority.get(i["decision"],4),
             i.get("reason_code")=="PREVIOUS_AUTO_APPROVAL"))[:MAX_RESPONSE_ITEMS]
         issues = output.get("issues",[])
+        if output.get("status") == "COMPLETED" and issues:
+            output["status"] = "PARTIAL"
         output["truncated"] = output["truncated"] or len(issues)>MAX_RESPONSE_ISSUES or any(i["entity_count"]>MAX_ISSUE_ENTITIES for i in issues)
         output["issues"] = [{**i,"entity_ids":i["entity_ids"][:MAX_ISSUE_ENTITIES],
                              "record_ids":i["record_ids"][:MAX_ISSUE_ENTITIES]} for i in issues[:MAX_RESPONSE_ISSUES]]
         if output.get("context_mapping") is not None:
             context=dict(output["context_mapping"])
+            if (context.get("status") == "COMPLETED" and not context.get("rules")
+                    and not context.get("applied") and issues):
+                context["status"] = "PARTIAL"
             cissues=context.get("issues",[])
             output["truncated"] = output["truncated"] or len(cissues)>MAX_RESPONSE_ISSUES or any(
                 i["entity_count"]>MAX_ISSUE_ENTITIES for i in cissues) or len(context.get("rules",[]))>64
@@ -759,6 +767,8 @@ class Neo4jAutoReviewService:
                 self._save(state)
             mentions = [r for r in data["current"] if isinstance(r, EntityMentionRecord)]
             proof = StructuredEvidence(data["text"], job.document_id, job.tbox_id, summary, mentions)
+            from .document_review_evidence import install_document_candidates
+            install_document_candidates(proof, mentions, data["current"], SourceIdentity)
             proof.restore(data["original"])
             await self._identities(principal, service, state, data, proof, items, deadline)
             state["stage"] = "FACTS"
@@ -811,7 +821,8 @@ class Neo4jAutoReviewService:
         # Only approved target identity facts, or the current document's exact
         # source-mapped identity facts, can establish a strong identity key.
         eligible = [f for f in all_facts if f.trust.status in {GovernanceStatus.APPROVED, GovernanceStatus.PUBLISHED}
-                    or (f.evidence.document_id == proof.document_id and proof.fact_mapping(f, revisions))]
+                    or (not getattr(proof, "document_candidates", False)
+                        and f.evidence.document_id == proof.document_id and proof.fact_mapping(f, revisions))]
         strong = _identity_values(all_mentions, eligible, data["tbox"])
         by_strong, by_name = defaultdict(list), defaultdict(list)
         for mention in all_mentions:
@@ -917,15 +928,25 @@ class Neo4jAutoReviewService:
                 definition = definitions[leader.entity.entity_type]
                 records.append({"record_id":eid,"group_id":group["group_id"],
                     "mention_count":len(group["members"]),"evidence_ids":[eid],
+                    "proposed_name":leader.entity.canonical_name,
+                    "proposed_mentions":[{"text":m.evidence.quoted_text,
+                        "char_start":m.evidence.char_start,"char_end":m.evidence.char_end,
+                        "document_version_id":m.evidence.version_id,"evidence_id":eid}
+                        for m in group["members"]
+                        if m.evidence.version_id == leader.evidence.version_id
+                        and source.node.start <= m.evidence.char_start < m.evidence.char_end <= source.node.end],
                     "entity_type":leader.entity.entity_type,"entity_type_description":definition.description,
                     "source_identity":{"document_id":leader.evidence.document_id,"collection":source.collection,
                                        "field":source.rule["id_field"],"id":source.source_id},
                     "identity_signature":group["signature"],"candidate_target_ids":target_ids,
-                    "rule_checks":{"source_record_unique":True,"comparison_complete":True,"identity_conflict":False}})
+                    "rule_checks":{"source_record_unique":not getattr(proof,"document_candidates",False),
+                        "candidate_identity_only":getattr(proof,"document_candidates",False),
+                        "comparison_complete":True,"identity_conflict":False}})
             payload = {"records":records,"evidence":list(evidence.values()),"targets":list(targets.values()),
                 "ontology":{"version_id":data["tbox"].tbox_id},
                 "rules":{"source_identity_scope":"document and collection; not a global identifier",
-                         "same_source_record_references_are_one_group":True,
+                         "same_source_record_references_are_one_group":not getattr(proof,"document_candidates",False),
+                         "candidate_group_requires_original_identity_evidence":True,
                          "new_group_id":"use the supplied group_id if the source proves this object",
                          "absence_of_target_alone_is_insufficient":True}}
             prepared_batches.append((batch,payload))
@@ -1014,6 +1035,7 @@ class Neo4jAutoReviewService:
         conflicts = _fact_conflicts(all_facts, data["tbox"])
         groups = defaultdict(list)
         mapping_by_key = {}
+        individual = []
         for fact in current_facts:
             scope = state.get("_resume_entities")
             if (scope and fact.subject.entity_id not in scope
@@ -1042,6 +1064,9 @@ class Neo4jAutoReviewService:
                 items[fact.record_id] = _item(fact,"NEEDS_HUMAN",reason,
                     "存在不同事实值，需要核对适用时间和来源。" if key in conflicts else "原文与映射尚不能直接证明该事实，或记录已被人工暂缓。")
                 continue
+            if getattr(proof, "document_candidates", False):
+                individual.append(fact)
+                continue
             mkey = _hash([data["tbox"].checksum,proof.summary["mapping_checksum"],mapping])
             groups[mkey].append(fact)
             mapping_by_key[mkey] = mapping
@@ -1067,7 +1092,7 @@ class Neo4jAutoReviewService:
             prepared_batches.append((batch, payload))
         # A mapping proposal never becomes the reason on an individual candidate.
         # Ambiguous mappings fall back to explicit, per-assertion model review.
-        pending = []
+        pending = list(individual)
         for offset in range(0, len(prepared_batches), 3):
             window = prepared_batches[offset:offset + 3]
             results = await asyncio.gather(*(self._model(state, "mapping", p, deadline) for _, p in window))

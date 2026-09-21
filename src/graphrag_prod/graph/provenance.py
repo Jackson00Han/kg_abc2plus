@@ -533,6 +533,22 @@ class Neo4jProvenanceStore:
         if bundle.activate_version and active is not None and active["active_count"] > 0:
             raise ValueError("document already has a different active version")
 
+        # HAS_CHUNK represents one immutable partition of a document version.
+        # Check under the document write lock so concurrent uploads cannot mix
+        # partitions and invalidate existing evidence or publication membership.
+        different_partition = tx.run(
+            """
+            MATCH (version:DocumentVersion {tenant_id:$tenant_id,version_id:$version_id})
+              -[:HAS_CHUNK]->(existing:Chunk)
+            WHERE coalesce(existing.splitter_version,'') <> $splitter_version
+            RETURN existing.chunk_id AS chunk_id LIMIT 1
+            """,
+            tenant_id=version.tenant_id, version_id=version.version_id,
+            splitter_version=chunk.splitter_version,
+        ).single()
+        if different_partition is not None:
+            raise ValueError("document version already uses a different chunk partition")
+
         version_properties = _properties(
             version_id=version.version_id,
             document_id=version.document_id,

@@ -1,24 +1,22 @@
 import { TYPE_LABELS, PREDICATE_LABELS } from "./core.mjs";
 
-export const TYPE_COLORS = Object.freeze({
-  Equipment: ["#dceedd", "#7faa8a"],
-  Risk: ["#f5e4de", "#bd9183"],
-  EquipmentClass: ["#ecf0e3", "#a9bb87"],
-  ProductFamily: ["#e1eede", "#80a571"],
-  ProductModel: ["#e1eee4", "#79a38b"],
-  Site: ["#e3e7db", "#9aa78a"],
-  IndustrialSystem: ["#e5eade", "#a3b492"],
-  InstalledAsset: ["#d4eddf", "#438364"],
-  Component: ["#e3edf5", "#8ba6bf"],
-  Symptom: ["#f6e9d7", "#c8a071"],
-  FaultMode: ["#f4e0db", "#c69583"],
-  DiagnosticCondition: ["#f6e7d6", "#bfa076"],
-  DiagnosticTest: ["#e6e3f1", "#a799c3"],
-  MaintenanceAction: ["#e0eceb", "#86aca6"],
-  Observation: ["#ece5f0", "#b19abb"],
-  InspectionEvent: ["#e9e4f1", "#a599bd"],
-  SourceEdition: ["#e6edef", "#98b1b4"],
-});
+// A stable palette also covers types introduced by future ontology packages.
+const PALETTE = [
+  ["#173c3c", "#5ee0c0"], ["#263453", "#85b9ff"],
+  ["#393050", "#bc9bfa"], ["#443824", "#ebc276"],
+  ["#432c3c", "#ed99b4"], ["#263e40", "#79d2dd"],
+  ["#35422c", "#b6d78c"], ["#423329", "#eda979"],
+];
+export function typeColors(type = "") {
+  let hash = 2166136261;
+  for (const char of type) hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
+  return PALETTE[(hash >>> 0) % PALETTE.length];
+}
+export const TYPE_COLORS = new Proxy(Object.freeze({}), { get: (_, type) => typeColors(String(type)) });
+export function typeLabel(type, schema = {}) {
+  const definition = (schema.entity_types || []).find(item => item.name === type);
+  return definition?.display_name || definition?.label || TYPE_LABELS[type] || type;
+}
 export const VIEWS = Object.freeze({
   all: { label: "实例图谱", direction: "LR" },
   ontology: { label: "本体模型", direction: "LR" },
@@ -67,8 +65,8 @@ export function validateGraphPage(page) {
     !Array.isArray(page.nodes) ||
     !Array.isArray(page.edges) ||
     !Array.isArray(page.literals) ||
-    page.nodes.length > 150 ||
-    page.edges.length > 200 ||
+    page.nodes.length > 200 ||
+    page.edges.length > 300 ||
     page.literals.length > 200 ||
     !page.view_token
   )
@@ -92,6 +90,24 @@ export function validateGraphPage(page) {
     throw new Error("图谱响应数量不一致。");
   return page;
 }
+// Keep the shortest unique path suffix on the canvas; identity and full label
+// remain available in search, hover and the evidence inspector.
+export function compactGraphLabels(nodes) {
+  const suffixes = nodes.map(node => [String(node.label),
+    ...String(node.label).matchAll(/[\/#]/g)].map(part => typeof part === "string" ? part : String(node.label).slice(part.index + 1)).filter(Boolean).reverse());
+  return nodes.map((node, index) => suffixes[index].find(suffix =>
+    suffixes.every((other, offset) => offset === index || !other.includes(suffix))) || node.label);
+}
+export function wrapTypeLabel(label) {
+  const words = label.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" ").filter(Boolean);
+  if (words.length < 2) return label;
+  let split = 1, best = Infinity;
+  for (let index = 1; index < words.length; index++) {
+    const width = Math.max(words.slice(0, index).join("").length, words.slice(index).join("").length);
+    if (width < best) { best = width; split = index; }
+  }
+  return `${words.slice(0, split).join("")}\n${words.slice(split).join("")}`;
+}
 export function graphElements(page) {
   validateGraphPage(page);
   // Counts describe this authorized page only, never the unseen whole graph.
@@ -101,23 +117,28 @@ export function graphElements(page) {
     if (edge.source !== edge.target)
       degree.set(edge.target, degree.get(edge.target) + 1);
   }
+  const labels = compactGraphLabels(page.nodes);
+  const hubs = new Set([...degree].filter(([, value]) => value >= 4).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12).map(([id]) => id));
   return [
-    ...page.nodes.map((node) => {
-      const colors = TYPE_COLORS[node.entity_type] || ["#e9ece7", "#a9b1a3"];
+    ...page.nodes.map((node, index) => {
+      const colors = typeColors(node.entity_type);
+      const name = typeLabel(node.entity_type, page.schema);
       return {
         data: {
           id: `n:${node.entity_id}`,
           label: node.label,
-          typeLabel: TYPE_LABELS[node.entity_type] || node.entity_type,
-          displayLabel: `${node.label}\n${TYPE_LABELS[node.entity_type] || node.entity_type}`,
+          typeLabel: name,
+          type: node.entity_type,
+          displayLabel: labels[index],
           searchText: [node.label, node.entity_id, node.canonical_key,
-            TYPE_LABELS[node.entity_type], node.entity_type].filter(Boolean).join(" ").toLocaleLowerCase(),
+            name, node.entity_type].filter(Boolean).join(" ").toLocaleLowerCase(),
           visibleDegree: degree.get(node.entity_id),
+          overviewLabel: labels[index].length > 18 ? labels[index].slice(0, 17) + "…" : labels[index],
           fill: colors[0],
           border: colors[1],
           entity: node,
         },
-        classes: `instance${node.entity_type === "InstalledAsset" ? " asset" : ""}`,
+        classes: `instance${node.entity_type === "InstalledAsset" ? " asset" : ""}${hubs.has(node.entity_id) ? " hub" : ""}`,
       };
     }),
     ...page.edges.map((edge) => ({
@@ -143,12 +164,14 @@ export function ontologyElements(schema) {
     throw new Error("本体响应超出约定范围。");
   const ids = new Set(types.map((t) => t.name));
   const nodes = types.map((type) => {
-    const colors = TYPE_COLORS[type.name] || ["#e9ece7", "#a9b1a3"];
+    const colors = typeColors(type.name);
     return {
       data: {
         id: `t:${type.name}`,
-        label: TYPE_LABELS[type.name] || type.name,
-        displayLabel: `${TYPE_LABELS[type.name] || type.name}\n${type.name}`,
+        label: typeLabel(type.name, schema),
+        typeLabel: typeLabel(type.name, schema),
+        type: type.name,
+        displayLabel: wrapTypeLabel(typeLabel(type.name, schema)),
         searchText: `${TYPE_LABELS[type.name] || type.name} ${type.name}`.toLocaleLowerCase(),
         fill: colors[0],
         border: colors[1],

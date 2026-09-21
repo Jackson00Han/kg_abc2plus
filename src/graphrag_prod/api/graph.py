@@ -12,7 +12,7 @@ from graphrag_prod.retrieval.models import VersionFilter
 
 from .source_contracts import SourceListRequest, SourceListResponse, SourceReadRequest, SourceReadResponse
 from .graph_contracts import (
-    GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
+    GraphBrowseRequest, GraphBrowseResponse, GraphEntityPageResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
     IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
 )
 from .runtime import (
@@ -67,9 +67,13 @@ class Neo4jGraphOperations:
                 selected = self.resolver.resolve(principal, request.industrial_scope.to_domain(), version_filter=original).version_filter
                 if not isinstance(selected, VersionFilter) or (original.match_none and not selected.match_none) or selected.published_at_or_before != original.published_at_or_before or len(selected.version_ids) > 100 or (not selected.match_none and not selected.version_ids) or (original.version_ids and not selected.version_ids <= original.version_ids):
                     raise DependencyUnavailableError()
-            return self.browser.query(principal, request.to_domain(), version_filter=selected, view_token=request.view_token, cursor=request.cursor)
+            if request.result_mode == "entities":
+                return self.browser.entity_page(principal, request.to_domain(), version_filter=selected,
+                    view_token=request.view_token, offset=request.entity_offset, focus_entity_id=request.focus_entity_id)
+            return self.browser.query(principal, request.to_domain(), version_filter=selected, view_token=request.view_token,
+                cursor=request.cursor, overview=request.result_mode == "overview")
 
-        return self._call(GraphBrowseResponse, execute)
+        return self._call(GraphEntityPageResponse if request.result_mode == "entities" else GraphBrowseResponse, execute)
 
     def evidence(self, principal: Principal, request: GraphEvidenceRequest) -> BackendResult:
         self._require(principal, "knowledge:graph:read")

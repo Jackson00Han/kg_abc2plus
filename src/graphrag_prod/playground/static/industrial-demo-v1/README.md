@@ -27,12 +27,3 @@ STRING 类型的唯一 `EquipmentCode`，`RatedPower` 使用 DECIMAL 与 `kW`。
 保留文件原始 UTF-8 字节与换行；修改后不能再使用原模板的精确证据绑定。
 同一来源的专家导入使用稳定 `source_key` 和初始 revision 0，重复导入已成功的
 批次不会被当作新知识静默追加。正常体验只需导入一次，再查看清单或发布历史。
-
-离线校验命令：
-
-```sh
-uv run python -m unittest discover -s tests/unit -p 'test_industrial_demo.py' -v
-```
-
-校验覆盖摘要、默认切块、精确引文、API 契约、本体与属性类型，以及同名不同
-设备编码不自动合并。它不调用 embedding 或 LLM，也不修改 Neo4j。

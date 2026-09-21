@@ -20,7 +20,7 @@ from ._rerank_transport import (
 )
 from .rerank_provider import (
     RerankProviderError, RerankProviderProfile, MAX_DEADLINE_SECONDS,
-    _CALL_LOCK, _checksum, _request, _subprocess_request,
+    _CALL_LOCK, _checksum, _request, _subprocess_request, _rendering_version,
 )
 from .reranking import RerankCandidate, RerankResponse, RerankScore
 
@@ -109,10 +109,15 @@ def listwise_cache_identity(query_text: str, candidates: tuple[RerankCandidate, 
     payload, documents, paired = _listwise_request(query_text, candidates, profile=profile)
     return {
         "profile": profile, "configuration": listwise_configuration(profile),
+        **({"rendering_version": _rendering_version("source-title-section:v1", candidates)}
+           if any(source.excerpt_checksum for source in candidates) else {}),
         "query_checksum": _checksum(query_text.encode("utf-8")),
         "candidates": [{"chunk_id": source.chunk_id, "checksum": source.checksum,
             "document_id": source.document_id, "version_id": source.version_id,
-            "rendered_checksum": _checksum(text.encode("utf-8"))}
+            "rendered_checksum": _checksum(text.encode("utf-8")),
+            **({"excerpt_policy": "exact-source-window:v1", "excerpt_start": source.excerpt_start,
+                "excerpt_end": source.excerpt_end, "excerpt_checksum": source.excerpt_checksum}
+               if source.excerpt_checksum else {})}
             for source, text in zip(candidates, documents, strict=True)],
         "request_checksum": _checksum(canonical_bytes(payload)), "pair_utf8_bytes": paired,
     }
@@ -180,7 +185,7 @@ def decode_listwise_response(payload: bytes, query_text: str, candidates: tuple[
             total_tokens=usage["total_tokens"], duration_ms=float(duration_ms),
             input_checksum=_checksum(encoded), output_checksum=_checksum(canonical_bytes(normalized)),
             input_bytes=len(encoded), pair_utf8_bytes=paired, candidate_count=count,
-            rendering_version="source-title-section:v1",
+            rendering_version=_rendering_version("source-title-section:v1", candidates),
             source_checksums=tuple(item.checksum for item in candidates),
             rendered_input_checksums=tuple(_checksum(text.encode("utf-8")) for text in documents),
             normalization_method=NORMALIZATION, normalization_removed_count=removed,

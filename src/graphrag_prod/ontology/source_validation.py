@@ -10,6 +10,16 @@ from collections import defaultdict
 from typing import Any
 
 
+class SourcePublicationConstraintError(ValueError):
+    """A constraint location inside the already authorized closed manifest."""
+
+    def __init__(self, message: str, *, reason: str, entity_id: str, predicate: str | None = None):
+        super().__init__(message)
+        self.reason = reason
+        self.entity_id = entity_id
+        self.predicate = predicate
+
+
 def validate_source_publication(
     source: dict[str, Any],
     entities: dict[str, Any],
@@ -17,6 +27,9 @@ def validate_source_publication(
     relationships: list[Any],
     registry: dict[str, Any] | None = None,
 ) -> None:
+    if source.get("metadata", {}).get("model_kind") == "property_graph":
+        validate_property_graph_publication(source, entities, values, relationships)
+        return
     outgoing: dict[tuple[str, str], list[Any]] = defaultdict(list)
     incoming: dict[tuple[str, str], list[Any]] = defaultdict(list)
     for edge in relationships:
@@ -118,3 +131,120 @@ def validate_source_publication(
             props = attributes(edge)
             if props.get("criterion_role") == "rule_criterion" and props.get("rule_clause") not in rule_bindings[edge.subject.entity_id]:
                 raise ValueError("criterion clause must resolve through the phenomenon's registered rule binding")
+
+
+def validate_property_graph_publication(
+    source: dict[str, Any],
+    entities: dict[str, Any],
+    values: dict[str, dict[str, Any]],
+    relationships: list[Any],
+) -> None:
+    """Execute uploaded constraints against a closed authorized graph manifest.
+
+    This preserves source identity mappings and counts distinct graph objects,
+    so additional evidence never becomes an additional engineering owner.
+    Textual business descriptions remain review input, not executable rules.
+    """
+    from decimal import Decimal  # noqa: PLC0415
+    from .source import canonical_json  # noqa: PLC0415
+    constraints = source["constraints"]
+    structure = constraints["engineering_structure"]
+    outgoing: dict[tuple[str, str], set[str]] = defaultdict(set)
+    incoming: dict[tuple[str, str], set[str]] = defaultdict(set)
+    ownership: dict[str, set[str]] = defaultdict(set)
+    acyclic: dict[str, set[str]] = defaultdict(set)
+    structural_properties: dict[tuple[str, str, str], str] = {}
+    for identity, entity in entities.items():
+        if not isinstance(identity, str) or not identity.strip() or entity.entity_id != identity:
+            raise ValueError("entity identity must resolve to its stable platform ID")
+        if entity.entity_type not in source["entity_types"]:
+            raise ValueError("source graph contains an undeclared entity type")
+    for edge in relationships:
+        subject, target = edge.subject.entity_id, edge.object_entity.entity_id
+        if subject not in entities or target not in entities:
+            raise ValueError("source graph relationship endpoint does not exist")
+        relation = source["relation_types"].get(edge.predicate)
+        if relation is None:
+            raise ValueError("source graph contains an undeclared relationship type")
+        pair = {"from": entities[subject].entity_type, "to": entities[target].entity_type}
+        if pair not in relation["allowed_type_pairs"]:
+            raise ValueError("source graph relationship endpoints violate allowed type pairs")
+        # The graph represents one structural edge per pair; several assertion
+        # records may legitimately preserve the independent sources for it.
+        if edge.predicate in structure["non_repeatable_relations"]:
+            signature = (subject, edge.predicate, target)
+            properties = {item.name: item.literal_semantics.canonical_value for item in edge.relationship_properties}
+            encoded = canonical_json(properties)
+            if signature in structural_properties and structural_properties[signature] != encoded:
+                raise ValueError("source structural relationship has conflicting duplicate properties")
+            structural_properties[signature] = encoded
+        outgoing[(subject, edge.predicate)].add(target)
+        incoming[(target, edge.predicate)].add(subject)
+        if edge.predicate in structure["ownership_relations"]:
+            ownership[target].add(subject)
+        if edge.predicate in structure["acyclic_relations"]:
+            acyclic[subject].add(target)
+    for name, constraint in constraints.items():
+        if "allowed_combinations" not in constraint:
+            continue
+        combinations = constraint["allowed_combinations"]
+        fields = tuple(combinations[0])
+        declared = {**source["property_definitions"]["entity_common"]["properties"], **source["entity_types"][constraint["entity_type"]]["properties"]}
+        def same(key: str, actual: Any, expected: Any) -> bool:
+            if declared[key]["value_type"] in {"number", "integer"}:
+                return not isinstance(actual, bool) and Decimal(str(actual)) == Decimal(str(expected))
+            return type(actual) is type(expected) and actual == expected
+        for identity, entity in entities.items():
+            if entity.entity_type != constraint["entity_type"]:
+                continue
+            own = values.get(identity, {})
+            if any(key not in own for key in fields) or not any(all(same(key, own[key], row[key]) for key in fields) for row in combinations):
+                raise SourcePublicationConstraintError(
+                    f"source property combination violates {name}",
+                    reason="PROPERTY_COMBINATION_INVALID", entity_id=identity)
+    for rule in constraints["ownership_cardinality"]["rules"]:
+        adjacency = incoming if rule["direction"] == "incoming" else outgoing
+        for identity, entity in entities.items():
+            if entity.entity_type not in rule["entity_types"]:
+                continue
+            count = len(adjacency[(identity, rule["relation_type"])])
+            if count < rule["min_count"] or (rule["max_count"] is not None and count > rule["max_count"]):
+                raise SourcePublicationConstraintError(
+                    f"source ownership cardinality violates {rule['id']}",
+                    reason="RELATIONSHIP_REQUIRED" if count < rule["min_count"] else "RELATIONSHIP_CARDINALITY",
+                    entity_id=identity, predicate=rule["relation_type"])
+    # Iterative traversal avoids Python recursion limits on valid long chains.
+    indegree: dict[str, int] = {identity: 0 for identity in entities}
+    for children in acyclic.values():
+        for identity in children:
+            indegree[identity] += 1
+    remaining = [identity for identity, degree in indegree.items() if degree == 0]
+    visited = 0
+    while remaining:
+        identity = remaining.pop()
+        visited += 1
+        for child in acyclic.get(identity, ()):
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                remaining.append(child)
+    if visited != len(entities):
+        raise ValueError("source graph contains a forbidden structural cycle")
+    if structure["require_one_project"]:
+        root_type, member_types = structure["project_root_type"], set(structure["project_member_types"])
+        for identity, entity in entities.items():
+            if entity.entity_type not in member_types:
+                continue
+            pending, seen, roots = [identity], set(), set()
+            while pending:
+                candidate = pending.pop()
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                if entities[candidate].entity_type == root_type:
+                    roots.add(candidate)
+                else:
+                    pending.extend(ownership.get(candidate, ()))
+            if len(roots) != 1:
+                raise SourcePublicationConstraintError(
+                    "source graph member requires exactly one evidenced project root",
+                    reason="PROJECT_ROOT_UNRESOLVED", entity_id=identity)

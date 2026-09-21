@@ -12,6 +12,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+import base64
 import json
 import math
 import threading
@@ -84,7 +85,8 @@ from .extraction import (
     ExtractionRejected,
     ExtractionValidationAttempt,
 )
-from .parser import BoundedDocumentParser, ParsedDocument
+from .parser import BoundedDocumentParser, ChunkingOptions, DocumentParseError, ParsedDocument, parse_with_chunking
+from .mapping_preflight import bind_preview_evidence, preview_mapping, preview_summary, validate_mapping_profile
 from .provider_errors import RETRYABLE_PROVIDER_FINDING_CODES
 
 
@@ -167,6 +169,8 @@ class ConstructionMetadata:
     knowledge_scope: str = "BUSINESS"
     manual_record: PreparedManualRecord | None = None
     industrial_context: IndustrialUploadContext | None = None
+    mapping_profile: dict[str, Any] | None = None
+    chunking: ChunkingOptions | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -187,10 +191,20 @@ class ConstructionMetadata:
         object.__setattr__(self, "access_groups", groups)
         _aware(self.published_at, "published_at")
         _extraction_mode(self.extraction_mode)
+        if self.chunking is not None:
+            if not isinstance(self.chunking, ChunkingOptions) or self.extraction_mode == "MANUAL":
+                raise ValueError("chunking options are only supported for document uploads")
+        if self.mapping_profile is not None:
+            validate_mapping_profile(self.mapping_profile)
+            if self.extraction_mode == "MANUAL":
+                raise ValueError("manual records cannot use document mappings")
+        if self.chunking is not None and self.chunking.strategy == "mapped_document":
+            if self.mapping_profile is None or self.mime_type not in {"application/xml", "text/xml"}:
+                raise ValueError("whole document evidence requires an explicit XML mapping")
         if self.knowledge_scope not in {"BUSINESS", "AUTHORITATIVE"}:
             raise ValueError("knowledge_scope must be BUSINESS or AUTHORITATIVE")
-        if self.knowledge_scope == "AUTHORITATIVE" and self.extraction_mode != "LLM":
-            raise ValueError("authoritative document construction requires extraction")
+        if self.knowledge_scope == "AUTHORITATIVE" and self.extraction_mode == "MANUAL":
+            raise ValueError("manual construction cannot declare authoritative scope")
         if (self.extraction_mode == "MANUAL") != isinstance(self.manual_record, PreparedManualRecord):
             raise ValueError("manual construction requires an explicit human record")
         if self.canonical_uri.startswith(HUMAN_SOURCE_PREFIX) != (self.extraction_mode == "MANUAL"):
@@ -311,6 +325,7 @@ class ConstructionJobState:
     extraction_mode: str = "LLM"
 
     industrial_context_json: str | None = None
+    chunking_json: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -354,6 +369,7 @@ class ConstructionChunkResult:
     replayed: bool = False
     validation_attempts: tuple[ConstructionValidationAttempt, ...] = ()
     mapping_summary: dict[str, Any] | None = None
+    document_preflight: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,6 +383,7 @@ class KnowledgeConstructionResult:
     ingestion: IngestionResult
     chunks: tuple[ConstructionChunkResult, ...]
     extraction_mode: str = "LLM"
+    chunking: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,6 +407,7 @@ class ConstructionJobView:
     chunks: tuple[ConstructionChunkResult, ...] = ()
     extraction_mode: str = "LLM"
     operation_key: str | None = None
+    chunking: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -430,6 +448,20 @@ class ConstructionIngestionFailed(RuntimeError):
 
 class ConstructionConflict(RuntimeError):
     """Stable workflow identity or immutable audit data conflicts."""
+
+
+class ConstructionChunkingConflict(ConstructionConflict):
+    """An immutable document version already has a different source partition."""
+
+
+def chunking_summary(parsed: ParsedDocument, options: ChunkingOptions | None) -> dict[str, Any] | None:
+    if options is None:
+        return None
+    sizes = [len(chunk.text) for chunk in parsed.chunks]
+    return dict(max_chars=options.max_chars, strategy=options.strategy,
+                splitter_signature=parsed.splitter_signature, chunk_count=len(sizes),
+                min_chars=min(sizes), max_actual_chars=max(sizes),
+                total_chars=len(parsed.normalized_text))
 
 
 class ConstructionAuthorizationError(PermissionError):
@@ -521,6 +553,7 @@ class ConstructionAuditStore(Protocol):
         canonical_uri: str,
         source_name: str,
         access_groups: frozenset[str],
+        splitter_signature: str | None = None,
     ) -> ObservedDocumentState: ...
 
     def ensure_job(
@@ -781,6 +814,7 @@ class Neo4jConstructionAuditStore:
         canonical_uri: str,
         source_name: str,
         access_groups: frozenset[str],
+        splitter_signature: str | None = None,
     ) -> ObservedDocumentState:
         _require_construction_capability(principal)
         if not access_groups or not access_groups <= principal.groups:
@@ -826,18 +860,25 @@ class Neo4jConstructionAuditStore:
                        CASE WHEN document IS NULL THEN true ELSE any(
                            group IN $principal_groups
                            WHERE group IN document.access_groups
-                       ) END AS authorized
+                       ) END AS authorized,
+                       ($splitter_signature IS NOT NULL AND EXISTS {
+                           MATCH (target_version)-[:HAS_CHUNK]->(stored_chunk)
+                           WHERE coalesce(stored_chunk.splitter_version,'') <> $splitter_signature
+                       }) AS different_chunking
                 """,
                 tenant_id=principal.tenant_id,
                 document_id=document_id_value,
                 version_id=version_id_value,
                 principal_groups=sorted(principal.groups),
+                splitter_signature=splitter_signature,
             ).single()
         if row is None:
             raise ConstructionConflict("document lifecycle state is unavailable")
         exists = row["existing_document_id"] is not None
         if exists and not row["authorized"]:
             raise ConstructionAuthorizationError("source is unavailable to this principal")
+        if row["different_chunking"]:
+            raise ConstructionChunkingConflict("source version already uses different chunking")
         if exists and (
             row["canonical_uri"] != canonical_uri or row["source_name"] != source_name
         ):
@@ -894,6 +935,8 @@ class Neo4jConstructionAuditStore:
         }
         if state.industrial_context_json is not None:
             identity["industrial_context_json"] = state.industrial_context_json
+        if state.chunking_json is not None:
+            identity["chunking_json"] = state.chunking_json
         captured_lifecycle = {
             "expected_active_snapshot_id": state.expected_active_snapshot_id or "",
             "source_generation": state.source_generation,
@@ -930,6 +973,7 @@ class Neo4jConstructionAuditStore:
             created_at=_native_datetime(stored["created_at"], "created_at"),
             extraction_mode=stored.get("extraction_mode", "LLM"),
             industrial_context_json=stored.get("industrial_context_json"),
+            chunking_json=stored.get("chunking_json"),
         )
 
     @staticmethod
@@ -1528,6 +1572,8 @@ def _construction_job_view(row: Any) -> ConstructionJobView:
             chunks=tuple(sorted(chunks, key=lambda item: item.chunk_id)),
             extraction_mode=properties.get("extraction_mode", "LLM"),
             operation_key=properties.get("operation_key"),
+            chunking=(None if properties.get("chunking_json") is None
+                      else json.loads(properties["chunking_json"])),
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ConstructionConflict("stored construction job is invalid") from exc
@@ -1544,6 +1590,7 @@ def _chunk_result_payload(result: ConstructionChunkResult) -> dict[str, object]:
         "assertion_record_ids": list(result.assertion_record_ids),
         "validation_attempts": [asdict(item) for item in result.validation_attempts],
         **({"mapping_summary": result.mapping_summary} if result.mapping_summary is not None else {}),
+        **({"document_preflight": result.document_preflight} if result.document_preflight is not None else {}),
     }
 
 
@@ -1568,6 +1615,7 @@ def _chunk_result_from_payload(
         replayed=replayed,
         validation_attempts=_validation_attempt_summaries(payload),
         mapping_summary=payload.get("mapping_summary"),
+        document_preflight=payload.get("document_preflight"),
     )
 
 
@@ -1753,6 +1801,7 @@ def _decode_audited_payload(
     audited = AuditedExtraction(
         output=ExtractionOutput(entities, mentions, assertions),
         origin=(KnowledgeOrigin.HUMAN_SUPPLEMENT if getattr(extractor, "is_manual", False)
+                else KnowledgeOrigin.MAPPED if getattr(extractor, "max_document_model_calls", None) == 0
                 else KnowledgeOrigin.LLM_EXTRACTED),
         authority=AuthorityLevel.SECONDARY,
         status=disposition,
@@ -1833,8 +1882,11 @@ def _to_abox_batch(
             raise ConstructionConflict("human additions cannot claim document authority")
         trust = replace(trust, origin=KnowledgeOrigin.HUMAN_SUPPLEMENT,
                         extractor_version=None, prompt_version=None)
+    if audited.origin is KnowledgeOrigin.MAPPED:
+        trust = replace(trust, origin=KnowledgeOrigin.MAPPED)
     if authoritative:
-        trust = replace(trust, origin=KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
+        trust = replace(trust, origin=(KnowledgeOrigin.AUTHORITATIVE_MAPPED
+                        if audited.origin is KnowledgeOrigin.MAPPED else KnowledgeOrigin.AUTHORITATIVE_EXTRACTED),
                         authority=AuthorityLevel.AUTHORITATIVE)
 
     entities = {item.entity_id: _identity(item) for item in audited.output.entities}
@@ -2168,8 +2220,10 @@ class Neo4jKnowledgeConstructionWorkflow:
         selected_parser = self.industrial_parser if industrial and self.industrial_parser is not None else self.parser
         if metadata.manual_record is not None and payload != metadata.manual_record.text.encode('utf-8'):
             raise ConstructionConflict("manual source content differs from submitted facts")
-        parsed = selected_parser.parse(payload, mime_type=metadata.mime_type)
+        parsed = parse_with_chunking(selected_parser, payload, mime_type=metadata.mime_type,
+                                     chunking=metadata.chunking)
         self._preflight_budget(parsed, extraction_mode=metadata.extraction_mode)
+        selected_chunking = chunking_summary(parsed, metadata.chunking)
         if industrial:
             self.industrial_upload_policy.validate_parsed(metadata, parsed)
         self._require_deadline(deadline)
@@ -2181,10 +2235,19 @@ class Neo4jKnowledgeConstructionWorkflow:
             or tbox.key != metadata.tbox_key
         ):
             raise ConstructionConflict("tenant has no active PUBLISHED T-Box for this key")
+        document_preflight = None
+        if metadata.mapping_profile is not None:
+            document_preflight = preview_mapping(parsed, metadata.mapping_profile, tbox)
+            if not document_preflight.get("valid"):
+                raise DocumentParseError("mapping preview has blocking diagnostics; inspect upload preflight")
         self._require_deadline(deadline)
         extractor = None
         provider_timeout = 0.0
         extractor_signature = SOURCE_ONLY_AUDIT_SIGNATURE
+        if document_preflight is not None:
+            extractor_signature += ":" + _fingerprint(document_preflight)
+        if metadata.extraction_mode == "SOURCE_ONLY" and metadata.knowledge_scope == "AUTHORITATIVE":
+            extractor_signature += ":declared-authoritative-source:v1"
         prompt_signature = CANONICAL_EMPTY_PROMPT_SIGNATURE
         if metadata.extraction_mode == "MANUAL":
             assert metadata.manual_record is not None
@@ -2196,7 +2259,10 @@ class Neo4jKnowledgeConstructionWorkflow:
         if metadata.extraction_mode == "LLM":
             extractor = self.extractor_factory(tbox)
             if self.document_extractor_selector is not None:
-                extractor = self.document_extractor_selector(extractor, parsed)
+                if metadata.mapping_profile is None:
+                    extractor = self.document_extractor_selector(extractor, parsed)
+                else:
+                    extractor = self.document_extractor_selector(extractor, parsed, mapping_profile=metadata.mapping_profile)
             if (
                 extractor.active_tbox.tenant_id != principal.tenant_id
                 or extractor.active_tbox.tbox_id != tbox.tbox_id
@@ -2213,7 +2279,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                 or validation_attempts not in (1, 2)
             ):
                 raise ConstructionConflict("extractor validation-attempt bound is invalid")
-            required_calls = (2 if getattr(extractor, "deterministic_batches", False)
+            required_calls = (getattr(extractor, "max_document_model_calls", 2) if getattr(extractor, "deterministic_batches", False)
                               else len(parsed.chunks) * validation_attempts)
             if required_calls > self.config.max_model_calls:
                 raise ConstructionBudgetExceeded(
@@ -2264,6 +2330,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             canonical_uri=metadata.canonical_uri,
             source_name=metadata.source_name,
             access_groups=metadata.access_groups,
+            **({"splitter_signature": parsed.splitter_signature} if metadata.chunking is not None else {}),
         )
         self._require_deadline(deadline)
         request_fingerprint = content_checksum(
@@ -2288,6 +2355,9 @@ class Neo4jKnowledgeConstructionWorkflow:
                     "ingestion_profile_id": ingestion_profile.profile_id,
                     "extraction_profile_id": extraction_profile.profile_id,
                     "access_groups": sorted(metadata.access_groups),
+                    **({"chunking": selected_chunking} if selected_chunking is not None else {}),
+                    **({"mapping_preflight": _fingerprint(document_preflight),
+                        "mapping_submitted_by": principal.principal_id} if document_preflight is not None else {}),
                     **({"industrial_context": industrial_identity} if industrial_identity is not None else {}),
                     # Keep already-published LLM request identities replayable.
                     **(
@@ -2327,6 +2397,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                 created_at=now,
                 extraction_mode=metadata.extraction_mode,
                 industrial_context_json=None if industrial_identity is None else canonical_json(industrial_identity),
+                chunking_json=None if selected_chunking is None else canonical_json(selected_chunking),
             ),
             expected_chunks=len(parsed.chunks),
         )
@@ -2349,6 +2420,12 @@ class Neo4jKnowledgeConstructionWorkflow:
             )
             return self.embedding_provider(**kwargs)
 
+        document, version, chunks = ingestion_request.domain_inputs()
+        if document_preflight is not None:
+            try:
+                document_preflight = bind_preview_evidence(document_preflight, chunks)
+            except ValueError as error:
+                raise DocumentParseError(str(error)) from error
         try:
             ingestion = self.pipeline.run(
                 ingestion_request,
@@ -2368,7 +2445,6 @@ class Neo4jKnowledgeConstructionWorkflow:
                 raise ConstructionIngestionFailed('source preparation failed') from error
             raise
         self._require_deadline(deadline)
-        document, version, chunks = ingestion_request.domain_inputs()
         if industrial:
             try:
                 self.industrial_upload_policy.persist(principal, metadata, parsed, job)
@@ -2450,6 +2526,12 @@ class Neo4jKnowledgeConstructionWorkflow:
                     tbox=tbox,
                     profile=extraction_profile,
                     chunk=chunk,
+                    document_preflight=document_preflight if chunk.ordinal == 0 else None,
+                    mapping_profile=metadata.mapping_profile if chunk.ordinal == 0 else None,
+                    original_payload=payload if chunk.ordinal == 0 and (
+                        document_preflight is not None or parsed.mime_type in {"application/xml", "text/xml"}
+                    ) else None,
+                    declared_knowledge_scope=metadata.knowledge_scope,
                 )
             assert extractor is not None
             return self._process_chunk(
@@ -2523,6 +2605,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             ingestion=ingestion,
             chunks=tuple(results),
             extraction_mode=metadata.extraction_mode,
+            chunking=selected_chunking,
         )
 
     def _process_source_chunk(
@@ -2533,6 +2616,10 @@ class Neo4jKnowledgeConstructionWorkflow:
         tbox: TBoxVersion,
         profile: GraphPipelineProfile,
         chunk: Chunk,
+        document_preflight: dict[str, Any] | None = None,
+        mapping_profile: dict[str, Any] | None = None,
+        original_payload: bytes | None = None,
+        declared_knowledge_scope: str = "BUSINESS",
     ) -> ConstructionChunkResult:
         """Audit deliberate model omission without manufacturing knowledge records."""
 
@@ -2564,6 +2651,15 @@ class Neo4jKnowledgeConstructionWorkflow:
             "prompt_version": profile.prompt_signature,
             "model_calls": 0,
         }
+        if document_preflight is not None:
+            payload["document_preflight"] = document_preflight
+            payload["mapping_profile"] = mapping_profile
+            payload["mapping_submitted_by"] = principal.principal_id
+        if declared_knowledge_scope == "AUTHORITATIVE":
+            payload["declared_knowledge_scope"] = declared_knowledge_scope
+            payload["scope_declared_by"] = principal.principal_id
+        if original_payload is not None:
+            payload["original_content_base64"] = base64.b64encode(original_payload).decode("ascii")
         input_hash = _fingerprint(payload)
         artifact_id = derivation_artifact_id(
             principal.tenant_id, AUDIT_ARTIFACT_KIND, input_hash, profile.profile_id
@@ -2592,6 +2688,7 @@ class Neo4jKnowledgeConstructionWorkflow:
             finding_codes=(),
             mention_record_ids=(),
             assertion_record_ids=(),
+            document_preflight=preview_summary(document_preflight) if document_preflight is not None else None,
         )
         self.audit_store.persist_outcome(
             principal,
@@ -2871,6 +2968,7 @@ class Neo4jKnowledgeConstructionWorkflow:
                     "response": attempt.response,
                     "response_chars": attempt.response_chars,
                     "provider_seconds": attempt.provider_seconds,
+                    "provider_usage": attempt.provider_usage,
                     "findings": [asdict(item) for item in attempt.findings],
                     "recorded_at": self.clock().isoformat(),
                 }

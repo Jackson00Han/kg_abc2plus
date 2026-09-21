@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import base64
 import binascii
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import JsonValue, AwareDatetime, Field, StringConstraints, field_validator, model_validator
 from .auto_review_contracts import AutoReviewResponse
 
 from graphrag_prod.knowledge.publication_guard import (
     MAX_PUBLICATION_CHANGE_RECORDS,
+    MAX_PUBLICATION_SELECTION_RECORDS,
     MAX_PUBLICATION_MANIFEST_RECORDS,
 )
 
@@ -334,6 +335,12 @@ class OntologyListRequest(StrictAPIModel):
     limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 100
 
 
+class OntologySourceIdentityMapping(StrictAPIModel):
+    source_property: TypeName
+    target: Literal["platform_entity_id"]
+    requires_audited_source_identity_mapping: Literal[True]
+
+
 class OntologySourceCapabilities(StrictAPIModel):
     profile: str
     source_version: str
@@ -342,8 +349,11 @@ class OntologySourceCapabilities(StrictAPIModel):
     blocked_entity_types: tuple[TypeName, ...]
     blocked_relationship_types: tuple[TypeName, ...]
     scope: str
+    identity_mapping: OntologySourceIdentityMapping | None = None
+    executable_constraints: Annotated[tuple[TypeName, ...], Field(max_length=1024)] = ()
+    preserved_sections: Annotated[tuple[TypeName, ...], Field(max_length=32)] = ()
 
-    @field_validator("blocked_entity_types", "blocked_relationship_types", mode="before")
+    @field_validator("blocked_entity_types", "blocked_relationship_types", "executable_constraints", "preserved_sections", mode="before")
     @classmethod
     def accept_arrays(cls, value: object) -> object:
         return _json_array(value)
@@ -577,7 +587,41 @@ class ManualFactInput(StrictAPIModel):
         return self
 
 
+class ConstructionChunkingRequest(StrictAPIModel):
+    max_chars: Annotated[int, Field(strict=True, ge=800, le=65536)] = 1200
+    strategy: Literal["structure", "fixed", "mapped_document"] = "structure"
+
+    @model_validator(mode="after")
+    def bounded_strategy(self) -> Self:
+        if self.strategy != "mapped_document" and self.max_chars > 3000:
+            raise ValueError("ordinary extraction windows are limited to 3000 characters")
+        return self
+
+    def to_domain(self):
+        from graphrag_prod.construction.parser import ChunkingOptions
+        return ChunkingOptions(max_chars=self.max_chars, strategy=self.strategy)
+
+
+class ConstructionChunkingResponse(ConstructionChunkingRequest):
+    splitter_signature: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)]
+    chunk_count: Annotated[int, Field(strict=True, ge=1, le=512)]
+    min_chars: Annotated[int, Field(strict=True, ge=1, le=65536)]
+    max_actual_chars: Annotated[int, Field(strict=True, ge=1, le=65536)]
+    total_chars: Annotated[int, Field(strict=True, ge=1, le=MAX_DOCUMENT_BYTES)]
+
+    @model_validator(mode="after")
+    def consistent_lengths(self) -> Self:
+        if not (self.min_chars <= self.max_actual_chars <= self.max_chars
+                and self.min_chars * self.chunk_count <= self.total_chars
+                <= self.max_actual_chars * self.chunk_count):
+            raise ValueError("chunking summary lengths are inconsistent")
+        return self
+
+
 class KnowledgeConstructionRequest(StrictAPIModel):
+    # Omitted settings retain existing operation identities for legacy callers.
+    chunking: ConstructionChunkingRequest | None = None
+    mapping_profile: dict[str, Any] | None = None
     preflight_token: Annotated[str, StringConstraints(strict=True, pattern=r"^[a-f0-9]{64}$")] | None = None
     knowledge_scope: Literal["BUSINESS", "AUTHORITATIVE"] = "BUSINESS"
     manual_fact: ManualFactInput | None = None
@@ -602,7 +646,7 @@ class KnowledgeConstructionRequest(StrictAPIModel):
         str,
         StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=256),
     ]
-    mime_type: Literal["text/plain", "text/markdown", "text/csv", "application/json"]
+    mime_type: Literal["text/plain", "text/markdown", "text/csv", "application/json", "application/xml", "text/xml"]
     language: Annotated[
         str,
         StringConstraints(
@@ -656,6 +700,23 @@ class KnowledgeConstructionRequest(StrictAPIModel):
     def safe_metadata(cls, value: str, info: object) -> str:
         return _safe_metadata_text(value, getattr(info, "field_name", "metadata"))
 
+    @field_validator("mapping_profile")
+    @classmethod
+    def bounded_mapping_profile(cls, value: dict | None) -> dict | None:
+        if value is not None:
+            from graphrag_prod.construction.mapping_preflight import validate_mapping_profile
+            validate_mapping_profile(value)
+        return value
+
+    @model_validator(mode="after")
+    def mapping_is_preview_only(self) -> Self:
+        if self.mapping_profile is not None and self.extraction_mode == "MANUAL":
+            raise ValueError("manual records cannot use document mappings")
+        if self.chunking is not None and self.chunking.strategy == "mapped_document":
+            if self.mapping_profile is None or self.mime_type not in {"application/xml", "text/xml"}:
+                raise ValueError("whole document evidence requires an explicit XML mapping")
+        return self
+
     @field_validator("content_base64")
     @classmethod
     def canonical_base64(cls, value: str | None) -> str | None:
@@ -676,6 +737,7 @@ class KnowledgeConstructionRequest(StrictAPIModel):
         from graphrag_prod.construction.manual import HUMAN_SOURCE_PREFIX
         if self.extraction_mode == "MANUAL":
             if (self.manual_fact is None or self.content_base64 is not None
+                    or self.chunking is not None
                     or self.knowledge_scope != "BUSINESS" or self.industrial_context is not None
                     or self.canonical_uri != HUMAN_SOURCE_PREFIX + self.operation_key
                     or self.source_name != "人工补充记录" or self.mime_type != "text/plain"):
@@ -733,7 +795,53 @@ class ConstructionMappingSummaryResponse(StrictAPIModel):
     collections: Annotated[list[ConstructionMappingCollectionResponse], Field(max_length=16)]
 
 
+class ConstructionDocumentMappingSummaryResponse(StrictAPIModel):
+    """Bounded execution receipt for a caller-supplied document mapping.
+
+    This is separate from the older model-proposed JSON collection contract;
+    evidence gaps and source semantics must survive response serialization.
+    """
+
+    mapping_checksum: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    record_count: Annotated[int, Field(ge=0, le=2000)]
+    relationship_count: Annotated[int, Field(ge=0, le=8000)]
+    unresolved_references: Annotated[list[dict[str, JsonValue]], Field(max_length=8000)]
+    semantic_context: dict[str, JsonValue]
+
+    @model_validator(mode="after")
+    def bounded_summary(self) -> Self:
+        from graphrag_prod.construction.mapping_preflight import bounded_json, MAX_REPORT_BYTES
+        bounded_json(self.model_dump(mode="json"), MAX_REPORT_BYTES)
+        return self
+
+
+class ConstructionXmlMappingSummaryResponse(ConstructionDocumentMappingSummaryResponse):
+    # Older immutable XML summaries did not persist this version field. Add it
+    # to the transport projection without changing their recorded payload.
+    version: Literal["xml-mapping-extraction:v1"] = "xml-mapping-extraction:v1"
+    property_count: Annotated[int, Field(ge=0, le=30000)]
+    deferred_property_count: Annotated[int, Field(ge=0, le=30000)]
+    deferred_properties: Annotated[list[dict[str, JsonValue]], Field(max_length=30000)]
+    coverage: dict[str, JsonValue]
+    model_calls: Annotated[int, Field(strict=True, ge=0, le=0)]
+
+    @model_validator(mode="after")
+    def complete_deferred_property_receipt(self) -> Self:
+        if self.deferred_property_count != len(self.deferred_properties):
+            raise ValueError("deferred property count must match the retained receipt")
+        return self
+
+
+class ConstructionMarkdownMappingSummaryResponse(ConstructionDocumentMappingSummaryResponse):
+    version: Literal["markdown-reviewed-mapping-extraction:v1"]
+    unresolved_relationship_count: Annotated[int, Field(ge=0, le=8000)]
+    coverage: Annotated[list[dict[str, JsonValue]], Field(max_length=513)]
+    complete: bool
+    provider_calls: Annotated[int, Field(strict=True, ge=0, le=0)]
+
+
 class ConstructionChunkResponse(StrictAPIModel):
+    document_preflight: dict[str, Any] | None = None
     chunk_id: Identifier
     artifact_id: Identifier
     status: Literal["CANDIDATE", "QUARANTINED", "REJECTED", "EMPTY", "SOURCE_ONLY"]
@@ -741,7 +849,12 @@ class ConstructionChunkResponse(StrictAPIModel):
     mention_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
     assertion_record_ids: Annotated[tuple[Identifier, ...], Field(max_length=1_000)]
     replayed: bool
-    mapping_summary: ConstructionMappingSummaryResponse | None = None
+    mapping_summary: (
+        ConstructionMappingSummaryResponse
+        | ConstructionXmlMappingSummaryResponse
+        | ConstructionMarkdownMappingSummaryResponse
+        | None
+    ) = None
     validation_attempts: Annotated[
         tuple[ConstructionValidationAttemptResponse, ...], Field(max_length=2)
     ] = ()
@@ -785,6 +898,8 @@ class UploadMatchResponse(StrictAPIModel):
 
 
 class KnowledgeUploadPreflightResponse(StrictAPIModel):
+    chunking: ConstructionChunkingResponse | None = None
+    mapping_preflight: dict[str, Any] | None = None
     checksum: str
     original_checksum: str
     exact_matches: Annotated[list[UploadMatchResponse], Field(max_length=20)]
@@ -799,6 +914,7 @@ class KnowledgeUploadPreflightResponse(StrictAPIModel):
 
 
 class KnowledgeConstructionResponse(StrictAPIModel):
+    chunking: ConstructionChunkingResponse | None = None
     auto_review: AutoReviewResponse | None = None
     extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
     job_id: Identifier
@@ -818,6 +934,8 @@ class KnowledgeConstructionResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def chunks_match_extraction_mode(self) -> Self:
+        if self.chunking is not None and self.chunking.chunk_count != len(self.chunks):
+            raise ValueError("chunking summary must match construction results")
         if any(
             (chunk.status == "SOURCE_ONLY") != (self.extraction_mode == "SOURCE_ONLY")
             for chunk in self.chunks
@@ -845,6 +963,7 @@ class ConstructionJobListRequest(StrictAPIModel):
 
 
 class ConstructionJobResponse(StrictAPIModel):
+    chunking: ConstructionChunkingResponse | None = None
     auto_review: AutoReviewResponse | None = None
     extraction_mode: Literal["LLM", "SOURCE_ONLY", "MANUAL"] = "LLM"
     operation_key: Annotated[str, Field(strict=True, min_length=1, max_length=256)] | None = None
@@ -870,6 +989,8 @@ class ConstructionJobResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def valid_progress(self) -> Self:
+        if self.chunking is not None and self.chunking.chunk_count != self.expected_chunks:
+            raise ValueError("chunking summary must match expected job chunks")
         if self.completed_chunks > self.expected_chunks:
             raise ValueError("completed_chunks exceeds expected_chunks")
         if any(
@@ -927,7 +1048,7 @@ class ContextPropertyEvidenceResponse(StrictAPIModel):
 
 class TrustResponse(StrictAPIModel):
     origin: Literal[
-        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
+        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "MAPPED", "AUTHORITATIVE_MAPPED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
     ]
     authority: Literal["AUTHORITATIVE", "SECONDARY"]
     status: Literal[
@@ -1066,6 +1187,7 @@ class ReviewAssessmentResponse(StrictAPIModel):
 
 
 class ReviewQueueRequest(StrictAPIModel):
+    cursor: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
     statuses: Annotated[
         tuple[Literal["CANDIDATE", "QUARANTINED"], ...], Field(min_length=1, max_length=2)
     ] = ("CANDIDATE", "QUARANTINED")
@@ -1084,6 +1206,7 @@ class ReviewQueueRequest(StrictAPIModel):
 
 class ReviewQueueResponse(StrictAPIModel):
     items: Annotated[tuple[ReviewRecordResponse, ...], Field(max_length=100)]
+    next_cursor: Annotated[str, Field(min_length=1, max_length=1024)] | None = None
 
     @field_validator("items", mode="before")
     @classmethod
@@ -1584,6 +1707,14 @@ class PublicationHistoryResponse(StrictAPIModel):
 
 class PublicationCandidatesRequest(StrictAPIModel):
     limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 100
+    offset: Annotated[int, Field(strict=True, ge=0, le=1_000_000)] = 0
+    select_all: bool = False
+
+
+class PublicationSelectionItem(StrictAPIModel):
+    revision_id: Identifier
+    record_id: Identifier
+    requires_replacement: bool
 
 
 class PublicationCandidateResponse(StrictAPIModel):
@@ -1593,6 +1724,13 @@ class PublicationCandidateResponse(StrictAPIModel):
 
 class PublicationCandidatesResponse(StrictAPIModel):
     items: Annotated[tuple[PublicationCandidateResponse, ...], Field(max_length=100)]
+    total: Annotated[int, Field(strict=True, ge=0)]
+    total_entities: Annotated[int, Field(strict=True, ge=0)]
+    offset: Annotated[int, Field(strict=True, ge=0)]
+    limit: Annotated[int, Field(strict=True, ge=1, le=100)]
+    selection: list[PublicationSelectionItem] = Field(default_factory=list, max_length=MAX_PUBLICATION_SELECTION_RECORDS)
+    selection_complete: bool = False
+    selection_limit: int = MAX_PUBLICATION_SELECTION_RECORDS
 
     @field_validator("items", mode="before")
     @classmethod
@@ -1773,7 +1911,10 @@ class PublishedGraphQualityResponse(StrictAPIModel):
 
 
 class ActivePublicationInventoryRequest(StrictAPIModel):
-    """Bounded active A-Box inventory filters."""
+    """Bounded active A-Box inventory filters; export uses the manifest bound."""
+
+    export_all: bool = False
+    publication_id: Identifier | None = None
 
     document_id: Identifier | None = None
     limit: Annotated[
@@ -1855,7 +1996,22 @@ class ActivePublicationInventoryRelationshipPropertyResponse(StrictAPIModel):
     evidence: ActivePublicationInventoryEvidenceResponse
 
 
+class ActivePublicationContextReferenceResponse(StrictAPIModel):
+    chunk_id: Identifier
+    char_start: Annotated[int, Field(strict=True, ge=0, le=2_147_483_647)]
+    char_end: Annotated[int, Field(strict=True, ge=1, le=2_147_483_647)]
+    source_checksum: Digest
+    mapping_checksum: Digest
+
+    @model_validator(mode="after")
+    def valid_range(self) -> Self:
+        if self.char_end <= self.char_start:
+            raise ValueError("context value range must be non-empty")
+        return self
+
+
 class ActivePublicationInventoryAssertionResponse(StrictAPIModel):
+    context_value_reference: ActivePublicationContextReferenceResponse | None = None
     subject: ActivePublicationInventoryEntityResponse
     predicate: TypeName
     object_kind: Literal["entity", "literal"]
@@ -1893,7 +2049,7 @@ class ActivePublicationInventoryItemResponse(StrictAPIModel):
     record_kind: Literal["ENTITY_MENTION", "ASSERTION"]
     governance_status: Literal["PUBLISHED"]
     origin: Literal[
-        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
+        "EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "MAPPED", "AUTHORITATIVE_MAPPED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"
     ]
     authority_level: Literal["AUTHORITATIVE", "SECONDARY"]
     confidence: Annotated[float, Field(strict=True, ge=0.0, le=1.0)]
@@ -1959,7 +2115,31 @@ class ActivePublicationInventoryResponse(StrictAPIModel):
         return self
 
 
+class ActivePublicationExportResponse(ActivePublicationInventoryResponse):
+    """Complete, versioned A-Box snapshot with authorized evidence references."""
+
+    format: Literal["graphrag-abox-export-v1"] = "graphrag-abox-export-v1"
+    exported_at: str
+    tenant_id: Identifier
+    scope: Literal["publication", "document"]
+    items: Annotated[
+        tuple[ActivePublicationInventoryItemResponse, ...],
+        Field(max_length=MAX_PUBLICATION_MANIFEST_RECORDS),
+    ]
+
+    @model_validator(mode="after")
+    def complete_export(self) -> Self:
+        if self.truncated or len(self.items) != self.matching_record_count:
+            raise ValueError("instance export must be complete")
+        if self.document_id is None and self.matching_record_count != self.total_record_count:
+            raise ValueError("unfiltered export must include every publication record")
+        if self.scope != ("document" if self.document_id else "publication"):
+            raise ValueError("instance export scope does not match filter")
+        return self
+
+
 __all__ = [
+    "ActivePublicationExportResponse",
     "ActivePublicationInventoryAssertionResponse",
     "ActivePublicationInventoryEntityResponse",
     "ActivePublicationInventoryEvidenceResponse",

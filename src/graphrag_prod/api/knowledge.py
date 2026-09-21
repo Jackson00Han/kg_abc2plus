@@ -12,6 +12,10 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any, Callable
 from .auto_review_contracts import AutoReviewResponse, AutoReviewRunRequest
+from .ontology_source_contracts import (
+    OntologySourceImportRequest, OntologySourceRequest, OntologySourceValidationResponse,
+    SOURCE_NORMALIZATION_VERSION,
+)
 
 from graphrag_prod.construction import (
     ConstructionMetadata,
@@ -20,7 +24,7 @@ from graphrag_prod.construction import (
     LiteralNormalizationError,
     TBoxLiteralNormalizer,
 )
-from graphrag_prod.construction.parser import BoundedDocumentParser
+from graphrag_prod.construction.parser import BoundedDocumentParser, parse_with_chunking
 from graphrag_prod.construction.preflight import Neo4jUploadPreflight
 from graphrag_prod.construction.upload_guard import Neo4jUploadGuard, UploadAlreadyRunning
 from graphrag_prod.construction.provider_errors import MODEL_CALL_TIMEOUT
@@ -28,6 +32,8 @@ from graphrag_prod.construction.workflow import (
     ConstructionAuthorizationError,
     ConstructionBudgetExceeded,
     ConstructionConflict,
+    ConstructionChunkingConflict,
+    chunking_summary,
     ConstructionIngestionFailed,
     Neo4jConstructionAuditStore,
 )
@@ -112,6 +118,7 @@ from graphrag_prod.ontology import (
 from graphrag_prod.ontology.store import TBoxConflict, TBoxValidationError
 
 from .knowledge_contracts import (
+    ActivePublicationExportResponse,
     ActivePublicationInventoryRequest,
     ActivePublicationInventoryResponse,
     AuthoritativeImportRequest,
@@ -172,6 +179,9 @@ from .runtime import (
     PublicationValidationError,
     ConstructionIngestionFailedError,
     ConstructionMappingInvalidError,
+    XmlInputInvalidError,
+    ConstructionOntologyIncompatibleError,
+    ConstructionChunkingConflictError,
     IndustrialConstructionInputLimitError,
     DependencyTimeoutError,
     DependencyUnavailableError,
@@ -452,6 +462,7 @@ def _construction_chunk_payload(value: Any) -> dict[str, object]:
         "assertion_record_ids": value.assertion_record_ids,
         "replayed": value.replayed,
         "mapping_summary": getattr(value, "mapping_summary", None),
+        "document_preflight": getattr(value, "document_preflight", None),
         "validation_attempts": tuple(
             asdict(item) for item in getattr(value, "validation_attempts", ())
         ),
@@ -460,6 +471,7 @@ def _construction_chunk_payload(value: Any) -> dict[str, object]:
 
 def _construction_job_payload(value: Any) -> dict[str, object]:
     return {
+        "chunking": getattr(value, "chunking", None),
         "operation_key": getattr(value, "operation_key", None),
         "extraction_mode": value.extraction_mode,
         "job_id": value.job_id,
@@ -594,6 +606,7 @@ def _inventory_item_payload(value: Any) -> dict[str, object]:
     assertion = None
     if value.assertion is not None:
         assertion = {
+            "context_value_reference": value.assertion.context_value_reference,
             "subject": _inventory_entity_payload(value.assertion.subject),
             "predicate": value.assertion.predicate,
             "object_kind": value.assertion.object_kind,
@@ -936,6 +949,144 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         return BackendResult(_outbound(OntologyListResponse, {"items": items}))
 
+    def _diagnose_ontology_file(
+        self, principal: Principal, request: OntologySourceRequest,
+    ) -> tuple[dict[str, Any], TBoxVersion | None]:
+        """Parse after authentication; never persist or invoke a language model."""
+        from graphrag_prod.ontology.yaml_source import diagnose_ontology_source
+        from graphrag_prod.ontology.source import canonical_json, validate_rule_reference_registry
+        from graphrag_prod.ontology.store import _validate_declared_units
+
+        result = diagnose_ontology_source(
+            request.content, filename=request.filename, tenant_id=principal.tenant_id,
+        )
+        diagnostics = list(result.get("diagnostics", ()))
+        value = None
+        if result.get("valid") and result.get("normalized_tbox") is not None:
+            try:
+                mapping = dict(result["normalized_tbox"])
+                mapping.pop("tenant_id", None)
+                mapping.pop("status", None)
+                mapping.pop("tbox_id", None)
+                mapping.pop("checksum", None)
+                if request.rule_reference_registry is not None:
+                    registry = canonical_json(validate_rule_reference_registry(request.rule_reference_registry))
+                    if mapping.get("rule_reference_registry_json") not in (None, registry):
+                        raise ValueError("上传内容与另选的规则引用目录不一致。")
+                    mapping["rule_reference_registry_json"] = registry
+                normalized = OntologyImportRequest.model_validate(mapping)
+                definition = normalized.model_dump(
+                    mode="python", exclude={"activate", "expected_checksum", "expected_active_tbox_id"}, exclude_none=True,
+                )
+                value = TBoxVersion.from_mapping({
+                    **definition, "tenant_id": principal.tenant_id, "status": "DRAFT",
+                })
+                _validate_declared_units(value)
+                # Validate the full stored-version response before any write,
+                # including source capabilities beyond the extraction schema.
+                OntologyVersionResponse.model_validate(_tbox_payload(value))
+            except (TypeError, ValueError, TBoxValidationError) as error:
+                # Pydantic input bodies must not be reflected into diagnostics.
+                from pydantic import ValidationError
+                if isinstance(error, ValidationError):
+                    for issue in error.errors(include_input=False, include_url=False)[:20]:
+                        diagnostics.append({
+                            "severity": "error", "code": "NORMALIZED_SCHEMA_INVALID",
+                            "message": str(issue["msg"])[:4096],
+                            "path": "/" + "/".join(str(part) for part in issue["loc"]),
+                        })
+                else:
+                    diagnostics.append({"severity": "error", "code": "NORMALIZED_SCHEMA_INVALID", "message": str(error)[:4096]})
+                value = None
+        valid = value is not None and not any(item.get("severity") == "error" for item in diagnostics)
+        definition = None
+        summary: dict[str, Any] = {}
+        if valid:
+            definition = value.to_mapping()
+            definition.pop("tenant_id", None)
+            definition.pop("status", None)
+            source_version = result.get("source_version")
+            if value.source_contract_json:
+                from graphrag_prod.ontology.source import source_import_report
+                source_version = source_import_report(value.source_contract_json).get("source_version", source_version)
+            summary = {
+                "key": value.key, "version": value.version,
+                "source_version": source_version,
+                "entity_type_count": len(value.entity_types),
+                "relationship_type_count": len(value.relationship_types),
+                "property_count": sum(len(item.properties) for item in (*value.entity_types, *value.relationship_types)),
+            }
+        # Keep blocking diagnostics ahead of informational messages if bounded.
+        diagnostics.sort(key=lambda item: {"error": 0, "warning": 1, "info": 2}[item["severity"]])
+        diagnostics = [
+            {**item, "message": item["message"][:4096], "path": item.get("path", "$")[:4096] if item.get("path") is not None else None}
+            for item in diagnostics[:100]
+        ]
+        payload = {
+            "valid": valid, "diagnostics": diagnostics[:100], "summary": summary,
+            "normalized_definition": definition,
+            "source_sha256": hashlib.sha256(request.content.encode("utf-8")).hexdigest(),
+            "normalization_checksum": value.checksum if valid else None,
+            "source_format": "json" if request.filename.lower().endswith(".json") else "yaml",
+            "expected_checksum": result.get("expected_checksum"),
+        }
+        checked = _outbound(OntologySourceValidationResponse, payload)
+        return checked.model_dump(mode="python", by_alias=True), value if valid else None
+
+    def ontology_validate(
+        self, principal: Principal, request: OntologySourceRequest,
+    ) -> BackendResult:
+        _require_capability(principal, "ontology:write")
+        payload, _ = self._diagnose_ontology_file(principal, request)
+        return BackendResult(payload)
+
+    def ontology_import_file(
+        self, principal: Principal, request: OntologySourceImportRequest,
+    ) -> BackendResult:
+        _require_capability(principal, "ontology:write")
+        if request.activate:
+            _require_capability(principal, "ontology:publish")
+        payload, value = self._diagnose_ontology_file(principal, request)
+        if value is None:
+            raise RequestValidationError()
+        if (payload["source_sha256"] != request.expected_source_sha256
+                or value.checksum != request.expected_normalization_checksum):
+            raise ConflictError()
+        embedded_checksum = payload.get("expected_checksum")
+        if (request.expected_checksum is not None and embedded_checksum is not None
+                and request.expected_checksum != embedded_checksum):
+            raise ConflictError()
+        expected_checksum = request.expected_checksum or embedded_checksum
+        source_file = {
+            "filename": request.filename, "format": payload["source_format"],
+            "content": request.content, "sha256": payload["source_sha256"],
+            "normalization_checksum": value.checksum,
+            "normalization_version": SOURCE_NORMALIZATION_VERSION,
+        }
+        try:
+            if request.activate:
+                stored = self.tboxes.save_and_activate(
+                    value, expected_checksum=expected_checksum,
+                    expected_active_tbox_id=request.expected_active_tbox_id,
+                    source_file=source_file, created_by=principal.principal_id,
+                )
+            else:
+                stored = self.tboxes.import_version(
+                    value, expected_checksum=expected_checksum,
+                    source_file=source_file, created_by=principal.principal_id,
+                )
+        except ApiRuntimeError:
+            raise
+        except TimeoutError as error:
+            raise DependencyTimeoutError() from error
+        except TBoxValidationError as error:
+            raise RequestValidationError() from error
+        except TBoxConflict as error:
+            raise ConflictError() from error
+        except Exception as error:
+            raise DependencyUnavailableError() from error
+        return BackendResult(_outbound(OntologyVersionResponse, _tbox_payload(stored)))
+
     def ontology_import(
         self, principal: Principal, request: OntologyImportRequest
     ) -> BackendResult:
@@ -1215,25 +1366,60 @@ class Neo4jKnowledgeOperations:
         if request.extraction_mode == "MANUAL":
             raise RequestValidationError()
         try:
+            if request.extraction_mode == "LLM":
+                active = self.tboxes.active(principal.tenant_id, request.tbox_key)
+                if active is None or active.status is not TBoxStatus.PUBLISHED:
+                    raise ConflictError()
+                if any("llm-candidate" not in item.canonical_key_namespaces
+                       for item in active.entity_types if item.instance_allowed):
+                    raise ConstructionOntologyIncompatibleError()
             report = self.preflight.check(
                 principal, request.decoded_content(),
                 canonical_uri=request.canonical_uri, mime_type=request.mime_type,
             )
+            parsed = None
+            if request.mapping_profile is not None or request.chunking is not None:
+                parsed = self._parse_upload(request.decoded_content(), request)
+                self.construction._preflight_budget(parsed, extraction_mode=request.extraction_mode)
+            if request.chunking is not None:
+                report["chunking"] = chunking_summary(parsed, request.chunking.to_domain())
+            if request.mapping_profile is not None:
+                from graphrag_prod.construction.mapping_preflight import preview_mapping
+                tbox = self.tboxes.active(principal.tenant_id, request.tbox_key)
+                if (tbox is None or tbox.status is not TBoxStatus.PUBLISHED
+                        or tbox.tenant_id != principal.tenant_id or tbox.key != request.tbox_key):
+                    raise ConflictError()
+                report["mapping_preflight"] = preview_mapping(parsed, request.mapping_profile, tbox)
             # This is an explicit decision receipt, not an authorization token.
             # Bind it to both the selected source view and all upload settings.
             settings = request.model_dump(mode="json", exclude={"preflight_token", "content_base64"})
+            if request.chunking is None:
+                settings.pop("chunking", None)
             receipt = {"principal": principal.principal_id, "tenant": principal.tenant_id,
                        "groups": sorted(principal.groups), "settings": settings, "report": report}
             token = hashlib.sha256(json.dumps(receipt, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             return BackendResult(_outbound(KnowledgeUploadPreflightResponse, {**report, "review_token": token}))
         except ApiRuntimeError:
             raise
-        except (DocumentParseError, ValueError, TypeError) as error:
+        except DocumentParseError as error:
+            if request.mime_type in {"application/xml", "text/xml"}:
+                raise XmlInputInvalidError() from error
+            raise RequestValidationError() from error
+        except (ValueError, TypeError) as error:
             raise RequestValidationError() from error
         except TimeoutError as error:
             raise DependencyTimeoutError() from error
         except Exception as error:
             raise DependencyUnavailableError() from error
+
+    def _prepare_source_index(self, principal: Principal) -> None:
+        """Runtime hook after durable source construction, before automatic review."""
+
+    def _parse_upload(self, content: bytes, request: KnowledgeConstructionRequest):
+        parser = (getattr(self.construction, "industrial_parser", None)
+                  if request.industrial_context is not None else None) or self.upload_parser
+        return parse_with_chunking(parser, content, mime_type=request.mime_type,
+                                   chunking=None if request.chunking is None else request.chunking.to_domain())
 
     def construct(
         self, principal: Principal, request: KnowledgeConstructionRequest
@@ -1260,13 +1446,15 @@ class Neo4jKnowledgeOperations:
                 knowledge_scope=request.knowledge_scope,
                 manual_record=None if request.manual_fact is None else request.manual_fact.to_record(),
                 industrial_context=None if request.industrial_context is None else request.industrial_context.to_domain(),
+                mapping_profile=request.mapping_profile,
+                chunking=None if request.chunking is None else request.chunking.to_domain(),
             )
             content = request.decoded_content()
         except (TypeError, ValueError) as error:
             raise RequestValidationError() from error
         try:
             guard = nullcontext() if request.extraction_mode == "MANUAL" else self.upload_guard.hold(
-                principal, self.upload_parser.parse(content, mime_type=request.mime_type).normalized_checksum,
+                principal, self._parse_upload(content, request).normalized_checksum,
                 request.access_groups,
             )
             with guard:
@@ -1275,6 +1463,7 @@ class Neo4jKnowledgeOperations:
                     if (checked.exact_matches or checked.similar_matches or checked.truncated) and request.preflight_token != checked.review_token:
                         raise UploadReviewRequiredError()
                 result = self.construction.run(principal, content, metadata)
+            self._prepare_source_index(principal)
         except UploadAlreadyRunning as error:
             raise UploadInProgressError() from error
         except ApiRuntimeError:
@@ -1283,11 +1472,17 @@ class Neo4jKnowledgeOperations:
             raise ResourceNotFoundError() from error
         except ConstructionIngestionFailed as error:
             raise ConstructionIngestionFailedError() from error
+        except ConstructionChunkingConflict as error:
+            raise ConstructionChunkingConflictError() from error
         except (ConstructionConflict, IngestionConflict) as error:
             raise ConflictError() from error
         except IndustrialUploadBudgetExceeded as error:
             raise IndustrialConstructionInputLimitError() from error
-        except (ConstructionBudgetExceeded, DocumentParseError) as error:
+        except DocumentParseError as error:
+            if request.mime_type in {"application/xml", "text/xml"}:
+                raise XmlInputInvalidError() from error
+            raise RequestValidationError() from error
+        except ConstructionBudgetExceeded as error:
             raise RequestValidationError() from error
         except TimeoutError as error:
             raise DependencyTimeoutError() from error
@@ -1301,6 +1496,7 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         try:
             payload = {
+                "chunking": getattr(result, "chunking", None),
                 "job_id": result.job_id,
                 "extraction_mode": result.extraction_mode,
                 "document_id": result.document_id,
@@ -1309,7 +1505,8 @@ class Neo4jKnowledgeOperations:
                 "tbox_id": result.tbox_id,
                 "chunks": tuple(_construction_chunk_payload(item) for item in result.chunks),
             }
-            if self.auto_reviews is not None and result.extraction_mode == "LLM":
+            if (self.auto_reviews is not None and result.extraction_mode == "LLM"
+                    and request.mapping_profile is None):
                 # Source construction and review share the construction request's
                 # bounded wall-clock budget. Review can be resumed separately.
                 total_budget = getattr(getattr(self.construction, "config", None), "deadline_seconds", 4200)
@@ -1361,7 +1558,9 @@ class Neo4jKnowledgeOperations:
         self, principal: Principal, request: ReviewQueueRequest
     ) -> BackendResult:
         _require_capability(principal, "knowledge:review")
+        from graphrag_prod.knowledge.review_cursor import decode_review_cursor, encode_review_cursor
         try:
+            decode_review_cursor(request.cursor)
             statuses = tuple(
                 GovernanceStatus(value) for value in request.statuses
             )
@@ -1371,7 +1570,8 @@ class Neo4jKnowledgeOperations:
             items = self.reviews.review_queue(
                 principal,
                 statuses=statuses,
-                limit=request.limit,
+                limit=request.limit + 1,
+                cursor=request.cursor,
             )
         except ApiRuntimeError:
             raise
@@ -1387,7 +1587,9 @@ class Neo4jKnowledgeOperations:
             raise DependencyUnavailableError() from error
         try:
             payload = {
-                "items": tuple(_review_record_payload(item) for item in items)
+                "items": tuple(_review_record_payload(item) for item in items[:request.limit]),
+                "next_cursor": encode_review_cursor(items[request.limit-1])
+                    if len(items) > request.limit else None,
             }
         except (AttributeError, KeyError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
@@ -1484,8 +1686,18 @@ class Neo4jKnowledgeOperations:
     ) -> BackendResult:
         _require_capability(principal, "knowledge:publish")
         try:
-            values = self.publications.candidates(principal, limit=request.limit)
+            values, total, total_entities = self.publications.candidate_page(
+                principal, limit=request.limit, offset=request.offset
+            )
+            selection, complete = self.publications.candidate_selection(principal) if request.select_all else ([], False)
+            complete = complete and len(selection) == total
             payload = {
+                "selection": selection if complete else [],
+                "selection_complete": complete,
+                "total": total,
+                "total_entities": total_entities,
+                "offset": request.offset,
+                "limit": request.limit,
                 "items": tuple(
                     {
                         "record": _review_record_payload(value.item),
@@ -2191,6 +2403,7 @@ class Neo4jKnowledgeOperations:
                 principal,
                 document_id=request.document_id,
                 limit=request.limit,
+                **({"export_all": True} if request.export_all else {}),
             )
         except ApiRuntimeError:
             raise
@@ -2223,6 +2436,18 @@ class Neo4jKnowledgeOperations:
             }
         except (AttributeError, TypeError, ValueError) as error:
             raise DependencyUnavailableError() from error
+        if request.export_all:
+            if request.publication_id and result.publication_id != request.publication_id:
+                raise ConflictError()
+            if result.truncated or len(result.items) != result.matching_record_count:
+                raise ConflictError()
+            payload.update(
+                format="graphrag-abox-export-v1",
+                exported_at=datetime.now(UTC).isoformat(),
+                tenant_id=principal.tenant_id,
+                scope="document" if result.document_id else "publication",
+            )
+            return BackendResult(_outbound(ActivePublicationExportResponse, payload))
         return BackendResult(_outbound(ActivePublicationInventoryResponse, payload))
 
     def documents(

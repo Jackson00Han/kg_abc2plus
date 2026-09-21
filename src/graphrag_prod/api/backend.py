@@ -47,6 +47,9 @@ from graphrag_prod.retrieval import (
 from graphrag_prod.retrieval.engine import RerankAttemptedFailure
 from .runtime import RerankingFailedError
 from .auto_review_contracts import AutoReviewResponse, AutoReviewRunRequest
+from .ontology_source_contracts import (
+    OntologySourceImportRequest, OntologySourceRequest, OntologySourceValidationResponse,
+)
 
 from .contracts import (
     AnswerRequest,
@@ -71,7 +74,7 @@ from .quality_history_contracts import (
 )
 from .source_contracts import SourceListRequest, SourceListResponse, SourceReadRequest, SourceReadResponse
 from .graph_contracts import (
-    GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
+    GraphBrowseRequest, GraphBrowseResponse, GraphEntityPageResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
     IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
 )
 from .knowledge_contracts import (
@@ -283,6 +286,14 @@ class KnowledgeOperations(Protocol):
 
     def ontology_import(
         self, principal: Principal, request: OntologyImportRequest
+    ) -> BackendResult: ...
+
+    def ontology_validate(
+        self, principal: Principal, request: OntologySourceRequest
+    ) -> BackendResult: ...
+
+    def ontology_import_file(
+        self, principal: Principal, request: OntologySourceImportRequest
     ) -> BackendResult: ...
 
     def ontology_publish(
@@ -1208,6 +1219,8 @@ class GraphRAGApplicationBackend:
             methods = (
                 "ontology_list",
                 "ontology_import",
+                "ontology_validate",
+                "ontology_import_file",
                 "ontology_publish",
                 "authoritative_import",
                 "construct",
@@ -1257,10 +1270,14 @@ class GraphRAGApplicationBackend:
                 request = _validated(request_model, envelope.payload)
             except (TypeError, ValueError) as error:
                 raise RequestValidationError() from error
+            if isinstance(request, GraphBrowseRequest) and request.result_mode == "entities":
+                response_model = GraphEntityPageResponse
             return _response(getattr(self._graph, method)(principal, request), response_model)
         knowledge_operations = {
             OperationKind.ONTOLOGY_LIST,
             OperationKind.ONTOLOGY_IMPORT,
+            OperationKind.ONTOLOGY_VALIDATE,
+            OperationKind.ONTOLOGY_FILE_IMPORT,
             OperationKind.ONTOLOGY_PUBLISH,
             OperationKind.KNOWLEDGE_IMPORT,
             OperationKind.KNOWLEDGE_PREFLIGHT,
@@ -1297,6 +1314,12 @@ class GraphRAGApplicationBackend:
         if envelope.operation in knowledge_operations:
             if self._knowledge is None:
                 raise ResourceNotFoundError()
+            if envelope.operation is OperationKind.ONTOLOGY_VALIDATE:
+                request = _validated(OntologySourceRequest, envelope.payload)
+                return _response(self._knowledge.ontology_validate(principal, request), OntologySourceValidationResponse)
+            if envelope.operation is OperationKind.ONTOLOGY_FILE_IMPORT:
+                request = _validated(OntologySourceImportRequest, envelope.payload)
+                return _response(self._knowledge.ontology_import_file(principal, request), OntologyVersionResponse)
             if envelope.operation is OperationKind.ONTOLOGY_LIST:
                 request = _validated(OntologyListRequest, envelope.payload)
                 return _response(

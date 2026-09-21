@@ -631,7 +631,7 @@ CALL (publication, revision) {
                    AND value.relationship_type = revision.predicate
                    AND value.property_value_id IS NOT NULL
                    AND value.name IS NOT NULL
-                   AND value.schema_version = revision.ontology_version_id
+                   AND value.schema_version IN [revision.ontology_version_id, $property_schema_version]
                    AND value.extractor_version IS NOT NULL
                    AND value.evidence_chunk_id = revision.chunk_id
                    AND value.document_id = revision.document_id
@@ -869,6 +869,8 @@ _AUTHORITY_BY_ORIGIN = {
     "EXPERT_IMPORT": "AUTHORITATIVE",
     "EXPERT_CREATED": "AUTHORITATIVE",
     "LLM_EXTRACTED": "SECONDARY",
+    "MAPPED": "SECONDARY",
+    "AUTHORITATIVE_MAPPED": "AUTHORITATIVE",
     "AUTHORITATIVE_EXTRACTED": "AUTHORITATIVE",
     "HUMAN_SUPPLEMENT": "SECONDARY",
     "RULE_DERIVED": "SECONDARY",
@@ -1058,8 +1060,14 @@ def _count(row: Mapping[str, Any], name: str) -> int:
 
 
 def _literal_semantics(revision: dict[str, Any]) -> TypedLiteralValue | None:
+    # Cypher map projections include missing optional properties as null.
+    # TEXT encoding is deliberately omitted when persisted; decode it exactly
+    # as an absent property, while still rejecting unknown encoding values.
+    properties = dict(revision)
+    if properties.get("literal_source_encoding") is None:
+        properties.pop("literal_source_encoding", None)
     try:
-        return TypedLiteralValue.from_flat_properties(revision)
+        return TypedLiteralValue.from_flat_properties(properties)
     except (TypeError, ValueError):
         return None
 
@@ -1248,7 +1256,7 @@ def _materialized_relationship_property_signatures(
     try:
         for raw_value in raw_values:
             stored = _mapping(raw_value)
-            literal = TypedLiteralValue.from_flat_properties(stored)
+            literal = _literal_semantics(stored)
             if literal is None:
                 return None
             values.append(
@@ -1988,6 +1996,10 @@ class Neo4jPublishedGraphQualityService:
             "manifest_hash": boundary.manifest_hash,
             "ontology_version_id": boundary.ontology_version_id,
             "tbox_checksum": boundary.tbox.checksum,
+            # Extraction persists the policy ID compiled from this exact T-Box.
+            "property_schema_version": (
+                f"{boundary.tbox.tenant_id}:{boundary.tbox.key}:v{boundary.tbox.version}"
+            ),
         }
         revision_rows = _rows(
             tx.run(

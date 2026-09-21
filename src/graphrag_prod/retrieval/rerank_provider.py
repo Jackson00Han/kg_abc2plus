@@ -1,7 +1,8 @@
 """Fixed-provider reranking with an isolated, terminable HTTPS request.
 
-This client orders complete, already-authorized Chunk texts. It cannot discover
-sources, widen permissions, truncate evidence, retry, or select a fallback.
+This client orders already-authorized complete Chunks or explicit exact source
+windows prepared by retrieval. It cannot discover sources, widen permissions,
+truncate inputs itself, retry, or select a fallback.
 """
 
 from __future__ import annotations
@@ -116,12 +117,20 @@ def provider_configuration(profile: str | RerankProviderProfile = DEFAULT_PROFIL
     }
 
 
+def _rendering_version(base: str, candidates: tuple[RerankCandidate, ...]) -> str:
+    return base + ("+exact-source-window:v1" if any(c.excerpt_checksum for c in candidates) else "")
+
+
 def _render(candidate: RerankCandidate, profile: RerankProviderProfile) -> str:
+    passage = candidate.text
+    if candidate.excerpt_checksum is not None:
+        passage = (f"[exact-source-window:v1; incomplete original excerpt; source-relative characters "
+                   f"{candidate.excerpt_start}:{candidate.excerpt_end}]\n" + passage)
     if not profile.include_source_context:
-        return candidate.text
+        return passage
     title = candidate.source_title or ""
     section = candidate.source_section or ""
-    return f"Source document: {title}\nSource section: {section}\nPassage:\n{candidate.text}"
+    return f"Source document: {title}\nSource section: {section}\nPassage:\n{passage}"
 
 
 def _request(query_text: str, candidates: tuple[RerankCandidate, ...],
@@ -137,7 +146,7 @@ def _request(query_text: str, candidates: tuple[RerankCandidate, ...],
     try:
         for candidate in candidates:
             if (not isinstance(candidate.text, str)
-                    or candidate.checksum != _checksum(candidate.text.encode("utf-8"))):
+                    or (candidate.excerpt_checksum or candidate.checksum) != _checksum(candidate.text.encode("utf-8"))):
                 raise RerankProviderError("RERANK_SOURCE_CHECKSUM")
         request = {"model": MODEL, "query": query_text,
                    "documents": [_render(item, profile) for item in candidates], "top_n": len(candidates)}
@@ -159,13 +168,16 @@ def rerank_cache_identity(query_text: str, candidates: tuple[RerankCandidate, ..
     request, paired = _request(query_text, candidates, profile)
     return {
         "profile": profile.profile_id, "model": MODEL, "endpoint": ENDPOINT,
-        "instruct": profile.instruct, "rendering_version": profile.rendering_version,
+        "instruct": profile.instruct, "rendering_version": _rendering_version(profile.rendering_version, candidates),
         "instruction_mode": "provider_default_qa" if profile.instruct is None else "explicit",
         "query_checksum": _checksum(query_text.encode("utf-8")),
         "candidates": [{"chunk_id": item.chunk_id, "checksum": item.checksum,
                         "document_id": getattr(item, "document_id", None),
                         "version_id": getattr(item, "version_id", None),
-                        "rendered_checksum": _checksum(rendered.encode("utf-8"))}
+                        "rendered_checksum": _checksum(rendered.encode("utf-8")),
+                        **({"excerpt_policy": "exact-source-window:v1",
+                            "excerpt_start": item.excerpt_start, "excerpt_end": item.excerpt_end,
+                            "excerpt_checksum": item.excerpt_checksum} if item.excerpt_checksum else {})}
                        for item, rendered in zip(candidates, request["documents"], strict=True)],
         "request_checksum": _checksum(canonical_bytes(request)),
         "pair_utf8_bytes": paired,
@@ -179,7 +191,7 @@ def response_metadata(response: RerankResponse, *,
         from .listwise_provider import listwise_response_metadata
         return listwise_response_metadata(response, profile=profile)
     profile = get_provider_profile(profile)
-    if response.instruct != profile.instruct or response.rendering_version != profile.rendering_version:
+    if response.instruct != profile.instruct or response.rendering_version not in {profile.rendering_version, profile.rendering_version + "+exact-source-window:v1"}:
         raise RerankProviderError("RERANK_PROFILE_MISMATCH")
     return {
         "profile": profile.profile_id, "model": response.model, "model_version_kind": "provider_alias",
@@ -247,7 +259,7 @@ def decode_response(payload: bytes, query_text: str, candidates: tuple[RerankCan
             input_checksum=_checksum(encoded), output_checksum=_checksum(canonical_bytes(normalized_output)),
             input_bytes=len(encoded), pair_utf8_bytes=paired, candidate_count=len(candidates),
             total_tokens=usage["total_tokens"],
-            rendering_version=profile.rendering_version,
+            rendering_version=_rendering_version(profile.rendering_version, candidates),
             rendered_input_checksums=tuple(_checksum(text.encode("utf-8")) for text in request["documents"]),
             source_checksums=tuple(item.checksum for item in candidates),
         )

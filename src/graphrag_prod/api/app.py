@@ -24,6 +24,9 @@ from graphrag_prod.observability.metrics import MetricsRegistry
 
 from .auth import AuthenticatedIdentity
 from .auto_review_contracts import AutoReviewResponse, AutoReviewRunRequest
+from .ontology_source_contracts import (
+    OntologySourceImportRequest, OntologySourceRequest, OntologySourceValidationResponse,
+)
 from .auth import AuthenticationError as JWTAuthenticationError
 from .auth import JWTAuthenticator, extract_bearer_token
 from .contracts import (
@@ -43,6 +46,7 @@ from .contracts import (
     RetrievalResponse,
 )
 from .knowledge_contracts import (
+    ActivePublicationExportResponse,
     ActivePublicationInventoryResponse,
     AuthoritativeImportRequest,
     AuthoritativeImportResponse,
@@ -104,7 +108,7 @@ from .quality_history_contracts import (
 )
 from .source_contracts import SourceListRequest, SourceListResponse, SourceReadRequest, SourceReadResponse
 from .graph_contracts import (
-    GraphBrowseRequest, GraphBrowseResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
+    GraphBrowseRequest, GraphBrowseResponse, GraphEntityPageResponse, GraphEvidenceRequest, GraphEvidenceResponseEnvelope,
     IndustrialSourcesRequest, IndustrialSourcesResponse, IndustrialSourceChunkRequest, IndustrialSourceChunkEnvelope,
 )
 
@@ -771,7 +775,7 @@ def create_app(
     async def source_library_read(request: Request, body: SourceReadRequest, identity: IdentityDependency) -> Any:
         return await run_operation(request, identity, OperationKind.SOURCE_READ, body.model_dump(mode="python"))
 
-    @app.post("/v1/knowledge/graph:query", response_model=GraphBrowseResponse)
+    @app.post("/v1/knowledge/graph:query", response_model=GraphBrowseResponse | GraphEntityPageResponse)
     async def graph_query(request: Request, body: GraphBrowseRequest, identity: IdentityDependency) -> Any:
         return await run_operation(request, identity, OperationKind.GRAPH_QUERY, body.model_dump(mode="python"))
 
@@ -806,6 +810,22 @@ def create_app(
             identity,
             OperationKind.ONTOLOGY_LIST,
             {"key": key, "status": ontology_status, "limit": limit},
+        )
+
+    @app.post("/v1/ontologies:validate", response_model=OntologySourceValidationResponse)
+    async def validate_ontology_source(
+        request: Request, body: OntologySourceRequest, identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request, identity, OperationKind.ONTOLOGY_VALIDATE, body.model_dump(mode="python"),
+        )
+
+    @app.post("/v1/ontologies:import-file", response_model=OntologyVersionResponse)
+    async def import_ontology_source(
+        request: Request, body: OntologySourceImportRequest, identity: IdentityDependency,
+    ) -> Any:
+        return await run_operation(
+            request, identity, OperationKind.ONTOLOGY_FILE_IMPORT, body.model_dump(mode="python"),
         )
 
     @app.post(
@@ -947,6 +967,7 @@ def create_app(
             Query(alias="status", min_length=1, max_length=2),
         ] = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        cursor: Annotated[str | None, Query(min_length=1, max_length=1024)] = None,
     ) -> Any:
         return await run_operation(
             request,
@@ -955,6 +976,7 @@ def create_app(
             {
                 "statuses": tuple(statuses or ("CANDIDATE", "QUARANTINED")),
                 "limit": limit,
+                "cursor": cursor,
             },
         )
 
@@ -1096,12 +1118,14 @@ def create_app(
         request: Request,
         identity: IdentityDependency,
         limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+        select_all: bool = False,
     ) -> Any:
         return await run_operation(
             request,
             identity,
             OperationKind.KNOWLEDGE_PUBLICATION_CANDIDATES,
-            {"limit": limit},
+            {"limit": limit, "offset": offset, "select_all": select_all},
         )
 
     @app.post(
@@ -1162,6 +1186,29 @@ def create_app(
             OperationKind.KNOWLEDGE_INVENTORY,
             {"document_id": document_id, "limit": limit},
         )
+
+    @app.get(
+        "/v1/knowledge/publication-inventory/export",
+        response_model=ActivePublicationExportResponse,
+    )
+    async def export_publication_inventory(
+        request: Request,
+        response: Response,
+        identity: IdentityDependency,
+        document_id: Annotated[
+            str | None, Query(min_length=1, max_length=256, pattern=r"^[^\x00-\x20\x7f]+$"),
+        ] = None,
+        publication_id: Annotated[
+            str | None, Query(min_length=1, max_length=256, pattern=r"^[^\x00-\x20\x7f]+$"),
+        ] = None,
+    ) -> Any:
+        payload = await run_operation(
+            request, identity, OperationKind.KNOWLEDGE_INVENTORY,
+            {"document_id": document_id, "publication_id": publication_id, "export_all": True},
+        )
+        response.headers["Content-Disposition"] = 'attachment; filename="knowledge-instances.json"'
+        response.headers["Cache-Control"] = "no-store"
+        return payload
 
     @app.post("/v1/knowledge/publications:compare", response_model=PublicationComparisonResponse)
     async def compare_publications(request: Request, body: PublicationComparisonRequest, identity: IdentityDependency) -> Any:

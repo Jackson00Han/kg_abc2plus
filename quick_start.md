@@ -51,18 +51,23 @@ tail -n 60 .local/workbench/8002.log
 
 不要将 `.env` 或 `.env.workbench.local` 提交到 Git、截图或公开分享。
 
+模型配置也可写入 `.env.workbench.local`，其值优先于 `.env`。切换时一起核对
+`OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `MODEL_NAME`。启动支持旧版 DashScope 地址及
+百炼官方业务空间地址 `https://ws-<空间ID>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`
+（以及官方列出的新加坡、法兰克福、东京、香港、弗吉尼亚地域）。只接受 HTTPS 官方
+接口地址，不接受嵌入凭据、查询参数或其他主机。
+
+抽取与向量模型目前共用此地址和 Key。切换后须分别验证文本生成与向量生成；
+保持 `EMBEDDING_MODEL` 和 `EMBEDDING_DIMENSIONS` 的向量空间配置，避免混用已有索引。
+
+
 ## 遇到问题
 
 - **Docker 未启动**：先打开 Docker Desktop，等它就绪后再次运行。脚本可启动已有且停止的数据库容器，但不会创建替代数据库或删除容器。
 - **8002 被其他程序占用**：脚本会停止操作，避免误关其他服务；先确认占用程序。
 - **服务仍在收尾**：等待当前任务结束，再次运行；脚本不会强制终止任务。
 - **缺少 `.env.workbench.local`**：通常发生在新电脑或重新克隆仓库。需先恢复同一个数据库及其连接配置，不能仅凭源码恢复知识数据。该文件需要 `PLAYGROUND_NEO4J_URI`、`PLAYGROUND_NEO4J_USER`、`PLAYGROUND_NEO4J_PASSWORD`、`PLAYGROUND_NEO4J_DATABASE=neo4j`，以及可选的 `WORKBENCH_NEO4J_CONTAINER`。请使用真实的现有数据库配置，不要复制别人的密码。
+- **图谱展示文件无法生成**：后端预计算需要 Node.js 18 或更高版本，先运行 `node --version` 检查；缺失时使用 [Node.js 官方安装包](https://nodejs.org/en/download) 安装。无需额外安装 npm 图谱依赖。详情见 [图谱可视化制品](docs/graph-visualization.md)。
 - **缺少 `.venv`**：在项目目录按项目依赖说明准备 Python 3.12 环境与依赖，再运行脚本。快速启动不自动重建环境或安装软件。
 
 此入口针对当前 Mac 和已有水泵测试库；它不是新电脑的一键初始化或生产部署脚本。
-
-## 本次验证
-
-2026-09-10 已实际通过此入口重启 8002，页面可访问，水泵库保留 4 个节点、3 条关系、
-4 条属性；隔离模式保持开启。3 项进程识别与数据库预检保护测试通过，Shell 语法及
-差异检查通过。未通过停止数据库容器或故意中断模型任务进行测试。

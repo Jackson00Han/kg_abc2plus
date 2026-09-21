@@ -297,6 +297,6 @@ class Neo4jContextProjectionService:
             committed.update(r.record_id for r in packet)
             summary["applied"]=len(committed)
             self._progress(identifier,committed,summary)
-        summary["status"]="COMPLETED" if committed==expected else "PARTIAL"
+        summary["status"]="COMPLETED" if committed==expected and not compilation.issues else "PARTIAL"
         self._progress(identifier,committed,summary)
         return summary

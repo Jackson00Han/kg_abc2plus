@@ -1,0 +1,10 @@
+{
+  "profile": "desktop-graph.v1",
+  "max_nodes": 200,
+  "max_edges": 300,
+  "max_page_items": 200,
+  "max_literal_items_per_page": 200,
+  "max_hops": 2,
+  "overview": "complete_selected_scope_or_explicit_limit_error",
+  "properties": "on_demand_dossier_and_bounded_graph_pages"
+}

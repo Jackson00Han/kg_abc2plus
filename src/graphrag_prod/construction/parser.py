@@ -11,6 +11,7 @@ import csv
 import io
 import json
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -23,9 +24,11 @@ DEFAULT_MAX_SOURCE_BYTES = 5 * 1024 * 1024
 _BUILTIN_MIME_TYPES = frozenset(
     {
         "application/json",
+        "application/xml",
         "text/csv",
         "text/markdown",
         "text/plain",
+        "text/xml",
     }
 )
 _ALLOWED_TEXT_CONTROLS = frozenset({"\n", "\t"})
@@ -33,6 +36,28 @@ _ALLOWED_TEXT_CONTROLS = frozenset({"\n", "\t"})
 
 class DocumentParseError(ValueError):
     """A source failed the bounded parser contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkingOptions:
+    """Per-upload settings; never mutate a shared parser's configuration."""
+
+    max_chars: int = 1_200
+    strategy: str = "structure"
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.max_chars, bool)
+            or not isinstance(self.max_chars, int)
+            or not 800 <= self.max_chars <= (65_536 if self.strategy == "mapped_document" else 3_000)
+        ):
+            raise ValueError("chunking max_chars must be an integer between 800 and 3000")
+        if self.strategy not in ("structure", "fixed", "mapped_document"):
+            raise ValueError("chunking strategy must be structure or fixed")
+
+    @property
+    def signature(self) -> str:
+        return f"upload-chunking:v1:strategy={self.strategy}:max={self.max_chars}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +71,15 @@ class ParserLimits:
     max_csv_rows: int = 100_000
     max_csv_cells: int = 1_000_000
     max_csv_field_chars: int = 100_000
+    max_xml_depth: int = 64
+    max_xml_nodes: int = 100_000
+    max_xml_attributes: int = 256
+    max_xml_attribute_chars: int = 100_000
+    max_xml_name_chars: int = 512
+    max_xml_text_fragments: int = 200_000
+    max_xml_total_attributes: int = 100_000
+    max_xml_path_chars: int = 4_096
+    max_xml_total_path_chars: int = 8 * 1024 * 1024
 
     def __post_init__(self) -> None:
         for name in (
@@ -56,6 +90,15 @@ class ParserLimits:
             "max_csv_rows",
             "max_csv_cells",
             "max_csv_field_chars",
+            "max_xml_depth",
+            "max_xml_nodes",
+            "max_xml_attributes",
+            "max_xml_attribute_chars",
+            "max_xml_name_chars",
+            "max_xml_text_fragments",
+            "max_xml_total_attributes",
+            "max_xml_path_chars",
+            "max_xml_total_path_chars",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -410,10 +453,13 @@ class BoundedDocumentParser:
         if not isinstance(json_record_boundaries, bool):
             raise TypeError("json_record_boundaries must be a boolean")
         self.json_record_boundaries = json_record_boundaries
+        from .xml_parser import XmlDocumentParser
+
         selected_plugins = plugins or (
             Utf8TextParser(),
             JsonDocumentParser(self.limits),
             CsvDocumentParser(self.limits),
+            XmlDocumentParser(self.limits),
         )
         registry: dict[str, DocumentParserPlugin] = {}
         for plugin in selected_plugins:
@@ -432,7 +478,12 @@ class BoundedDocumentParser:
     def allowed_mime_types(self) -> frozenset[str]:
         return frozenset(self._registry)
 
-    def parse(self, payload: bytes, *, mime_type: str) -> ParsedDocument:
+    def parse(
+        self, payload: bytes, *, mime_type: str,
+        chunking: ChunkingOptions | None = None,
+    ) -> ParsedDocument:
+        if chunking is not None and not isinstance(chunking, ChunkingOptions):
+            raise TypeError("chunking must be ChunkingOptions or None")
         if not isinstance(payload, bytes):
             raise TypeError("payload must be bytes")
         if not payload:
@@ -451,27 +502,54 @@ class BoundedDocumentParser:
         normalized = located.text if located else _normalize_text(parsed)
         if len(normalized) > self.limits.max_normalized_chars:
             raise DocumentParseError("normalized source exceeds the character limit")
-        record_chunks = self.json_record_boundaries and canonical_mime == "application/json" and not located
+        selected = self.chunking if chunking is None else ChunkingConfig(max_chars=chunking.max_chars)
+        mapped_document = chunking is not None and chunking.strategy == "mapped_document"
+        if mapped_document and (canonical_mime not in {"application/xml", "text/xml"}
+                                or len(normalized) > selected.max_chars):
+            raise DocumentParseError("mapped XML document exceeds its bounded evidence window")
+        fixed_chunks = chunking is not None and chunking.strategy == "fixed"
+        record_chunks = (self.json_record_boundaries or chunking is not None) and canonical_mime == "application/json" and not located
+        markdown_chunks = canonical_mime == "text/markdown" and not located
+        xml_chunks = canonical_mime in {"application/xml", "text/xml"} and not located
         chunks = (
-            split_located_gapless(located, config=self.chunking)
+            split_located_gapless(located, config=selected, fixed=fixed_chunks)
             if located
-            else split_json_records_gapless(normalized, config=self.chunking)
+            else split_fixed_gapless(normalized, max_chars=selected.max_chars)
+            if fixed_chunks or mapped_document
+            else split_json_records_gapless(normalized, config=selected)
             if record_chunks
-            else split_gapless(normalized, config=self.chunking)
+            else split_markdown_packed_gapless(normalized, config=selected)
+            if markdown_chunks and chunking is not None
+            else split_markdown_sections_gapless(normalized, config=selected)
+            if markdown_chunks
+            else split_xml_gapless(normalized, config=selected, limits=self.limits)
+            if xml_chunks
+            else split_gapless(normalized, config=selected)
         )
+        signature = (
+            f"{selected.signature}|{located.parser_version}:"
+            f"pages={','.join(str(page) for page in located.selected_pages)}"
+            if located
+            else f"{selected.signature}|fixed-character:v1"
+            if fixed_chunks or mapped_document
+            else f"{selected.signature}|json-record-boundaries:v1"
+            if record_chunks
+            else f"{selected.signature}|markdown-packed-blocks:v1"
+            if markdown_chunks and chunking is not None
+            else f"{selected.signature}|markdown-sections:v1"
+            if markdown_chunks
+            else f"{selected.signature}|bounded-xml-spans:v1"
+            if xml_chunks
+            else selected.signature
+        )
+        if chunking is not None:
+            signature = f"{chunking.signature}|{signature}"
         return ParsedDocument(
             mime_type=canonical_mime,
             normalized_text=normalized,
             original_checksum=content_checksum(payload),
             normalized_checksum=content_checksum(normalized),
-            splitter_signature=(
-                f"{self.chunking.signature}|{located.parser_version}:"
-                f"pages={','.join(str(page) for page in located.selected_pages)}"
-                if located
-                else f"{self.chunking.signature}|json-record-boundaries:v1"
-                if record_chunks
-                else self.chunking.signature
-            ),
+            splitter_signature=signature,
             chunks=chunks,
             source_locations=located.source_locations if located else (),
             parser_version=located.parser_version if located else None,
@@ -479,8 +557,19 @@ class BoundedDocumentParser:
         )
 
 
+def parse_with_chunking(
+    parser: Any, payload: bytes, *, mime_type: str,
+    chunking: ChunkingOptions | None = None,
+) -> ParsedDocument:
+    """Keep legacy parser injection compatible when no options were requested."""
+    if chunking is None:
+        return parser.parse(payload, mime_type=mime_type)
+    return parser.parse(payload, mime_type=mime_type, chunking=chunking)
+
+
 def split_located_gapless(
-    source: NormalizedSource, *, config: ChunkingConfig | None = None
+    source: NormalizedSource, *, config: ChunkingConfig | None = None,
+    fixed: bool = False,
 ) -> tuple[ChunkSeed, ...]:
     """Apply the existing splitter independently inside each selected page."""
 
@@ -488,9 +577,12 @@ def split_located_gapless(
     for page in source.source_locations:
         if page.kind != "page":
             continue
-        for seed in split_gapless(
-            source.text[page.char_start:page.char_end], config=config
-        ):
+        page_text = source.text[page.char_start:page.char_end]
+        page_chunks = (
+            split_fixed_gapless(page_text, max_chars=(config or ChunkingConfig()).max_chars)
+            if fixed else split_gapless(page_text, config=config)
+        )
+        for seed in page_chunks:
             seeds.append(
                 ChunkSeed(
                     ordinal=len(seeds),
@@ -502,6 +594,21 @@ def split_located_gapless(
                 )
             )
     return tuple(seeds)
+
+
+def split_fixed_gapless(normalized_text: str, *, max_chars: int) -> tuple[ChunkSeed, ...]:
+    """Use exact character lengths; the final fragment may be shorter."""
+    if not isinstance(normalized_text, str) or not normalized_text:
+        raise ValueError("normalized_text must be a nonempty string")
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars <= 0:
+        raise ValueError("max_chars must be a positive integer")
+    return tuple(
+        ChunkSeed(
+            ordinal=index, text=normalized_text[start:start + max_chars],
+            char_start=start, char_end=min(start + max_chars, len(normalized_text)),
+        )
+        for index, start in enumerate(range(0, len(normalized_text), max_chars))
+    )
 
 
 def split_gapless(
@@ -608,6 +715,183 @@ def split_json_records_gapless(
         if end <= start:
             # We are inside an oversized value. Split only up to the next
             # structural boundary, then resume ordinary record packing.
+            next_boundary = ordered[boundary_index]
+            fragment = split_gapless(
+                normalized_text[start:min(next_boundary, hard_end + 1)], config=selected,
+            )[0]
+            end = start + fragment.char_end
+        seeds.append(ChunkSeed(
+            ordinal=len(seeds), text=normalized_text[start:end],
+            char_start=start, char_end=end,
+        ))
+        start = end
+    return tuple(seeds)
+
+
+def _markdown_sections(normalized_text: str) -> list[tuple[int, str | None]]:
+    """Locate heading paths without interpreting fenced code as headings."""
+    sections: list[tuple[int, str | None]] = [(0, None)]
+    headings: list[tuple[int, str]] = []
+    fence: tuple[str, int] | None = None
+    cursor = 0
+    for line in normalized_text.splitlines(keepends=True):
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\n"))
+        if fence:
+            if match and match[1][0] == fence[0] and len(match[1]) >= fence[1] and not match[2].strip():
+                fence = None
+        elif match:
+            if match[1][0] != "`" or "`" not in match[2]:
+                fence = (match[1][0], len(match[1]))
+        else:
+            heading = re.match(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?)|[ \t]*)$", line.rstrip("\n"))
+            if heading:
+                level = len(heading[1])
+                title = re.sub(r"[ \t]+#+[ \t]*$", "", heading[2] or "").strip()
+                if title:
+                    while headings and headings[-1][0] >= level:
+                        headings.pop()
+                    headings.append((level, title))
+                    section = " / ".join(item[1] for item in headings)
+                    if cursor == 0:
+                        sections[0] = (0, section)
+                    else:
+                        sections.append((cursor, section))
+        cursor += len(line)
+    return sections
+
+
+def split_markdown_sections_gapless(
+    normalized_text: str, *, config: ChunkingConfig | None = None,
+) -> tuple[ChunkSeed, ...]:
+    """Legacy section splitting, retained for existing jobs and evidence IDs."""
+    selected = config or ChunkingConfig()
+    sections = _markdown_sections(normalized_text)
+    seeds: list[ChunkSeed] = []
+    for index, (start, section) in enumerate(sections):
+        end = sections[index + 1][0] if index + 1 < len(sections) else len(normalized_text)
+        for seed in split_gapless(normalized_text[start:end], config=selected):
+            seeds.append(ChunkSeed(
+                ordinal=len(seeds), text=seed.text,
+                char_start=start + seed.char_start, char_end=start + seed.char_end,
+                section=section,
+            ))
+    return tuple(seeds)
+
+
+def _markdown_block_boundaries(normalized_text: str) -> set[int]:
+    """Locate paragraphs and opaque fenced-code/table blocks in original text."""
+    lines = normalized_text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    boundaries = {0, len(normalized_text)}
+    fence: tuple[str, int] | None = None
+    table = False
+    for index, line in enumerate(lines):
+        stripped = line.rstrip("\n")
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", stripped)
+        if fence:
+            if match and match[1][0] == fence[0] and len(match[1]) >= fence[1] and not match[2].strip():
+                fence = None
+                boundaries.add(offsets[index + 1])
+            continue
+        if table:
+            if stripped.strip() and "|" in stripped:
+                continue
+            table = False
+            boundaries.add(offsets[index])
+        if match and (match[1][0] != "`" or "`" not in match[2]):
+            fence = (match[1][0], len(match[1]))
+            boundaries.add(offsets[index])
+            continue
+        # GFM-style pipe tables. The delimiter row distinguishes a table from
+        # ordinary prose containing a pipe; no text is rewritten or repeated.
+        if "|" in stripped and index + 1 < len(lines):
+            cells = lines[index + 1].strip().strip("|").split("|")
+            if all(re.fullmatch(r"\s*:?-{1,}:?\s*", cell) for cell in cells):
+                table = True
+                boundaries.add(offsets[index])
+                continue
+        if not stripped.strip():
+            boundaries.add(offsets[index + 1])
+    return boundaries
+
+
+def split_markdown_packed_gapless(
+    normalized_text: str, *, config: ChunkingConfig | None = None,
+) -> tuple[ChunkSeed, ...]:
+    """Pack consecutive short sections; split large sections at block boundaries.
+
+    A table or code fence that fits the limit stays together. Oversized blocks
+    still obey the hard limit. Source text, offsets and section paths remain
+    exact; a chunk spanning multiple sections names its first and last path.
+    """
+    selected = config or ChunkingConfig()
+    sections = _markdown_sections(normalized_text)
+    block_boundaries = sorted(_markdown_block_boundaries(normalized_text))
+    boundaries = {start for start, _ in sections} | {len(normalized_text)}
+    block_index = 0
+    for index, (start, _) in enumerate(sections):
+        end = sections[index + 1][0] if index + 1 < len(sections) else len(normalized_text)
+        while block_index < len(block_boundaries) and block_boundaries[block_index] <= end:
+            boundary = block_boundaries[block_index]
+            if end - start > selected.max_chars and start < boundary < end:
+                boundaries.add(boundary)
+            block_index += 1
+    ordered = sorted(boundaries)
+    seeds: list[ChunkSeed] = []
+    start, boundary_index, section_index = 0, 1, 0
+    while start < len(normalized_text):
+        hard_end = min(start + selected.max_chars, len(normalized_text))
+        end = start
+        while boundary_index < len(ordered) and ordered[boundary_index] <= hard_end:
+            end = ordered[boundary_index]
+            boundary_index += 1
+        if end <= start:
+            # The next paragraph/table/fence exceeds the limit; preserve the
+            # same exact-text fallback used by the other structure splitters.
+            fragment = split_gapless(normalized_text[start:min(ordered[boundary_index], hard_end + 1)], config=selected)[0]
+            end = start + fragment.char_end
+        while section_index + 1 < len(sections) and sections[section_index + 1][0] <= start:
+            section_index += 1
+        last_index = section_index
+        while last_index + 1 < len(sections) and sections[last_index + 1][0] < end:
+            last_index += 1
+        first_section, last_section = sections[section_index][1], sections[last_index][1]
+        section = (f"{first_section} → {last_section}"
+                   if first_section and last_section and first_section != last_section
+                   else first_section or last_section)
+        seeds.append(ChunkSeed(
+            ordinal=len(seeds), text=normalized_text[start:end],
+            char_start=start, char_end=end, section=section,
+        ))
+        start = end
+    return tuple(seeds)
+
+
+def split_xml_gapless(
+    normalized_text: str, *, config: ChunkingConfig | None = None,
+    limits: ParserLimits | None = None,
+) -> tuple[ChunkSeed, ...]:
+    """Pack source XML tags at exact boundaries; retain the hard chunk bound."""
+    from .xml_parser import locate_xml
+
+    selected = config or ChunkingConfig()
+    root = locate_xml(normalized_text, limits=limits)
+    boundaries = {0, len(normalized_text)}
+    for element in root.walk():
+        boundaries.update((element.start, element.start_tag_end, element.end))
+    ordered = sorted(boundaries)
+    seeds: list[ChunkSeed] = []
+    start = 0
+    boundary_index = 1
+    while start < len(normalized_text):
+        hard_end = min(start + selected.max_chars, len(normalized_text))
+        end = start
+        while boundary_index < len(ordered) and ordered[boundary_index] <= hard_end:
+            end = ordered[boundary_index]
+            boundary_index += 1
+        if end <= start:
             next_boundary = ordered[boundary_index]
             fragment = split_gapless(
                 normalized_text[start:min(next_boundary, hard_end + 1)], config=selected,

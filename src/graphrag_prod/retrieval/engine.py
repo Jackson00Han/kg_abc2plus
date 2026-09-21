@@ -25,6 +25,7 @@ from graphrag_prod.domain import Principal, retrieval_scope_token
 from graphrag_prod.graph.browse_models import GraphViewChanged
 from graphrag_prod.knowledge.publication_guard import publication_members_guard
 
+from .excerpts import EXCERPT_POLICY, context_record, restore_excerpt, rerank_record
 from .models import (
     Citation,
     RetrievalRequest,
@@ -740,6 +741,14 @@ def _trace_hits(
     )
 
 
+def _context_records(records: dict[str, dict[str, Any]], request: RetrievalRequest) -> dict[str, dict[str, Any]]:
+    try:
+        return {identifier: context_record(record, request.query_text, request.limits.max_context_chars)
+                for identifier, record in records.items()}
+    except (ValueError, KeyError, TypeError):
+        raise RetrievalUnavailable("source Chunk integrity validation failed") from None
+
+
 def _retrieved_chunk(
     record: dict[str, Any], *, role: str, score: float | None, reasons: tuple[str, ...],
 ) -> RetrievedChunk:
@@ -759,6 +768,10 @@ def _retrieved_chunk(
         section=None if record.get("section") is None else str(record["section"]),
         document_title=None if record.get("document_title") is None else str(record["document_title"]),
         published_at=_native_datetime(record.get("published_at")),
+        is_excerpt=record.get("is_excerpt", False),
+        source_char_start=record.get("source_char_start"),
+        source_char_end=record.get("source_char_end"),
+        excerpt_checksum=record.get("excerpt_checksum"),
     )
     return RetrievedChunk(str(record["text"]), citation, role, score, reasons)
 
@@ -873,7 +886,11 @@ class Neo4jRetrievalEngine:
             if len(rows) != len(result.chunks) or set(by_id) != set(trace.selected_chunk_ids):
                 raise GraphViewChanged()
             for chunk in result.chunks:
-                current = _retrieved_chunk(by_id[chunk.citation.chunk_id], role=chunk.role,
+                try:
+                    record = restore_excerpt(by_id[chunk.citation.chunk_id], chunk.citation)
+                except (ValueError, KeyError, TypeError):
+                    raise GraphViewChanged() from None
+                current = _retrieved_chunk(record, role=chunk.role,
                                            score=chunk.score, reasons=chunk.reasons)
                 if current != chunk:
                     raise GraphViewChanged()
@@ -1029,7 +1046,16 @@ class Neo4jRetrievalEngine:
             raise _CorpusStateChanged()
         for candidate in prepared.candidates:
             row = hydrated[candidate.chunk_id]
-            if (row["text"] != candidate.text or row["chunk_checksum"] != candidate.checksum
+            try:
+                context_record(row, "", len(row["text"]))
+            except (ValueError, KeyError, TypeError):
+                raise _CorpusStateChanged() from None
+            candidate_text = row["text"]
+            if candidate.excerpt_checksum is not None:
+                if candidate.excerpt_end > len(candidate_text):
+                    raise _CorpusStateChanged()
+                candidate_text = candidate_text[candidate.excerpt_start:candidate.excerpt_end]
+            if (candidate_text != candidate.text or row["chunk_checksum"] != candidate.checksum
                     or row["document_id"] != candidate.document_id or row["version_id"] != candidate.version_id
                     or row.get("document_title") != candidate.source_title or row.get("section") != candidate.source_section):
                 raise _CorpusStateChanged()
@@ -1056,9 +1082,14 @@ class Neo4jRetrievalEngine:
                                                   deduplicate_content=limits.deduplicate_content)
         ranked_set = set(ordered_ids)
         adjacency = tuple(identifier for identifier in combined if identifier not in ranked_set)
+        contexts = _context_records(hydrated, request)
         selection = select_context(ranked_ids=ordered_ids, anchor_ids=anchors, adjacent_ids=adjacency,
-            char_lengths={identifier: len(str(row["text"])) for identifier, row in hydrated.items()},
-            max_chunks=limits.top_k, max_chars=limits.max_context_chars)
+            char_lengths={identifier: len(str(row["text"])) for identifier, row in contexts.items()},
+            max_chunks=limits.top_k, max_chars=limits.max_context_chars,
+            excerpt_ids=frozenset(identifier for identifier, row in contexts.items() if row.get("is_excerpt")))
+        for identifier, allocation in selection.char_allocations:
+            if allocation < len(contexts[identifier]["text"]):
+                contexts[identifier] = context_record(hydrated[identifier], request.query_text, allocation)
         decisions = [item for item in previous.decisions
                      if item.reason in {"insufficient_rrf_channels", "final_authorization_or_version_check"}]
         decisions.extend(TraceDecision(identifier, "rejected", "rerank_candidate_limit")
@@ -1074,7 +1105,10 @@ class Neo4jRetrievalEngine:
             role = role_by_id[identifier]
             reasons = ((f"reranker {reranking.response.model} rank {positions[identifier]}",)
                        if identifier in positions else (f"adjacent to {adjacent_anchors[identifier]}",))
-            chunks.append(_retrieved_chunk(hydrated[identifier], role=role, score=scores.get(identifier), reasons=reasons))
+            if contexts[identifier].get("is_excerpt"):
+                reasons += ("exact_source_excerpt",)
+                decisions.append(TraceDecision(identifier, "truncated", "exact_source_excerpt"))
+            chunks.append(_retrieved_chunk(contexts[identifier], role=role, score=scores.get(identifier), reasons=reasons))
             decisions.append(TraceDecision(identifier, "selected", role))
         trace_id = hashlib.sha256((previous.trace_id + "\0" + reranking.response.input_checksum
                                   + "\0" + reranking.response.output_checksum).encode("utf-8")).hexdigest()
@@ -1341,14 +1375,22 @@ class Neo4jRetrievalEngine:
         )
         for chunk_id in duplicate_ids:
             decisions.append(TraceDecision(chunk_id, "rejected", "duplicate_content"))
+        contexts = _context_records(hydrated, request)
         if _candidate_capture is not None:
+            rerank_contexts = {identifier: rerank_record(hydrated[identifier], request.query_text)
+                               for identifier in deduped_ranking[:_candidate_capture["limit"]]}
             _candidate_capture["candidates"] = tuple(
                 RerankCandidate(
-                    chunk_id, str(hydrated[chunk_id]["text"]), str(hydrated[chunk_id]["chunk_checksum"]),
+                    chunk_id, str(rerank_contexts[chunk_id]["text"]), str(hydrated[chunk_id]["chunk_checksum"]),
                     source_title=hydrated[chunk_id].get("document_title"),
                     source_section=hydrated[chunk_id].get("section"),
                     document_id=str(hydrated[chunk_id]["document_id"]),
                     version_id=str(hydrated[chunk_id]["version_id"]),
+                    excerpt_checksum=rerank_contexts[chunk_id].get("excerpt_checksum"),
+                    excerpt_start=(rerank_contexts[chunk_id]["char_start"] - hydrated[chunk_id]["char_start"]
+                                   if rerank_contexts[chunk_id].get("is_excerpt") else None),
+                    excerpt_end=(rerank_contexts[chunk_id]["char_end"] - hydrated[chunk_id]["char_start"]
+                                 if rerank_contexts[chunk_id].get("is_excerpt") else None),
                 )
                 for chunk_id in deduped_ranking[:_candidate_capture["limit"]]
             )
@@ -1371,10 +1413,14 @@ class Neo4jRetrievalEngine:
             ranked_ids=deduped_ranking,
             anchor_ids=anchor_ids,
             adjacent_ids=deduped_adjacency,
-            char_lengths={key: len(str(value["text"])) for key, value in hydrated.items()},
+            char_lengths={key: len(str(value["text"])) for key, value in contexts.items()},
             max_chunks=limits.top_k,
             max_chars=limits.max_context_chars,
+            excerpt_ids=frozenset(identifier for identifier, row in contexts.items() if row.get("is_excerpt")),
         )
+        for identifier, allocation in selection.char_allocations:
+            if allocation < len(contexts[identifier]["text"]):
+                contexts[identifier] = context_record(hydrated[identifier], request.query_text, allocation)
         for chunk_id, reason in selection.skipped:
             decisions.append(TraceDecision(chunk_id, "rejected", reason))
         role_by_id = dict(selection.roles)
@@ -1384,7 +1430,7 @@ class Neo4jRetrievalEngine:
         }
         result_chunks: list[RetrievedChunk] = []
         for chunk_id in selection.chunk_ids:
-            record = hydrated[chunk_id]
+            record = contexts[chunk_id]
             role = role_by_id[chunk_id]
             reasons = [
                 f"{channel} rank {rank}"
@@ -1393,6 +1439,9 @@ class Neo4jRetrievalEngine:
             reasons.extend(graph_reasons.get(chunk_id, []))
             if role == "adjacent":
                 reasons.append(f"adjacent to {adjacency_anchor[chunk_id]}")
+            if record.get("is_excerpt"):
+                reasons.append("exact_source_excerpt")
+                decisions.append(TraceDecision(chunk_id, "truncated", "exact_source_excerpt"))
             result_chunks.append(_retrieved_chunk(
                 record, role=role, score=final_scores.get(chunk_id), reasons=tuple(reasons),
             ))
@@ -1521,6 +1570,8 @@ class Neo4jRetrievalEngine:
         cutoff: datetime | None = request.version_filter.published_at_or_before
         payload = {
             "query": request.query_text,
+            "excerpt_policy": EXCERPT_POLICY,
+            "context_allocation_policy": "remaining-budget:v1",
             "tenant_id": request.principal.tenant_id,
             "principal_id": request.principal.principal_id,
             "groups": sorted(request.principal.groups),

@@ -1,6 +1,7 @@
 {
   "schema": "graphrag-industrial-demo-kit-v1",
   "kit_id": "industrial-demo-v1",
+  "ontology_key": "pump-maintenance-demo",
   "title": "循环水泵知识构建体验包",
   "description": "本项目虚构的工业示例，约定台账和配套实例为演示中的专家权威基准；不代表外部行业认证。先发布本体，再仅入库权威来源、导入并发布专家实例，最后抽取普通检修报告。",
   "placeholders": {

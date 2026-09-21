@@ -8,7 +8,10 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, JsonValue, StringConstraints, field_validator, model_validator
 
-from graphrag_prod.graph.browse_models import GraphBrowseQuery, GraphReadPin
+from graphrag_prod.graph.browse_models import (
+    GraphBrowseQuery, GraphReadPin, MAX_GRAPH_EDGES, MAX_GRAPH_NODES,
+    MAX_GRAPH_PAGE_ITEMS,
+)
 from graphrag_prod.graph.view_tokens import MAX_GRAPH_TOKEN_CHARS
 from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_RECORDS
 
@@ -21,7 +24,7 @@ from .knowledge_contracts import OntologyEntityType, OntologyHierarchy, Ontology
 
 GraphToken = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=MAX_GRAPH_TOKEN_CHARS)]
 GraphAuthority = Literal["AUTHORITATIVE", "SECONDARY"]
-GraphOrigin = Literal["EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"]
+GraphOrigin = Literal["EXPERT_IMPORT", "EXPERT_CREATED", "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "MAPPED", "AUTHORITATIVE_MAPPED", "HUMAN_SUPPLEMENT", "RULE_DERIVED", "FIXTURE"]
 SourceKind = Literal["CURATED_REFERENCE", "OFFICIAL_PUBLICATION", "SYNTHETIC_FIELD_RECORD", "USER_UPLOAD"]
 
 
@@ -39,9 +42,12 @@ class GraphBrowseRequest(StrictAPIModel):
     seed_entity_ids: Annotated[tuple[Identifier, ...], Field(max_length=8)] = ()
     direction: Literal["both", "outgoing", "incoming"] = "both"
     hops: Annotated[int, Field(strict=True, ge=1, le=2)] = 1
-    page_size: Annotated[int, Field(strict=True, ge=1, le=200)] = 100
+    page_size: Annotated[int, Field(strict=True, ge=1, le=MAX_GRAPH_PAGE_ITEMS)] = 100
     view_token: GraphToken | None = None
     cursor: GraphToken | None = None
+    result_mode: Literal["graph", "overview", "entities"] = "graph"
+    entity_offset: Annotated[int, Field(strict=True, ge=0, le=MAX_PUBLICATION_MANIFEST_RECORDS)] = 0
+    focus_entity_id: Identifier | None = None
 
     @field_validator("entity_types", "predicates", "seed_entity_ids", mode="before")
     @classmethod
@@ -53,6 +59,13 @@ class GraphBrowseRequest(StrictAPIModel):
         self.to_domain()
         if self.cursor is not None and self.view_token is None:
             raise ValueError("a graph cursor requires its view_token")
+        if self.result_mode == "overview" and self.cursor is not None:
+            raise ValueError("graph overview does not accept a cursor")
+        if self.result_mode == "entities":
+            if self.page_size not in (10, 30) or self.cursor or self.seed_entity_ids or self.predicates:
+                raise ValueError("entity pages require size 10 or 30 and entity filters only")
+        elif self.entity_offset or self.focus_entity_id:
+            raise ValueError("entity offsets and focus require entity mode")
         return self
 
     def to_domain(self) -> GraphBrowseQuery:
@@ -105,6 +118,22 @@ class GraphBrowseNodeResponse(StrictAPIModel):
     canonical_key: GraphName
     authority_levels: Annotated[tuple[GraphAuthority, ...], Field(min_length=1, max_length=2)]
     mention_revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=MAX_PUBLICATION_MANIFEST_RECORDS)]
+
+
+class GraphEntitySummaryResponse(GraphBrowseNodeResponse):
+    property_count: Annotated[int, Field(strict=True, ge=0, le=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    relation_count: Annotated[int, Field(strict=True, ge=0, le=MAX_PUBLICATION_MANIFEST_RECORDS)]
+
+
+class GraphEntityPageResponse(StrictAPIModel):
+    view_token: GraphToken
+    pin: GraphReadPinResponse
+    items: Annotated[tuple[GraphEntitySummaryResponse, ...], Field(max_length=30)]
+    total: Annotated[int, Field(strict=True, ge=0, le=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    offset: Annotated[int, Field(strict=True, ge=0, le=MAX_PUBLICATION_MANIFEST_RECORDS)]
+    page_size: Literal[10, 30]
+    entity_types: Annotated[tuple[GraphTypeName, ...], Field(max_length=64)]
+    visibility: Literal["AUTHORIZED_SOURCE_VIEW"] = "AUTHORIZED_SOURCE_VIEW"
 
 
 class GraphRelationshipSourceResponse(StrictAPIModel):
@@ -169,21 +198,58 @@ class GraphBrowseLiteralResponse(StrictAPIModel):
 
 
 class GraphBrowsePageResponse(StrictAPIModel):
-    returned_nodes: Annotated[int, Field(strict=True, ge=0, le=150)]
-    returned_edges: Annotated[int, Field(strict=True, ge=0, le=200)]
-    returned_literals: Annotated[int, Field(strict=True, ge=0, le=200)]
+    returned_nodes: Annotated[int, Field(strict=True, ge=0, le=MAX_GRAPH_NODES)]
+    returned_edges: Annotated[int, Field(strict=True, ge=0, le=MAX_GRAPH_EDGES)]
+    returned_literals: Annotated[int, Field(strict=True, ge=0, le=MAX_GRAPH_PAGE_ITEMS)]
     has_more: bool
     next_cursor: GraphToken | None
+
+
+class GraphPositionResponse(StrictAPIModel):
+    x: Annotated[float, Field(allow_inf_nan=False, ge=-10_000_000, le=10_000_000)]
+    y: Annotated[float, Field(allow_inf_nan=False, ge=-10_000_000, le=10_000_000)]
+
+
+class GraphGroupResponse(StrictAPIModel):
+    type: GraphTypeName
+    x: Annotated[float, Field(allow_inf_nan=False, ge=0, le=10_000_000)]
+    y: Annotated[float, Field(allow_inf_nan=False, ge=0, le=10_000_000)]
+    width: Annotated[float, Field(allow_inf_nan=False, ge=0, le=10_000_000)]
+    height: Annotated[float, Field(allow_inf_nan=False, ge=0, le=10_000_000)]
+    count: Annotated[int, Field(strict=True, ge=1, le=MAX_GRAPH_NODES)]
+
+
+class GraphLayoutResponse(StrictAPIModel):
+    positions: Annotated[dict[Annotated[str, StringConstraints(strict=True, min_length=3, max_length=258)], GraphPositionResponse], Field(max_length=MAX_GRAPH_NODES)]
+    groups: Annotated[list[GraphGroupResponse], Field(max_length=64)]
+    engine: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=100)]
+
+
+class GraphLayoutPairResponse(StrictAPIModel):
+    network: GraphLayoutResponse
+    grouped: GraphLayoutResponse
+
+
+class GraphVisualizationResponse(StrictAPIModel):
+    schema_version: Literal["graph-visualization.v1"]
+    layout_version: Literal["cytoscape-3.34.2-cose-type-grid.v1"]
+    artifact_id: Checksum
+    generated_at: str
+    default_layout: Literal["network", "grouped"]
+    status: Literal["READY"]
+    layouts: GraphLayoutPairResponse
+    ontology: GraphLayoutPairResponse
 
 
 class GraphBrowseResponse(StrictAPIModel):
     view_token: GraphToken
     pin: GraphReadPinResponse
     graph_schema: GraphBrowseSchemaResponse = Field(alias="schema")
-    nodes: Annotated[tuple[GraphBrowseNodeResponse, ...], Field(max_length=150)]
-    edges: Annotated[tuple[GraphBrowseEdgeResponse, ...], Field(max_length=200)]
-    literals: Annotated[tuple[GraphBrowseLiteralResponse, ...], Field(max_length=200)]
+    nodes: Annotated[tuple[GraphBrowseNodeResponse, ...], Field(max_length=MAX_GRAPH_NODES)]
+    edges: Annotated[tuple[GraphBrowseEdgeResponse, ...], Field(max_length=MAX_GRAPH_EDGES)]
+    literals: Annotated[tuple[GraphBrowseLiteralResponse, ...], Field(max_length=MAX_GRAPH_PAGE_ITEMS)]
     page: GraphBrowsePageResponse
+    visualization: GraphVisualizationResponse | None = None
     visibility: Literal["AUTHORIZED_SOURCE_VIEW"] = "AUTHORIZED_SOURCE_VIEW"
 
     @model_validator(mode="after")
@@ -198,6 +264,15 @@ class GraphBrowseResponse(StrictAPIModel):
             raise ValueError("graph assertions require visible endpoints")
         if (len(self.nodes), len(self.edges), len(self.literals)) != (self.page.returned_nodes, self.page.returned_edges, self.page.returned_literals) or self.page.has_more != (self.page.next_cursor is not None):
             raise ValueError("graph pagination metadata is inconsistent")
+        if self.visualization is not None:
+            expected = {"n:" + key for key in ids}
+            types = {"t:" + item.name for item in self.graph_schema.entity_types}
+            for layout in (self.visualization.layouts.network, self.visualization.layouts.grouped):
+                if set(layout.positions) != expected:
+                    raise ValueError("visualization coordinates require exactly the visible nodes")
+            for layout in (self.visualization.ontology.network, self.visualization.ontology.grouped):
+                if set(layout.positions) != types:
+                    raise ValueError("ontology coordinates require exactly the visible schema types")
         return self
 
 

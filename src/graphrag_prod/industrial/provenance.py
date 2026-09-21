@@ -10,7 +10,7 @@ from neo4j import Query
 
 from graphrag_prod.domain.access import Principal
 
-from .corpus import FAMILY_TO_CONTRACT
+from .families import FAMILY_TO_CONTRACT
 
 
 MAX_PROVENANCE_BYTES = 8 * 1024 * 1024

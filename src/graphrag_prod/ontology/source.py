@@ -174,7 +174,18 @@ def _properties(values: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _compile_source_contract(source: Mapping[str, Any]) -> dict[str, Any]:
     """Compile declarations; reject unknown shapes, unresolved refs and cycles."""
     if set(source) != _TOP_LEVEL:
-        raise ValueError("source ontology must contain exactly the ten versioned contract sections")
+        from .yaml_source import OntologySourceError  # noqa: PLC0415
+        missing = sorted(_TOP_LEVEL - set(source))
+        extra = sorted(set(source) - _TOP_LEVEL)
+        details = []
+        if missing:
+            details.append("缺少章节：" + "、".join(missing))
+        if extra:
+            details.append("包含不支持的章节：" + "、".join(key[:128] for key in extra[:10]))
+        raise OntologySourceError(
+            "来源本体声明了十节契约，但章节不匹配。" + "；".join(details) + "。请核对完整契约，不要直接删除来源声明。",
+            code="contract_sections_mismatch", path="$." + extra[0][:128] if extra else "$",
+        )
     text = canonical_json(source)
     if len(text.encode("utf-8")) > MAX_SOURCE_BYTES:
         raise ValueError("source ontology exceeds the bounded import size")
@@ -289,7 +300,28 @@ def _compile_source_contract(source: Mapping[str, Any]) -> dict[str, Any]:
 
 def compile_source_contract(source: Mapping[str, Any]) -> dict[str, Any]:
     try:
-        return _compile_source_contract(source)
+        from .yaml_source import OntologySourceError  # noqa: PLC0415
+        if not isinstance(source, Mapping) or not isinstance(source.get("metadata"), dict):
+            raise OntologySourceError("来源本体需要 metadata 对象来声明格式与版本。", code="invalid_structure", path="$.metadata")
+        metadata = source["metadata"]
+        # An explicit contract takes precedence over structural resemblance.
+        # A graph model name alone does not declare the ten-section contract.
+        if "contract_id" in metadata:
+            if metadata["contract_id"] != SOURCE_CONTRACT_ID:
+                raise OntologySourceError("未支持此来源本体契约。请使用已适配的定义或平台导出的本体 JSON。", code="unsupported_source_contract", path="$.metadata.contract_id")
+            if metadata.get("contract_version") != SOURCE_CONTRACT_VERSION:
+                raise OntologySourceError("未支持此来源契约版本；当前支持 ai_power.knowledge_ontology@1.0.0。本体业务版本与契约版本应分别声明。", code="unsupported_contract_version", path="$.metadata.contract_version")
+            return _compile_source_contract(source)
+        if metadata.get("model_kind") == "property_graph" or {"scope", "layers", "constraints"} <= set(source):
+            from .property_graph_source import compile_property_graph_source  # noqa: PLC0415
+            return compile_property_graph_source(source)
+        raise OntologySourceError(
+            f"当前文件包含 {len(source)} 个顶层章节，未声明受支持的来源本体契约。"
+            "图模型名称不能决定文件格式。请使用已适配的本体定义：七节属性图定义、"
+            "ai_power.knowledge_ontology@1.0.0 十节契约，或平台本体 JSON。"
+            "原文件需先完成语义适配，不能仅修改版本号、添加契约编号或删除章节。",
+            code="unsupported_ontology_format", path="$.metadata",
+        )
     except (KeyError, TypeError, IndexError, AttributeError, RecursionError) as exc:
         raise ValueError("source contract contains a malformed or unsupported declaration") from exc
 
@@ -299,6 +331,9 @@ def source_import_report(source_contract_json: str | None) -> dict[str, Any] | N
         return None
     source = json.loads(source_contract_json)
     compiled = compile_source_contract(source)
+    if source["metadata"]["model_kind"] == "property_graph":
+        from .property_graph_source import property_graph_import_report  # noqa: PLC0415
+        return {**property_graph_import_report(source), "source_checksum": hashlib.sha256(source_contract_json.encode("utf-8")).hexdigest(), "source_checksum_basis": "canonical_json_utf8_sha256"}
     return {"profile": SOURCE_PROFILE, "source_version": source["metadata"]["ontology_version"], "source_checksum": hashlib.sha256(source_contract_json.encode("utf-8")).hexdigest(), "source_checksum_basis": "canonical_json_utf8_sha256", "blocked_entity_types": [item["name"] for item in compiled["entity_types"] if not item["instance_allowed"]], "blocked_relationship_types": [item["name"] for item in compiled["relationship_types"] if not item["instance_allowed"]], "scope": "有证据的设备结构与概念知识；类型端点和外部派生关系仅保存定义，禁止作为普通实例事实抽取或发布。源文件完整保存；不执行诊断或外部派生。"}
 
 

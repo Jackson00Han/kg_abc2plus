@@ -205,6 +205,9 @@ WHERE COUNT {
               checksum: $tbox_checksum
           })
       } = 1
+MATCH (publication)-[:USES_TBOX_VERSION]->(bound_tbox:TBoxVersion {
+    tenant_id: $tenant_id, tbox_id: $ontology_version_id, checksum: $tbox_checksum
+})
 CALL (publication) {
     MATCH (publication)-[membership:PUBLISHES_KNOWLEDGE_REVISION]->(revision)
     RETURN count(membership) AS membership_count,
@@ -218,7 +221,9 @@ CALL (publication) {
                THEN 1
            END) AS valid_revision_count
 }
-RETURN publication.published_revision_ids AS manifest_revision_ids,
+RETURN bound_tbox.tenant_id + ':' + bound_tbox.key + ':v' + toString(bound_tbox.version)
+           AS property_schema_version,
+       publication.published_revision_ids AS manifest_revision_ids,
        membership_count,
        distinct_revision_count,
        membership_revision_ids,
@@ -668,6 +673,7 @@ class _PropertyExpectation:
 
 def _relationship_property_expectations(
     row: dict[str, Any],
+    property_schema_version: str | None = None,
 ) -> tuple[_PropertyExpectation, ...]:
     """Decode immutable revision JSON and bind it to the parent evidence scope."""
 
@@ -749,7 +755,7 @@ def _relationship_property_expectations(
             < value.evidence_char_end
             <= parent_end
             and value.extractor_version == extractor
-            and value.schema_version == schema_version
+            and value.schema_version in {schema_version, property_schema_version}
         ):
             raise ActivePublicationInventoryConflict()
         expectations.append(
@@ -817,7 +823,9 @@ def _validate_relationship_property_materializations(
         revision_id = _required_text(revision.get("revision_id"))
         if revision_id in expected:
             raise ActivePublicationInventoryConflict()
-        expected[revision_id] = _relationship_property_expectations(row)
+        expected[revision_id] = _relationship_property_expectations(
+            row, parameters["property_schema_version"]
+        )
 
     if not expected:
         return {}
@@ -1140,6 +1148,7 @@ class Neo4jActivePublicationInventoryService:
         *,
         document_id: str | None = None,
         limit: int = 100,
+        export_all: bool = False,
     ) -> ActivePublicationInventory:
         if not isinstance(principal, Principal):
             raise TypeError("principal must be a Principal")
@@ -1147,6 +1156,10 @@ class Neo4jActivePublicationInventoryService:
             raise ActivePublicationInventoryAuthorizationError()
         normalized_document_id = _optional_filter(document_id)
         normalized_limit = _limit(limit)
+        if not isinstance(export_all, bool):
+            raise TypeError("export_all must be a boolean")
+        if export_all:
+            normalized_limit = MAX_PUBLICATION_MANIFEST_RECORDS
         try:
             quality = self.quality_service.audit(principal)
         except PublishedGraphQualityAuthorizationError as exc:
@@ -1195,6 +1208,10 @@ class Neo4jActivePublicationInventoryService:
         if len(manifest_rows) != 1:
             raise ActivePublicationInventoryConflict()
         manifest = manifest_rows[0]
+        # Derived from the publication-bound T-Box, never from client input.
+        parameters["property_schema_version"] = _required_text(
+            manifest.get("property_schema_version")
+        )
         membership_count = _count(manifest, "membership_count")
         distinct_count = _count(manifest, "distinct_revision_count")
         valid_count = _count(manifest, "valid_revision_count")

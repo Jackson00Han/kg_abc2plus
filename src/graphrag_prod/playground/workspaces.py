@@ -103,27 +103,6 @@ class Neo4jWorkspaceStore:
         with self.driver.session(database=self.database) as session:
             return [dict(row) for row in session.run(Query(text, timeout=5.0), **parameters)]
 
-    def initialize(self, personas: tuple[PlaygroundPersona, ...]) -> None:
-        for field in ("knowledge_base_id", "name_key", "active_tenant_id"):
-            self.rows(f"CREATE CONSTRAINT workbench_workspace_{field}_unique IF NOT EXISTS "
-                      f"FOR (w:WorkbenchKnowledgeBase) REQUIRE w.{field} IS UNIQUE")
-        self.rows("CREATE CONSTRAINT workbench_workspace_operation_unique IF NOT EXISTS "
-                  "FOR (o:WorkbenchWorkspaceOperation) REQUIRE o.operation_id IS UNIQUE")
-        names = {"industrial-schneider-demo": "工业知识库", "tenant-alpha": "示例项目 A",
-                 "tenant-beta": "示例项目 B", "demo-a": "一号泵站", "demo-b": "二号泵站"}
-        for tenant in sorted({p.tenant_id for p in personas}):
-            people = [p for p in personas if p.tenant_id == tenant]
-            groups = sorted({group for p in people for group in p.groups})
-            public = [group for group in groups if group == "public" or group.endswith("-public")]
-            name = names.get(tenant, tenant)
-            self.rows("""MERGE (w:WorkbenchKnowledgeBase {knowledge_base_id:$id})
-                ON CREATE SET w.name=$name, w.name_key=$name_key, w.active_tenant_id=$tenant,
-                  w.generation=1, w.admin_groups=$groups, w.user_groups=$public,
-                  w.created_at=$now, w.updated_at=$now, w.initial_tenant_id=$tenant
-                RETURN w.knowledge_base_id AS id""", id=_project_id(tenant), name=name,
-                name_key=name.casefold(), tenant=tenant, groups=groups, public=public or groups[:1],
-                now=datetime.now(UTC).isoformat())
-
     def visible(self, project: dict) -> bool:
         return not self.pump_only or (
             project.get("initial_tenant_id") is None or

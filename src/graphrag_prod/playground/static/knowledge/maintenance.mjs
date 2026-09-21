@@ -20,14 +20,14 @@ export function mountMaintenance({api,epoch,browser,feedback=()=>()=>{},navigate
   const dialog=document.createElement('dialog');dialog.className='kb-evidence';dialog.setAttribute('aria-label','记录人工核查结论');document.body.append(dialog);dialog.addEventListener('cancel',reset);
   function reset(){dialogSerial++;dialog.close();dialog.replaceChildren();}
   function directoryLabels(report){const d=browser.getDirectory();if(!d || d.pin.publication_id!==report.publication_id || d.pin.corpus_revision!==report.corpus_revision)return {};
-    const labels={};for(const n of d.items){labels[n.entity_id]=n.label;for(const f of n.properties)labels[f.revision_id]=labels[f.record_id]=`${n.label} · ${label(f.predicate)}`;for(const f of n.relations)labels[f.revision_id]=labels[f.record_id]=`${n.label} · ${label(f.predicate)} · ${f.other.label}`;}return labels;
+    const labels={};for(const n of d.items){labels[n.entity_id]=n.label;for(const f of n.properties||[])labels[f.revision_id]=labels[f.record_id]=`${n.label} · ${label(f.predicate)}`;for(const f of n.relations||[])labels[f.revision_id]=labels[f.record_id]=`${n.label} · ${label(f.predicate)} · ${f.other.label}`;}return labels;
   }
   async function openObject(issue,report){
     navigate('browse');browser.tab('entities');await browser.activate();
     const d=browser.getDirectory();
     if(!d || d.pin.publication_id!==report.publication_id || d.pin.corpus_revision!==report.corpus_revision){document.getElementById('kb-dossier').textContent='浏览范围与检查报告版本不一致，请刷新知识并重新检查。';return;}
-    const n=d.items.find(n=>n.entity_id===issue.object_id || n.mention_revision_ids.includes(issue.object_id) || [...n.properties,...n.relations].some(f=>f.revision_id===issue.object_id || f.record_id===issue.object_id));
-    if(n)browser.select(n.entity_id);else document.getElementById('kb-dossier').textContent='当前授权浏览范围无法定位此对象，请按报告中的技术定位信息核查来源关联或知识模型。';
+    const n=d.items.find(n=>n.entity_id===issue.object_id || n.mention_revision_ids.includes(issue.object_id) || [...(n.properties||[]),...(n.relations||[])].some(f=>f.revision_id===issue.object_id || f.record_id===issue.object_id));
+    if(n || issue.object_kind==='Entity')browser.select(n?.entity_id||issue.object_id);else document.getElementById('kb-dossier').textContent='当前授权浏览范围无法定位此对象，请按报告中的技术定位信息核查来源关联或知识模型。';
   }
   async function render(report,container,historical=false){
     const marker={},identity=epoch();renders.set(container,marker);

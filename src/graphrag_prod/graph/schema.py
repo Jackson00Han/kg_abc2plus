@@ -26,6 +26,8 @@ class SchemaExpectation:
 
 
 EXPECTED_SCHEMA = (
+    SchemaExpectation("tbox_source_file_id_unique", "constraint", "UNIQUENESS", "TBoxSourceFile", ("source_file_id",)),
+    SchemaExpectation("tbox_source_file_identity_unique", "constraint", "UNIQUENESS", "TBoxSourceFile", ("tenant_id", "tbox_id", "sha256", "normalization_checksum")),
     SchemaExpectation("context_projection_run_id_unique", "constraint", "UNIQUENESS", "KnowledgeContextProjectionRun", ("run_id",)),
     SchemaExpectation("context_mapping_attempt_id_unique", "constraint", "UNIQUENESS", "KnowledgeContextMappingAttempt", ("attempt_id",)),
     SchemaExpectation("upload_reservation_id_unique", "constraint", "UNIQUENESS", "UploadReservation", ("reservation_id",)),

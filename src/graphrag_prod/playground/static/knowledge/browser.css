@@ -3,3 +3,5 @@
 .kb-source-text{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;line-height:1.9;background:var(--surface);color:var(--ink);padding:16px;border-radius:8px;max-height:560px;overflow:auto}
 
 .kb-evidence label{display:grid;gap:8px;margin:16px 0}.kb-evidence textarea,.kb-evidence select{font:inherit;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:10px;max-width:100%}.kb-evidence mark{color:#17232b}.kb-source:focus,.kb-entity:focus-visible{outline:2px solid var(--teal);outline-offset:3px}.kb-source pre{white-space:pre-wrap;overflow-wrap:anywhere}.kb-scope{margin:8px 0 14px;color:var(--muted);font-size:13px}[hidden]{display:none!important}
+
+.kb-filters .kb-page-size{flex:0 0 116px}

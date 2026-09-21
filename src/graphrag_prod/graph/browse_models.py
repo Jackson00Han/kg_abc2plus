@@ -10,8 +10,11 @@ from graphrag_prod.knowledge.publication_guard import MAX_PUBLICATION_MANIFEST_R
 
 
 MAX_GRAPH_RECORDS = MAX_PUBLICATION_MANIFEST_RECORDS
-MAX_GRAPH_NODES = 150
-MAX_GRAPH_EDGES = 200
+# Desktop presentation bounds are separate from publication and page budgets.
+GRAPH_DISPLAY_PROFILE = "desktop-graph.v1"
+MAX_GRAPH_NODES = 200
+MAX_GRAPH_EDGES = 300
+MAX_GRAPH_PAGE_ITEMS = 200
 MAX_GRAPH_HOPS = 2
 GRAPH_READ_CAPABILITY = "knowledge:graph:read"
 
@@ -85,7 +88,7 @@ class GraphBrowseQuery:
         if self.direction not in {"both", "outgoing", "incoming"}:
             raise ValueError("unsupported graph direction")
         _integer(self.hops, "hops", 1, MAX_GRAPH_HOPS)
-        _integer(self.page_size, "page_size", 1, MAX_GRAPH_EDGES)
+        _integer(self.page_size, "page_size", 1, MAX_GRAPH_PAGE_ITEMS)
         for name, maximum in (("entity_types", 64), ("predicates", 64), ("seed_entity_ids", 8)):
             values = getattr(self, name)
             if not isinstance(values, tuple) or len(values) > maximum or len(values) != len(set(values)):

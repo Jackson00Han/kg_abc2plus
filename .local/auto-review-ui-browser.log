@@ -1,2 +1,0 @@
-Chromium ready: 153.0.8010.12
-{"status":"passed","mode":"isolated read-only response fixtures; no knowledge writes","screenshots":["receipt-1280.png","evidence-1280.png","human-queue-1280.png","receipt-1440.png","evidence-1440.png","human-queue-1440.png","receipt-1920.png","evidence-1920.png","human-queue-1920.png"],"errors":[],"blocked":[]}

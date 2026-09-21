@@ -1344,7 +1344,8 @@ class GroundedGenerationService:
                 if len(item.chunk.text) != citation.char_end - citation.char_start:
                     raise ValueError("Chunk text does not match its citation range")
                 checksum = hashlib.sha256(item.chunk.text.encode("utf-8")).hexdigest()
-                if checksum != citation.chunk_checksum:
+                expected = citation.excerpt_checksum if citation.is_excerpt else citation.chunk_checksum
+                if checksum != expected:
                     raise ValueError("Chunk text does not match its citation checksum")
         except (TypeError, ValueError):
             return AnswerResult.refusal(failure_code=INVALID_CONTEXT)

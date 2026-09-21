@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Mapping
 
 import pint
 
 from .models import TBoxStatus, TBoxVersion
+from .source import MAX_SOURCE_BYTES
 
 
 _UNIT_REGISTRY = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
@@ -86,6 +87,72 @@ def _version_record(value: TBoxVersion) -> dict[str, Any]:
             sort_keys=True,
             separators=(",", ":"),
         ),
+    }
+
+
+def _source_file_record(
+    value: TBoxVersion,
+    source_file: Mapping[str, Any] | None,
+    created_by: str | None,
+) -> dict[str, Any] | None:
+    """Validate raw source independently of the normalized T-Box definition."""
+    if source_file is None:
+        return None
+    fields = {
+        "filename", "format", "content", "sha256",
+        "normalization_checksum", "normalization_version",
+    }
+    if not isinstance(source_file, Mapping) or set(source_file) != fields:
+        raise TBoxValidationError("source_file must contain exactly the source audit fields")
+    if any(not isinstance(source_file[name], str) for name in fields):
+        raise TBoxValidationError("source_file fields must be strings")
+    filename = source_file["filename"]
+    if (
+        not filename or filename != filename.strip() or len(filename) > 240
+        or filename in {".", ".."} or "/" in filename or "\\" in filename
+        or any(ord(character) < 32 or ord(character) == 127 for character in filename)
+    ):
+        raise TBoxValidationError("source filename must be a basename of at most 240 characters")
+    source_format = source_file["format"]
+    if source_format not in {"yaml", "json"}:
+        raise TBoxValidationError("source format must be yaml or json")
+    content = source_file["content"]
+    try:
+        source_bytes = content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise TBoxValidationError("source content must be valid UTF-8 text") from exc
+    if not source_bytes or len(source_bytes) > MAX_SOURCE_BYTES:
+        raise TBoxValidationError("source content exceeds the bounded import size or is empty")
+    source_hash = hashlib.sha256(source_bytes).hexdigest()
+    if source_file["sha256"] != source_hash:
+        raise TBoxValidationError("source content SHA-256 does not match")
+    if source_file["normalization_checksum"] != value.checksum:
+        raise TBoxValidationError("source normalization checksum does not match the T-Box")
+    normalization_version = source_file["normalization_version"]
+    if (
+        not normalization_version or normalization_version != normalization_version.strip()
+        or len(normalization_version) > 128
+        or any(ord(character) < 32 or ord(character) == 127 for character in normalization_version)
+    ):
+        raise TBoxValidationError("source normalization version must be a bounded identifier")
+    if created_by is not None and (
+        not isinstance(created_by, str) or not created_by.strip()
+        or created_by != created_by.strip() or len(created_by) > 256
+        or any(ord(character) < 32 or ord(character) == 127 for character in created_by)
+    ):
+        raise TBoxValidationError("source creator must be a bounded principal identifier")
+    return {
+        **source_file,
+        "source_file_id": _component_id(
+            value.tbox_id, "source-file", value.tenant_id, source_hash, value.checksum,
+        ),
+        "tenant_id": value.tenant_id,
+        "tbox_id": value.tbox_id,
+        "size_bytes": len(source_bytes),
+        "created_by": created_by,
+        # Draft edits may replace external reference registries; retain the
+        # complete result of this conversion independently of the current draft.
+        "normalized_definition_json": _version_record(value)["definition_json"],
     }
 
 
@@ -199,6 +266,8 @@ class Neo4jTBoxStore:
         value: TBoxVersion,
         *,
         expected_checksum: str | None = None,
+        source_file: Mapping[str, Any] | None = None,
+        created_by: str | None = None,
     ) -> TBoxVersion:
         """Create or CAS-update a draft; exact replays are idempotent."""
         if not isinstance(value, TBoxVersion):
@@ -206,6 +275,7 @@ class Neo4jTBoxStore:
         if value.status is not TBoxStatus.DRAFT:
             raise ValueError("only DRAFT T-Box versions can be imported")
         _validate_declared_units(value)
+        source_record = _source_file_record(value, source_file, created_by)
         expected_checksum = _checked_checksum(expected_checksum)
         now = datetime.now(UTC)
         with self.driver.session(database=self.database) as session:
@@ -214,24 +284,28 @@ class Neo4jTBoxStore:
                 value,
                 expected_checksum,
                 now,
+                source_record,
             )
         return self.get(value.tenant_id, value.tbox_id)
 
     def save_and_activate(
         self, value: TBoxVersion, *, expected_checksum: str | None = None,
         expected_active_tbox_id: str | None = None,
+        source_file: Mapping[str, Any] | None = None,
+        created_by: str | None = None,
     ) -> TBoxVersion:
         """Save and activate atomically: failed activation leaves no saved draft."""
         if not isinstance(value, TBoxVersion) or value.status is not TBoxStatus.DRAFT:
             raise ValueError("activation requires a validated new definition")
         _validate_declared_units(value)
+        source_record = _source_file_record(value, source_file, created_by)
         expected_checksum = _checked_checksum(expected_checksum)
         if expected_active_tbox_id is not None:
             expected_active_tbox_id = _required(expected_active_tbox_id, "expected_active_tbox_id")
         now = datetime.now(UTC)
 
         def save(tx: Any) -> None:
-            self._import_tx(tx, value, expected_checksum, now)
+            self._import_tx(tx, value, expected_checksum, now, source_record)
             self._publish_tx(tx, value.tenant_id, value.tbox_id, expected_active_tbox_id, now)
 
         with self.driver.session(database=self.database) as session:
@@ -354,6 +428,7 @@ class Neo4jTBoxStore:
         value: TBoxVersion,
         expected_checksum: str | None,
         now: datetime,
+        source_record: dict[str, Any] | None = None,
     ) -> None:
         catalog = tx.run(
             """
@@ -391,6 +466,11 @@ class Neo4jTBoxStore:
             current = dict(existing)
             current_checksum = current.get("checksum")
             if current_checksum == value.checksum:
+                if source_record is not None:
+                    Neo4jTBoxStore._write_source_file_tx(
+                        tx, source_record, now,
+                        allow_create=current.get("status") == TBoxStatus.DRAFT.value,
+                    )
                 return
             if current.get("status") != TBoxStatus.DRAFT.value:
                 raise TBoxConflict("published or retired T-Box versions are immutable")
@@ -459,6 +539,8 @@ class Neo4jTBoxStore:
                 raise TBoxConflict("draft T-Box changed during import")
 
         Neo4jTBoxStore._write_definition_tx(tx, value)
+        if source_record is not None:
+            Neo4jTBoxStore._write_source_file_tx(tx, source_record, now)
         tx.run(
             """
             MATCH (catalog:TBoxCatalog {
@@ -472,6 +554,69 @@ class Neo4jTBoxStore:
             key=value.key,
             now=now,
         ).consume()
+
+    @staticmethod
+    def _write_source_file_tx(
+        tx: Any,
+        properties: dict[str, Any],
+        now: datetime,
+        *,
+        allow_create: bool = True,
+    ) -> None:
+        """Append immutable source/conversion audit; keep earlier draft inputs.
+
+        The same raw file may produce a different definition when a separately
+        supplied rule-reference registry changes. Each normalization checksum
+        gets its own audit record while exact input/result replays stay stable.
+        """
+        parameters = {
+            "tenant_id": properties["tenant_id"],
+            "tbox_id": properties["tbox_id"],
+            "source_file_id": properties["source_file_id"],
+        }
+        if allow_create:
+            record = tx.run(
+                """
+                MATCH (version:TBoxVersion {
+                    tenant_id: $tenant_id, tbox_id: $tbox_id, status: 'DRAFT'
+                })
+                MERGE (source:TBoxSourceFile {
+                    tenant_id: $tenant_id, tbox_id: $tbox_id,
+                    source_file_id: $source_file_id
+                })
+                ON CREATE SET source = $properties, source.created_at = $now
+                MERGE (version)-[:HAS_TBOX_SOURCE_FILE]->(source)
+                RETURN source{.*} AS source
+                """,
+                **parameters,
+                properties=properties,
+                now=now,
+            ).single()
+        else:
+            record = tx.run(
+                """
+                MATCH (version:TBoxVersion {
+                    tenant_id: $tenant_id, tbox_id: $tbox_id
+                })-[:HAS_TBOX_SOURCE_FILE]->(source:TBoxSourceFile {
+                    tenant_id: $tenant_id, tbox_id: $tbox_id,
+                    source_file_id: $source_file_id
+                })
+                RETURN source{.*} AS source
+                """,
+                **parameters,
+            ).single()
+        if record is None:
+            raise TBoxConflict("published or retired T-Box source files are immutable")
+        stored = dict(record["source"])
+        # The first upload's filename and authenticated creator remain intact on
+        # same-content replays, including uploads under a different local name.
+        immutable_fields = (
+            "source_file_id", "tenant_id", "tbox_id", "format", "content",
+            "sha256", "size_bytes", "normalization_checksum", "normalization_version",
+            "normalized_definition_json",
+        )
+        if any(stored.get(name) != properties[name] for name in immutable_fields):
+            raise TBoxConflict("stored T-Box source file is inconsistent or immutable")
 
     @staticmethod
     def _write_definition_tx(tx: Any, value: TBoxVersion) -> None:

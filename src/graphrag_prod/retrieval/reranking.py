@@ -38,13 +38,25 @@ class RerankCandidate:
     source_section: str | None = None
     document_id: str | None = None
     version_id: str | None = None
+    # Relative offsets into the immutable source, whose digest stays in checksum.
+    excerpt_checksum: str | None = None
+    excerpt_start: int | None = None
+    excerpt_end: int | None = None
 
     def __post_init__(self) -> None:
         _text(self.chunk_id, "chunk_id", 256)
         if not isinstance(self.text, str) or not self.text.strip() or len(self.text) > 30_000:
             raise ValueError("reranking requires intact bounded source text")
         _checksum(self.checksum)
-        if hashlib.sha256(self.text.encode("utf-8")).hexdigest() != self.checksum:
+        if self.excerpt_checksum is None:
+            if self.excerpt_start is not None or self.excerpt_end is not None:
+                raise ValueError("full rerank candidates cannot claim excerpt offsets")
+        else:
+            _checksum(self.excerpt_checksum)
+            if (type(self.excerpt_start) is not int or type(self.excerpt_end) is not int
+                    or self.excerpt_start < 0 or self.excerpt_end - self.excerpt_start != len(self.text)):
+                raise ValueError("rerank excerpt offsets must identify the exact source slice")
+        if hashlib.sha256(self.text.encode("utf-8")).hexdigest() != (self.excerpt_checksum or self.checksum):
             raise ValueError("reranking candidate text differs from its checksum")
         for name in ("source_title", "source_section", "document_id", "version_id"):
             value = getattr(self, name)

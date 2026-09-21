@@ -264,12 +264,14 @@ class SubgraphProvenance:
             KnowledgeOrigin.EXPERT_IMPORT,
             KnowledgeOrigin.EXPERT_CREATED,
             KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
+            KnowledgeOrigin.AUTHORITATIVE_MAPPED,
         }:
             raise ValueError("authoritative subgraph data requires an expert origin")
         if self.authority is AuthorityLevel.SECONDARY and self.origin in {
             KnowledgeOrigin.EXPERT_IMPORT,
             KnowledgeOrigin.EXPERT_CREATED,
             KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
+            KnowledgeOrigin.AUTHORITATIVE_MAPPED,
         }:
             raise ValueError("secondary subgraph data cannot claim an expert origin")
         object.__setattr__(self, "confidence", _bounded_confidence(self.confidence))
@@ -578,12 +580,16 @@ _MENTION_QUERY = """
 MATCH (state:KnowledgePublicationState {tenant_id: $tenant_id})
       -[:ACTIVE_KNOWLEDGE_PUBLICATION]->
       (publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+// Resolve publication members before joining source and type declarations.
+CALL (publication) {
 MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
       (mention:GovernedEntityMentionRevision {
           tenant_id: $tenant_id,
           governance_status: 'PUBLISHED'
       })-[:IN_CHUNK]->(chunk:Chunk {tenant_id: $tenant_id})
 MATCH (mention)-[:REFERS_TO]->(entity:Entity {tenant_id: $tenant_id})
+RETURN mention, chunk, entity
+}
 MATCH (document:Document {tenant_id: $tenant_id})
 MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(snapshot:KnowledgeSnapshot {
           tenant_id: $tenant_id
@@ -686,6 +692,8 @@ MATCH (state:KnowledgePublicationState {tenant_id: $tenant_id})
       (publication:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
 MATCH (publication)-[:USES_TBOX_VERSION]->
       (tbox:TBoxVersion {tenant_id: $tenant_id})
+// Keep seed membership independent of the source/type join order.
+CALL (publication) {
 MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
       (seed_mention:GovernedEntityMentionRevision {
           tenant_id: $tenant_id,
@@ -693,6 +701,8 @@ MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
       })-[:IN_CHUNK]->(seed_chunk:Chunk {tenant_id: $tenant_id})
 MATCH (seed_mention)-[:REFERS_TO]->(
       seed_entity:Entity {tenant_id: $tenant_id})
+RETURN seed_mention, seed_chunk, seed_entity
+}
 MATCH (seed_document:Document {tenant_id: $tenant_id})
 MATCH (publication)-[:USES_KNOWLEDGE_SNAPSHOT]->(seed_snapshot:KnowledgeSnapshot {
           tenant_id: $tenant_id
@@ -775,6 +785,7 @@ MATCH (assertion)-[:SUBJECT]->(subject:Entity {tenant_id: $tenant_id})
 OPTIONAL MATCH (assertion)-[:OBJECT]->(object:Entity {tenant_id: $tenant_id})
 MATCH (publication)-[:PUBLISHES_KNOWLEDGE_REVISION]->
       (subject_mention:GovernedEntityMentionRevision {
+          revision_id: assertion.subject_mention_revision_id,
           tenant_id: $tenant_id,
           governance_status: 'PUBLISHED'
       })-[:IN_CHUNK]->(chunk)
@@ -795,6 +806,7 @@ MATCH (document)-[:HAS_VERSION]->(version:DocumentVersion {
 })
 MATCH (snapshot)-[:OF_VERSION]->(version)
 MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(subject_type:TBoxEntityType)
+WHERE subject_type.name = subject.entity_type
 OPTIONAL MATCH (tbox)-[:DECLARES_ENTITY_TYPE]->(object_type:TBoxEntityType)
 WHERE object_type.name = object.entity_type
 WITH publication, tbox, seed_entity, seed_chunk_id, assertion, chunk,

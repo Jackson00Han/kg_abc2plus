@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from graphrag_prod.retrieval.models import Citation, RetrievedChunk
 
 
-PROMPT_VERSION = "grounded-answer-v1.4.0"
+PROMPT_VERSION = "grounded-answer-v1.5.0"
 OUTPUT_SCHEMA_VERSION = "grounded-answer-output-v1.0.0"
 REFUSAL_ANSWER = "I don't have enough cited context to answer this question."
 _INLINE_CITATION = re.compile(r"\[S[1-9][0-9]*\]")
@@ -139,8 +139,14 @@ class AnswerCitation:
     section: str | None
     document_title: str
     published_at: datetime
+    is_excerpt: bool = False
+    source_char_start: int | None = None
+    source_char_end: int | None = None
+    excerpt_checksum: str | None = None
 
     def __post_init__(self) -> None:
+        from graphrag_prod.retrieval.excerpts import validate_excerpt_metadata
+        validate_excerpt_metadata(self)
         if not re.fullmatch(r"S[1-9][0-9]*", self.citation_id):
             raise ValueError("citation_id must use the server S<number> format")
         for name in (
@@ -205,6 +211,10 @@ class AnswerCitation:
             section=citation.section,
             document_title=document_title,
             published_at=published_at,
+            is_excerpt=citation.is_excerpt,
+            source_char_start=citation.source_char_start,
+            source_char_end=citation.source_char_end,
+            excerpt_checksum=citation.excerpt_checksum,
         )
 
 

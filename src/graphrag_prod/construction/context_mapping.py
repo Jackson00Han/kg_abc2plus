@@ -23,6 +23,7 @@ from .literals import TBoxLiteralNormalizer
 from .structured import canonical, collections, digest, locate_json, pointer
 
 VERSION = "json-context-mapping:v1"
+PLANNER_VERSION = "json-context-planner:v2"
 MAX_CONTEXTS = 256
 MAX_RULES = 64
 MAX_PROMPT_CHARS = 100_000
@@ -222,8 +223,14 @@ def validate_context_plan(plan, payload=None):
             if collection is None or not set(rule["entity_types"]).issubset(collection["entity_types"]):
                 raise ValueError("CONTEXT_UNKNOWN_TARGET")
             paths = {c["path"]: c for c in collection["contexts"]}
-            if rule["value_path"] not in paths or paths[rule["value_path"]]["scope"] != rule["scope_path"]:
+            if rule["value_path"] not in paths:
                 raise ValueError("CONTEXT_UNKNOWN_SOURCE")
+            expected_scope = paths[rule["value_path"]]["scope"]
+            if expected_scope != rule["scope_path"]:
+                raise ValueError("CONTEXT_SCOPE_MISMATCH: " + canonical({
+                    "value_path": rule["value_path"], "expected_scope_path": expected_scope,
+                    "actual_scope_path": rule["scope_path"],
+                }))
             binding = rule["binding"]
             if binding["mode"] == "IDENTITY_TEMPLATE":
                 template = paths.get(binding["template_path"])
@@ -257,6 +264,10 @@ def _validated_model_rules(plan, payload):
         raise ValueError("CONTEXT_NO_VALID_RULES: " + canonical(rejected)[:1000])
     result = {"version": plan["version"], "rules": accepted}
     validate_context_plan(result, payload)
+    if not accepted and any(p["required"] for c in payload.get("collections", [])
+                            for kind in c["ontology"] for p in kind["properties"]):
+        raise ValueError("CONTEXT_REQUIRED_RULES_MISSING: required properties remain; "
+                         "return supported mappings using each context's exact scope, including an empty root scope")
     return result, rejected
 
 
@@ -456,6 +467,31 @@ def compile_context_properties(text, tbox, mapping_summary, mentions, facts, chu
             "status": "PARTIAL" if uncertain else "COMPLETED", "applied": count, "uncertain": uncertain,
             "overridden": overridden, "reason": rule["reason"]})
         total_overridden += overridden
+    # Executing every proposed rule is not sufficient when required fields
+    # were omitted from the plan. Keep these gaps explicit, including old
+    # persisted empty plans, without inventing a scope or a value.
+    supplied = {(s.subject_mention.entity.entity_id, s.property_name) for s in specs}
+    reported = {(entity, i["property_name"]) for i in issues for entity in i["entity_ids"]}
+    missing = {}
+    for path, _, _, _, _, mention in records:
+        check_budget()
+        if mention.trust.status not in {GovernanceStatus.CANDIDATE, GovernanceStatus.APPROVED, GovernanceStatus.PUBLISHED}:
+            continue
+        for name, definition in definitions[mention.entity.entity_type].items():
+            key = (mention.entity.entity_id, name)
+            if not definition.cardinality.required or key in supplied or key in reported:
+                continue
+            if any(f.trust.status in {GovernanceStatus.CANDIDATE, GovernanceStatus.APPROVED, GovernanceStatus.PUBLISHED}
+                   and f.literal_semantics is not None for f in existing.get(key, [])):
+                continue
+            missing.setdefault(name, {})[mention.entity.entity_id] = (path, mention)
+    for name, members in sorted(missing.items()):
+        paths = sorted({p for path, _ in members.values() for p in locations_by_collection[path]
+                        if p.rsplit("/", 1)[-1] == pointer(name)})[:16]
+        issues.append({"code": "CONTEXT_REQUIRED_UNMAPPED", "property_name": name,
+            "entity_ids": sorted(members), "record_ids": [members[e][1].record_id for e in sorted(members)],
+            "entity_count": len(members), "source_paths": paths,
+            "reason": "必填属性尚无可用事实或通过校验的上下文映射；未自动补值，请核对适用范围后重试。"})
     check_budget()
     return ContextCompilation(tuple(specs), tuple(issues), tuple(summaries), total_overridden)
 
@@ -472,6 +508,9 @@ class OpenAICompatibleContextMapper:
             "Return only JSON {version:'" + VERSION + "',rules:[...]}; no code, new values or instances. "
             "Each rule has EXACT keys collection,property,value_path,scope_path,entity_types,binding,reason. "
             "Paths, scopes and entity types must be supplied; map only a property declared on EVERY selected type. "
+            "value_path is the selected contexts[].path; scope_path MUST equal that SAME context's scope exactly. "
+            "The empty string scope \"\" means document root and is valid: keep it as \"\", never replace it with the value path or '/'. "
+            "For example a context {path:'/metadata/site_id',scope:'',value:'S1'} uses value_path:'/metadata/site_id',scope_path:''. "
             "Context metadata can supply a shared field missing from child records when scope and meaning are explicit. "
             "Prefer IDENTITY_TEMPLATE whenever source context declares an identity template linking the value to each record. "
             "binding is {mode:'IDENTITY_TEMPLATE',template_path,context_variable,identity_field,record_variables:{templateVariable:recordFieldPointer}}. "
@@ -479,13 +518,14 @@ class OpenAICompatibleContextMapper:
             "Otherwise use {mode:'ANCESTOR_DEFAULT'} only for an unambiguous default in that ancestor's context. "
             "A source-location description, filename, comment about a field, or data from a sibling project is NOT the property's value. "
             "Only the supplied missing ontology properties are eligible; mapped nullable local fields are not gaps to fill. "
+            "A type with an empty properties list is not an eligible target. Do not extend a rule to unrelated collections. "
             "Explicit local values are never overwritten; conflicts are left for review. Do not infer units, measured values, status or operational bindings. "
             "Use one rule for compatible entity types sharing the same field/scope. Prioritize required and identity fields. "
             "Unknown scope/semantics must be omitted, never guessed. reason is concise Chinese <=120 characters. "
             "Use valid double-quoted JSON."
         )
         messages = [{"role": "system", "content": instruction}, {"role": "user", "content": canonical(payload)}]
-        audit = {"version": VERSION, "model": self.model, "attempts": []}
+        audit = {"version": VERSION, "planner_version": PLANNER_VERSION, "model": self.model, "attempts": []}
         if len(messages[1]["content"]) > MAX_PROMPT_CHARS:
             return {"status": "UNAVAILABLE", "mapping": None, "audit": {**audit, "failure_code": "CONTEXT_PROMPT_LIMIT"}}
         for attempt in (1, 2):
@@ -514,11 +554,15 @@ class OpenAICompatibleContextMapper:
                 audit["attempts"].append(entry)
                 return {"status": "COMPLETE", "mapping": mapping, "audit": audit}
             except (ValueError, TypeError, KeyError) as error:
-                entry.update(status="REJECTED", seconds=time.monotonic()-started, error_code="CONTEXT_PLAN_INVALID")
+                entry.update(status="REJECTED", seconds=time.monotonic()-started,
+                             error_code="CONTEXT_PLAN_INVALID", validation_error=str(error)[:2000])
                 audit["attempts"].append(entry)
                 if attempt == 1 and entry.get("response"):
                     messages.extend([{"role": "assistant", "content": entry["response"]},
-                        {"role": "user", "content": "Return the complete corrected plan. Validation: " + str(error)[:300]}])
+                        {"role": "user", "content": "Return the complete corrected plan, preserving independently valid rules. "
+                         "Copy scope_path from the selected contexts[].scope exactly; an empty string is the document root. "
+                         "Select only ontology properties declared for each target type. An empty plan does not resolve required fields. "
+                         "If a binding cannot be supported, omit it rather than guessing. Validation: " + str(error)[:2000]}])
                     continue
             except Exception as error:
                 entry.update(status="UNAVAILABLE", seconds=time.monotonic()-started, error_type=type(error).__name__)

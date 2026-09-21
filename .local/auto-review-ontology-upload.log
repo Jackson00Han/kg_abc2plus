@@ -1,2 +1,0 @@
-Chromium ready: 153.0.8010.12
-{"phase":"ontology","status":"passed","started_at":"2026-09-13T15:35:01.132Z","errors":[],"blocked":[],"screenshots":["ontology-1280.png","ontology-1440.png","ontology-1920.png"],"workspace_id":"43b248f9-927a-5811-8b86-c2af24bb8cc6","generation":5,"result":{"key":"ai_power.busway.ontology","version":5000000,"tbox_id":"987774ce-dabe-5baf-92a9-6c22a8687c49","status":"PUBLISHED"},"finished_at":"2026-09-13T15:35:06.347Z"}

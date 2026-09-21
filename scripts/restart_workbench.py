@@ -58,7 +58,6 @@ def private_environment() -> dict[str, str]:
         raise RuntimeError('当前工作台只支持既有 neo4j 数据库。')
     # This entry point always preserves the user's current data-isolation choice.
     environment['PLAYGROUND_PUMP_ONLY'] = '1'
-    environment['PLAYGROUND_ALLOW_DISPOSABLE_DB'] = '1'
     return {key: str(value) for key, value in environment.items() if value is not None}
 
 
@@ -118,7 +117,6 @@ def restart() -> None:
     with log_path.open('a') as log:
         log_path.chmod(0o600)
         process = subprocess.Popen([str(python), 'scripts/run_playground.py',
-            '--enable-industrial', '--reuse-existing-corpus', '--skip-provider-warmup',
             '--host', '127.0.0.1', '--port', '8002', '--no-open'], cwd=ROOT,
             env=environment, stdin=subprocess.DEVNULL, stdout=log,
             stderr=subprocess.STDOUT, start_new_session=True)

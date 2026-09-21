@@ -957,6 +957,7 @@ class Neo4jKnowledgeStore:
             )
         model_derived = next(iter(origins)) in {
             KnowledgeOrigin.LLM_EXTRACTED, KnowledgeOrigin.AUTHORITATIVE_EXTRACTED,
+            KnowledgeOrigin.MAPPED, KnowledgeOrigin.AUTHORITATIVE_MAPPED,
             KnowledgeOrigin.HUMAN_SUPPLEMENT,
         }
         for entity in entities.values():

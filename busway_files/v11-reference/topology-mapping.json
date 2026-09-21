@@ -1,0 +1,366 @@
+{
+  "version": "xml-declarative-mapping:v1",
+  "mapping_id": "busway.v11.engineering-xml",
+  "mapping_version": "1.0.0",
+  "root": {
+    "name": "Project"
+  },
+  "semantic_context": {
+    "content_layer": "engineering_configuration",
+    "source_claim": "user_supplied_configuration",
+    "industrial_validation": "not_independently_verified",
+    "runtime_event": false,
+    "live_channel_binding": "not_verified",
+    "source_unit_or_scaling": "not_verified"
+  },
+  "collections": [
+    {
+      "id": "assets",
+      "select": [
+        "/Project/NodeTree/Root",
+        "/Project/NodeTree/Root//Child"
+      ],
+      "type": {
+        "cases": [
+          {
+            "when": {
+              "@NodeType": "1"
+            },
+            "entity_type": "Project"
+          },
+          {
+            "when": {
+              "@NodeType": "3"
+            },
+            "entity_type": "Busway"
+          },
+          {
+            "when": {
+              "@NodeType": "4"
+            },
+            "entity_type": "Section"
+          },
+          {
+            "when": {
+              "@NodeType": "2",
+              "@ElementType": "420"
+            },
+            "entity_type": "EndFeedUnit"
+          },
+          {
+            "when": {
+              "@NodeType": "2",
+              "@ElementType": "430"
+            },
+            "entity_type": "Flange"
+          },
+          {
+            "when": {
+              "@NodeType": "2",
+              "@ElementType": "435"
+            },
+            "entity_type": "Joint"
+          },
+          {
+            "when": {
+              "@NodeType": "2",
+              "@ElementType": "440"
+            },
+            "entity_type": "PlugInUnit"
+          },
+          {
+            "when": {
+              "@NodeType": "2",
+              "@ElementType": "450"
+            },
+            "entity_type": "StraightSection"
+          }
+        ]
+      },
+      "identity": {
+        "scope": [
+          "/Project/NodeTree/Root/@FullCode"
+        ],
+        "fields": [
+          "@FullCode"
+        ]
+      },
+      "properties": [
+        {
+          "select": "@FullCode",
+          "property": "full_code"
+        },
+        {
+          "select": "@Code",
+          "property": "code"
+        },
+        {
+          "select": "@Name",
+          "property": "display_name"
+        },
+        {
+          "select": "Extension/Data[@Data1='CurrentRating']/@Data2",
+          "property": "rated_current",
+          "transform": "quantity",
+          "source_unit": "A",
+          "types": [
+            "Joint",
+            "PlugInUnit",
+            "StraightSection"
+          ]
+        },
+        {
+          "select": "Extension/Data[@Data1='ProtectionDegree']/@Data2",
+          "property": "protection_degree",
+          "types": [
+            "Joint",
+            "StraightSection"
+          ]
+        }
+      ],
+      "retained_fields": [
+        {
+          "select": "@Index",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@FullName",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@Description",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@Naming",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@Paging",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@TempType",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@VentilationCoefficient",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@FieldCode",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@ElementTypeDes",
+          "reason": "原始工程描述或组态字段；当前本体未将其声明为实例属性，不推导其他事实。"
+        },
+        {
+          "select": "@AlgorithmType",
+          "reason": "算法组态标识，不表示发生故障、规则已执行或根因已确认。"
+        },
+        {
+          "select": "Standard/text()",
+          "reason": "原始产品系列组态文本；未声明为当前类型的本体属性。"
+        },
+        {
+          "select": "Extension/Data/@Data1",
+          "reason": "源扩展字段名称，用于显式映射或保留处置。"
+        },
+        {
+          "select": "Extension/Data[@Data1='BuswayCount']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='ZoneCount']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='ElementCount']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='Polarity']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='BusbarMaterial']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='EarthCapacity']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='BuswayLength']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='BreakerInterruptingCapability']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='BreakerPolarity']",
+          "reason": "源扩展字段原样保留；不生成本体未声明的属性或按源汇总值补造对象。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='AlgorithmRouteStatus']",
+          "reason": "原始算法路径状态保留，包括 staging_assumption_unverified；不提升为已经核验的运行状态。",
+          "descendants": true
+        },
+        {
+          "select": "Extension/Data[@Data1='AlgorithmRouteBasis']",
+          "reason": "原始组态路径形成依据保留，不据此推出实际诊断事件。",
+          "descendants": true
+        }
+      ]
+    },
+    {
+      "id": "ports",
+      "select": [
+        "/Project/NodeTree/Root//Port"
+      ],
+      "type": "Port",
+      "identity": {
+        "owner_collection": "assets",
+        "fields": [
+          "@Ordinal"
+        ]
+      },
+      "properties": [
+        {
+          "select": "@Ordinal",
+          "property": "ordinal"
+        },
+        {
+          "select": "@DisplayName",
+          "property": "display_name"
+        },
+        {
+          "select": "@Enabled",
+          "property": "enabled"
+        },
+        {
+          "select": "@PortType",
+          "property": "role",
+          "transform": "enum",
+          "values": {
+            "501": "input",
+            "502": "output",
+            "503": "attachment"
+          }
+        }
+      ],
+      "retained_fields": [
+        {
+          "select": "@Name",
+          "reason": "原始组态端口名称；显示名称使用来源明确的 DisplayName，不以名称推断连接。"
+        }
+      ]
+    },
+    {
+      "id": "points",
+      "select": [
+        "/Project/NodeTree/Root//Variable"
+      ],
+      "type": "MeasurementPoint",
+      "identity": {
+        "owner_collection": "assets",
+        "fields": [
+          "@Item"
+        ]
+      },
+      "properties": [
+        {
+          "select": "@Item",
+          "property": "item"
+        },
+        {
+          "select": "@Name",
+          "property": "variable_name"
+        },
+        {
+          "select": "@Unit",
+          "property": "measurement_system_ref"
+        }
+      ],
+      "retained_fields": [
+        {
+          "select": "@Comment",
+          "reason": "原始测点注释保留；仅凭注释不确认可观测量、现场测量对象或读数。"
+        },
+        {
+          "select": "@Address",
+          "reason": "原始外部采集配置字段保留于来源证据，不入知识属性；缺失地址不删除已配置测点。"
+        },
+        {
+          "select": "@PackType",
+          "reason": "原始采集组态字段，交由数据适配层解释。"
+        },
+        {
+          "select": "@PackIndex",
+          "reason": "原始采集组态字段，交由数据适配层解释。"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "type": "CONTAINS",
+      "kind": "parent",
+      "from_collection": "assets",
+      "to_collection": "assets"
+    },
+    {
+      "type": "HAS_PORT",
+      "kind": "parent",
+      "from_collection": "assets",
+      "to_collection": "ports"
+    },
+    {
+      "type": "HAS_POINT",
+      "kind": "parent",
+      "from_collection": "assets",
+      "to_collection": "points"
+    },
+    {
+      "type": "CONNECTS_TO_COMPONENT",
+      "kind": "reference",
+      "from_collection": "ports",
+      "to_collection": "assets",
+      "select": "@Load",
+      "target_select": "@FullCode"
+    }
+  ],
+  "retained_fields": [
+    {
+      "select": "/Project/@xmlns:xsi",
+      "reason": "XML命名空间声明，仅用于解析。"
+    },
+    {
+      "select": "/Project/@xmlns:xsd",
+      "reason": "XML命名空间声明，仅用于解析。"
+    },
+    {
+      "select": "/Project/ProjectSettings",
+      "reason": "原始工程工具配置；不将本地路径或软件参数写为业务知识。",
+      "descendants": true
+    }
+  ],
+  "deferred_relationships": [
+    {
+      "type": "OBSERVES",
+      "collection": "points",
+      "reason": "当前两份业务输入未提供独立核验的通道语义、单位和缩放目录；保留所有测点，暂不建立测点到观测量的绑定。模拟知识文档不能补足真实通道依据。"
+    }
+  ]
+}

@@ -33,6 +33,15 @@ normalized where recorded; executable library code was not rebuilt or changed.
 The original MIT notices, including the bundled Dagre legal notice, are kept
 alongside the scripts.
 
+## Current knowledge atlas
+
+The published atlas now loads only `cytoscape.min.js` in the browser and applies
+`preset` positions from an authenticated graph response. The backend Node.js
+entry `graph/layout.cjs` reuses this exact Cytoscape bundle for deterministic
+CoSE computation before display. The Dagre distribution remains available for
+other consumers, but the atlas does not load it or calculate client layouts.
+See [the artifact architecture](../../../../../../docs/graph-visualization.md).
+
 ## Browser loading and API
 
 Load these classic scripts in order, before the application's native ESM

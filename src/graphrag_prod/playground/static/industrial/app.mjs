@@ -25,7 +25,7 @@ import {
   beginButtonFeedback, clearButtonFeedback,
 } from "./core.mjs";
 import { IndustrialGraph } from "./graph.mjs";
-import { TYPE_COLORS, VIEWS, samePin, graphEmptyState, ontologyGraphFilters } from "./graph-model.mjs";
+import { TYPE_COLORS, typeLabel, VIEWS, samePin, graphEmptyState, ontologyGraphFilters } from "./graph-model.mjs";
 import { mountGovernance } from "./governance.mjs";
 import { SourceCatalog } from "./source-catalog.mjs";
 import { mountRetrievalOptions, rerankingLabel } from "./retrieval-options.mjs";
@@ -39,7 +39,6 @@ let graph,
   sourceCatalog,
   bootstrap,
   page = null,
-  pageQuery = null,
   view = "all",
   graphEpoch = 0,
   selectionEpoch = 0,
@@ -60,6 +59,7 @@ const panelNames = {
 };
 function resetInspector() {
   selectionEpoch++;
+  $("graph-inspector").closest(".graph-workspace").classList.remove("has-inspector");
   $("graph-inspector").open = false;
   $("graph-inspector").hidden = true;
   $("inspector-summary").textContent = "详情与来源";
@@ -69,22 +69,24 @@ function openInspector(label) {
   $("inspector-summary").textContent = `${label || "所选内容"} · 详情与来源`;
   $("graph-inspector").hidden = false;
   $("graph-inspector").open = true;
+  $("graph-inspector").closest(".graph-workspace").classList.add("has-inspector");
+  requestAnimationFrame(() => graph?.fitFocus());
 }
 function viewSelectedDetails() {
   const inspector = $("graph-inspector");
   if (inspector.hidden) return;
   inspector.open = true;
-  const summary = $("inspector-summary");
-  summary.scrollIntoView({ block: "start", behavior: "auto" });
+  const summary = $("close-graph-inspector");
+  $("graph-inspector").scrollIntoView({ block: "nearest", behavior: "auto" });
   summary.focus({ preventScroll: true });
 }
 function loadingGraph(
   text = "正在载入有来源的知识关系",
-  detail = "构建当前身份可见的图谱视图",
+  detail = "读取当前发布版本的图谱展示文件",
   busy = true,
 ) {
   const placeholder = $("graph-placeholder");
-  placeholder.hidden = busy;
+  placeholder.hidden = false;
   placeholder.querySelector(".graph-empty-actions")?.remove();
   placeholder.querySelector("strong").textContent = text;
   placeholder.querySelector("p").textContent = detail;
@@ -93,7 +95,6 @@ function loadingGraph(
 function resetGraph() {
   graphEpoch++;
   page = null;
-  pageQuery = null;
   graph?.clear();
   resetInspector();
   $("node-count").textContent = "—";
@@ -101,7 +102,9 @@ function resetGraph() {
   $("type-count").textContent = "—";
   $("type-legend").replaceChildren();
   $("graph-timing").textContent = "";
-  $("next-page").hidden = true;
+  $("graph-artifact-status").textContent = "正在读取发布版本…";
+  $("graph-artifact-status").removeAttribute("title");
+  $("graph-result-note").hidden = true;
 }
 function updateStats(result) {
   $("node-count-label").textContent =
@@ -121,17 +124,34 @@ function updateStats(result) {
     view === "ontology"
       ? page.schema.entity_types.map((t) => t.name)
       : [...new Set(page.nodes.map((n) => n.entity_type))];
+  const all = button("全部类型", () => selectType(null), "legend-item selected");
+  all.setAttribute("aria-pressed", "true");
+  legend.append(all);
   for (const type of types) {
-    const item = element("span", "legend-item"),
-      dot = element("i", "legend-swatch");
-    dot.style.backgroundColor = (TYPE_COLORS[type] || [])[1] || "#a2b29a";
-    item.append(dot, document.createTextNode(TYPE_LABELS[type] || type));
+    const item = button("", () => selectType(type), "legend-item"), dot = element("i", "legend-swatch");
+    item.dataset.type = type;
+    item.setAttribute("aria-pressed", "false");
+    dot.style.backgroundColor = TYPE_COLORS[type][1];
+    const count = view === "ontology" ? 1 : page.nodes.filter(node => node.entity_type === type).length;
+    item.append(dot, document.createTextNode(typeLabel(type, page.schema)), element("small", "", String(count)));
     legend.append(item);
+  }
+  function selectType(type) {
+    const counts = graph.filterType(type);
+    $("node-count").textContent = counts.nodes;
+    $("edge-count").textContent = counts.edges;
+    $("type-count").textContent = type ? 1 : types.length;
+    for (const item of legend.querySelectorAll("button")) {
+      const active = (item.dataset.type || null) === type;
+      item.classList.toggle("selected", active);
+      item.setAttribute("aria-pressed", String(active));
+    }
+    $("canvas-caption").textContent = type ? `${typeLabel(type, page.schema)} · 当前范围类型筛选 · 点击「全部类型」恢复` : "滚轮缩放 · 拖动画布 · 点击节点或连线查看来源";
   }
   $("canvas-caption").textContent =
     view === "ontology"
       ? "本体模型 · 点选连线查看关系约束，不代表实例事实"
-      : `${selectedGraphFilter()?.label || VIEWS[view].label} · 滚轮缩放 · 拖动节点 · 点选后在图谱下方查看详情与来源`;
+      : `${selectedGraphFilter()?.label || VIEWS[view].label} · 滚轮缩放 · 点击节点或连线查看来源`;
 }
 function currentPersona() {
   return (bootstrap?.personas || []).find(item => item.id === client.session?.identity?.id);
@@ -179,7 +199,7 @@ function graphBody(extra = {}) {
     seed_entity_ids: [],
     direction: "both",
     hops: 1,
-    page_size: 100,
+    result_mode: "overview",
     ...extra,
   };
 }
@@ -196,7 +216,9 @@ async function loadGraph(extra = {}, trigger = $('reload-graph')) {
   $("type-count").textContent = "—";
   $("type-legend").replaceChildren();
   $("graph-timing").textContent = "";
-  $("next-page").hidden = trigger !== $('next-page');
+  $("graph-artifact-status").textContent = "正在读取发布版本…";
+  $("graph-artifact-status").removeAttribute("title");
+  $("graph-result-note").hidden = true;
   loadingGraph();
   const started = performance.now();
   const query = graphBody(extra);
@@ -208,12 +230,18 @@ async function loadGraph(extra = {}, trigger = $('reload-graph')) {
       return;
     }
     page = result;
-    pageQuery = query;
     const counts = graph.setPage(page, view);
     updateStats(counts);
+    const artifact = page.visualization;
+    $("graph-artifact-status").textContent = `${page.pin.publication_id ? `发布 v${page.pin.publication_generation}` : "本体视图"} · 布局已保存`;
+    $("graph-artifact-status").title = `展示文件 ${artifact.artifact_id} · 生成于 ${artifact.generated_at}`;
+    const notes = [];
+    if (view !== "ontology" && counts.nodes && !counts.edges) notes.push("当前范围暂无实体关系，按类型展示节点；类型分组不表示事实关系。");
+    if (view === "ontology") notes.push("本体模型展示允许的类型连接，不代表已发生的实例事实。");
+    $("graph-result-note").textContent = notes.join(" ");
+    $("graph-result-note").hidden = !notes.length;
     $("graph-timing").textContent =
       `${Math.round(performance.now() - started)} ms`;
-    $("next-page").hidden = !page.page.has_more || view === "ontology";
     if (counts.nodes) {
       $("graph-placeholder").hidden = true;
     } else {
@@ -233,12 +261,26 @@ async function loadGraph(extra = {}, trigger = $('reload-graph')) {
     if (extra.seed_entity_ids?.length) toast("已显示所选节点周围的授权关系。");
   } catch (error) {
     if (epoch !== graphEpoch || identity !== client.epoch) return;
-    const text = safeError(error);
+    graph?.clear();
+    page = null;
+    $("graph-artifact-status").textContent = "展示文件未载入";
+    const text = error.code === "conflict"
+      ? "当前范围超出图谱展示上限，请选择更具体的关系范围或从来源资料中查看局部图谱。"
+      : safeError(error);
     if (text) {
       loadingGraph("图谱暂未载入", text, false);
       message(text, true);
     }
   } finally {finish();}
+}
+function invalidateGraphEvidence(error) {
+  if (![401, 403].includes(error.status) && !["GRAPH_VIEW_CHANGED", "graph_view_changed"].includes(error.code)) return false;
+  resetGraph();
+  const text = safeError(error) || "图谱版本或可见范围已变化，请刷新图谱。";
+  $("graph-artifact-status").textContent = "需要刷新可见范围";
+  loadingGraph("图谱可见范围已失效", text, false);
+  message(text, true);
+  return true;
 }
 function detailField(label, value) {
   const n = element("div", "detail-field");
@@ -273,7 +315,7 @@ function renderSchema(selected) {
   const note = element(
     "div",
     "source-note",
-    "此处表示允许的类型与关系约束，不表示某台设备已经具有这些事实。层级布局由视图计算。",
+    "此处表示允许的类型与关系约束，不表示某台设备已经具有这些事实。布局随版本预先生成。",
   );
   target.append(note);
   if (definition.source_types)
@@ -393,7 +435,7 @@ async function selectGraph(selected) {
       ),
       detailField("目标节点", byId.get(assertion.target)?.label),
     );
-    if (assertion.predicate === "MAY_INDICATE")
+    if (["MAY_INDICATE", "POSSIBLE_CAUSE"].includes(assertion.predicate))
       target.append(
         element(
           "div",
@@ -429,7 +471,7 @@ async function selectGraph(selected) {
       )
         return;
       if (!samePin(current.pin, data.pin))
-        throw new Error("图谱与来源版本不一致，请刷新图谱。");
+        throw Object.assign(new Error("图谱与来源版本不一致，请刷新图谱。"), {code: "GRAPH_VIEW_CHANGED"});
       clear(evidenceArea);
       evidenceArea.append(element("h3", "", "来源与事实依据"));
       if (!data.items.length)
@@ -445,6 +487,7 @@ async function selectGraph(selected) {
         selection !== selectionEpoch
       )
         return;
+      if (invalidateGraphEvidence(error)) return;
       const text = safeError(error);
       if (text) {
         clear(evidenceArea).append(element("p", "danger-text", text));
@@ -534,10 +577,11 @@ async function showLiteral(item, current) {
     )
       return;
     if (!samePin(current.pin, payload.pin))
-      throw new Error("图谱与来源版本不一致，请刷新。");
+      throw Object.assign(new Error("图谱与来源版本不一致，请刷新。"), {code: "GRAPH_VIEW_CHANGED"});
     for (const entry of payload.items) target.append(renderEvidence(entry));
   } catch (error) {
-    if (selection === selectionEpoch && epoch === graphEpoch) {
+    if (selection === selectionEpoch && epoch === graphEpoch && identity === client.epoch) {
+      if (invalidateGraphEvidence(error)) return;
       const text = safeError(error);
       if (text) target.append(element("p", "danger-text", text));
     }
@@ -710,7 +754,8 @@ async function search(event) {
         head,
         element("pre", "", chunk.text),
         metadata([
-          `片段 ${citation.ordinal + 1} · 字符 ${citation.char_start}–${citation.char_end}`,
+          `${citation.is_excerpt ? "原文摘录" : "片段"} ${citation.ordinal + 1} · 字符 ${citation.char_start}–${citation.char_end}`,
+          citation.is_excerpt ? `原片段范围 ${citation.source_char_start}–${citation.source_char_end} · 上下文不完整` : null,
           `引用 ${shortId(citation.chunk_id)}`,
           `来源校验 ${shortId(citation.version_checksum)}`,
         ]),
@@ -745,7 +790,7 @@ async function copyContexts() {
   if (!searchContexts.length) return;
   const context = searchContexts.map((chunk, index) => {
     const citation = chunk.citation;
-    return `[${index + 1}] ${citation.document_title}\n文档版本：${citation.version_id}\nChunk：${citation.chunk_id} · 字符 ${citation.char_start}–${citation.char_end}\n${chunk.text}`;
+    return `[${index + 1}] ${citation.document_title}\n文档版本：${citation.version_id}\nChunk：${citation.chunk_id} · 字符 ${citation.char_start}–${citation.char_end}${citation.is_excerpt ? `\n原文摘录：原片段范围 ${citation.source_char_start}–${citation.source_char_end}，上下文不完整。` : ""}\n${chunk.text}`;
   }).join("\n\n");
   try {
     await navigator.clipboard.writeText(context);
@@ -799,7 +844,7 @@ async function changePersona() {
       $(id).value = "";
     updateReferenceControl();
     document.querySelectorAll("[data-question][data-family]").forEach(item => { item.hidden = !industrial; });
-    if(canManage)await construction?.refreshCapabilities();
+    if(canManage && ["build", "records", "maintenance"].includes(panel))await construction?.refreshCapabilities();
     if (identity !== client.epoch) return false;
     await loadSources({ populateAssets: true });
     if (identity !== client.epoch) return;
@@ -972,6 +1017,8 @@ $("asset").addEventListener("change", () => {
   void loadGraph();
 });
 $("trust").addEventListener("change", () => void loadGraph());
+$("graph-inspector").addEventListener("toggle", event => { if (!event.currentTarget.open && !event.currentTarget.hidden) { graph?.clearFocus(); graph?.scheduleFit(); } });
+$("close-graph-inspector").addEventListener("click", event => { event.preventDefault(); graph?.clearFocus(); graph?.scheduleFit(); });
 $("fit-graph").addEventListener("click", () => graph?.fit());
 $("zoom-in").addEventListener("click", () => graph?.zoom(1.2));
 $("zoom-out").addEventListener("click", () => graph?.zoom(1 / 1.2));
@@ -984,14 +1031,6 @@ $("export-graph").addEventListener("click", () => {
   link.download = `industrial-${view}.png`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-});
-$("next-page").addEventListener("click", event => {
-  if (page?.page.next_cursor)
-    void loadGraph({
-      ...pageQuery,
-      view_token: page.view_token,
-      cursor: page.page.next_cursor,
-    }, event.currentTarget);
 });
 $("search-family").addEventListener("change", () => {
   searchSource = null;

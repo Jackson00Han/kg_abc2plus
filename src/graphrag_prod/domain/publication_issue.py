@@ -7,6 +7,8 @@ PUBLICATION_ISSUE_MESSAGES = MappingProxyType({
     "PROPERTY_VALUES_DIFFER": "该属性只允许一个值，但这些来源的值、单位或适用时间不一致。请核对标记的记录后返回修改。",
     "PROPERTY_REQUIRED": "该实体缺少必须填写的属性，请返回补充。",
     "PROPERTY_INVALID": "该属性的值、类型、单位或时间不符合当前知识模型，请返回修改。",
+    "PROPERTY_COMBINATION_INVALID": "该实体的属性缺失或组合不符合本体约束，请核对原文并补齐后重新预览。",
+    "PROJECT_ROOT_UNRESOLVED": "该实体未能通过已确认的归属关系定位到唯一项目。请补齐并选入项目和归属关系，或核对是否存在多个项目归属。",
     "SCHEMA_INVALID": "该实体、属性或关系不符合当前知识模型，请核对后返回修改。",
     "ENDPOINT_MISSING": "这条事实依赖的实体来源未包含在本次发布中，请勾选对应来源；尚未确认时请返回审核。",
     "RELATIONSHIP_REQUIRED": "该实体缺少知识模型要求的关系，请返回补充。",

@@ -1,5 +1,0 @@
-Starting disposable Stage 8 Neo4j container: sample-graphrag-stage8-neo4j-9643
-Waiting for Neo4j on 127.0.0.1:59014
-Running Stage 8 Neo4j integration tests
-test_additive_repair_preserves_old_heads_evidence_audit_and_manual_decisions (test_context_projection_neo4j.ContextProjectionNeo4jTests.test_additive_repair_preserves_old_heads_evidence_audit_and_manual_decisions) ... ok
-test_context_identity_precedes_cross_document_matching_and_wrong_scope_is_human (test_context_projection_neo4j.ContextProjectionNeo4jTests.test_context_identity_precedes_cross_document_matching_and_wrong_scope_is_human) ... 

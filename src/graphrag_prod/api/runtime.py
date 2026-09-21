@@ -75,6 +75,8 @@ class OperationKind(str, Enum):
     READINESS = "readiness"
     ONTOLOGY_LIST = "ontology_list"
     ONTOLOGY_IMPORT = "ontology_import"
+    ONTOLOGY_VALIDATE = "ontology_validate"
+    ONTOLOGY_FILE_IMPORT = "ontology_file_import"
     ONTOLOGY_PUBLISH = "ontology_publish"
     KNOWLEDGE_IMPORT = "knowledge_import"
     KNOWLEDGE_PREFLIGHT = "knowledge_preflight"
@@ -121,6 +123,7 @@ class OperationKind(str, Enum):
             self.INGESTION,
             self.DELETION,
             self.ONTOLOGY_IMPORT,
+            self.ONTOLOGY_FILE_IMPORT,
             self.ONTOLOGY_PUBLISH,
             self.KNOWLEDGE_IMPORT,
             self.KNOWLEDGE_CONSTRUCT,
@@ -142,6 +145,7 @@ class OperationKind(str, Enum):
             self.HEALTH,
             self.READINESS,
             self.ONTOLOGY_LIST,
+            self.ONTOLOGY_VALIDATE,
             self.KNOWLEDGE_PREFLIGHT,
             self.KNOWLEDGE_CONSTRUCTION_JOB,
             self.KNOWLEDGE_CONSTRUCTION_JOBS,
@@ -182,6 +186,8 @@ _OPERATION_SCOPES = MappingProxyType(
         OperationKind.READINESS: "health:probe",
         OperationKind.ONTOLOGY_LIST: "ontology:read",
         OperationKind.ONTOLOGY_IMPORT: "ontology:write",
+        OperationKind.ONTOLOGY_VALIDATE: "ontology:write",
+        OperationKind.ONTOLOGY_FILE_IMPORT: "ontology:write",
         OperationKind.ONTOLOGY_PUBLISH: "ontology:publish",
         OperationKind.KNOWLEDGE_IMPORT: "knowledge:import",
         OperationKind.KNOWLEDGE_PREFLIGHT: "knowledge:construct",
@@ -343,6 +349,9 @@ class ErrorCode(str, Enum):
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     CONSTRUCTION_INGESTION_FAILED = "construction_ingestion_failed"
     CONSTRUCTION_MAPPING_INVALID = "construction_mapping_invalid"
+    CONSTRUCTION_CHUNKING_CONFLICT = "construction_chunking_conflict"
+    XML_INPUT_INVALID = "xml_input_invalid"
+    CONSTRUCTION_ONTOLOGY_INCOMPATIBLE = "construction_ontology_incompatible"
     CONSTRUCTION_INPUT_LIMIT = "construction_input_limit"
     OVERLOADED = "overloaded"
     RUNTIME_CLOSED = "runtime_closed"
@@ -420,6 +429,19 @@ class RequestValidationError(ApiRuntimeError):
     default_message = "the request is invalid"
 
 
+class ConstructionOntologyIncompatibleError(RequestValidationError):
+    code = ErrorCode.CONSTRUCTION_ONTOLOGY_INCOMPATIBLE
+    default_message = "当前本体的部分可抽取类型未允许 llm-candidate 临时身份命名空间。请更新本体后再抽取；仍可选择仅保存来源。"
+
+
+class XmlInputInvalidError(RequestValidationError):
+    code = ErrorCode.XML_INPUT_INVALID
+    default_message = (
+        "XML 校验未通过：请检查 UTF-8 编码、标签闭合及文档大小；"
+        "不支持 DTD、声明实体或外部资源。"
+    )
+
+
 class IndustrialConstructionInputLimitError(RequestValidationError):
     code = ErrorCode.CONSTRUCTION_INPUT_LIMIT
     default_message = (
@@ -455,6 +477,11 @@ class ConflictError(ApiRuntimeError):
 class UploadReviewRequiredError(ConflictError):
     code = ErrorCode.UPLOAD_REVIEW_REQUIRED
     default_message = "请先核对重复或相似资料，再决定是否继续构建。"
+
+
+class ConstructionChunkingConflictError(ConflictError):
+    code = ErrorCode.CONSTRUCTION_CHUNKING_CONFLICT
+    default_message = "该来源版本已按其他切片配置保存。当前配置仅用于新资料版本，已有片段及证据保持不变。"
 
 
 class UploadInProgressError(ConflictError):
@@ -539,12 +566,15 @@ class RuntimeClosedError(ApiRuntimeError):
 _PUBLIC_ERROR_MESSAGES = MappingProxyType(
     {
         ErrorCode.INVALID_REQUEST: RequestValidationError.default_message,
+        ErrorCode.XML_INPUT_INVALID: XmlInputInvalidError.default_message,
+        ErrorCode.CONSTRUCTION_ONTOLOGY_INCOMPATIBLE: ConstructionOntologyIncompatibleError.default_message,
         ErrorCode.CONSTRUCTION_INPUT_LIMIT: IndustrialConstructionInputLimitError.default_message,
         ErrorCode.UNAUTHENTICATED: AuthenticationError.default_message,
         ErrorCode.FORBIDDEN: AuthorizationError.default_message,
         ErrorCode.NOT_FOUND: ResourceNotFoundError.default_message,
         ErrorCode.CONFLICT: ConflictError.default_message,
         ErrorCode.UPLOAD_REVIEW_REQUIRED: UploadReviewRequiredError.default_message,
+        ErrorCode.CONSTRUCTION_CHUNKING_CONFLICT: ConstructionChunkingConflictError.default_message,
         ErrorCode.UPLOAD_IN_PROGRESS: UploadInProgressError.default_message,
         ErrorCode.GRAPH_VIEW_CHANGED: GraphViewChangedError.default_message,
         ErrorCode.RATE_LIMITED: RateLimitExceeded.default_message,

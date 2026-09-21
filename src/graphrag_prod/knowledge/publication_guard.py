@@ -10,8 +10,10 @@ import re
 
 
 # A publication retains prior approved knowledge; its total is not a write batch.
-MAX_PUBLICATION_CHANGE_RECORDS = 500
-MAX_PUBLICATION_MANIFEST_RECORDS = 2_000
+MAX_PUBLICATION_SELECTION_RECORDS = 10_000
+# A replacement carries both the new revision ID and the replaced record ID.
+MAX_PUBLICATION_CHANGE_RECORDS = 2 * MAX_PUBLICATION_SELECTION_RECORDS
+MAX_PUBLICATION_MANIFEST_RECORDS = 20_000
 # Compatibility export: the former name continues to mean a single change set.
 MAX_PUBLICATION_RECORDS = MAX_PUBLICATION_CHANGE_RECORDS
 

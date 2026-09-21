@@ -29,6 +29,7 @@ from .browse_models import (
     GraphBrowseUnavailable, GraphReadPin, GraphViewChanged, read_graph_state,
 )
 from .view_tokens import GraphViewTokenCodec, digest
+from .visualization import GraphVisualizationStore
 
 
 _SOURCE_METADATA = """RETURN version.industrial_source_kind AS source_kind,
@@ -84,14 +85,26 @@ class _View:
 
 class Neo4jPublishedGraphBrowser:
     def __init__(self, driver: Any, database: str = "neo4j", *, cursor_signing_key: bytes | None = None,
-                 token_codec: GraphViewTokenCodec | None = None, transaction_timeout_seconds: float = 30.0) -> None:
+                 token_codec: GraphViewTokenCodec | None = None, transaction_timeout_seconds: float = 30.0,
+                 visualizations: GraphVisualizationStore | None = None) -> None:
         if driver is None or not isinstance(database, str) or not database.strip():
             raise ValueError("graph browser requires a driver and database")
         if isinstance(transaction_timeout_seconds, bool) or not isinstance(transaction_timeout_seconds, (int, float)) or not 0 < transaction_timeout_seconds <= 60:
             raise ValueError("graph read timeout is outside its bound")
         self.driver, self.database = driver, database
         self.tokens = token_codec or GraphViewTokenCodec(cursor_signing_key)
+        self.visualizations = visualizations or GraphVisualizationStore()
         self._read_work = unit_of_work(timeout=float(transaction_timeout_seconds), metadata={"component": "governed-graph-browser"})(self._load_tx)
+
+    def prepare_visualizations(self, principal: Principal, *, publication_id: str | None = None) -> None:
+        """Prepare both governed trust views after publish and during startup."""
+        self._authorize(principal)
+        version_filter = VersionFilter()
+        for policy in ("PUBLISHED_SECONDARY_INCLUSIVE", "AUTHORITATIVE_ONLY"):
+            view = self._load(principal, policy, version_filter)
+            if publication_id is not None and view.pin.publication_id != publication_id:
+                return
+            self.visualizations.prepare(principal, view, trust_policy=policy, version_filter=_filter_payload(version_filter))
 
     @staticmethod
     def _authorize(principal: Principal) -> None:
@@ -270,9 +283,57 @@ class Neo4jPublishedGraphBrowser:
             entries.extend(((0, 1, key), "node", key) for key in query.seed_entity_ids)
         return sorted(entries)
 
-    def query(self, principal: Principal, query: GraphBrowseQuery, *, version_filter: VersionFilter = VersionFilter(),
-              view_token: str | None = None, cursor: str | None = None) -> dict[str, Any]:
+    def entity_page(self, principal: Principal, query: GraphBrowseQuery, *,
+                    version_filter: VersionFilter = VersionFilter(), view_token: str | None = None,
+                    offset: int = 0, focus_entity_id: str | None = None) -> dict[str, Any]:
+        """Page authorized entity summaries without exporting the entire fact directory.
+
+        The bounded source view still rechecks ACLs and evidence on every read.
+        Details use the existing version-pinned graph/evidence APIs on demand.
+        """
         self._authorize(principal)
+        if query.page_size not in (10, 30) or type(offset) is not int or not 0 <= offset <= MAX_GRAPH_RECORDS:
+            raise ValueError("invalid entity page")
+        previous = None if view_token is None else self.tokens.decode(principal, "view", view_token)[0]
+        view = self._load(principal, query.trust_policy, version_filter)
+        claims = {"pin": asdict(view.pin), "version_filter": _filter_payload(version_filter),
+                  "trust_policy": query.trust_policy, "view_digest": view.view_digest}
+        if previous is not None and previous != claims:
+            raise GraphViewChanged()
+        properties = {key: [] for key in view.nodes}
+        relations = {key: set() for key in view.nodes}
+        for key, value in view.assertions.items():
+            if value.object_entity_id is None:
+                properties[value.subject_entity_id].append(value.literal_value)
+            else:
+                fact_key = relationship_fact_key(principal.tenant_id, view.pin.ontology_version_id,
+                    value.subject_entity_id, value.predicate, value.object_entity_id, value.relationship_properties,
+                    independent_record_id=(view.evidence[key].get("fact_distinction") or {}).get("record_id"))
+                relations[value.subject_entity_id].add(fact_key)
+                relations[value.object_entity_id].add(fact_key)
+        needle = (query.name_query or "").casefold()
+        items = [dict(node, property_count=len(properties[key]), relation_count=len(relations[key]))
+                 for key, node in view.nodes.items()
+                 if (not query.entity_types or node["entity_type"] in query.entity_types)
+                 and (not needle or needle in " ".join([node["label"], node["canonical_key"],
+                     *node["aliases"], *properties[key]]).casefold())]
+        items.sort(key=lambda node: (node["label"].casefold(), node["entity_id"]))
+        if focus_entity_id is not None:
+            index = next((i for i, node in enumerate(items) if node["entity_id"] == focus_entity_id), None)
+            if index is not None:
+                offset = index // query.page_size * query.page_size
+        offset = min(offset, max(0, (len(items) - 1) // query.page_size) * query.page_size)
+        return {"view_token": view_token or self.tokens.encode(principal, "view", claims),
+                "pin": asdict(view.pin), "items": tuple(items[offset:offset + query.page_size]),
+                "total": len(items), "offset": offset, "page_size": query.page_size,
+                "entity_types": tuple(sorted({node["entity_type"] for node in view.nodes.values()})),
+                "visibility": "AUTHORIZED_SOURCE_VIEW"}
+
+    def query(self, principal: Principal, query: GraphBrowseQuery, *, version_filter: VersionFilter = VersionFilter(),
+              view_token: str | None = None, cursor: str | None = None, overview: bool = False) -> dict[str, Any]:
+        self._authorize(principal)
+        if type(overview) is not bool or (overview and cursor is not None):
+            raise ValueError("graph overview does not accept a cursor")
         if not isinstance(query, GraphBrowseQuery) or not isinstance(version_filter, VersionFilter) or (cursor is not None and view_token is None):
             raise ValueError("invalid graph query")
         previous, expires = (None, None) if view_token is None else self.tokens.decode(principal, "view", view_token)
@@ -283,7 +344,10 @@ class Neo4jPublishedGraphBrowser:
         token = view_token or self.tokens.encode(principal, "view", claims)
         if expires is None:
             _, expires = self.tokens.decode(principal, "view", token)
-        query_digest = digest(asdict(query))
+        # Cursor ordering is versioned independently of the publication pin.
+        # Old cursors must fail closed when deployment changes the ordering,
+        # rather than silently skipping records in the same publication.
+        query_digest = digest({"query": asdict(query), "pagination": "relationships-first-v2"})
         after: tuple[int, int, str] | None = None
         if cursor is not None:
             continuation, _ = self.tokens.decode(principal, "cursor", cursor)
@@ -300,12 +364,24 @@ class Neo4jPublishedGraphBrowser:
                     value.relationship_properties,
                     independent_record_id=(view.evidence[key].get("fact_distinction") or {}).get("record_id"))
                 groups.setdefault(fact_key, []).append(key)
-                group_order = (ordering[0], ordering[1], fact_key)
+                group_order = (ordering[0], 0, fact_key)
                 previous_entry = grouped_entries.get(fact_key)
                 if previous_entry is None or group_order < previous_entry[0]:
                     grouped_entries[fact_key] = (group_order, "relationship", fact_key)
             else:
-                grouped_entries[(kind, key)] = (ordering, kind, key)
+                if overview and value is not None:
+                    # Properties belong in the on-demand entity dossier. Keep
+                    # their subjects, including property-only/isolated nodes.
+                    key = value.subject_entity_id
+                    kind = "node"
+                # Graph pages show relationships before property facts. The
+                # latter use UUID revision IDs while aggregated relationships
+                # use a prefixed fact key: sorting those strings together lets
+                # hundreds of properties crowd every edge off the first page.
+                # Keep depth first for neighborhood traversal, with explicit
+                # relationship / property / node ordering within each depth.
+                display_order = (ordering[0], 2 if kind == "node" else 1, key)
+                grouped_entries[(kind, key)] = (display_order, kind, key)
         entries = [item for item in sorted(grouped_entries.values())
                    if after is None or item[0] > after]
         nodes: set[str] = set()
@@ -313,13 +389,17 @@ class Neo4jPublishedGraphBrowser:
         consumed = 0
         last = None
         for ordering, kind, key in entries:
-            if consumed >= query.page_size:
+            if not overview and consumed >= query.page_size:
                 break
             source_ids = sorted(groups[key]) if kind == "relationship" else [key]
             source_id = source_ids[0]
             value = view.assertions[source_id] if kind != "node" else None
             endpoints = {key} if value is None else {value.subject_entity_id} | (set() if value.object_entity_id is None else {value.object_entity_id})
             if len(nodes | endpoints) > MAX_GRAPH_NODES or (value is not None and value.object_entity_id is not None and len(edges) >= MAX_GRAPH_EDGES):
+                if overview:
+                    # An overview is complete for its selected scope or fails
+                    # explicitly; never return a disconnected partial graph.
+                    raise GraphBrowseLimitExceeded()
                 break
             nodes.update(endpoints)
             if value is not None:
@@ -349,9 +429,12 @@ class Neo4jPublishedGraphBrowser:
             last = ordering
         has_more = consumed < len(entries)
         next_cursor = None if not has_more else self.tokens.encode(principal, "cursor", {"view": digest(claims), "query": query_digest, "after": last}, expires_at=expires)
+        artifact = self.visualizations.prepare(principal, view, trust_policy=query.trust_policy,
+            version_filter=_filter_payload(version_filter))
         return {"view_token": token, "pin": asdict(view.pin), "schema": view.schema,
             "nodes": tuple(view.nodes[key] for key in sorted(nodes)), "edges": tuple(edges), "literals": tuple(literals),
             "page": {"returned_nodes": len(nodes), "returned_edges": len(edges), "returned_literals": len(literals), "has_more": has_more, "next_cursor": next_cursor},
+            "visualization": self.visualizations.page(artifact, view.nodes, nodes),
             "visibility": "AUTHORIZED_SOURCE_VIEW"}
 
     def evidence(self, principal: Principal, revision_ids: tuple[str, ...], *, view_token: str) -> dict[str, Any]:

@@ -31,6 +31,7 @@ export const PREDICATE_LABELS = Object.freeze({
   CONNECTS_TO: "电气连接",
   HAS_SYMPTOM: "出现现象",
   MAY_INDICATE: "可能关联",
+  POSSIBLE_CAUSE: "可能原因",
   CHECKED_BY: "检查依据",
   ADDRESSED_BY: "相关维护",
   OBSERVED_ON: "观测对象",
@@ -48,6 +49,8 @@ export const ORIGIN_LABELS = Object.freeze({
   EXPERT_IMPORT: "项目人工导入",
   EXPERT_CREATED: "人工建立",
   LLM_EXTRACTED: "模型自动抽取",
+  MAPPED: "声明式映射",
+  AUTHORITATIVE_MAPPED: "权威资料映射",
   RULE_DERIVED: "规则衍生",
   FIXTURE: "测试样例",
 });

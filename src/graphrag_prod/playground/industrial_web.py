@@ -34,7 +34,7 @@ def pump_only_page(html: str) -> str:
     html = re.sub(r'<span class="domain-chip">.*?</span>', '', html, flags=re.S)
     html = re.sub(r'<button\s+class="question-example".*?</button\s*>', '', html, flags=re.S)
     html = re.sub(r'<div class="soft-note">.*?</div>',
-                  '<div class="soft-note">当前仅使用循环水泵测试包，检索结果以实际上传并发布的资料为准。</div>', html, flags=re.S)
+                  '<div class="soft-note">检索范围为当前知识库中已上传并发布的资料。</div>', html, flags=re.S)
     return html.replace('工业配电与设备运维', '循环水泵知识构建测试').replace('如 BKT-A01', '如 BC-P-101')
 
 def attach_industrial_web(app: FastAPI) -> None:

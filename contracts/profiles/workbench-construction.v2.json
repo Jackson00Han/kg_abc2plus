@@ -1,0 +1,19 @@
+{
+  "profile": "workbench-construction.v2",
+  "json_splitter": "json-record-boundaries:v1",
+  "max_document_bytes": 5242880,
+  "max_chunks": 128,
+  "max_llm_chunks": 128,
+  "max_validation_attempts": 2,
+  "max_model_calls": 256,
+  "max_total_extraction_chars": 262144,
+  "max_concurrency": 2,
+  "deadline_seconds": 4200.0,
+  "http_timeout_seconds": 4260.0,
+  "per_model_call_timeout_seconds": 120.0,
+  "per_embedding_call_timeout_seconds": 30.0,
+  "max_model_output_tokens": 8192,
+  "max_model_response_chars": 65536,
+  "max_publication_change_records": 500,
+  "max_publication_manifest_records": 2000
+}

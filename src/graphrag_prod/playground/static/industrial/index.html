@@ -7,11 +7,8 @@
     <link rel="stylesheet" href="/industrial/assets/workbench.css" />
     <link rel="stylesheet" href="/industrial/assets/knowledge/browser.css" />
     <link rel="stylesheet" href="/industrial/assets/governance.css" />
+    <link rel="stylesheet" href="/industrial/assets/graph-explorer.css" />
     <script defer src="/industrial/assets/vendor/cytoscape.min.js"></script>
-    <script
-      defer
-      src="/industrial/assets/vendor/cytoscape-dagre.min.js"
-    ></script>
     <script type="module" src="/industrial/assets/app.mjs"></script>
   </head>
   <body>
@@ -71,8 +68,8 @@
           <div class="page-heading">
             <div>
               <div class="eyebrow">EXPLORE CONNECTIONS</div>
-              <h1>看清设备之间的联系。</h1>
-              <p>探索设备、部件与关系，点选节点或连线，追溯原文与依据。</p>
+              <h1>从知识，看到关联。</h1>
+              <p>探索已发布的知识网络，让每一条联系都有据可查。</p>
             </div>
             <div class="graph-stats" aria-label="当前图谱统计">
               <div><strong id="node-count">—</strong><small id="node-count-label">当前可见节点</small></div>
@@ -81,6 +78,7 @@
             </div>
           </div>
           <div class="graph-workspace">
+            <div class="graph-publication-bar"><span class="graph-map-title"><i></i> KNOWLEDGE ATLAS <span>知识图谱</span></span><span id="graph-artifact-status" role="status">正在读取发布版本…</span></div>
             <div class="graph-stage">
               <div class="graph-toolbar">
                 <div class="segmented" role="group" aria-label="图谱展示内容">
@@ -116,6 +114,7 @@
                   </button>
                 </div>
               </div>
+              <div id="graph-result-note" class="graph-result-note" role="status" hidden></div>
               <div class="canvas-wrap">
                 <div
                   id="graph-canvas"
@@ -127,7 +126,7 @@
                   <p>构建当前身份可见的图谱视图</p>
                 </div>
                 <div class="canvas-caption" id="canvas-caption">
-                  滚轮缩放 · 拖动节点 · 点选后在图谱下方查看详情与来源
+                  滚轮缩放 · 拖动节点 · 点选查看详情与来源
                 </div>
                 <div class="canvas-controls">
                   <button id="fit-graph" aria-label="适应画布" title="适应画布">适应</button>
@@ -148,13 +147,11 @@
                   <span><i></i>权威来源</span
                   ><span><i class="dashed"></i>次权威</span>
                 </div>
-                <button id="next-page" class="text-button" hidden>
-                  下一页 →</button
-                ><span id="graph-timing" class="muted"></span>
+                <span id="graph-timing" class="muted"></span>
               </div>
             </div>
             <details id="graph-inspector" class="inspector" hidden>
-              <summary id="inspector-summary">详情与来源</summary>
+              <summary><span id="inspector-summary">详情与来源</span><button id="close-graph-inspector" type="button" aria-label="关闭详情与来源">×</button></summary>
               <div id="inspector-content" class="inspector-content"></div>
             </details>
           </div>

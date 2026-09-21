@@ -559,6 +559,10 @@ class CitationResponse(StrictAPIModel):
     section: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)] | None = None
     document_title: Annotated[str, StringConstraints(strict=True, min_length=1, max_length=512)] | None = None
     published_at: AwareDatetime | None = None
+    is_excerpt: bool = False
+    source_char_start: Annotated[int, Field(strict=True, ge=0)] | None = None
+    source_char_end: Annotated[int, Field(strict=True, ge=1)] | None = None
+    excerpt_checksum: Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")] | None = None
 
     @field_validator("canonical_uri")
     @classmethod
@@ -580,6 +584,8 @@ class CitationResponse(StrictAPIModel):
         object.__setattr__(self, "source_kind", actual_kind)
         if self.char_end <= self.char_start:
             raise ValueError("citation character range is invalid")
+        from graphrag_prod.retrieval.excerpts import validate_excerpt_metadata
+        validate_excerpt_metadata(self)
         return self
 
 
@@ -605,8 +611,9 @@ class RetrievedChunkResponse(StrictAPIModel):
         if self.citation.char_end - self.citation.char_start != len(self.text):
             raise ValueError("retrieved text must match its exact source range")
         checksum = hashlib.sha256(self.text.encode("utf-8")).hexdigest()
-        if checksum != self.citation.chunk_checksum:
-            raise ValueError("retrieved text must match its Chunk checksum")
+        expected = self.citation.excerpt_checksum if self.citation.is_excerpt else self.citation.chunk_checksum
+        if checksum != expected:
+            raise ValueError("retrieved text must match its exact Chunk or excerpt checksum")
         return self
 
 
@@ -748,7 +755,7 @@ class GraphProvenanceResponse(StrictAPIModel):
     origin: Literal[
         "EXPERT_IMPORT",
         "EXPERT_CREATED",
-        "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "HUMAN_SUPPLEMENT",
+        "LLM_EXTRACTED", "AUTHORITATIVE_EXTRACTED", "MAPPED", "AUTHORITATIVE_MAPPED", "HUMAN_SUPPLEMENT",
         "RULE_DERIVED",
         "FIXTURE",
     ]
@@ -760,7 +767,7 @@ class GraphProvenanceResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_origin_authority(self) -> Self:
-        expert = self.origin in {"EXPERT_IMPORT", "EXPERT_CREATED", "AUTHORITATIVE_EXTRACTED"}
+        expert = self.origin in {"EXPERT_IMPORT", "EXPERT_CREATED", "AUTHORITATIVE_EXTRACTED", "AUTHORITATIVE_MAPPED"}
         if expert != (self.authority == "AUTHORITATIVE"):
             raise ValueError("graph origin and authority are inconsistent")
         return self

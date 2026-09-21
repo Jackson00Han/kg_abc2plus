@@ -183,6 +183,10 @@ def _instruction(kind: str) -> str:
     identity = (
         "For identity, action is MATCH, NEW or UNCERTAIN. MATCH selects an existing supplied target_id; "
         "NEW assigns a temporary new_group_id, shared by every mention of the same newly established object. "
+        "proposed_name and proposed_mentions identify the candidate being reviewed, not an established identity. "
+        "Locate each proposed mention in its cited evidence using document-relative char_start/char_end "
+        "and the evidence's document-relative range. Check that exact occurrence and its source context; "
+        "do not substitute another object merely because it appears in the same evidence window. "
         "A group may be split into different objects where evidence requires it. Compare both existing targets "
         "and all current-batch records before NEW. No search result does NOT prove a new entity. "
         "Only explicit, scope-qualified identifiers or configured identity rules establish sameness; names, "

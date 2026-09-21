@@ -14,6 +14,7 @@ export function comparisonMarkup(result){
 }
 export function mountActions({api,epoch,browser,feedback=()=>()=>{},navigate,correctRecord,rollback,toast,maintainSource}){
   let serial=0;
+  const historyRenders=new WeakMap();
   const dialog=document.createElement('dialog');dialog.className='kb-evidence';dialog.setAttribute('aria-label','知识维护');document.body.append(dialog);
   function reset(){serial++;dialog.close();dialog.replaceChildren();}
   dialog.addEventListener('cancel',reset);
@@ -29,8 +30,8 @@ export function mountActions({api,epoch,browser,feedback=()=>()=>{},navigate,cor
   async function maintain(item){
     if(item.document_id){await maintainSource(item);return;}
     if(item.object_id){
-      const d=browser.getDirectory();const n=d?.items.find(n=>n.entity_id===item.object_id || n.mention_revision_ids.includes(item.object_id) || [...n.properties,...n.relations].some(f=>f.revision_id===item.object_id || f.record_id===item.object_id || f.sources?.some(s=>s.revision_id===item.object_id || s.record_id===item.object_id)));
-      if(n)return maintain(n);
+      const d=browser.getDirectory();const n=d?.items.find(n=>n.entity_id===item.object_id || n.mention_revision_ids.includes(item.object_id) || [...(n.properties||[]),...(n.relations||[])].some(f=>f.revision_id===item.object_id || f.record_id===item.object_id || f.sources?.some(s=>s.revision_id===item.object_id || s.record_id===item.object_id)));
+      if(n || item.object_kind==='Entity'){const detail=await browser.select(n?.entity_id||item.object_id);if(detail)return maintain(detail);return;}
       open('定位待修正知识','<p>当前浏览视图中无法定位该对象。可以尝试按记录读取；图谱结构问题需根据质量报告修复来源关联或知识模型。</p>');
       return correct(item.object_id);
     }
@@ -71,11 +72,20 @@ export function mountActions({api,epoch,browser,feedback=()=>()=>{},navigate,cor
   function history(items,container){
     const active=items.find(p=>p.status==='ACTIVE');
     const targets=active?items.filter(p=>p.publication_id!==active.publication_id):[];
+    const previous=historyRenders.get(container),identity=epoch();
+    // Background history refreshes may finish after a reader has selected a
+    // target. Preserve that selection only within the same authorized active
+    // version, and only while the target remains in the returned history.
+    const selected=previous?.identity===identity && previous.active===active?.publication_id
+      ? container.querySelector('[data-rollback-target]')?.value : '';
+    historyRenders.set(container,{identity,active:active?.publication_id});
     const reason=!items.length?'尚未发布知识。首次发布后会生成版本记录；后续可在发布版本之间切换。':!active?'当前没有可访问的生效版本，暂时无法切换。请核对当前身份权限与发布状态。':!targets.length?'当前仅有一个可访问的发布版本，暂无其他版本可切换。后续发布新版本后，可在这里查看差异并选择版本。':'选择目标版本，先比较文档与知识的变化，再设为当前版本。可以回滚到较早版本，也可以重新启用后续版本；完整历史继续保留。';
     container.innerHTML=`<div class="kb-source"><h3>版本切换</h3><p>${active?`当前生效：第 ${e(active.generation)} 版。`:''}${e(reason)}</p><div class="kb-actions"><label>目标版本 <select data-rollback-target aria-label="选择目标发布版本" ${targets.length?'':'disabled'}><option value="">${targets.length?'请选择历史版本':'暂无其他版本'}</option>${targets.map(p=>`<option value="${e(p.publication_id)}">第 ${e(p.generation)} 版 · ${e(new Date(p.created_at).toLocaleString('zh-CN'))}</option>`).join('')}</select></label><button class="button" data-open-rollback disabled>查看切换影响</button></div></div>`+items.map((p,index)=>`<article class="kb-source"><h3>第 ${e(p.generation)} 版 · ${p.status==='ACTIVE'?'当前生效':'历史版本 · 当前未生效'}</h3><p>${e(new Date(p.created_at).toLocaleString('zh-CN'))} · 发布人 ${e(p.created_by)} · ${p.published_revision_ids.length} 条知识记录${Number.isInteger(p.source_document_count)?` · ${p.source_document_count} 份来源资料`:''}</p>${active&&p.publication_id!==active.publication_id?`<button class="button" data-compare="${index}">设为当前版本…</button>`:''}<details><summary>版本技术详情</summary><p>${e(p.publication_id)}</p><p>知识模型版本：${e(p.ontology_version_id)}</p></details></article>`).join('');
     const select=container.querySelector('[data-rollback-target]');
     const button=container.querySelector('[data-open-rollback]');
     select.onchange=()=>{button.disabled=!targets.some(p=>p.publication_id===select.value);};
+    if(targets.some(p=>p.publication_id===selected))select.value=selected;
+    select.onchange();
     button.onclick=()=>{const target=targets.find(p=>p.publication_id===select.value);if(target&&active)return compare(target,active,button);};
     if(items.length===100)container.insertAdjacentHTML('beforeend','<p>仅显示最近 100 个可访问版本。</p>');
     container.querySelectorAll('[data-compare]').forEach(b=>b.onclick=()=>compare(items[Number(b.dataset.compare)],active,b));

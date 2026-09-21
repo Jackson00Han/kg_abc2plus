@@ -27,7 +27,9 @@ export function dossiers(pages) {
       facts.set(key,fact);
     }
   }
-  if (nodes.size>500 || facts.size>500) throw new Error('知识范围超过浏览上限，请按来源缩小范围。');
+  // Directory facts include properties; their budget is separate from the
+  // much smaller number of nodes/edges rendered on one graph page.
+  if (nodes.size>500 || facts.size>2000) throw new Error('知识范围超过浏览上限，请按来源缩小范围。');
   for (const fact of facts.values()) {
     const subject=nodes.get(fact.source || fact.subject);
     if (!subject || (fact.target && !nodes.has(fact.target))) throw new Error('知识关系端点不完整。');
@@ -45,10 +47,10 @@ export function entityPage(items, {query='',type='',page=0,size=12}={}) {
   return {items:found.slice(current*size,(current+1)*size),total:found.length,page:current,pages:Math.ceil(found.length/size)};
 }
 /** Collect all bounded pages before entity grouping. No partial dossier is published. */
-export async function readDirectory(api, version_filter={}, isCurrent=()=>true) {
-  const pages=[], cursors=new Set(); let view_token, cursor;
+export async function readDirectory(api, version_filter={}, isCurrent=()=>true, query={}) {
+  const pages=[], cursors=new Set(); let view_token=query.view_token, cursor;
   for(let count=0;count<12;count++) {
-    const page=await api('/v1/knowledge/graph:query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page_size:200,version_filter,...(view_token?{view_token}:{}),...(cursor?{cursor}:{})})});
+    const page=await api('/v1/knowledge/graph:query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...query,page_size:200,version_filter,...(view_token?{view_token}:{}),...(cursor?{cursor}:{})})});
     if(!isCurrent()) throw new Error('读取已取消。');
     if(view_token && page.view_token!==view_token) throw new Error('知识版本发生变化，请刷新。');
     pages.push(page); view_token=page.view_token;

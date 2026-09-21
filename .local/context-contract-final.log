@@ -1,8 +1,0 @@
-test_context_cannot_retarget_record_and_missing_secondary_link_fails_closed (test_context_contract_neo4j.ContextContractNeo4jTests.test_context_cannot_retarget_record_and_missing_secondary_link_fails_closed) ... ok
-test_context_publication_materialization_quality_and_both_source_roles (test_context_contract_neo4j.ContextContractNeo4jTests.test_context_publication_materialization_quality_and_both_source_roles) ... ok
-test_context_source_acl_change_and_retirement_hide_secondary_values (test_context_contract_neo4j.ContextContractNeo4jTests.test_context_source_acl_change_and_retirement_hide_secondary_values) ... ok
-
-----------------------------------------------------------------------
-Ran 3 tests in 365.422s
-
-OK

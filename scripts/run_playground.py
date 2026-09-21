@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble and serve the local GraphRAG retrieval Playground."""
+"""Serve the existing local knowledge workbench without loading legacy corpora."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import sys
@@ -33,7 +34,6 @@ from graphrag_prod.api import (
     GraphRAGApplicationBackend,
     GraphRAGQueryOperations,
     JWTAuthConfig,
-    JWTAuthenticator,
     Neo4jKnowledgeOperations,
     ProviderUsage,
     QueryEmbedding,
@@ -48,27 +48,23 @@ from graphrag_prod.api.runtime import (
     UploadInProgressError,
 )
 from graphrag_prod.construction import (
-    BoundedDocumentParser,
     ConstructionConfig,
     ExtractionLimits,
     Neo4jKnowledgeConstructionWorkflow,
     OpenAICompatibleOntologyExtractor,
 )
 from graphrag_prod.domain import Principal
-from graphrag_prod.domain.ids import chunk_embedding_id, embedding_space_id
+from graphrag_prod.domain.ids import embedding_space_id, chunk_embedding_id
 from graphrag_prod.domain.models import ChunkEmbedding
 from graphrag_prod.generation import GroundedGenerationService
-from graphrag_prod.graph.schema import apply_schema, verify_schema
 from graphrag_prod.ingestion import (
     EmbeddingProfile,
     Neo4jEmbeddingIndexManager,
     Neo4jIncrementalPipeline,
-    Neo4jIngestionService,
 )
 from graphrag_prod.playground import (
     PLAYGROUND_AUDIENCE,
     PLAYGROUND_ISSUER,
-    PLAYGROUND_RETRIEVAL_LIMITS,
     PLAYGROUND_TOKEN_LIFETIME_SECONDS,
     PlaygroundCatalog,
     attach_playground_routes,
@@ -77,17 +73,13 @@ from graphrag_prod.playground import (
 from graphrag_prod.retrieval import (
     Neo4jEvidenceSubgraphProjector,
     Neo4jRetrievalEngine,
-    RetrievalBackendTimeout,
-    RetrievalRequest as DomainRetrievalRequest,
 )
-from tests.fixtures.dev_corpus import load_dev_corpus_fixture
 from graphrag_prod.playground.demo_corpus import load_demo_corpus
-from scripts.playground_reset_store import capture_reset_embeddings, reset_playground_corpus
 from graphrag_prod.construction.structured import StructuredDocumentParser, select_structured_extractor
 
 
 _PLAYGROUND_CONSTRUCTION_LIMITS = json.loads(
-    (ROOT / "contracts/profiles/dev-mini-construction.v2.json").read_text(encoding="utf-8")
+    (ROOT / "contracts/profiles/workbench-construction.v2.json").read_text(encoding="utf-8")
 )
 _PLAYGROUND_EXTRACTION_PROMPT = "industrial-property-graph-extraction:v6-exact-json-spans"
 
@@ -282,13 +274,34 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
         embedder: _OpenAICompatibleEmbedder,
         database: str,
         auto_review_service: Any | None = None,
+        publications: Any | None = None,
     ) -> None:
         super().__init__(driver=driver, construction=construction, database=database,
-                         auto_review_service=auto_review_service)
+                         auto_review_service=auto_review_service, publications=publications)
         self._driver = driver
         self._database = database
         self._embedder = embedder
         self._generation_lock = threading.Lock()
+
+    def _prepare_source_index(self, principal: Principal) -> None:
+        self._refresh_embedding_generation(principal.tenant_id)
+
+    def publish(self, principal: Principal, request: Any, *, preview_only: bool = False) -> BackendResult:
+        # Repair derived index state before opening the publication transaction.
+        # Exact current-corpus coverage and the existing publication guards still
+        # decide readiness; no candidate knowledge is published by this repair.
+        from graphrag_prod.api.knowledge import _require_capability
+        _require_capability(principal, "knowledge:publish")
+        if not self._generation_lock.acquire(blocking=False):
+            raise UploadInProgressError()
+        try:
+            try:
+                self._refresh_embedding_generation(principal.tenant_id)
+            except Exception as error:
+                raise DependencyUnavailableError() from error
+            return super().publish(principal, request, preview_only=preview_only)
+        finally:
+            self._generation_lock.release()
 
     def construct(self, principal: Principal, request: Any) -> BackendResult:
         # One local process serializes construction plus the matching index CAS.
@@ -354,15 +367,17 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
                 embedding_space_id=self._embedder.embedding_space_id,
                 database_=self._database,
             )
-            if not previous_rows:
-                raise RuntimeError(
-                    "tenant has no prior Playground embedding generation"
-                )
-            baseline = previous_rows[0]
-            baseline_generation_version = int(baseline["generation_version"])
-            baseline_corpus_revision = int(baseline["corpus_revision"])
+            # An interrupted prepare has no corpus revision yet. It may be
+            # reused deterministically; it must not make int(None) block repair.
+            baseline = previous_rows[0] if previous_rows else {}
+            baseline_generation_version = int(baseline.get("generation_version") or 0)
+            if baseline and baseline.get("corpus_revision") is None:
+                baseline_generation_version -= 1
+            baseline_corpus_revision = int(baseline.get("corpus_revision") or 0)
             expected_active_generation_id = None
         else:
+            if active.embedding_space_id != self._embedder.embedding_space_id or active.dimensions != self._embedder.dimensions:
+                raise RuntimeError("active index differs from configured embedding space")
             baseline_generation_version = active.generation_version
             baseline_corpus_revision = int(active.corpus_revision or 0)
             expected_active_generation_id = active.generation_id
@@ -375,7 +390,7 @@ class _PlaygroundKnowledgeOperations(Neo4jKnowledgeOperations):
         if len(records) != 1:
             raise RuntimeError("tenant corpus revision is unavailable")
         if (
-            active is not None
+            active is not None and active.state == "ACTIVE"
             and int(records[0]["corpus_revision"]) == baseline_corpus_revision
         ):
             return
@@ -508,265 +523,44 @@ def _loopback_neo4j_uri(value: str) -> str:
     return value
 
 
+def _official_provider_base_url(value: str) -> str:
+    """Accept DashScope and documented, workspace-scoped MaaS endpoints."""
+    try:
+        parsed = urlparse(value)
+        host = parsed.hostname or ""
+        legacy = host in {
+            "dashscope.aliyuncs.com",
+            "dashscope-intl.aliyuncs.com",
+            "dashscope-us.aliyuncs.com",
+        }
+        workspace = re.fullmatch(
+            r"ws-[a-z0-9]+\.(?:cn-beijing|ap-southeast-1|eu-central-1|"
+            r"ap-northeast-1|cn-hongkong|us-east-1)\.maas\.aliyuncs\.com",
+            host,
+        ) is not None
+        valid = (
+            not any(character.isspace() or ord(character) < 32 for character in value)
+            and parsed.scheme == "https"
+            and (legacy or workspace)
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in {None, 443}
+            and parsed.path.rstrip("/") == "/compatible-mode/v1"
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("OPENAI_BASE_URL must be an official DashScope or workspace MaaS HTTPS endpoint")
+    return value.rstrip("/")
+
+
 def _required_environment(name: str) -> str:
     value = os.getenv(name)
     if value is None or not value.strip():
         raise RuntimeError(f"missing required local Playground setting: {name}")
     return value.strip()
-
-
-def _empty_database(driver: neo4j.Driver, database: str) -> None:
-    records, _, _ = driver.execute_query(
-        "MATCH (node) WITH count(node) AS nodes "
-        "OPTIONAL MATCH ()-[relationship]->() "
-        "RETURN nodes, count(relationship) AS relationships",
-        database_=database,
-    )
-    if (
-        len(records) != 1
-        or records[0]["nodes"] != 0
-        or records[0]["relationships"] != 0
-    ):
-        raise RuntimeError(
-            "refusing to initialize the Playground in a non-empty Neo4j database"
-        )
-
-
-def _corpus_fixture(profile: str):
-    if profile == "demo-mini-zh-v1":
-        return load_demo_corpus()
-    if profile == "dev-corpus-v1":
-        return load_dev_corpus_fixture()
-    raise ValueError("unknown Playground corpus profile")
-
-
-def _load_corpus(
-    driver: neo4j.Driver,
-    database: str,
-    embedder: _OpenAICompatibleEmbedder,
-    *, corpus_profile: str = "dev-corpus-v1",
-):
-    print(f"[1/5] Verifying the versioned {corpus_profile} corpus", flush=True)
-    fixture = _corpus_fixture(corpus_profile)
-
-    print("[2/5] Applying the production graph schema", flush=True)
-    _empty_database(driver, database)
-    apply_schema(driver, database)
-    driver.execute_query("CALL db.awaitIndexes(60)", database_=database)
-    errors = verify_schema(driver, database)
-    if errors:
-        raise RuntimeError("Playground schema verification failed: " + "; ".join(errors))
-
-    counts = fixture.build.manifest["counts"]
-    print(f"[3/5] Ingesting {counts['documents']} documents and {counts['active_chunks']} traceable Chunks", flush=True)
-    service = Neo4jIngestionService(
-        driver,
-        database,
-        worker_id="local-playground-loader",
-    )
-    for plan in fixture.plans:
-        result = service.ingest(plan)
-        if result.active_snapshot_id != plan.snapshot.snapshot_id:
-            raise RuntimeError(f"Playground Snapshot did not activate: {plan.document_id}")
-
-    print(
-        f"      Generating {embedder.dimensions}-dimensional {embedder.model} embeddings",
-        flush=True,
-    )
-    manager = Neo4jEmbeddingIndexManager(driver, database)
-    tenant_bundles: dict[str, list[Any]] = {}
-    for plan in fixture.plans:
-        tenant_bundles.setdefault(plan.tenant_id, []).extend(plan.bundles)
-    created_at = datetime.now(UTC)
-    for tenant_id, bundles in sorted(tenant_bundles.items()):
-        vectors = embedder.embed_documents([bundle.chunk.text for bundle in bundles])
-        embeddings = tuple(
-            ChunkEmbedding(
-                embedding_id=chunk_embedding_id(
-                    bundle.chunk.chunk_id,
-                    embedder.embedding_space_id,
-                ),
-                tenant_id=tenant_id,
-                chunk_id=bundle.chunk.chunk_id,
-                embedding_space_id=embedder.embedding_space_id,
-                provider=embedder.provider,
-                model=embedder.model,
-                revision=embedder.revision,
-                dimensions=embedder.dimensions,
-                normalization=embedder.normalization,
-                created_at=created_at,
-                vector=vector,
-            )
-            for bundle, vector in zip(bundles, vectors, strict=True)
-        )
-        if manager.materialize(embeddings) != len(embeddings):
-            raise RuntimeError(f"Playground embedding materialization failed: {tenant_id}")
-        generation = manager.prepare(
-            tenant_id=tenant_id,
-            embedding_profile=embeddings[0],
-            generation_version=1,
-        )
-        coverage = manager.coverage(generation.generation_id)
-        if not coverage.complete:
-            raise RuntimeError(f"Playground embedding coverage is incomplete: {tenant_id}")
-        manager.activate(
-            generation.generation_id,
-            expected_active_generation_id=None,
-        )
-    driver.execute_query(
-        "CALL db.index.fulltext.awaitEventuallyConsistentIndexRefresh()",
-        database_=database,
-    )
-    return fixture
-
-
-def _reuse_corpus(
-    driver: neo4j.Driver,
-    database: str,
-    embedder: _OpenAICompatibleEmbedder,
-    *, corpus_profile: str = "dev-corpus-v1",
-):
-    """Resume an initialized local corpus without changing any stored data."""
-    print(f"[1/5] Verifying the versioned {corpus_profile} corpus", flush=True)
-    fixture = _corpus_fixture(corpus_profile)
-    print("[2/5] Verifying the existing production graph schema", flush=True)
-    if verify_schema(driver, database):
-        raise RuntimeError("existing Playground schema is incomplete or invalid")
-    tenant_ids = tuple(sorted({plan.tenant_id for plan in fixture.plans}))
-    readiness = _Neo4jReadiness(
-        driver, database, expected_tenant_ids=tenant_ids,
-    ).check().payload
-    if readiness.status != "ready":
-        raise RuntimeError("existing Playground corpus is not ready for every tenant")
-
-    print("[3/5] Verifying current embedding profiles; preserving existing data", flush=True)
-    try:
-        records, _, _ = driver.execute_query(
-            Query(
-                """
-                MATCH (state:TenantCorpusState)-[:ACTIVE_EMBEDDING_INDEX]->(
-                    generation:EmbeddingIndexGeneration
-                )
-                WHERE state.tenant_id IN $tenant_ids
-                RETURN state.tenant_id AS tenant_id,
-                       generation.tenant_id AS generation_tenant_id,
-                       generation.embedding_space_id AS embedding_space_id,
-                       generation.dimensions AS dimensions,
-                       generation.similarity AS similarity,
-                       generation.index_name AS index_name,
-                       generation.label_name AS label_name
-                LIMIT $limit
-                """,
-                timeout=2.0,
-            ),
-            tenant_ids=list(tenant_ids), limit=len(tenant_ids) + 1,
-            database_=database,
-        )
-        if (
-            len(records) != len(tenant_ids)
-            or {record["tenant_id"] for record in records} != set(tenant_ids)
-        ):
-            raise ValueError("unexpected tenant generation coverage")
-        expected_indexes: dict[str, str] = {}
-        for record in records:
-            # The space ID binds provider, model, revision, dimensions and
-            # normalization; dimension equality alone cannot authorize reuse.
-            if (
-                record["generation_tenant_id"] != record["tenant_id"]
-                or record["embedding_space_id"] != embedder.embedding_space_id
-                or isinstance(record["dimensions"], bool)
-                or not isinstance(record["dimensions"], int)
-                or record["dimensions"] != embedder.dimensions
-                or record["similarity"] != "cosine"
-                or not isinstance(record["index_name"], str)
-                or not record["index_name"]
-                or not isinstance(record["label_name"], str)
-                or not record["label_name"]
-                or record["index_name"] in expected_indexes
-            ):
-                raise ValueError("existing generation does not match configuration")
-            expected_indexes[record["index_name"]] = record["label_name"]
-        indexes, _, _ = driver.execute_query(
-            Query(
-                """
-                SHOW INDEXES YIELD name, type, entityType, labelsOrTypes,
-                                   properties, state, options
-                WHERE name IN $index_names
-                RETURN name, type, entityType, labelsOrTypes, properties, state, options
-                """,
-                timeout=2.0,
-            ),
-            index_names=list(expected_indexes), database_=database,
-        )
-        if (
-            len(indexes) != len(expected_indexes)
-            or {record["name"] for record in indexes} != set(expected_indexes)
-        ):
-            raise ValueError("existing vector indexes are incomplete")
-        for record in indexes:
-            configuration = record["options"]["indexConfig"]
-            if (
-                record["type"] != "VECTOR"
-                or record["entityType"] != "NODE"
-                or record["state"] != "ONLINE"
-                or tuple(record["labelsOrTypes"]) != (expected_indexes[record["name"]],)
-                or tuple(record["properties"]) != ("vector",)
-                or isinstance(configuration.get("vector.dimensions"), bool)
-                or not isinstance(configuration.get("vector.dimensions"), int)
-                or configuration.get("vector.dimensions") != embedder.dimensions
-                or not isinstance(configuration.get("vector.similarity_function"), str)
-                or configuration["vector.similarity_function"].lower() != "cosine"
-            ):
-                raise ValueError("existing physical vector index does not match configuration")
-    except Exception:
-        raise RuntimeError(
-            "existing Playground embedding profile or vector index is incompatible"
-        ) from None
-    return fixture
-
-
-def _warm_retrieval(
-    engine: Neo4jRetrievalEngine,
-    fixture: Any,
-    embedder: _OpenAICompatibleEmbedder,
-) -> None:
-    """Compile one complete bounded retrieval path for each tenant."""
-
-    print("[4/5] Warming the bounded retrieval path for both tenants", flush=True)
-    questions_by_tenant: dict[str, Mapping[str, Any]] = {}
-    for question in fixture.build.questions:
-        tenant_id = str(question["principal"]["tenant_id"])
-        if bool(question["answerable"]):
-            questions_by_tenant.setdefault(tenant_id, question)
-    expected_tenants = {plan.tenant_id for plan in fixture.plans}
-    if set(questions_by_tenant) != expected_tenants:
-        raise RuntimeError("Playground warm-up questions do not cover every tenant")
-
-    for tenant_id, question in sorted(questions_by_tenant.items()):
-        principal = question["principal"]
-        query_embedding = embedder.embed(str(question["query"]), tenant_id=tenant_id)
-        request = DomainRetrievalRequest(
-            query_text=str(question["query"]),
-            query_vector=query_embedding.vector,
-            principal=Principal(
-                principal_id=str(principal["principal_id"]),
-                tenant_id=tenant_id,
-                groups=frozenset(str(item) for item in principal["groups"]),
-            ),
-            query_embedding_space_id=query_embedding.embedding_space_id,
-            limits=PLAYGROUND_RETRIEVAL_LIMITS,
-        )
-        try:
-            result = engine.retrieve(request)
-        except RetrievalBackendTimeout:
-            print(
-                f"      Retrieval warm-up timed out for {tenant_id}; "
-                "retrying once with the same bounds and query embedding",
-                flush=True,
-            )
-            result = engine.retrieve(request)
-        if result.trace.tenant_id != tenant_id or not result.chunks:
-            raise RuntimeError(f"Playground retrieval warm-up failed: {tenant_id}")
 
 
 def build_playground_app(
@@ -776,56 +570,19 @@ def build_playground_app(
     signing_key: bytes,
     embedder: _OpenAICompatibleEmbedder,
     extraction_model: str = "qwen-plus",
-    reuse_existing_corpus: bool = False,
-    enable_reset: bool = False,
-    skip_provider_warmup: bool = False,
-    enable_industrial: bool = False,
-    corpus_profile: str = "dev-corpus-v1",
-    pump_only: bool = False,
+    pump_only: bool = True,
 ):
-    if pump_only and not (enable_industrial and reuse_existing_corpus and skip_provider_warmup):
-        raise ValueError("pump-only requires the existing workbench and disabled fixture warm-up")
-    if type(enable_industrial) is not bool:
-        raise ValueError("enable_industrial must be boolean")
-    if enable_industrial and not reuse_existing_corpus:
-        raise ValueError("industrial runtime requires reuse_existing_corpus; load the corpus explicitly first")
-    if enable_industrial:
-        # The legacy reset deliberately drops the entire disposable database.
-        enable_reset = False
-    if not isinstance(reuse_existing_corpus, bool):
-        raise ValueError("reuse_existing_corpus must be a boolean")
-    if not isinstance(enable_reset, bool):
-        raise ValueError("enable_reset must be a boolean")
-    if not isinstance(skip_provider_warmup, bool):
-        raise ValueError("skip_provider_warmup must be a boolean")
-    if skip_provider_warmup and not reuse_existing_corpus:
-        raise ValueError("skip_provider_warmup requires a verified existing corpus")
-    if enable_industrial and corpus_profile != "dev-corpus-v1":
-        raise ValueError("industrial service requires its retained regression corpus")
-    corpus_options = {} if corpus_profile == "dev-corpus-v1" else {"corpus_profile": corpus_profile}
-    fixture = load_demo_corpus() if pump_only else (
-        _reuse_corpus(driver, database, embedder, **corpus_options)
-        if reuse_existing_corpus
-        else _load_corpus(driver, database, embedder, **corpus_options)
-    )
-    from graphrag_prod.playground.industrial_runtime import (
-        INDUSTRIAL_TENANT, TenantQueryOperations, build_industrial_query_operations,
-        verify_existing_industrial_runtime,
-    )
-    if enable_industrial and not pump_only:
-        verify_existing_industrial_runtime(driver, database, embedder.embedding_space_id)
-    enabled_tenants = tuple(sorted({plan.tenant_id for plan in fixture.plans}
-                                  | ({INDUSTRIAL_TENANT} if enable_industrial else set())))
-    if pump_only:
-        from graphrag_prod.playground.workspaces import Neo4jWorkspaceStore
-        visible_projects = Neo4jWorkspaceStore(driver, database, pump_only=True).list()
-        if not visible_projects:
-            raise ValueError("pump-only requires an already isolated empty project")
-        enabled_tenants = tuple(sorted(p["active_tenant_id"] for p in visible_projects))
+    if pump_only is not True:
+        raise ValueError("the current workbench requires PLAYGROUND_PUMP_ONLY=1")
+    fixture = load_demo_corpus()
+    from graphrag_prod.playground.workspaces import Neo4jWorkspaceStore
+    visible_projects = Neo4jWorkspaceStore(driver, database, pump_only=True).list()
+    if not visible_projects:
+        raise ValueError("the workbench requires an existing isolated project")
+    enabled_tenants = tuple(sorted(p["active_tenant_id"] for p in visible_projects))
     catalog = PlaygroundCatalog(
         fixture,
         signing_key,
-        enable_industrial=enable_industrial,
         embedding_metadata={
             "provider": embedder.provider,
             "model": embedder.model,
@@ -855,22 +612,13 @@ def build_playground_app(
             "construction_limits": dict(_PLAYGROUND_CONSTRUCTION_LIMITS),
         },
     )
-    catalog.pump_only = pump_only
-    if pump_only:
-        catalog.enable_industrial = False
+    catalog.pump_only = True
     retrieval_engine = Neo4jRetrievalEngine(
         driver,
         database,
         transaction_timeout_seconds=30.0,
     )
-    if skip_provider_warmup:
-        print(
-            "[4/5] External provider warm-up explicitly skipped; connectivity is "
-            "unverified. Uploads and queries still require the real provider.",
-            flush=True,
-        )
-    else:
-        _warm_retrieval(retrieval_engine, fixture, embedder)
+    print("External provider warm-up skipped; uploads and queries use the configured provider.", flush=True)
     query_operations = GraphRAGQueryOperations(
         retrieval_engine,
         embedder,
@@ -879,24 +627,9 @@ def build_playground_app(
     )
     from graphrag_prod.api.graph import Neo4jGraphOperations
     from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser
+    from graphrag_prod.graph.visualization import GraphVisualizationPreparationQueue, prepare_publication_visualizations
     graph_operations = Neo4jGraphOperations(browser=Neo4jPublishedGraphBrowser(driver, database))
-    if enable_industrial and not pump_only:
-        from graphrag_prod.api.graph import Neo4jGraphOperations
-        from graphrag_prod.graph.browsing import Neo4jPublishedGraphBrowser
-        from graphrag_prod.industrial.retrieval import Neo4jIndustrialScopeResolver
-        from graphrag_prod.industrial.source_catalog import Neo4jIndustrialSourceCatalog
-        industrial_queries = build_industrial_query_operations(
-            driver, database, embedder=embedder,
-            generation_service=GroundedGenerationService(_DisabledAnswerModel()),
-            api_key=embedder.client.api_key,
-        )
-        query_operations = TenantQueryOperations(query_operations, industrial_queries)
-        graph_operations = Neo4jGraphOperations(
-            browser=Neo4jPublishedGraphBrowser(driver, database),
-            industrial_scope_resolver=Neo4jIndustrialScopeResolver(driver, database),
-            source_catalog=Neo4jIndustrialSourceCatalog(driver, database),
-        )
-    from graphrag_prod.industrial.construction import Neo4jIndustrialUploadPolicy, industrial_upload_parser
+    graph_preparations = GraphVisualizationPreparationQueue(graph_operations.browser)
     prompt_signature = _PLAYGROUND_EXTRACTION_PROMPT
     construction_embedder = _OpenAICompatibleEmbedder(
         embedder.client.with_options(
@@ -927,8 +660,6 @@ def build_playground_app(
         extractor_factory=lambda tbox: _build_playground_extractor(
             embedder.client, extraction_model, tbox,
         ),
-        industrial_upload_policy=Neo4jIndustrialUploadPolicy(driver, database) if enable_industrial and not pump_only else None,
-        industrial_parser=industrial_upload_parser() if enable_industrial and not pump_only else None,
         config=ConstructionConfig(
             extractor_signature=f"openai-compatible:{extraction_model}:v3",
             prompt_signature=prompt_signature,
@@ -946,12 +677,25 @@ def build_playground_app(
     from graphrag_prod.knowledge.auto_review_model import OpenAICompatibleAutoReviewer
     from graphrag_prod.knowledge.context_projection import Neo4jContextProjectionService
     from graphrag_prod.construction.context_mapping import OpenAICompatibleContextMapper
+    from graphrag_prod.knowledge.review import Neo4jKnowledgePublicationService
+
+    def prepare_published_graph(principal, publication):
+        # Server-owned local workspace identities enumerate the relevant ACL
+        # views; never widen the caller's groups to produce a public file.
+        project = workspace_registry.store.active(principal.tenant_id)
+        if project is None:
+            return
+        readers = tuple(Principal(persona.principal_id, persona.tenant_id,
+                frozenset(persona.groups), frozenset(persona.scopes))
+            for persona in workspace_registry.personas(project))
+        graph_preparations.submit(readers, publication.publication_id)
 
     knowledge_operations = _PlaygroundKnowledgeOperations(
         driver=driver,
         database=database,
         construction=construction,
         embedder=embedder,
+        publications=Neo4jKnowledgePublicationService(driver, database, on_activated=prepare_published_graph),
         auto_review_service=Neo4jAutoReviewService(
             driver, database,
             reviewer=OpenAICompatibleAutoReviewer(client=embedder.client, model=extraction_model, enable_thinking=False),
@@ -970,15 +714,6 @@ def build_playground_app(
         knowledge=knowledge_operations,
         **({"graph": graph_operations} if graph_operations is not None else {}),
     )
-    reset_controller = None
-    if enable_reset:
-        from graphrag_prod.playground.reset import PlaygroundResetController
-
-        cached_fixture = capture_reset_embeddings(driver, database, fixture, embedder)
-        reset_controller = PlaygroundResetController(
-            lambda: reset_playground_corpus(driver, database, cached_fixture),
-        )
-        backend = reset_controller.wrap_backend(backend)
     auth_config = JWTAuthConfig(
                 issuer=PLAYGROUND_ISSUER,
                 audience=PLAYGROUND_AUDIENCE,
@@ -986,23 +721,26 @@ def build_playground_app(
                 leeway_seconds=0,
                 max_lifetime_seconds=PLAYGROUND_TOKEN_LIFETIME_SECONDS,
             )
-    workspace_registry = None
-    authenticator = JWTAuthenticator(auth_config)
-    if enable_industrial:
-        from graphrag_prod.playground.workspaces import (
-            Neo4jWorkspaceStore, WorkspaceRegistry, WorkspaceAuthenticator, attach_workspace_routes, prepare_workspace_tenant,
-        )
-        workspace_store = Neo4jWorkspaceStore(driver, database, pump_only=pump_only)
-        if not pump_only:
-            workspace_store.initialize(catalog.personas)
-
-        workspace_registry = WorkspaceRegistry(
-            workspace_store, signing_key,
-            lambda tenant_id: prepare_workspace_tenant(driver, database, embedder, tenant_id),
-        )
-        catalog.workspaces = workspace_registry
-        backend = workspace_registry.wrap_backend(backend)
-        authenticator = WorkspaceAuthenticator(auth_config, workspace_registry)
+    from graphrag_prod.playground.workspaces import (
+        WorkspaceRegistry, WorkspaceAuthenticator, attach_workspace_routes, prepare_workspace_tenant,
+    )
+    workspace_store = Neo4jWorkspaceStore(driver, database, pump_only=True)
+    workspace_registry = WorkspaceRegistry(
+        workspace_store, signing_key,
+        lambda tenant_id: prepare_workspace_tenant(driver, database, embedder, tenant_id),
+    )
+    catalog.workspaces = workspace_registry
+    # One-time migration for existing active publications. These calls only read
+    # governed knowledge and write private JSON presentation artifacts.
+    prepared = 0
+    for project in visible_projects:
+        for persona in workspace_registry.personas(project):
+            reader = Principal(persona.principal_id, persona.tenant_id,
+                frozenset(persona.groups), frozenset(persona.scopes))
+            prepared += prepare_publication_visualizations(graph_operations.browser, reader)
+    print(f"Published graph visualization views prepared: {prepared}.", flush=True)
+    backend = workspace_registry.wrap_backend(backend)
+    authenticator = WorkspaceAuthenticator(auth_config, workspace_registry)
     app = create_app(
         authenticator=authenticator,
         backend=backend,
@@ -1020,254 +758,32 @@ def build_playground_app(
             construction_timeout_seconds=_PLAYGROUND_CONSTRUCTION_LIMITS["http_timeout_seconds"],
             max_attempts=1,
         ),
-        shutdown_callbacks=(driver.close,),
+        shutdown_callbacks=(graph_preparations.close, driver.close),
     )
     app.state.pump_only = pump_only
-    attach_playground_routes(app, catalog, reset_controller=reset_controller)
-    if workspace_registry is not None:
-        attach_workspace_routes(app, workspace_registry, authenticator)
-    app.state.playground_gold_questions = tuple(fixture.build.questions)
+    attach_playground_routes(app, catalog)
+    attach_workspace_routes(app, workspace_registry, authenticator)
     return app
-
-
-def _run_http_check(app: Any) -> None:
-    """Exercise the browser's authenticated API path and all reviewed cases."""
-
-    from fastapi.testclient import TestClient
-
-    with TestClient(app) as client:
-        page = client.get("/industrial")
-        if page.status_code != 200 or 'id="governance-host"' not in page.text:
-            raise RuntimeError("Industrial workbench page check failed")
-        bootstrap_response = client.get("/playground/bootstrap")
-        if bootstrap_response.status_code != 200:
-            raise RuntimeError("Playground bootstrap check failed")
-        bootstrap = bootstrap_response.json()
-        if bootstrap.get("local_reset", {}).get("enabled"):
-            client.headers["X-Playground-Generation"] = bootstrap["local_reset"]["generation"]
-        personas = {item["id"]: item for item in bootstrap["personas"]}
-        tokens: dict[str, str] = {}
-        for persona_id in personas:
-            response = client.post(
-                "/playground/session",
-                json={"persona_id": persona_id},
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"Playground session check failed: {persona_id}")
-            tokens[persona_id] = str(response.json()["access_token"])
-
-        retrieval_limits = bootstrap["defaults"]["retrieval_limits"]
-        questions = bootstrap["questions"]
-        default_question = next(
-            item
-            for item in questions
-            if item["id"] == bootstrap["defaults"]["question_id"]
-        )
-        default_persona_id = default_question["recommended_persona_id"]
-        headers = {"Authorization": f"Bearer {tokens[default_persona_id]}"}
-        retrieval_response = client.post(
-            "/v1/retrieval",
-            headers=headers,
-            json={
-                "query_text": default_question["query"],
-                "limits": retrieval_limits,
-                "include_graph": True,
-            },
-        )
-        if retrieval_response.status_code != 200 or not retrieval_response.json()["chunks"]:
-            raise RuntimeError("Playground default retrieval check failed")
-        if "graph" not in retrieval_response.json():
-            raise RuntimeError("Playground graph projection contract check failed")
-        default_chunk_ids = {
-            item["citation"]["chunk_id"]
-            for item in retrieval_response.json()["chunks"]
-        }
-
-        answer_response = client.post(
-            "/v1/answers",
-            headers=headers,
-            json={
-                "query_text": default_question["query"],
-                "retrieval_limits": retrieval_limits,
-            },
-        )
-        if answer_response.status_code != 403:
-            raise RuntimeError("Playground token unexpectedly authorized answers")
-
-        ontology_response = client.get("/v1/ontologies", headers=headers)
-        if ontology_response.status_code != 200 or ontology_response.json() != {"items": []}:
-            raise RuntimeError("Playground ontology workspace check failed")
-
-        failures: list[str] = []
-        actual_rankings: list[dict[str, Any]] = []
-        actual_selected: list[dict[str, Any]] = []
-        for question in questions:
-            persona_id = question["recommended_persona_id"]
-            response = client.post(
-                "/v1/retrieval",
-                headers={"Authorization": f"Bearer {tokens[persona_id]}"},
-                json={
-                    "query_text": question["query"],
-                    "limits": retrieval_limits,
-                },
-            )
-            if response.status_code != 200:
-                failures.append(str(question["id"]))
-                continue
-            payload = response.json()
-            trace = payload["trace"]
-            minimum_channels = int(trace["limits"]["minimum_rrf_channels"])
-            ranking = [
-                str(hit["chunk_id"])
-                for hit in trace["final_ranking"]
-                if len(hit["ranks"]) >= minimum_channels
-            ]
-            visible_resources = [
-                {
-                    "stage": stage,
-                    "kind": "chunk",
-                    "id": str(hit["chunk_id"]),
-                }
-                for stage in (
-                    "vector_recall",
-                    "bm25_recall",
-                    "seed_ranking",
-                    "graph_expansion",
-                    "candidate_vector_ranking",
-                    "final_ranking",
-                )
-                for hit in trace[stage]
-            ]
-            visible_resources.extend(
-                {
-                    "stage": "selected_context",
-                    "kind": "chunk",
-                    "id": str(chunk_id),
-                }
-                for chunk_id in trace["selected_chunk_ids"]
-            )
-            actual_rankings.append(
-                {
-                    "id": str(question["id"]),
-                    "ranking": ranking,
-                    "visible_resources": visible_resources,
-                }
-            )
-            actual_selected.append(
-                {
-                    "id": str(question["id"]),
-                    "ranking": [str(value) for value in trace["selected_chunk_ids"]],
-                    "visible_resources": visible_resources,
-                }
-            )
-        if failures:
-            raise RuntimeError(
-                "Playground reviewed retrieval cases failed: " + ", ".join(failures)
-            )
-        from graphrag_prod.retrieval.metrics import evaluate_retrieval_results
-
-        gold_questions = list(app.state.playground_gold_questions)
-        ranking_metrics = evaluate_retrieval_results(gold_questions, actual_rankings)
-        selected_metrics = evaluate_retrieval_results(gold_questions, actual_selected)
-        if (
-            ranking_metrics.evidence_recall_at_5 < 0.80
-            or ranking_metrics.mrr < 0.80
-            or ranking_metrics.unauthorized_exposure_count != 0
-            or selected_metrics.evidence_recall_at_5 < 0.80
-            or selected_metrics.mrr < 0.80
-            or selected_metrics.unauthorized_exposure_count != 0
-        ):
-            raise RuntimeError(
-                "Playground reviewed retrieval metrics failed: "
-                f"ranking={ranking_metrics}; selected={selected_metrics}"
-            )
-        print(
-            "      Provider retrieval smoke metrics: "
-            f"ranking={ranking_metrics}; selected={selected_metrics}",
-            flush=True,
-        )
-
-        custom_response = client.post(
-            "/v1/retrieval",
-            headers=headers,
-            json={
-                "query_text": default_question["query"],
-                "limits": bootstrap["defaults"]["retrieval_limits"],
-            },
-        )
-        if custom_response.status_code != 200:
-            raise RuntimeError("Playground custom hybrid check failed")
-        custom_trace = custom_response.json()["trace"]
-        if not custom_trace["vector_recall"] or not custom_trace["bm25_recall"]:
-            raise RuntimeError("Playground custom query did not use hybrid recall")
-
-        default_tenant = personas[default_persona_id]["tenant_id"]
-        other_persona_id = next(
-            persona_id
-            for persona_id, persona in personas.items()
-            if persona["tenant_id"] != default_tenant
-        )
-        altered_response = client.post(
-            "/v1/retrieval",
-            headers={"Authorization": f"Bearer {tokens[other_persona_id]}"},
-            json={
-                "query_text": default_question["query"],
-                "limits": retrieval_limits,
-            },
-        )
-        altered_payload = altered_response.json()
-        altered_chunk_ids = {
-            item["citation"]["chunk_id"] for item in altered_payload.get("chunks", [])
-        }
-        if (
-            altered_response.status_code != 200
-            or altered_payload.get("trace", {}).get("tenant_id")
-            != personas[other_persona_id]["tenant_id"]
-            or altered_chunk_ids.intersection(default_chunk_ids)
-        ):
-            raise RuntimeError("Playground altered-persona ACL check failed")
-
-        readiness = client.get("/health/ready")
-        if readiness.status_code != 200 or readiness.json().get("status") != "ready":
-            raise RuntimeError("Playground readiness check failed")
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--corpus-profile", choices=("demo-mini-zh-v1", "dev-corpus-v1"),
-                        help="default: minimal Chinese demo; industrial mode retains dev-corpus-v1")
-    parser.add_argument("--enable-industrial", action="store_true", help="reuse the loaded industrial corpus with governed graph UI and industrial reranking")
+    parser.add_argument("--port", type=int, default=8002)
     parser.add_argument("--no-open", action="store_true", help="do not open a browser")
-    parser.add_argument(
-        "--reuse-existing-corpus",
-        action="store_true",
-        help="verify and reuse an initialized local database without loading fixture data",
-    )
-    parser.add_argument(
-        "--skip-provider-warmup",
-        action="store_true",
-        help="open a verified existing corpus during a provider outage; not allowed with --check",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="run the authenticated HTTP smoke suite and exit",
-    )
     return parser
 
 
 def main() -> None:
     args = _parser().parse_args()
-    if args.skip_provider_warmup and (not args.reuse_existing_corpus or args.check):
-        raise SystemExit("--skip-provider-warmup requires --reuse-existing-corpus and cannot use --check")
     host = require_loopback_host(args.host)
     if not 1 <= args.port <= 65_535:
         raise SystemExit("--port must be between 1 and 65535")
 
     load_dotenv(ROOT / ".env")
     pump_only = os.environ.get("PLAYGROUND_PUMP_ONLY") == "1"
+    if not pump_only:
+        raise SystemExit("PLAYGROUND_PUMP_ONLY=1 is required; use ./quick_start.command")
     api_key = _required_environment("OPENAI_API_KEY")
     base_url = _required_environment("OPENAI_BASE_URL")
     embedding_model = _required_environment("EMBEDDING_MODEL")
@@ -1278,19 +794,10 @@ def main() -> None:
         raise SystemExit("EMBEDDING_DIMENSIONS must be an integer") from error
     if embedding_dimensions not in {64, 128, 256, 512, 768, 1024, 1536, 2048}:
         raise SystemExit("EMBEDDING_DIMENSIONS is not supported by text-embedding-v4")
-    parsed_provider_url = urlparse(base_url)
-    allowed_dashscope_hosts = {
-        "dashscope.aliyuncs.com",
-        "dashscope-intl.aliyuncs.com",
-        "dashscope-us.aliyuncs.com",
-    }
-    if (
-        parsed_provider_url.scheme != "https"
-        or parsed_provider_url.hostname not in allowed_dashscope_hosts
-        or parsed_provider_url.username is not None
-        or parsed_provider_url.password is not None
-    ):
-        raise SystemExit("OPENAI_BASE_URL must be an official DashScope HTTPS endpoint")
+    try:
+        base_url = _official_provider_base_url(base_url)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     embedder = _OpenAICompatibleEmbedder(
         OpenAI(
             api_key=api_key,
@@ -1304,16 +811,12 @@ def main() -> None:
         dimensions=embedding_dimensions,
     )
 
-    if _required_environment("PLAYGROUND_ALLOW_DISPOSABLE_DB") != "1":
-        raise SystemExit(
-            "PLAYGROUND_ALLOW_DISPOSABLE_DB=1 is required before fixture data may be loaded"
-        )
     uri = _loopback_neo4j_uri(_required_environment("PLAYGROUND_NEO4J_URI"))
     username = _required_environment("PLAYGROUND_NEO4J_USER")
     password = _required_environment("PLAYGROUND_NEO4J_PASSWORD")
     database = os.getenv("PLAYGROUND_NEO4J_DATABASE", "neo4j").strip()
     if database != "neo4j":
-        raise SystemExit("the disposable Playground supports only the neo4j database")
+        raise SystemExit("the local workbench supports only the existing neo4j database")
 
     driver = neo4j.GraphDatabase.driver(
         uri,
@@ -1339,36 +842,14 @@ def main() -> None:
             embedder=embedder,
             extraction_model=extraction_model,
             pump_only=pump_only,
-            reuse_existing_corpus=args.reuse_existing_corpus,
-            enable_industrial=args.enable_industrial,
-            corpus_profile=args.corpus_profile or ("dev-corpus-v1" if args.enable_industrial else "demo-mini-zh-v1"),
-            skip_provider_warmup=args.skip_provider_warmup,
-            # main() already requires a loopback URI and the explicit disposable
-            # database opt-in. Production create_app() never installs this API.
-            enable_reset=True,
         )
     except Exception:
         driver.close()
         raise
 
-    if args.check:
-        print("[5/5] Running the selected corpus HTTP cases", flush=True)
-        _run_http_check(app)
-        print(
-            "Playground check passed: selected HTTP cases, provider smoke metrics, "
-            "hybrid recall, and ACL",
-            flush=True,
-        )
-        return
-
     url = f"http://{f'[{host}]' if ':' in host else host}:{args.port}/industrial"
     print(f"[5/5] Playground ready: {url}", flush=True)
-    print(
-        "      Press Ctrl-C to stop; existing corpus data is preserved."
-        if args.reuse_existing_corpus
-        else "      Press Ctrl-C to stop; the shell launcher removes its container.",
-        flush=True,
-    )
+    print("Press Ctrl-C to stop; existing data is preserved.", flush=True)
     if not args.no_open:
         timer = threading.Timer(0.8, webbrowser.open, args=(url,))
         timer.daemon = True

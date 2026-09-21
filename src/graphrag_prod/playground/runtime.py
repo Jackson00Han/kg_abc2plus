@@ -8,7 +8,6 @@ the normal JWT, tenant, group, rate-limit, and bounded-runtime controls.
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import asdict, dataclass
 from importlib.resources import files
 import ipaddress
@@ -21,7 +20,6 @@ from fastapi.responses import RedirectResponse
 import jwt
 from pydantic import BaseModel, ConfigDict, Field
 
-from graphrag_prod.api.backend import ProviderUsage, QueryEmbedding
 from graphrag_prod.retrieval import RetrievalLimits
 from .industrial_demo import get_industrial_demo_kit
 from .reset import PlaygroundResetController
@@ -54,126 +52,10 @@ PLAYGROUND_RETRIEVAL_LIMITS = RetrievalLimits(
 )
 _PERSONA_ID = re.compile(r"^persona-[0-9]{2}$")
 
-# This is a visible, editable starting point only.  The Playground never
-# imports or publishes it implicitly: a human must perform both API actions.
-DEFAULT_INDUSTRIAL_TBOX_TEMPLATE: dict[str, Any] = {
-    "key": "industrial-assets",
-    "version": 1,
-    "description": (
-        "Starter property-graph ontology for governed industrial asset knowledge"
-    ),
-    "entity_types": [
-        {
-            "name": "Organization",
-            "canonical_key_namespaces": ["organization-id", "llm-candidate"],
-            "properties": [],
-            "identity_properties": [],
-            "description": "Operator, supplier, manufacturer, or service company",
-        },
-        {
-            "name": "Site",
-            "canonical_key_namespaces": ["site-id", "llm-candidate"],
-            "properties": [],
-            "identity_properties": [],
-            "description": "Physical plant, facility, line, or operating location",
-        },
-        {
-            "name": "Equipment",
-            "canonical_key_namespaces": ["equipment-id", "llm-candidate"],
-            "properties": [
-                {
-                    "name": "RatedPower",
-                    "datatype": "DECIMAL",
-                    "required": False,
-                    "cardinality": "ZERO_OR_ONE",
-                    "unit": "kW",
-                    "description": "Nameplate rated power in kilowatts",
-                }
-            ],
-            "identity_properties": [],
-            "description": "Maintainable industrial equipment or machine",
-        },
-        {
-            "name": "Component",
-            "canonical_key_namespaces": ["component-id", "llm-candidate"],
-            "properties": [],
-            "identity_properties": [],
-            "description": "Replaceable component belonging to equipment",
-        },
-        {
-            "name": "Risk",
-            "canonical_key_namespaces": ["risk-id", "llm-candidate"],
-            "properties": [],
-            "identity_properties": [],
-            "description": "Operational, safety, supply, or reliability risk",
-        },
-    ],
-    "relationship_types": [
-        {
-            "name": "OPERATES",
-            "source_types": ["Organization"],
-            "target_types": ["Site", "Equipment"],
-            "properties": [],
-            "source_cardinality": "ZERO_OR_MORE",
-            "target_cardinality": "ZERO_OR_MORE",
-            "description": "Organization operates a site or equipment",
-        },
-        {
-            "name": "INSTALLED_AT",
-            "source_types": ["Equipment", "Component"],
-            "target_types": ["Site"],
-            "properties": [],
-            "source_cardinality": "ZERO_OR_ONE",
-            "target_cardinality": "ZERO_OR_MORE",
-            "description": "Asset is installed at a governed site",
-        },
-        {
-            "name": "CONTAINS",
-            "source_types": ["Equipment"],
-            "target_types": ["Component"],
-            "properties": [],
-            "source_cardinality": "ZERO_OR_MORE",
-            "target_cardinality": "ZERO_OR_ONE",
-            "description": "Equipment contains a component",
-        },
-        {
-            "name": "SUPPLIED_BY",
-            "source_types": ["Equipment", "Component"],
-            "target_types": ["Organization"],
-            "properties": [
-                {
-                    "name": "SupplyShare",
-                    "datatype": "DECIMAL",
-                    "required": False,
-                    "cardinality": "ZERO_OR_ONE",
-                    "unit": "percent",
-                    "description": "Evidence-backed share of supply",
-                }
-            ],
-            "source_cardinality": "ZERO_OR_MORE",
-            "target_cardinality": "ZERO_OR_MORE",
-            "description": "Asset is supplied by an organization",
-        },
-        {
-            "name": "EXPOSED_TO",
-            "source_types": ["Organization", "Site", "Equipment", "Component"],
-            "target_types": ["Risk"],
-            "properties": [],
-            "source_cardinality": "ZERO_OR_MORE",
-            "target_cardinality": "ZERO_OR_MORE",
-            "description": "Industrial subject is exposed to a stated risk",
-        },
-    ],
-}
-
-
 class DevelopmentCorpus(Protocol):
-    """Minimal interface supplied by the versioned development fixture."""
+    """Metadata supplied by the bundled pump example."""
 
     build: Any
-    vectors_by_id: Mapping[str, tuple[float, ...]]
-
-    def query_vector(self, question: Mapping[str, Any]) -> tuple[float, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,17 +116,6 @@ def _persona_scopes(tenant_id: str, groups: tuple[str, ...]) -> tuple[str, ...]:
         elif "reviewer" in group_set:
             selected.add("knowledge:review")
         return tuple(scope for scope in PLAYGROUND_SCOPES if scope in selected)
-    is_alpha_steward = tenant_id == "tenant-alpha" and {
-        "alpha-finance",
-        "alpha-legal",
-    }.issubset(group_set)
-    is_beta_steward = tenant_id == "tenant-beta" and "beta-board" in group_set
-    if is_alpha_steward or is_beta_steward:
-        selected.update(PLAYGROUND_SCOPES)
-    elif "alpha-finance" in group_set:
-        selected.add("knowledge:construct")
-    elif "alpha-legal" in group_set:
-        selected.add("knowledge:review")
     return tuple(scope for scope in PLAYGROUND_SCOPES if scope in selected)
 
 
@@ -258,13 +129,9 @@ class PlaygroundCatalog:
         *,
         embedding_metadata: Mapping[str, Any] | None = None,
         capabilities: Mapping[str, Any] | None = None,
-        enable_industrial: bool = False,
     ) -> None:
         if not isinstance(signing_key, bytes) or len(signing_key) < 32:
             raise ValueError("Playground signing key must contain at least 32 bytes")
-        if type(enable_industrial) is not bool:
-            raise TypeError("enable_industrial must be boolean")
-        self.enable_industrial = enable_industrial
         self.workspaces = None
         self.fixture = fixture
         self._signing_key = signing_key
@@ -296,9 +163,6 @@ class PlaygroundCatalog:
             )
             for index, (tenant_id, groups) in enumerate(identities, start=1)
         )
-        if enable_industrial:
-            from .industrial_runtime import industrial_personas
-            self.personas += industrial_personas()
         self.personas_by_id = {item.persona_id: item for item in self.personas}
         persona_id_by_scope = {
             (item.tenant_id, item.groups): item.persona_id for item in self.personas
@@ -343,9 +207,8 @@ class PlaygroundCatalog:
         # This deployment intentionally has no final-answer route authorization;
         # callers cannot make the bootstrap claim otherwise.
         capabilities["answer_generation"] = False
-        from .industrial_runtime import industrial_bootstrap
         return {
-            "industrial": industrial_bootstrap() if self.enable_industrial else {"enabled": False},
+            "industrial": {"enabled": False},
             "enabled_tenants": sorted({item.tenant_id for item in self.personas}),
             "schema_version": "local-playground-bootstrap-v1",
             "mode": (
@@ -370,10 +233,6 @@ class PlaygroundCatalog:
             "defaults": {
                 "question_id": "single_chunk-success-01",
                 "retrieval_limits": asdict(PLAYGROUND_RETRIEVAL_LIMITS),
-                "industrial_tbox_template": deepcopy(
-                    get_industrial_demo_kit()["ontology"] if manifest["dataset_id"] == "demo-mini-zh-v1"
-                    else DEFAULT_INDUSTRIAL_TBOX_TEMPLATE
-                ),
                 "industrial_demo": get_industrial_demo_kit(),
             },
             "capabilities": capabilities,
@@ -410,49 +269,6 @@ class PlaygroundCatalog:
             "expires_at": expires_at,
             "identity": persona.as_dict(),
         }
-
-
-class FixtureQueryEmbedder:
-    """Use reviewed vectors, with an honest BM25-only fallback for free text."""
-
-    def __init__(self, fixture: DevelopmentCorpus) -> None:
-        profile = fixture.build.manifest["embedding_profile"]
-        self.embedding_space_id = str(profile["embedding_space_id"])
-        self.dimensions = int(profile["dimensions"])
-        neutral_index = int(profile["feature_count"])
-        if not 0 <= neutral_index < self.dimensions:
-            raise ValueError("fixture has no unused dimension for BM25-only queries")
-
-        self._vectors_by_query = {
-            str(question["query"]): tuple(
-                float(value) for value in fixture.query_vector(question)
-            )
-            for question in fixture.build.questions
-        }
-        chunk_vectors = (
-            fixture.vectors_by_id[str(chunk["chunk_id"])]
-            for chunk in fixture.build.chunks
-        )
-        if any(float(vector[neutral_index]) != 0.0 for vector in chunk_vectors):
-            raise ValueError(
-                "fixture BM25-only dimension is not orthogonal to every Chunk"
-            )
-        neutral = [0.0] * self.dimensions
-        neutral[neutral_index] = 1.0
-        self._neutral_vector = tuple(neutral)
-
-    def is_reviewed(self, query_text: str) -> bool:
-        return query_text.strip() in self._vectors_by_query
-
-    def embed(self, query_text: str, *, tenant_id: str) -> QueryEmbedding:
-        del tenant_id  # The same synthetic question vector is safe across test tenants.
-        normalized = query_text.strip()
-        vector = self._vectors_by_query.get(normalized, self._neutral_vector)
-        return QueryEmbedding(
-            vector=vector,
-            embedding_space_id=self.embedding_space_id,
-            usage=ProviderUsage(model_calls=0, estimated_cost_usd=0.0),
-        )
 
 
 class SessionRequest(BaseModel):
@@ -514,7 +330,6 @@ def attach_playground_routes(
             payload["enabled_tenants"] = sorted({p["tenant_id"] for p in payload["personas"]})
             payload["dataset"] = {"id": "industrial-demo-v1", "version": "1", "embedding": catalog._embedding_metadata}
             payload["defaults"]["question_id"] = None
-            payload["defaults"]["industrial_tbox_template"] = deepcopy(get_industrial_demo_kit()["ontology"])
         if reset_controller is not None:
             payload["local_reset"] = reset_controller.bootstrap()
         return payload
@@ -523,7 +338,7 @@ def attach_playground_routes(
     async def playground_demo_file(filename: str) -> Response:
         # This allowlist serves committed synthetic teaching material only.
         # Runtime documents and filesystem paths never enter this route.
-        if filename in {"ontology.json", "authoritative_instances.template.json"}:
+        if filename == "authoritative_instances.template.json":
             resource = files("graphrag_prod.playground").joinpath("static", "industrial-demo-v1", filename)
             return Response(resource.read_bytes(), media_type="application/json", headers={
                 **security_headers, "Content-Disposition": f'attachment; filename="{filename}"',

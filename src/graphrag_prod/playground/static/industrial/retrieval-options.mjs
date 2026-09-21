@@ -90,6 +90,9 @@ function renderProcess(result, host) {
     if (rejected.has("character_budget") || rejected.has("chunk_limit") || rejected.has("rerank_candidate_limit")) {
       host.append(element("p", "retrieval-limit-notice", "本次有候选未进入上下文或模型重排范围。结果受预算限制，不代表知识库内的全部相关证据；展开检索过程可查看原因。"));
     }
+    if (list(result.chunks).some(chunk => chunk.citation?.is_excerpt)) {
+      host.append(element("p", "retrieval-limit-notice", "较长原文已按预算返回连续摘录，并保留精确来源位置。上下文不完整，不能据此判断全文没有其他内容；可在证据卡片查看完整原文。"));
+    }
     const scoring = element("details", "retrieval-scoring");
     scoring.append(element("summary", "", "返回片段为什么入选？"));
     scoring.append(element("p", "muted", "序号对应上方证据卡片。向量与 BM25 列显示候选融合时的分数和名次；RRF 为重排前融合分数。— 表示没有记录或模型未提供分数，不按 0 处理。相邻原文用于补全上下文，不保证按相关性排列。"));

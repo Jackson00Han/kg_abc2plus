@@ -16,7 +16,7 @@ from uuid import uuid4
 from .extraction import (ExtractionFinding, ExtractionRejected,
                          OpenAICompatibleOntologyExtractor, _response_content)
 from .literals import TBoxLiteralNormalizer
-from .parser import BoundedDocumentParser, ChunkingConfig, ParsedDocument
+from .parser import BoundedDocumentParser, ChunkingConfig, ChunkingOptions, ParsedDocument
 from .provider_errors import provider_failure_code
 
 VERSION = "json-field-mapping:v1"
@@ -147,8 +147,15 @@ class StructuredDocumentParser(BoundedDocumentParser):
         super().__init__(json_record_boundaries=True, **kwargs)
         self.json_chunking = ChunkingConfig(max_chars=json_max_chars)
 
-    def parse(self, payload: bytes, *, mime_type: str) -> ParsedDocument:
-        parsed = super().parse(payload, mime_type=mime_type)
+    def parse(
+        self, payload: bytes, *, mime_type: str,
+        chunking: ChunkingOptions | None = None,
+    ) -> ParsedDocument:
+        parsed = super().parse(payload, mime_type=mime_type, chunking=chunking)
+        # A user-selected limit is authoritative for every supported format.
+        # The historical JSON override remains only for legacy requests.
+        if chunking is not None:
+            return parsed
         if parsed.mime_type != "application/json" or not has_record_references(locate_json(parsed.normalized_text)):
             return parsed
         # The standard parser preserves all bytes/ranges; its version binds IDs.
@@ -532,7 +539,18 @@ class StructuredMappingExtractor:
                 "collections": rules}
 
 
-def select_structured_extractor(base, parsed):
+def select_structured_extractor(base, parsed, *, mapping_profile=None):
+    if mapping_profile is not None:
+        if parsed.mime_type in {"application/xml", "text/xml"}:
+            from .xml_executor import XmlMappingExtractor
+            return XmlMappingExtractor(base, parsed, mapping_profile)
+        if parsed.mime_type == "text/markdown":
+            from .markdown_executor import MarkdownMappingExtractor
+            return MarkdownMappingExtractor(base, parsed, mapping_profile)
+        raise ValueError("no governed mapping executor for this document type")
+    if isinstance(base, OpenAICompatibleOntologyExtractor) and parsed.mime_type in {"application/xml", "text/xml"}:
+        from .xml_extraction import XmlChunkOntologyExtractor
+        return XmlChunkOntologyExtractor(base, parsed)
     if (isinstance(base, OpenAICompatibleOntologyExtractor) and parsed.mime_type == "application/json"
         and has_record_references(locate_json(parsed.normalized_text))):
         return StructuredMappingExtractor(base, parsed)

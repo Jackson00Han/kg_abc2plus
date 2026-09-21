@@ -182,6 +182,14 @@ class Citation:
     # the Stage 5 contract while Stage 6 receives fuller source provenance.
     document_title: str | None = None
     published_at: datetime | None = None
+    is_excerpt: bool = False
+    source_char_start: int | None = None
+    source_char_end: int | None = None
+    excerpt_checksum: str | None = None
+
+    def __post_init__(self) -> None:
+        from .excerpts import validate_excerpt_metadata
+        validate_excerpt_metadata(self)
 
 
 @dataclass(frozen=True, slots=True)

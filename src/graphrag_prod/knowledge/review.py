@@ -55,7 +55,9 @@ from .store import (
     context_evidence_properties,
 )
 from .trust import GovernanceStatus
+from .publication_endpoints import published_mention_predecessor_alias
 from .publication_guard import (
+    MAX_PUBLICATION_SELECTION_RECORDS,
     MAX_PUBLICATION_CHANGE_RECORDS, MAX_PUBLICATION_MANIFEST_RECORDS,
     MAX_PUBLICATION_RECORDS, publication_members_guard,
 )
@@ -639,6 +641,60 @@ _PUBLICATION_CANDIDATE_QUERY = {
     kind: _publication_candidate_query(kind) for kind in ReviewRecordKind
 }
 
+# Reuse every eligibility, evidence and ACL condition for both the page and
+# totals. Pagination happens after combining record kinds, never per kind.
+_PUBLICATION_CANDIDATE_SCAN = "CALL () {\n" + "\nUNION ALL\n".join(
+    query.split("RETURN revision {.*} AS revision", 1)[0]
+    + f"RETURN DISTINCT revision, '{kind.value}' AS record_kind\n"
+    for kind, query in _PUBLICATION_CANDIDATE_QUERY.items()
+) + "}\n"
+_PUBLICATION_CANDIDATE_TOTALS = _PUBLICATION_CANDIDATE_SCAN + """
+RETURN count(*) AS total,
+       count(DISTINCT coalesce(revision.entity_id, revision.subject_entity_id))
+           AS total_entities
+"""
+_PUBLICATION_CANDIDATE_PAGE = _PUBLICATION_CANDIDATE_SCAN + """
+WITH revision, record_kind
+ORDER BY revision.created_at, revision.record_id, record_kind, revision.revision_id
+SKIP $offset LIMIT $limit
+RETURN revision {.*} AS revision, record_kind,
+       EXISTS {
+           MATCH (:KnowledgePublicationState {tenant_id: $tenant_id})
+                 -[:ACTIVE_KNOWLEDGE_PUBLICATION]->
+                 (:KnowledgePublication {tenant_id: $tenant_id, status: 'ACTIVE'})
+                 -[:PUBLISHES_KNOWLEDGE_REVISION]->(active_revision)
+           WHERE active_revision.record_id = revision.record_id
+       } AS requires_replacement
+"""
+
+_PUBLICATION_CANDIDATE_SELECTION = _PUBLICATION_CANDIDATE_PAGE.replace(
+    "RETURN revision {.*} AS revision, record_kind,",
+    "RETURN revision.revision_id AS revision_id, revision.record_id AS record_id,",
+)
+
+
+@unit_of_work(timeout=30)
+def _publication_candidate_selection_tx(tx, parameters):
+    rows = [dict(row) for row in tx.run(_PUBLICATION_CANDIDATE_SELECTION, **parameters)]
+    if len(rows) > MAX_PUBLICATION_SELECTION_RECORDS:
+        return [], False
+    return rows, True
+
+
+@unit_of_work(timeout=30)
+def _publication_candidate_page_tx(tx, parameters):
+    totals = tx.run(_PUBLICATION_CANDIDATE_TOTALS, **parameters).single(strict=True)
+    candidates = []
+    for row in tx.run(_PUBLICATION_CANDIDATE_PAGE, **parameters):
+        kind = ReviewRecordKind(row["record_kind"])
+        decoder = _stored_mention if kind is ReviewRecordKind.ENTITY_MENTION else _stored_assertion
+        candidates.append(PublicationCandidate(
+            ReviewQueueItem(kind, decoder(dict(row["revision"]))),
+            bool(row["requires_replacement"]),
+        ))
+    return tuple(candidates), int(totals["total"]), int(totals["total_entities"])
+
+
 _DEPENDENT_ASSERTION_QUERY = """
 MATCH (head:KnowledgeRecordHead {
     tenant_id: $tenant_id,
@@ -741,9 +797,12 @@ class Neo4jKnowledgeReviewService:
             GovernanceStatus.QUARANTINED,
         ),
         limit: int = 100,
+        cursor: str | None = None,
     ) -> tuple[ReviewQueueItem, ...]:
         _require_capability(principal, KNOWLEDGE_REVIEW_CAPABILITY)
         limit = _positive_integer(limit, "limit", MAX_REVIEW_QUEUE)
+        from .review_cursor import decode_review_cursor
+        position = decode_review_cursor(cursor)
         normalized_statuses = tuple(statuses)
         if not normalized_statuses or any(
             not isinstance(status, GovernanceStatus)
@@ -759,9 +818,21 @@ class Neo4jKnowledgeReviewService:
             "limit": limit,
         }
         items: list[ReviewQueueItem] = []
+        if position:
+            parameters.update(cursor_created_at=position[0], cursor_record_id=position[1],
+                              cursor_record_kind=position[2])
         with self.driver.session(database=self.database) as session:
             for kind in ReviewRecordKind:
-                records = session.run(_REVIEW_QUERY[kind], **parameters)
+                query = _REVIEW_QUERY[kind]
+                if position:
+                    query = _active_revision_query(kind, one_record=False, extra_where="""
+                        AND (revision.created_at > $cursor_created_at OR
+                            (revision.created_at = $cursor_created_at AND
+                              (revision.record_id > $cursor_record_id OR
+                               (revision.record_id = $cursor_record_id AND
+                                $current_record_kind > $cursor_record_kind))))
+                    """)
+                records = session.run(query, **parameters, current_record_kind=kind.value)
                 decoder = (
                     _stored_mention
                     if kind is ReviewRecordKind.ENTITY_MENTION
@@ -1716,9 +1787,23 @@ class Neo4jKnowledgeReviewService:
 class Neo4jKnowledgePublicationService:
     """Manifest, activate, and roll back reviewed canonical graph material."""
 
-    def __init__(self, driver: SessionDriver, database: str = "neo4j") -> None:
+    def __init__(self, driver: SessionDriver, database: str = "neo4j", *, on_activated=None) -> None:
+        if on_activated is not None and not callable(on_activated):
+            raise TypeError("on_activated must be callable")
         self.driver = driver
         self.database = database
+        self.on_activated = on_activated
+
+    def _after_activation(self, principal: Principal, result: KnowledgePublicationView) -> None:
+        # Derived presentation artifacts are generated only after the immutable
+        # publication commits. Failure must never misreport that commit or cause
+        # publication retries. Readers may safely retry their own artifact.
+        if self.on_activated is not None:
+            try:
+                self.on_activated(principal, result)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning("Publication committed; derived artifact preparation requires retry")
 
     def candidates(
         self,
@@ -1768,6 +1853,37 @@ class Neo4jKnowledgePublicationService:
             )
         )
         return tuple(candidates[:limit])
+
+    def candidate_page(
+        self, principal: Principal, *, limit: int = 100, offset: int = 0,
+    ) -> tuple[tuple[PublicationCandidate, ...], int, int]:
+        """Read a bounded page and ACL-filtered totals of eligible revisions."""
+        _require_capability(principal, KNOWLEDGE_PUBLISH_CAPABILITY)
+        limit = _positive_integer(limit, "limit", 100)
+        if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 1_000_000:
+            raise ValueError("offset must be an integer between 0 and 1000000")
+        parameters = {
+            "tenant_id": principal.tenant_id,
+            "groups": sorted(principal.groups),
+            "statuses": [GovernanceStatus.APPROVED.value, GovernanceStatus.PUBLISHED.value],
+            "limit": limit,
+            "offset": offset,
+        }
+        with self.driver.session(database=self.database) as session:
+            return session.execute_read(_publication_candidate_page_tx, parameters)
+
+    def candidate_selection(self, principal: Principal) -> tuple[list[dict], bool]:
+        """Select exact eligible revisions across pages, without loading evidence bodies."""
+        _require_capability(principal, KNOWLEDGE_PUBLISH_CAPABILITY)
+        parameters = {
+            "tenant_id": principal.tenant_id,
+            "groups": sorted(principal.groups),
+            "statuses": [GovernanceStatus.APPROVED.value, GovernanceStatus.PUBLISHED.value],
+            "offset": 0,
+            "limit": MAX_PUBLICATION_SELECTION_RECORDS + 1,
+        }
+        with self.driver.session(database=self.database) as session:
+            return session.execute_read(_publication_candidate_selection_tx, parameters)
 
     def publish(
         self,
@@ -1852,6 +1968,7 @@ class Neo4jKnowledgePublicationService:
             raise KnowledgePublicationConflict(
                 "published manifest is unavailable"
             )
+        self._after_activation(principal, result)
         return result
 
     def rollback(
@@ -1885,6 +2002,7 @@ class Neo4jKnowledgePublicationService:
             raise KnowledgePublicationConflict(
                 "rollback target is unavailable"
             )
+        self._after_activation(principal, result)
         return result
 
     def get(self, principal: Principal, publication_id: str) -> KnowledgePublicationView | None:
@@ -2163,6 +2281,38 @@ class Neo4jKnowledgePublicationService:
             ),
             key=lambda entry: entry[0].revision_id,
         )
+        # An earlier batch may have published an approved endpoint without
+        # changing its content. Translate only that exact lifecycle revision;
+        # arbitrary historical mentions and edited identities remain invalid.
+        required_endpoints = {
+            endpoint
+            for assertion, _ in source_assertions
+            for endpoint in (
+                assertion.subject_mention_revision_id,
+                assertion.object_mention_revision_id,
+            )
+            if endpoint is not None
+        }
+        for record in published_records:
+            if not isinstance(record, EntityMentionRecord) or record.revision.revision < 2:
+                continue
+            previous_id = RecordRevision.next(
+                record.record_id, record.revision.revision - 2
+            ).revision_id
+            if previous_id not in required_endpoints:
+                continue
+            try:
+                previous, _ = cls._load_revision_tx(
+                    tx, principal, previous_id, require_current=False,
+                    required_statuses=(GovernanceStatus.APPROVED,),
+                    ontology_version_id=record.trust.ontology_version_id,
+                    require_active_tbox=True,
+                )
+            except KnowledgeReviewUnavailable:
+                continue
+            alias = published_mention_predecessor_alias(previous, record)
+            if alias is not None:
+                published_mention_ids[alias[0]] = alias[1]
         for mention, snapshot_id in source_mentions:
             if mention.trust.status is GovernanceStatus.PUBLISHED:
                 published = mention
@@ -2916,10 +3066,15 @@ class Neo4jKnowledgePublicationService:
         if source_definition:
             source_contract = json.loads(source_definition).get("source_contract_json")
             if source_contract:
-                from graphrag_prod.ontology.source_validation import validate_source_publication  # noqa: PLC0415
+                from graphrag_prod.ontology.source_validation import (  # noqa: PLC0415
+                    SourcePublicationConstraintError, validate_source_publication,
+                )
                 try:
                     registry_json = json.loads(source_definition).get("rule_reference_registry_json")
                     validate_source_publication(json.loads(source_contract), entities, literal_values, relationship_records, None if registry_json is None else json.loads(registry_json))
+                except SourcePublicationConstraintError as exc:
+                    raise KnowledgePublicationConflict(str(exc), issue=_publication_issue(
+                        exc.reason, entity=entities[exc.entity_id], predicate=exc.predicate)) from exc
                 except ValueError as exc:
                     raise KnowledgePublicationConflict(str(exc), issue=_publication_issue("SCHEMA_INVALID", records)) from exc
         return ontology_id

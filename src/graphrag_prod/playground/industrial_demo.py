@@ -24,10 +24,9 @@ def _read_json(filename: str) -> dict[str, Any]:
 
 
 def get_industrial_demo_kit() -> dict[str, Any]:
-    """Return independent JSON-ready metadata, source texts, and editable drafts."""
+    """Return source samples and their required ontology key without a default T-Box."""
 
     kit = _read_json("manifest.json")
-    kit["ontology"] = _read_json("ontology.json")
     kit["authoritative_import_template"] = _read_json(
         "authoritative_instances.template.json"
     )

@@ -76,6 +76,7 @@ class ContextSelection:
     roles: tuple[tuple[str, str], ...]
     skipped: tuple[tuple[str, str], ...]
     total_chars: int
+    char_allocations: tuple[tuple[str, int], ...] = ()
 
 
 def select_context(
@@ -86,8 +87,13 @@ def select_context(
     char_lengths: Mapping[str, int],
     max_chunks: int,
     max_chars: int,
+    excerpt_ids: frozenset[str] = frozenset(),
 ) -> ContextSelection:
-    """Select whole chunks in anchor, adjacency, then rank-fill order."""
+    """Keep selection order; explicit source windows may use remaining budget.
+
+    Complete Chunks retain the previous all-or-nothing behavior. Only callers
+    that can reproduce an exact, explicitly partial source window opt in.
+    """
     if isinstance(max_chunks, bool) or max_chunks <= 0:
         raise ValueError("max_chunks must be positive")
     if isinstance(max_chars, bool) or max_chars <= 0:
@@ -97,6 +103,7 @@ def select_context(
     selected: list[str] = []
     considered: set[str] = set()
     total_chars = 0
+    allocations: list[tuple[str, int]] = []
 
     def consider(chunk_id: str, role: str) -> None:
         nonlocal total_chars
@@ -110,10 +117,15 @@ def select_context(
         if length is None or length <= 0:
             skipped.append((chunk_id, "missing_or_empty"))
             return
-        if total_chars + length > max_chars:
-            skipped.append((chunk_id, "character_budget"))
-            return
+        remaining = max_chars - total_chars
+        if length > remaining:
+            if chunk_id in excerpt_ids and remaining > 0:
+                length = remaining
+            else:
+                skipped.append((chunk_id, "character_budget"))
+                return
         selected.append(chunk_id)
+        allocations.append((chunk_id, length))
         roles[chunk_id] = role
         total_chars += length
 
@@ -128,4 +140,5 @@ def select_context(
         roles=tuple((chunk_id, roles[chunk_id]) for chunk_id in selected),
         skipped=tuple(skipped),
         total_chars=total_chars,
+        char_allocations=tuple(allocations),
     )

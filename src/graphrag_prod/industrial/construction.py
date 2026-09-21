@@ -6,7 +6,7 @@ from typing import Any, TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from graphrag_prod.domain import Principal
-from .corpus import FAMILY_TO_CONTRACT
+from .families import FAMILY_TO_CONTRACT
 from .provenance import Neo4jIndustrialProvenanceStore, canonical_json
 from .retrieval import IndustrialScope, Neo4jIndustrialScopeResolver
 
