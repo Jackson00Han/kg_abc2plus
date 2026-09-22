@@ -2,8 +2,8 @@
 <Project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
   <ProjectSettings>
     <ProjectName>PBMBaseProj_2512</ProjectName>
-    <ProjectBasePath>C:\Users\Public\Documents\BusToolKit\Projects</ProjectBasePath>
-    <ProjectPath>C:\Users\Public\Documents\BusToolKit\Projects\PBMBaseProj_2512</ProjectPath>
+    <ProjectBasePath>/workspace/project</ProjectBasePath>
+    <ProjectPath>/workspace/project/topology.xml</ProjectPath>
     <NodeNamingOption>Standard001</NodeNamingOption>
     <PsoProjectName>PBMBaseProj_2512a</PsoProjectName>
     <PsoProjectBasePath>C:\ProgramData\Schneider Electric\Power Operation\v2024\Config</PsoProjectBasePath>

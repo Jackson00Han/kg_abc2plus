@@ -40,7 +40,7 @@ The published atlas now loads only `cytoscape.min.js` in the browser and applies
 entry `graph/layout.cjs` reuses this exact Cytoscape bundle for deterministic
 CoSE computation before display. The Dagre distribution remains available for
 other consumers, but the atlas does not load it or calculate client layouts.
-See [the artifact architecture](../../../../../../docs/graph-visualization.md).
+See [the artifact architecture](../../../../../../docs/architecture.md).
 
 ## Browser loading and API
 

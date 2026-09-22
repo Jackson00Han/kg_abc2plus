@@ -1,0 +1,873 @@
+# 母线槽知识库本体：规定对象类型、字段含义、关系及合法的数据组合。
+# 英文标识供程序引用；display_name 是供人阅读的中文名称。
+# 中文注释帮助阅读；正式业务含义和约束仍写在 definition、description 与 constraints 中。
+# 阅读顺序：文件信息 → 业务边界 → 来源等级 → 通用属性 → 实体类型 → 关系 → 约束。
+
+# 一、文件信息：说明这份本体叫什么、属于哪个项目、当前是什么版本。
+metadata:
+  ontology_id: "ai_power.busway.ontology" # 本体的稳定标识，升级版本时不随意更换
+  title: "母线槽知识库本体" # 这份本体的中文名称
+  ontology_version: "0.1.1" # 本体版本号
+  model_kind: "property_graph" # 属性图：节点和关系都可以有属性
+  status: "BASELINE" # 首版结构已定稿，供真实资料建模与接入验证；不表示已通过生产验收
+  default_language: "zh-CN" # 默认使用简体中文
+  description: "定义母线槽工程结构、观测量与诊断知识的实体类型、关系和约束。" # 一句话说明本体负责定义什么
+
+# 二、业务边界：先明确知识库需要描述哪些内容，以及哪些内容交给外部系统。
+scope:
+  domain: "母线槽" # 所属业务领域
+  included_topics: # 纳入知识库的内容
+    - "母线槽工程结构、设备构件及连接拓扑"
+    - "测点、观测量及其类别与单位"
+    - "异常现象、候选根因及其关联、适用条件、证据来源与外部诊断规则引用"
+    - "母线槽设备或系统的检查、维修与维护工单及其诊断、处置和复测记录"
+  excluded_topics: # 本知识库不保存或不负责的内容
+    - "与母线槽无关的设备结构及诊断知识"
+    - "外部诊断规则的完整正文、执行用计算公式及具体业务阈值"
+
+# 三、来源核验等级：给资料及其证据分级，不给设备类型或业务实体分层。
+layers:
+  # 来源核验等级；来源记录通过 source_layer 引用等级标识。
+  # rank 越大表示本项目采用的来源核验等级越高，不是事实正确概率或最终检索分数。
+  # 具体检索权重由检索配置确定，并结合相关性、适用范围及版本有效性。
+  levels: # 来源等级清单，外部证据记录按英文标识引用
+    expert_reviewed: # 专家复核通过
+      display_name: "专家复核通过"
+      rank: 3
+      description: "对明确的来源版本及内容范围完成专业复核，结论为通过，且有可追溯的复核人、复核时间和复核记录。仅对复核覆盖的内容适用；文件署有专家姓名不等于已通过复核。"
+
+    official_verified: # 正式来源已核实
+      display_name: "正式来源已核实"
+      rank: 2
+      description: "发布主体、正式出处及版本身份可核验的原始资料，例如标准组织或设备制造商正式发布的文件；尚不具备上述专家复核通过依据。来源身份已核验不等于其中每项陈述均正确。"
+
+    unverified: # 来源待核实
+      display_name: "来源待核实"
+      rank: 1
+      description: "尚未具备上述专家复核或正式来源核验依据的资料。一般笔记、草稿和来源不明的转载在完成核验前属于此层；已知错误或复核不通过不能仅按待核验处理。"
+
+# 四、通用属性：所有实体都需要遵循的字段定义。
+# 这里写的是字段怎么填，不是在填写某个实体的业务数据。
+# value_type：string=文字，integer=整数，number=数值，boolean=是/否。
+# required：true=必填，false=可以省略；必填不代表可以猜测缺失内容。
+# allowed_values 列允许填写的值；value_descriptions 解释这些值的含义。
+property_definitions:
+  # 每个实体的属性 = 下面的通用属性 + 它所属类型的专有属性。
+  # 关系另有自己的属性，不继承这里的实体字段。
+  entity_common:
+    applies_to: "all_entity_types" # 适用于下面定义的全部实体类型
+    properties:
+      entity_id: # 图谱内部唯一编号，与显示名称、工程编号分别管理
+        display_name: "图谱唯一编号"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "在当前知识图谱内唯一引用实体的非空标识；不同实体不得共用，不以显示名称作为身份判断依据。"
+
+      display_name: # 具体实体叫什么，例如“1 号接头”；不是这里的类型名称
+        display_name: "显示名称"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "便于人阅读和展示的实体名称；允许缺省或与其他实体同名，不用于唯一识别实体。"
+
+# 五、实体类型：规定图谱里可以有哪些对象。
+# 例如 Joint 是“接头”这一类型；某工程的 1 号接头才是具体实体。
+# 类型下的 definition 解释这个类型；properties 下的 definition 则规定实体需要填写的说明字段。
+entity_types:
+  # 一个工程项目的管理范围，用于组织母线槽及相关构件。
+  Project:
+    display_name: "工程项目"
+    definition: "用于组织母线槽系统及相关资产，并界定其工程归属的管理容器。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+  # 某工程中的一套母线槽系统；不是某一段直身段。
+  Busway:
+    display_name: "母线槽系统"
+    definition: "工程项目中作为一个整体组织和标识的母线槽系统，可划分为母线分区并包含设备构件。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+  # 工程管理或定位时划分的分区；与实物“直身段”分开。
+  Section:
+    display_name: "母线分区"
+    definition: "母线槽系统内用于组织和定位构件的结构分区；表示构件的分组范围，不表示单个直身段。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+  # 母线槽工程中的馈电箱，按构件单独编号。
+  EndFeedUnit:
+    display_name: "馈电箱"
+    definition: "母线槽工程中的馈电端单元，作为独立构件进行标识、连接和定位。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+  # 工程资料中单独记录的法兰构件；不要因名称接近就与“接头”合并。
+  Flange:
+    display_name: "法兰"
+    definition: "母线槽工程中的法兰连接构件，作为独立构件进行标识和定位。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+  # 母线槽的连接接头，也是很多局部诊断所针对的对象。
+  Joint:
+    display_name: "接头"
+    definition: "用于连接母线槽构件的接头组件，可独立定位并作为接头诊断的对象。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+      rated_current: # 构件自己的额定电流；不能直接当作全工程的诊断参数
+        display_name: "额定电流"
+        value_type: "number" # 这个字段填写数值
+        unit: "A" # 本数值字段固定采用此单位，实例值只填写数字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "构件源资料记载的自身额定电流，统一按安培（A）表达；不直接作为全工程或某诊断范围的额定电流参数。"
+
+      protection_degree: # 例如 IP54；按来源填写，不推测其他构件的等级
+        display_name: "防护等级"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "构件源资料明确记载的外壳防护等级，如 IP54；不从构件类型、所属母线槽或相邻构件推定，不将样例取值限定为唯一允许值。"
+
+  # 接入母线槽、用于支路取电的插接箱。
+  PlugInUnit:
+    display_name: "插接箱"
+    definition: "通过插接接口接入母线槽的箱式构件，用于支路取电。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+      rated_current: # 构件自己的额定电流；不能直接当作全工程的诊断参数
+        display_name: "额定电流"
+        value_type: "number" # 这个字段填写数值
+        unit: "A" # 本数值字段固定采用此单位，实例值只填写数字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "构件源资料记载的自身额定电流，统一按安培（A）表达；不直接作为全工程或某诊断范围的额定电流参数。"
+
+  # 母线槽直线延伸的一段实物，不是上面的工程分区 Section。
+  StraightSection:
+    display_name: "直身段"
+    definition: "母线槽中呈直线延伸的物理段构件，用于构成母线槽线路。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      full_code: # 来源资料中的完整工程编号，不替代图谱唯一编号
+        display_name: "完整工程编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的工程对象完整编码，须结合工程及配置语境定位；不替代 entity_id，也不保证跨工程或跨版本唯一。"
+
+      code: # 较短的工程编号，不同工程或分区可以同号
+        display_name: "简短编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录的对象短编码，用于局部编号查询和显示；允许不同工程或分区重号，不能仅凭短编码合并实体或推定连接顺序。"
+
+      rated_current: # 构件自己的额定电流；不能直接当作全工程的诊断参数
+        display_name: "额定电流"
+        value_type: "number" # 这个字段填写数值
+        unit: "A" # 本数值字段固定采用此单位，实例值只填写数字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "构件源资料记载的自身额定电流，统一按安培（A）表达；不直接作为全工程或某诊断范围的额定电流参数。"
+
+      protection_degree: # 例如 IP54；按来源填写，不推测其他构件的等级
+        display_name: "防护等级"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "构件源资料明确记载的外壳防护等级，如 IP54；不从构件类型、所属母线槽或相邻构件推定，不将样例取值限定为唯一允许值。"
+
+  # 构件上用于描述连接或附件接入的位置，不是计算机的网络端口。
+  # “配置为连接/启用”与“运行中有电流”是两回事。
+  Port:
+    display_name: "连接端口"
+    definition: "隶属于构件、用于表达组态连接或附件接入的端口对象；组态连接不代表运行时带电或实际连通。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      ordinal: # 在所属构件内部区分端口的序号
+        display_name: "端口序号"
+        value_type: "integer" # 这个字段填写整数
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "在所属构件内部区分端口的序号；不作为全图唯一标识，不表示连接顺序或实际电流方向。"
+
+      role: # 配置中把端口用作入口、出口还是附件接口
+        display_name: "端口用途"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "端口在来源组态中的功能角色；入口、出口或附件接口均不直接表明运行时的电流方向，来源无法确定时不填写。"
+        allowed_values: # 只能填写下列英文值，中文注释用于解释
+          - "input" # 入口
+          - "output" # 出口
+          - "attachment" # 附件或支路接口
+        value_descriptions: # 每个允许值的详细含义
+          input: "入口端口：来源组态定义的输入侧接口。"
+          output: "出口端口：来源组态定义的输出侧接口。"
+          attachment: "附件端口：来源组态用于附件或支路接入的接口。"
+
+      enabled: # 配置中是否启用；未知时省略，不自动当成 false
+        display_name: "配置中是否启用"
+        value_type: "boolean" # 这个字段填写 true 或 false
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源组态中端口是否配置为启用；true 表示启用，false 表示未启用，缺失表示未知，不能据此证明运行连通、带电或支路有电流。"
+
+  # 配置里的一条测量或状态数据入口，例如某接头的 TempDiff。
+  # 这里说的是逻辑测点，不等同于现场单独一只传感器，也不是当前读数。
+  MeasurementPoint:
+    display_name: "测点"
+    definition: "归属于具体工程构件、用于关联观测量及其数据来源的逻辑测量或状态监测点；组态存在不表示已有有效采样。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      item: # 例如 Temp、TempDiff、Ia；名字本身不足以确定业务含义
+        display_name: "源系统采集项目"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源组态中的测项名称，如 Temp、TempDiff、Ia；须结合所属构件、测量系统和测温方案解释，不单独决定可观测量或测量对象。"
+
+      variable_name: # 在源系统中找到这条数据所用的名称或路径
+        display_name: "数据源变量名"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源组态中用于定位该测点数据通道的变量名称或路径；结合对应配置使用，不表示已获取有效采样，也不作为跨系统唯一标识。"
+
+      measurement_system_ref: # 例如 Etemp_1、EDock_1；这是采集系统标识，不是计量单位
+        display_name: "测量系统标识"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "该测点关联的外部测量系统或采集配置标识，如 Etemp_1、EDock_1、PM5350；在所属工程及配置语境中解析，不是计量单位，也不要求建立同名图实体。"
+
+  # 数据表示什么：温度、电流、负载率或进水报警等。
+  # 测点回答“从哪里取数”，观测量回答“取到的数据是什么意思”。
+  # 温度读数和温升都用 °C，但一个是对象温度，一个是温度差，不能混为一类。
+  Observable:
+    display_name: "观测量"
+    definition: "描述设备或环境的物理量、状态或指标的知识概念，既可由测点提供，也可由其他量和参数推导；不表示某一时刻的具体取值。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      definition: # 要求每个具体知识概念填写自身说明，区别于类型本身的定义
+        display_name: "观测量说明"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明该观测量表示什么，写清必要的测量对象、参照或比较含义，例如接头温度读数、直身温度读数、接头相对环境的温升；不填写具体读数、执行公式或业务阈值。"
+
+      quantity_kind: # 先确认是温度、温差、电流还是报警等，再按搭配表填写单位
+        display_name: "观测量类别"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明这个量属于温度、温度差、电流、报警状态等哪一类；类别相同不代表含义相同，单位相同也不代表可以互相替代。"
+        allowed_values: # 只能填写下列英文值，中文注释用于解释
+          - "active_power" # 有功功率
+          - "alarm_state" # 报警状态
+          - "duration" # 持续时间
+          - "electric_current" # 电流
+          - "electric_voltage" # 电压
+          - "frequency" # 频率
+          - "power_factor" # 功率因数
+          - "ratio" # 比值
+          - "reactive_power" # 无功功率
+          - "relative_humidity" # 相对湿度
+          - "statistical_correlation" # 统计相关性
+          - "temperature" # 温度读数
+          - "temperature_change_rate" # 温度或温升变化率
+          - "temperature_difference" # 温差，包括温升
+        value_descriptions: # 每个允许值的详细含义
+          active_power: "有功功率。"
+          alarm_state: "报警是否触发的布尔状态，不表示故障已经确诊。"
+          duration: "持续时间或时间间隔，例如降温响应滞后。"
+          electric_current: "电流。"
+          electric_voltage: "电压。"
+          frequency: "频率。"
+          power_factor: "功率因数。"
+          ratio: "比值，例如电流负载率；参照对象由具体量的定义说明。"
+          reactive_power: "无功功率。"
+          relative_humidity: "相对湿度。"
+          statistical_correlation: "统计相关性，例如温升与电流相关性，不表示因果关系。"
+          temperature: "温度读数，例如接头、直身或环境的温度；不用于温升或温度差。"
+          temperature_change_rate: "温度或温差随时间的变化率，例如温升变化率。"
+          temperature_difference: "温度差值，例如温升、相邻接头温升差或温升波动范围。"
+
+      canonical_unit: # 项目统一使用的单位；温度、温差用 °C，变化率用 °C/min
+        display_name: "统一单位"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "该可观测量的统一表达单位，例如温度、温升和温差用 °C，温升变化率用 °C/min，电流用 A；温度与温差通过观测量类别和定义区分。无量纲量使用字符串 1，报警布尔量也沿用此标记。该标记不是当前取值，且不表示源数据已完成单位转换。"
+
+      value_kind: # 这里保存 number 或 boolean 这样的类型名称，不保存某次测量值
+        display_name: "观测值类型"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "声明该可观测量对应观测值的数据类型；此属性本身记录类型名称，不存储具体采样值。数值比值和布尔报警即使都标记为无量纲，也不能混同。"
+        allowed_values: # 只能填写下列英文值，中文注释用于解释
+          - "number" # 数值型，如温度、电流、比值
+          - "boolean" # 布尔型，表示是或否，如报警是否触发
+        value_descriptions: # 每个允许值的详细含义
+          number: "数值型观测量，例如温升、电流、负载率或相关性指标。"
+          boolean: "布尔型观测量，例如报警是否触发；源信号 0/1 的映射及质量判断由来源映射和数据处理配置规定。"
+
+  # 一张检查、维修或维护任务记录；已有基础字段保持不变。
+  WorkOrder:
+    display_name: "工单"
+    definition: "记录针对具体设备或系统开展的检查、维修或维护任务及其处理过程和结果的业务记录。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      work_order_number: # 来源业务系统的编号；不能直接当作图谱唯一编号
+        display_name: "工单编号"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源业务系统或台账记录的工单编号，保留前导零等原始字符串内容；不同来源或编号范围可能同号，不能仅凭编号合并实体，也不替代 entity_id。"
+
+      status: # 工单流程状态，不是设备健康状态
+        display_name: "工单状态"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录所反映的工单业务状态，经明确映射后使用本项目的状态值；不表示设备故障状态、根因是否确认或处理是否成功，无法确定映射时不填写。"
+        allowed_values: # 只能填写下列英文值，中文注释用于解释
+          - "open" # 待处理
+          - "in_progress" # 处理中
+          - "completed" # 作业完成
+          - "closed" # 流程已关闭
+          - "cancelled" # 已取消
+        value_descriptions: # 每个允许值的详细含义
+          open: "待处理：来源明确记载工单已建立、等待处理，不表示已开始作业。"
+          in_progress: "处理中：来源明确记载工单正在检查、维修或维护。"
+          completed: "作业完成：来源明确记载作业任务已完成，不等同于流程已关闭或设备已恢复正常。"
+          closed: "已关闭：来源明确记载工单流程已关闭，不据此推定根因已确认、维修成功或复测通过。"
+          cancelled: "已取消：来源明确记载工单已取消，不表示此前没有进行过检查或处置。"
+
+      created_at: # 工单建立时间
+        display_name: "工单创建时间"
+        value_type: "string" # 这个字段填写文字
+        format: "date-time" # 完整日期、时刻和时区，例如 2026-09-16T09:30:00+08:00
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源业务记录中的工单创建时间，不是故障发生时间或图谱入库时间；仅在日期、时刻及其时区有依据时填写。"
+
+      completed_at: # 实际作业完成时间，不代表复测一定通过
+        display_name: "作业完成时间"
+        value_type: "string" # 这个字段填写文字
+        format: "date-time" # 完整日期、时刻和时区，例如 2026-09-16T09:30:00+08:00
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录明确给出的作业完成时间，日期、时刻及其时区须有依据；不能由完成或关闭状态推算，也不表示复测通过或根因已确认。"
+
+      closed_at: # 业务流程关闭时间，不等同于维修完成时间
+        display_name: "工单关闭时间"
+        value_type: "string" # 这个字段填写文字
+        format: "date-time" # 完整日期、时刻和时区，例如 2026-09-16T09:30:00+08:00
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源记录明确给出的流程关闭时间，日期、时刻及其时区须有依据；工单重开后历史关闭时间仍可能保留，不能仅凭此字段推定状态为已关闭。"
+
+      action_summary: # 来源明确记载的实际措施，保留未完成等限定
+        display_name: "处理措施摘要"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源工单中明确记载的实际检查、维修或维护措施的简要归纳；保留未执行、部分完成等限定，不将建议或计划写成已完成的处置。"
+
+      verification_summary: # 来源记载的复查或复测结果，可以是未通过或未开展
+        display_name: "复测结果摘要"
+        value_type: "string" # 这个字段填写文字
+        required: false # 可以省略，缺少依据时不要猜测
+        description: "来源工单中明确记载的复测、复查或验收情况及结果摘要，可记录未通过或明确未开展；无相关记录时不填写，不能仅凭完成或关闭状态推定恢复正常。"
+
+  # 定义一种异常表现，例如“相邻接头温差异常”；不宣称某台设备已经异常。
+  Phenomenon:
+    display_name: "异常现象"
+    definition: "对设备异常状态或异常表现的概念化描述，用于组织诊断知识；不表示特定设备已经发生该异常。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      definition: # 要求每个具体知识概念填写自身说明，区别于类型本身的定义
+        display_name: "现象说明"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明这种异常表现是什么，以及与相近现象的区别，例如温升超限与相邻接头温差异常的区别；不记录某台设备当前是否异常，具体判断公式和阈值由外部规则定义。"
+
+  # 例如进水、螺栓未拧紧等可能解释；具体设备是否确诊仍要看证据。
+  # 工单中的历史确认通过专门关系表达，不由这个类型名称决定。
+  RootCause:
+    display_name: "可能的根本原因"
+    definition: "可用于解释异常现象的原因类别；作为诊断知识中的候选解释，不表示具体设备的根因已获确认。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      definition: # 要求每个具体知识概念填写自身说明，区别于类型本身的定义
+        display_name: "原因说明"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明这类原因是什么，以及它可能如何引起异常，例如接头紧固不足可能增加接触电阻并引起局部发热；不表示具体设备已经存在该原因或已完成确诊。"
+
+  # 定义一类范围，例如“单接头范围”或“相邻接头对范围”。
+  # 这里不保存本次诊断具体包含哪些接头；具体对象需结合工程拓扑等资料确定。
+  DiagnosticScope:
+    display_name: "诊断作用范围"
+    definition: "描述诊断知识或规则在对象定位、对象比较、电流适用等方面的范围要求，例如单接头范围、相邻接头对范围和干路电流段范围；不指定具体工程对象。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      definition: # 要求每个具体知识概念填写自身说明，区别于类型本身的定义
+        display_name: "范围说明"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明该范围包含哪类对象、如何确定边界及需要哪些依据；范围要求须对应所采用的知识来源或规则版本，不将单一规则的固定成员、阈值或条件写成所有诊断范围的通用要求。不列出某次诊断的具体成员，定位、比较或其他用途由对应关系说明。"
+
+  # 定义诊断需要什么参数，例如温升预警阈值；不在这里填写具体阈值。
+  DiagnosticParameter:
+    display_name: "诊断参数定义"
+    definition: "诊断所需参数项的语义定义，用于说明参数的含义与用途并关联外部配置；不表示某个已配置的参数值。"
+    properties: # 本类型的专有属性，另加前面的通用实体属性
+      definition: # 要求每个具体知识概念填写自身说明，区别于类型本身的定义
+        display_name: "参数说明"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明参数表示什么、用于什么判断，必要时说明它是单个阈值还是一组分档阈值；不填写实际配置值、默认值或计算公式，也不表示已为某个工程配置完成。"
+
+      canonical_unit: # 参数也使用统一单位；这里不填写参数的实际数值
+        display_name: "参数单位"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "表达该参数时采用的统一计量单位，例如额定电流用 A，温升和温差阈值用 °C，温升变化率阈值用 °C/min，持续时间用 min；无量纲参数使用字符串 1。分档阈值的单位说明不代替各档配置，单位未知时不能以 1 代填。"
+
+# 六、关系类型：规定对象之间可以怎样连接，以及每种连接表示什么。
+# allowed_type_pairs 是允许的类型组合，from 是箭头起点，to 是箭头终点。
+# 例如 Joint → Port 表示接头可以关联连接端口，不是反过来。
+relation_types:
+  # allowed_type_pairs 逐对列出允许的端点类型；关系方向为 from → to。
+  # 方向：上一级工程对象 → 直接包含的下一级对象。
+  # 用于工程组成，不表示概念的大小类，也不跨级补连。
+  CONTAINS:
+    display_name: "包含"
+    definition: "工程对象直接包含下一级工程对象，表达项目、母线槽系统、分区与构件的组成归属；不表示类型继承或跨级的间接包含。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Project"
+        to: "Busway"
+      - from: "Busway"
+        to: "Section"
+      - from: "Section"
+        to: "EndFeedUnit"
+      - from: "Section"
+        to: "Flange"
+      - from: "Section"
+        to: "Joint"
+      - from: "Section"
+        to: "PlugInUnit"
+      - from: "Section"
+        to: "StraightSection"
+
+  # 方向：构件 → 它配置的连接端口。
+  HAS_PORT:
+    display_name: "拥有端口"
+    definition: "构件拥有某个已配置的结构端口，表达端口的组态归属。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "EndFeedUnit"
+        to: "Port"
+      - from: "Flange"
+        to: "Port"
+      - from: "Joint"
+        to: "Port"
+      - from: "PlugInUnit"
+        to: "Port"
+      - from: "StraightSection"
+        to: "Port"
+
+  # 方向：连接端口 → 对面连接的构件；当前模型不是端口连端口。
+  # 这里只记录来源配置，不能从箭头判断实际电流方向。
+  CONNECTS_TO_COMPONENT:
+    display_name: "端口连接"
+    definition: "结构端口的组态连接引用指向目标构件；不指定对端端口，不表示电流方向，也不证明运行时带电或实际连通。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Port"
+        to: "EndFeedUnit"
+      - from: "Port"
+        to: "Flange"
+      - from: "Port"
+        to: "Joint"
+      - from: "Port"
+        to: "PlugInUnit"
+      - from: "Port"
+        to: "StraightSection"
+
+  # 方向：构件 → 它配置的数据测点。
+  # 测点归属某接头，不代表该测点测到的一定是这个接头的温度。
+  HAS_POINT:
+    display_name: "配置测点"
+    definition: "构件配置并承载某个逻辑测点，表达测点的采集归属；不限定实际被测对象就是该构件，也不表示已有有效采样。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "EndFeedUnit"
+        to: "MeasurementPoint"
+      - from: "Flange"
+        to: "MeasurementPoint"
+      - from: "Joint"
+        to: "MeasurementPoint"
+      - from: "PlugInUnit"
+        to: "MeasurementPoint"
+      - from: "StraightSection"
+        to: "MeasurementPoint"
+
+  # 方向：测点 → 它对应的观测量。
+  # 例如 TempDiff 测点对应“温升”；Temp 的含义还须结合测量系统等资料判断。
+  OBSERVES:
+    display_name: "对应观测量"
+    definition: "逻辑测点对应其观测内容的语义概念，明确该测点代表哪一种物理量、状态或指标；不表示具体观测值。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "MeasurementPoint"
+        to: "Observable"
+
+  # 方向：异常现象 → 判断或解释它时用到的观测量。
+  # 这条关系的观测量用途由 criterion_role 说明，不能默认全是直接判断依据。
+  CHARACTERIZED_BY:
+    display_name: "关联观测量"
+    definition: "把异常现象与用于判断或解释它的观测量关联起来；通过观测量用途区分直接判断依据和辅助解释信息，建立关联不表示规则已经命中。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Phenomenon"
+        to: "Observable"
+
+    properties: # 这条关系自己的属性，不是任一端实体的属性
+      criterion_role: # 这条关系中的观测量是直接判断依据，还是辅助解释信息
+        display_name: "观测量用途"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明这个观测量在当前关系及适用条件下，是直接参与规则判断，还是用于辅助解释；涉及规则时须通过该关系的外部依据记录绑定规则版本及条款，缺少足够依据时不得默认填写任一用途。"
+        allowed_values: # 只能填写下列英文值，中文注释用于解释
+          - "rule_criterion" # 直接判断依据
+          - "contextual_only" # 辅助解释信息
+        value_descriptions: # 每个允许值的详细含义
+          rule_criterion: "直接判断依据：对应规则条款直接使用这个观测量参与判断；不表示规则已经命中，也不表示所需输入已齐备。"
+          contextual_only: "辅助解释信息：有来源依据，用于说明现象，但在当前适用条件下不直接参与规则判断；其他规则或条件下可能承担不同用途。"
+
+  # 方向：异常现象 → 可能解释它的原因；“可能”不等于已经确诊。
+  POSSIBLE_CAUSE:
+    display_name: "可能原因"
+    definition: "异常现象可由某类候选根因解释的一般诊断知识；只表达可能性，不表示具体设备已确诊，也不提供原因概率或排序。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Phenomenon"
+        to: "RootCause"
+
+  # 方向：观测量/异常现象/可能原因 → 一种诊断范围。
+  # 例如比较相邻接头 A、B 的温升，却只针对 B 判断异常：比较范围和诊断对象不同。
+  # 范围用途写在每条关系上；同一个范围可以在不同关系中承担不同用途。
+  APPLICABLE_TO_SCOPE:
+    display_name: "关联诊断范围"
+    definition: "说明观测量、异常现象或可能原因涉及哪种诊断范围，并区分该范围用于确定诊断对象、比较范围、适用范围还是归属信息；不表示具体工程成员已经确定，也不表示诊断条件已满足。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Observable"
+        to: "DiagnosticScope"
+      - from: "Phenomenon"
+        to: "DiagnosticScope"
+      - from: "RootCause"
+        to: "DiagnosticScope"
+
+    properties: # 这条关系自己的属性，不是任一端实体的属性
+      # 每条关系只填写一种用途；需要表达多种用途时分别建立关系，不必凑齐四种。
+      # localization=最终判断谁；comparison_basis=用谁的数据比较；
+      # applicability_basis=数据或知识可用于谁；reporting_context=附带说明属于哪里。
+      scope_role: # 这个范围在当前关系中用来做什么
+        display_name: "范围用途"
+        value_type: "string" # 这个字段填写文字
+        required: true # 必填
+        description: "说明所关联的范围在当前关系及适用条件下用来做什么；用途属于这条关系，不是范围自身固定的属性，也不表示已确定具体工程成员。"
+        allowed_values: # 只能填写下列英文值，中文注释用于解释
+          - "localization" # 诊断对象
+          - "comparison_basis" # 比较范围
+          - "applicability_basis" # 适用范围
+          - "reporting_context" # 归属信息
+        value_descriptions: # 每个允许值的详细含义
+          localization: "诊断对象：现象或原因判断最终针对哪些对象。"
+          comparison_basis: "比较范围：使用哪些对象的数据进行比较、计算或汇总。"
+          applicability_basis: "适用范围：这份观测数据或诊断知识可以用于哪些对象，例如同一段干路电流可用于分析的接头范围。"
+          reporting_context: "归属信息：随诊断结果说明对象所属的母线槽等背景；附带这些信息不改变实际诊断对象或计算范围。"
+
+  # 方向：观测量/异常现象/可能原因 → 所需的参数定义。
+  # 存在依赖关系，不表示对应参数值已经配置好。
+  REQUIRES_PARAMETER:
+    display_name: "需要参数"
+    definition: "在相应适用条件下，观测量的求取或异常现象、候选根因的判定所依赖的诊断参数定义；不表示参数值已配置，也不表示该依赖对所有规则版本均成立。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Observable"
+        to: "DiagnosticParameter"
+      - from: "Phenomenon"
+        to: "DiagnosticParameter"
+      - from: "RootCause"
+        to: "DiagnosticParameter"
+
+  # 方向：推导结果 → 推导所需的输入量，例如温升 → 温度读数。
+  # 表达概念依赖，不会自动执行计算，也不允许据此覆盖来源已有的测量值。
+  DERIVED_FROM:
+    display_name: "推导时依赖"
+    definition: "从派生结果的可观测量概念指向其输入可观测量概念，表达量之间的语义依赖；不包含执行公式，不表示输入已齐备或允许计算、回填及替代指定源值。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Observable"
+        to: "Observable"
+
+  # 方向：更具体的现象 → 更一般的现象，例如温升阈值超限 → 温升异常。
+  # 这是现象概念的分类，不是实体类型继承；也不表示两条诊断规则会一起命中。
+  SPECIALIZES:
+    display_name: "属于更一般的现象"
+    definition: "从更具体的异常现象概念指向更一般的异常现象概念，表达概念分类；不表示实体类型之间的继承，也不表示具体概念对应的规则命中会使一般概念对应的规则自动命中。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "Phenomenon"
+        to: "Phenomenon"
+
+  # 方向：工单 → 工单实际处理的工程对象。
+  TARGETS_ASSET:
+    display_name: "处理对象"
+    definition: "工单明确针对的母线槽系统、分区或具体构件，界定该工单的检查、维修或维护对象；不表示对象已故障，也不将其中记录的现象或原因自动应用于所有处理对象。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "WorkOrder"
+        to: "Busway"
+      - from: "WorkOrder"
+        to: "Section"
+      - from: "WorkOrder"
+        to: "EndFeedUnit"
+      - from: "WorkOrder"
+        to: "Flange"
+      - from: "WorkOrder"
+        to: "Joint"
+      - from: "WorkOrder"
+        to: "PlugInUnit"
+      - from: "WorkOrder"
+        to: "StraightSection"
+
+  # 方向：工单 → 其中明确记录的异常现象；历史记录不代表设备当前仍异常。
+  RECORDS_PHENOMENON:
+    display_name: "记录异常现象"
+    definition: "工单中明确记录的报修或检查所涉及的异常现象类别；报修描述不等于现场已复核，历史记录也不表示设备当前仍有该异常，否定或已排除的现象不得按肯定记录表达。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "WorkOrder"
+        to: "Phenomenon"
+
+  # 方向：工单 → 当时提出、尚未确认的原因；不能把通用候选清单自动抄入工单。
+  SUSPECTS_CAUSE:
+    display_name: "记录怀疑的原因"
+    definition: "工单中明确提出但当时尚未确认的原因类别；保留其假设性质，不将一般候选原因清单自动视为该工单实际提出的怀疑。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "WorkOrder"
+        to: "RootCause"
+
+  # 方向：工单 → 当时有明确依据确认的原因。
+  # 不能仅凭工单已关闭就生成这条关系，也不能将历史确认当成设备当前状态。
+  RECORDS_CONFIRMED_CAUSE:
+    display_name: "记录已确认原因"
+    definition: "工单中有明确确认结论及相应检查或诊断依据的原因类别；表示该工单记录的历史结论，不由关单、完成维修或一般候选关系推定，也不表示设备当前仍存在该原因。"
+    allowed_type_pairs: # 允许的起点类型 → 终点类型，每一项单独匹配
+      - from: "WorkOrder"
+        to: "RootCause"
+
+# 七、图谱约束：明确字段如何搭配、实体如何引用，以及工程结构怎样才合法。
+# 工程结构按每个项目已选定一个配置版本的视图检查；不同版本不能混在一起判断归属。
+# 完整结构必须满足下列要求；片段缺少的信息应补齐后再确认，不凭空推断。
+constraints:
+  # 只适用于观测量实体的三个字段；不检查实时读数或外部参数配置。
+  # 温度与温差采用相同单位，正确分类仍需看各自定义和来源。
+  observable_value_consistency:
+    description: "观测量概念记录的三个字段必须同时匹配下列同一组取值；这里规定本项目的统一表达方式，不限制原始资料可使用的物理单位，也不根据单位反推类别或自动转换源数据。"
+    entity_type: "Observable" # 此约束只检查 Observable，不自动套用到其他类型
+    allowed_combinations: # 每项都是完整的一组合法搭配
+      - quantity_kind: "active_power" # 有功功率
+        canonical_unit: "kW"
+        value_kind: "number"
+
+      - quantity_kind: "alarm_state" # 报警状态
+        canonical_unit: "1"
+        value_kind: "boolean"
+
+      - quantity_kind: "duration" # 持续时间
+        canonical_unit: "min"
+        value_kind: "number"
+
+      - quantity_kind: "electric_current" # 电流
+        canonical_unit: "A"
+        value_kind: "number"
+
+      - quantity_kind: "electric_voltage" # 电压
+        canonical_unit: "V"
+        value_kind: "number"
+
+      - quantity_kind: "frequency" # 频率
+        canonical_unit: "Hz"
+        value_kind: "number"
+
+      - quantity_kind: "power_factor" # 功率因数
+        canonical_unit: "1"
+        value_kind: "number"
+
+      - quantity_kind: "ratio" # 比值
+        canonical_unit: "1"
+        value_kind: "number"
+
+      - quantity_kind: "reactive_power" # 无功功率
+        canonical_unit: "kVAr"
+        value_kind: "number"
+
+      - quantity_kind: "relative_humidity" # 相对湿度
+        canonical_unit: "%"
+        value_kind: "number"
+
+      - quantity_kind: "statistical_correlation" # 统计相关性
+        canonical_unit: "1"
+        value_kind: "number"
+
+      - quantity_kind: "temperature" # 温度
+        canonical_unit: "°C"
+        value_kind: "number"
+
+      - quantity_kind: "temperature_change_rate" # 温度变化率
+        canonical_unit: "°C/min"
+        value_kind: "number"
+
+      - quantity_kind: "temperature_difference" # 温度差
+        canonical_unit: "°C"
+        value_kind: "number"
+
+
+  # 每个实体需要一个稳定的图谱编号；同名或工程短编号相同，不代表同一个实体。
+  entity_identity:
+    description: "在同一个图谱视图内，每个实体记录使用非空且唯一的 entity_id；同一实体的多条来源证据由外部证据记录关联，不重复建立同编号实体。名称、短编号或完整工程编号都不能单独作为跨来源合并实体的依据。"
+    id_property: "entity_id" # 使用已经定义的通用字段，不再另加一套编号
+    non_empty: true # 不能缺少编号，也不能只填空白
+    unique_in_graph: true # 校验的是整理后的图谱视图，不是尚未合并的多来源原始记录
+    not_sufficient_alone: # 这些信息可以帮助核对身份，但单独一个不足以证明是同一对象
+      - "display_name" # 显示名称可以重复
+      - "code" # 不同工程或分区可以有相同短编号
+      - "full_code" # 仍需结合工程、配置及来源身份记录
+
+  # 关系应连接真实存在且类型正确的对象，不能凭名称临时补造节点。
+  reference_integrity:
+    description: "实体和关系必须使用本体已声明的类型；每条关系的起点和终点须能引用到图谱中的实体，其类型组合与方向须符合对应关系的 allowed_type_pairs。"
+    entity_type_must_be_declared: true # 不接受拼错或尚未定义的实体类型
+    relation_type_must_be_declared: true # 不接受拼错或尚未定义的关系类型
+    endpoints_must_exist: true # 完整图谱不能留下指向不存在实体的关系
+    enforce_allowed_type_pairs: true # 直接复用上面的端点类型表，不再抄写第二份
+
+  # 数量约束按“不同的关联对象”计数，同一对象的多条证据不算多个对象。
+  # 以下最少数量针对完整工程结构；资料片段缺少归属时由校验工具标为待补，不自动补关系。
+  ownership_cardinality:
+    description: "在每个工程已选定一个配置版本的图谱视图内，非项目根节点的工程对象、端口和测点均须有唯一直接归属；端口可无对端，测点可暂未绑定观测量，但已有绑定不能互相冲突。构件不必都有端口或测点，也不要求每条连接都有反向记录。"
+    count_basis: "distinct_related_entities" # 数不同对象，不数来源文件或重复证据
+    rules:
+      - id: "engineering_parent" # 母线槽、分区和构件各有一个直接上级
+        entity_types:
+          - "Busway"
+          - "Section"
+          - "EndFeedUnit"
+          - "Flange"
+          - "Joint"
+          - "PlugInUnit"
+          - "StraightSection"
+        relation_type: "CONTAINS"
+        direction: "incoming" # 看多少个上级通过 CONTAINS 指向当前对象
+        min_count: 1 # 完整结构中不能没有上级
+        max_count: 1 # 同一配置视图中不能同时属于两个上级
+
+      - id: "port_owner" # 一个端口只属于一个构件
+        entity_types:
+          - "Port"
+        relation_type: "HAS_PORT"
+        direction: "incoming"
+        min_count: 1
+        max_count: 1
+
+      - id: "point_owner" # 一个测点配置只归属于一个构件
+        entity_types:
+          - "MeasurementPoint"
+        relation_type: "HAS_POINT"
+        direction: "incoming"
+        min_count: 1
+        max_count: 1
+
+      - id: "port_target" # 本项目的一个端口配置至多记录一个对端构件
+        entity_types:
+          - "Port"
+        relation_type: "CONNECTS_TO_COMPONENT"
+        direction: "outgoing" # 看当前端口指向多少个不同的对端构件
+        min_count: 0 # 未接线、预留或资料中没有目标，均不据此判为错误
+        max_count: 1 # 一个构件的多个分支应通过不同端口表达
+
+      - id: "point_observable" # 同一个测点配置不能同时被解释为两种不同的观测量
+        entity_types:
+          - "MeasurementPoint"
+        relation_type: "OBSERVES"
+        direction: "outgoing"
+        min_count: 0 # 结构检查允许尚未完成语义绑定；是否可取数或诊断另行核对
+        max_count: 1
+
+  # 每个工程对象要能沿归属关系找到唯一工程；不能从编号前缀猜归属。
+  engineering_structure:
+    description: "在每个工程已选定一个配置版本的图谱视图内，工程对象沿直接归属关系属于唯一项目，包含关系不能成环。工程归属与连接分别表达，不因连接两端属于不同项目、母线槽或分区就判定连接非法；具体连接仍须有来源依据，且不改变两端对象各自的归属。连接回路不等于包含关系成环。知识概念可以被不同项目共享，不要求它们归属于某个项目。"
+    project_root_type: "Project" # 工程归属追溯的根
+    project_member_types: # 只有这些工程对象需要归属到一个 Project
+      - "Busway"
+      - "Section"
+      - "EndFeedUnit"
+      - "Flange"
+      - "Joint"
+      - "PlugInUnit"
+      - "StraightSection"
+      - "Port"
+      - "MeasurementPoint"
+    ownership_relations: # 从对象沿这些关系的反方向寻找上级
+      - "CONTAINS"
+      - "HAS_PORT"
+      - "HAS_POINT"
+    require_one_project: true # 完整结构中必须且只能找到一个所属工程
+    # 连接到其他工程的构件不代表归属于那个工程；连接关系不参与上面的归属追溯。
+    acyclic_relations: # 只禁止包含环，不把正常的连接回路误判为错误
+      - "CONTAINS"
+    non_repeatable_relations: # 同一配置视图内，同类型、同起点、同终点的工程关系只保留一条
+      - "CONTAINS"
+      - "HAS_PORT"
+      - "HAS_POINT"
+      - "CONNECTS_TO_COMPONENT"
+    # 上述去重要求只针对列出的工程关系；多来源证据仍由外部记录保留。
+    # 诊断关系可能有不同用途、适用条件或版本，不能仅凭两端相同就合并。
